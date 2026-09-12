@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>电话外观 A / B（两套互不交错）</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: #000;
+    color: #f2f2f7;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 12px 12px calc(18px + env(safe-area-inset-bottom)); }
+  .page { max-width: 430px; margin: 0 auto; }
+  .note { font-size: 12px; line-height: 1.65; color: #8e8e93; margin: 0 2px 12px; }
+  .note b { color: #fff; }
+  .toolbar { position: sticky; top: 0; z-index: 30; background: #000; padding: 4px 0 10px; }
+  .seg {
+    display: flex;
+    padding: 2px;
+    margin-bottom: 8px;
+    border-radius: 9px;
+    background: #2c2c2e;
+  }
+  .seg button {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: #8e8e93;
+    font-size: 12px;
+    padding: 7px 4px;
+    border-radius: 7px;
+  }
+  .seg button.on { background: #3a3a3c; color: #fff; }
+  .tools-a, .tools-b { display: none; }
+  .is-a .tools-a { display: block; }
+  .is-b .tools-b { display: block; }
+
+  /* ========== 方案 A：兼得稿（来自 call-ui-preview.html，原样） ========== */
+  .a-phone {
+    --accent: #8b5cf6;
+    position: relative;
+    overflow: hidden;
+    height: 74vh;
+    min-height: 580px;
+    border-radius: 28px;
+    border: 1px solid rgba(255,255,255,.1);
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(139,92,246,.28), transparent 46%),
+      linear-gradient(180deg, #1a1424 0%, #120f18 100%);
+    box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    display: flex;
+    flex-direction: column;
+    color: #f6f3ff;
+    font-family: ui-sans-serif, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  }
+  .a-phone .spark {
+    position: absolute;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: .45;
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+  }
+  .a-phone .corner {
+    position: absolute;
+    font-size: 8px;
+    color: var(--accent);
+    opacity: .7;
+    pointer-events: none;
+  }
+  .a-phone .overlay-meta {
+    position: absolute;
+    top: 10px; left: 14px; right: 14px;
+    z-index: 3;
+    display: flex;
+    justify-content: space-between;
+    font-size: 8px;
+    letter-spacing: .22em;
+    color: rgba(255,255,255,.4);
+    font-weight: 700;
+    pointer-events: none;
+  }
+  .a-phone .both-head {
+    position: relative;
+    flex-shrink: 0;
+    text-align: center;
+    padding: 28px 12px 8px;
+  }
+  .a-phone .both-name {
+    margin-top: 8px;
+    font-family: ui-serif, "Songti SC", serif;
+    font-size: 1.45rem;
+    line-height: 1.15;
+    text-shadow: 0 0 18px rgba(139,92,246,.55);
+  }
+  .a-phone .hana {
+    display: inline-block;
+    margin-right: 6px;
+    color: rgba(196,181,253,.95);
+    text-shadow: 0 0 10px var(--accent);
+    font-size: .72em;
+    vertical-align: 2px;
+  }
+  .a-phone .both-timer {
+    margin-top: 4px;
+    font-size: 13px;
+    letter-spacing: .16em;
+    color: var(--accent);
+    font-weight: 300;
+  }
+  .a-phone .both-status {
+    margin-top: 4px;
+    font-size: 11px;
+    color: rgba(255,255,255,.55);
+    letter-spacing: .08em;
+  }
+  .a-phone .avatar {
+    width: 54px; height: 54px;
+    margin: 0 auto;
+    border-radius: 50%;
+    object-fit: cover;
+    background: radial-gradient(circle at 35% 30%, #c4b5fd, #6d28d9 70%);
+    box-shadow: 0 0 0 1px rgba(139,92,246,.4), 0 0 18px rgba(139,92,246,.35);
+    position: relative;
+  }
+  .a-phone .viz {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    height: 22px;
+    width: 86%;
+    max-width: 320px;
+    margin: 8px auto 0;
+  }
+  .a-phone .viz i {
+    display: block;
+    width: 3px;
+    height: 22px;
+    margin: 0 2px;
+    flex: 1;
+    max-width: 4px;
+    border-radius: 99px;
+    background: linear-gradient(to top, rgba(139,92,246,.2), var(--accent));
+    transform-origin: center bottom;
+    transform: scaleY(.22);
+  }
+  .a-phone .viz.live i { animation: aWave .62s ease-in-out infinite; }
+  .a-phone .viz.listen i { animation: aWave 1.55s ease-in-out infinite; }
+  .a-phone .viz.think i:nth-child(6),
+  .a-phone .viz.think i:nth-child(7),
+  .a-phone .viz.think i:nth-child(8) { transform: scaleY(.38); }
+  @keyframes aWave {
+    0%, 100% { transform: scaleY(.22); }
+    50% { transform: scaleY(1); }
+  }
+  .a-phone .card {
+    flex: 1;
+    min-height: 0;
+    margin: 4px 14px 8px;
+    padding: 14px 14px 10px;
+    overflow: auto;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,.1);
+    background: rgba(255,255,255,.04);
+    box-shadow: inset 0 1px 0 rgba(139,92,246,.2);
+  }
+  .a-phone .row { margin: 0 0 14px; }
+  .a-phone .who { font-size: 10px; color: rgba(255,255,255,.4); margin-bottom: 4px; }
+  .a-phone .who .dot { color: var(--accent); font-size: 8px; margin-right: 4px; }
+  .a-phone .right { text-align: right; }
+  .a-phone .ai-soft { font-size: 13px; line-height: 1.62; }
+  .a-phone .line { display: block; margin: 0 0 .35em; }
+  .a-phone .pending { color: rgba(255,255,255,.56); }
+  .a-phone .active { color: #fff; text-shadow: 0 0 12px rgba(139,92,246,.55); }
+  .a-phone .done { color: rgba(255,255,255,.42); }
+  .a-phone .user-soft {
+    display: inline-block;
+    max-width: 78%;
+    text-align: left;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: rgba(255,255,255,.92);
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 16px 16px 4px 16px;
+    padding: 7px 12px;
+  }
+  .a-phone .cue {
+    color: rgba(196,181,253,.9);
+    font-style: italic;
+    font-size: .88em;
+    margin: .35em 0 .45em;
+  }
+  .a-phone .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .a-phone .pill {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.7);
+  }
+  .a-phone .dock {
+    display: flex;
+    justify-content: space-around;
+    padding: 4px 10px 12px;
+    flex-shrink: 0;
+  }
+  .a-phone .knob { width: 52px; text-align: center; color: rgba(255,255,255,.7); font-size: 10px; }
+  .a-phone .knob .c {
+    width: 42px; height: 42px; margin: 0 auto 4px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .a-phone .knob.end .c { background: #e11d48; border-color: transparent; color: #fff; }
+
+  /* ========== 方案 B：iOS 小手机（冻结稿，不借用 A） ========== */
+  .b-phone {
+    --label: #f2f2f7;
+    --secondary: #c7c7cc;
+    --tertiary: #8e8e93;
+    --fill: rgba(255,255,255,.16);
+    --red: #ff3b30;
+    --cue: #ff9f0a;
+    position: relative;
+    overflow: hidden;
+    height: 78vh;
+    min-height: 680px;
+    border-radius: 47px;
+    background: #1c1c1e;
+    box-shadow: 0 0 0 1px #3a3a3c, 0 24px 60px rgba(0,0,0,.55);
+    display: flex;
+    flex-direction: column;
+    color: var(--label);
+  }
+  .b-phone .wallpaper {
+    position: absolute; inset: -24px;
+    background: #1c1c1e center/cover no-repeat;
+    filter: blur(38px) saturate(.55);
+    transform: scale(1.12);
+    opacity: .5;
+    pointer-events: none;
+  }
+  .b-phone .dim {
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,.28) 0%, rgba(28,28,30,.66) 48%, rgba(28,28,30,.94) 100%);
+    pointer-events: none;
+  }
+  .b-phone .sb {
+    position: relative; z-index: 2;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px 0;
+    font-size: 15px; font-weight: 600;
+  }
+  .b-phone .sb-r { display: flex; align-items: center; gap: 6px; }
+  .b-phone .top {
+    position: relative; z-index: 2; flex-shrink: 0;
+    text-align: center; padding: 14px 20px 0;
+  }
+  .b-phone .back {
+    position: absolute; left: 18px; top: 18px;
+    border: 0; background: rgba(255,255,255,.12); color: #fff;
+    width: 32px; height: 32px; border-radius: 50%;
+    font-size: 18px; line-height: 32px;
+  }
+  .b-phone .avatar {
+    width: 84px; height: 84px; margin: 0 auto 10px;
+    border-radius: 50%; object-fit: cover;
+    box-shadow: 0 0 0 3px rgba(255,255,255,.12), 0 16px 36px rgba(0,0,0,.32);
+  }
+  .b-phone .avatar.sm { width: 52px; height: 52px; margin-bottom: 8px; box-shadow: 0 0 0 2px rgba(255,255,255,.12); }
+  .b-phone .name { font-size: 22px; font-weight: 590; letter-spacing: -.03em; }
+  .b-phone .timer {
+    margin-top: 3px; font-size: 13px; color: var(--tertiary);
+    font-variant-numeric: tabular-nums; letter-spacing: .06em;
+  }
+  .b-phone .live-row { margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .b-phone .state { font-size: 11px; color: var(--secondary); letter-spacing: .08em; }
+  .b-phone .viz {
+    display: flex; align-items: flex-end; justify-content: center;
+    height: 16px; width: 148px;
+  }
+  .b-phone .viz i {
+    display: block; flex: 1; max-width: 2px; height: 16px; margin: 0 2px;
+    border-radius: 99px; background: rgba(255,255,255,.3);
+    transform-origin: center bottom; transform: scaleY(.28);
+  }
+  .b-phone .viz.live i { background: #fff; animation: bWave .62s ease-in-out infinite; }
+  .b-phone .viz.think i { background: rgba(255,255,255,.5); animation: bWave 1.4s ease-in-out infinite; }
+  @keyframes bWave {
+    0%, 100% { transform: scaleY(.22); }
+    50% { transform: scaleY(1); }
+  }
+  .b-phone .caption {
+    position: relative; z-index: 2; flex: 1; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 6px 28px 4px; overflow: hidden; text-align: center;
+  }
+  .b-phone .caption-inner { width: 100%; max-width: 320px; }
+  .b-phone .cue { font-size: 13px; font-style: italic; color: var(--cue); margin-bottom: 8px; }
+  .b-phone .speak { font-size: 15px; line-height: 1.5; font-weight: 500; }
+  .b-phone .speak .old { color: rgba(255,255,255,.28); display: block; margin-bottom: 8px; }
+  .b-phone .speak .now { color: #fff; display: block; }
+  .b-phone .badge {
+    display: inline-flex; align-items: center; margin: 0 4px;
+    padding: 1px 7px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.22);
+    background: rgba(255,255,255,.12);
+    font-size: 11px; font-style: normal; font-weight: 500;
+    color: var(--secondary); vertical-align: 1px;
+  }
+  .b-phone .tr { margin-top: 8px; font-size: 12px; line-height: 1.45; font-style: italic; color: rgba(255,255,255,.45); }
+  .b-phone.no-tr .tr { display: none; }
+  .b-phone .hint {
+    position: relative; z-index: 4; text-align: center;
+    font-size: 11px; color: var(--secondary); min-height: 15px; margin: 0 12px 6px;
+  }
+  .b-phone .composer { position: relative; z-index: 2; flex-shrink: 0; margin: 0 20px 10px; }
+  .b-phone .field {
+    position: relative; display: block; width: 100%;
+    height: 44px; border: 0; border-radius: 22px;
+    background: rgba(255,255,255,.12); box-shadow: none;
+  }
+  .b-phone .field.rec { background: rgba(255,59,48,.16); }
+  .b-phone .field input {
+    -webkit-appearance: none; appearance: none;
+    display: block; width: 100%; height: 44px;
+    padding: 0 46px 0 16px; border: 0; outline: none;
+    background: transparent; color: #fff; font-size: 16px; line-height: 44px;
+    color-scheme: dark; box-shadow: none;
+  }
+  .b-phone .field input::placeholder { color: #8e8e93; }
+  .b-phone .go {
+    position: absolute; right: 6px; top: 6px;
+    width: 32px; height: 32px; border: 0; border-radius: 50%;
+    background: #fff; color: #1c1c1e; padding: 0;
+  }
+  .b-phone .go svg { position: absolute; left: 9px; top: 9px; width: 14px; height: 14px; }
+  .b-phone .rec-lab {
+    display: block; height: 44px; line-height: 44px;
+    padding: 0 46px 0 16px; text-align: center;
+    font-size: 13px; color: #ff453a; font-weight: 600;
+  }
+  .b-phone .pad { position: relative; z-index: 2; flex-shrink: 0; padding: 2px 32px 6px; }
+  .b-phone .grid { display: flex; flex-wrap: wrap; justify-content: space-between; row-gap: 16px; }
+  .b-phone .btn {
+    width: 30%; text-align: center; color: var(--secondary);
+    font-size: 11px; background: none; border: 0; padding: 0;
+  }
+  .b-phone .btn .c {
+    width: 64px; height: 64px; margin: 0 auto 7px; border-radius: 50%;
+    background: var(--fill);
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .b-phone .btn:active .c { transform: scale(.92); }
+  .b-phone .btn.on .c { background: #fff; color: #1c1c1e; box-shadow: none; }
+  .b-phone .btn.end .c { background: var(--red); color: #fff; }
+  .b-phone .btn .c svg, .b-phone .mini svg { width: 22px; height: 22px; display: block; overflow: hidden; }
+  .b-phone .btn .c, .b-phone .mini { overflow: hidden; }
+  .b-phone .home {
+    position: relative; z-index: 6;
+    display: flex; align-items: center; justify-content: center;
+    width: 148px; height: 28px; margin: 4px auto 8px;
+    border: 0; background: transparent; padding: 0;
+  }
+  .b-phone .home span {
+    width: 134px; height: 5px; border-radius: 100px;
+    background: rgba(255,255,255,.34);
+  }
+  .b-phone .voice-foot {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 8;
+    width: 100%; padding: 0 12px 6px;
+  }
+  .b-phone.is-voice .read { margin-bottom: 0; padding-bottom: 40px; }
+  .b-phone.is-voice.sheet-on .read { padding-bottom: 148px; }
+  .b-phone .sheet { width: 100%; margin: 0 0 8px; padding: 0; background: none; }
+  .b-phone .sheet .field { margin: 0 0 12px; }
+  .b-phone .mini-row { display: flex; justify-content: space-between; align-items: center; height: 40px; }
+  .b-phone .mini {
+    width: 40px; height: 40px; border: 0; border-radius: 50%;
+    background: rgba(255,255,255,.14); color: #fff;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .b-phone .mini.on { background: #fff; color: #1c1c1e; }
+  .b-phone .mini.end { background: var(--red); color: #fff; }
+  .b-phone .read {
+    position: relative; z-index: 2; flex: 1; min-height: 0;
+    margin: 8px 22px 12px; overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .b-phone .read::-webkit-scrollbar { display: none; }
+  .b-phone .msg { margin: 0 0 16px; }
+  .b-phone .msg.cont { margin: 0 0 8px; }
+  .b-phone .msg.you { text-align: right; color: var(--secondary); font-size: 14px; line-height: 1.5; }
+  .b-phone .msg.ai { font-size: 15px; line-height: 1.55; }
+  .b-phone .msg .who { font-size: 11px; color: var(--tertiary); margin-bottom: 4px; }
+  .b-phone .msg.ai .now { color: #fff; }
+  .b-phone .msg.ai .old { color: rgba(255,255,255,.32); }
+  .b-phone .mask {
+    position: absolute; inset: 0; z-index: 20;
+    background: rgba(0,0,0,.62); display: flex; align-items: flex-end;
+  }
+  .b-phone .sheet-card {
+    width: 100%; padding: 18px 16px 22px;
+    border-radius: 22px 22px 0 0; background: #2c2c2e;
+  }
+  .b-phone .sheet-card h3 { margin: 0 0 8px; font-size: 16px; }
+  .b-phone .sheet-card p { margin: 0 0 14px; font-size: 13px; color: #c7c7cc; }
+  .b-phone .sheet-card .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .b-phone .sheet-card button {
+    border: 0; border-radius: 14px; padding: 10px 12px; font-size: 13px;
+    color: #fff; background: rgba(255,255,255,.12);
+  }
+  .b-phone .sheet-card button.main { background: #3a3a3c; }
+  .b-phone .sheet-card button.danger { background: rgba(255,59,48,.28); color: #ff8a80; }
+</style>
+</head>
+<body>
+<div class="page is-b" id="page">
+  <p class="note">A 和 B 是<strong>两套互不交错的设计</strong>。切外观等于换整部手机，不共用底栏、不共用头。<br>
+  A = 原来的兼得稿。B = iOS 小手机。长按 B 里的语音消息：重播 / 下载 / 换个说法 / 收藏。</p>
+  <div class="toolbar">
+    <div class="seg" id="scheme">
+      <button data-v="a">方案 A · 兼得</button>
+      <button data-v="b" class="on">方案 B · 小手机</button>
+    </div>
+    <div class="tools-a">
+      <div class="seg" id="a-scene">
+        <button data-v="idle" class="on">没开始读</button>
+        <button data-v="play">正在读</button>
+        <button data-v="done">读完了</button>
+      </div>
+    </div>
+    <div class="tools-b">
+      <div class="seg" id="b-mode">
+        <button data-v="keys" class="on">六键 · 朗读</button>
+        <button data-v="voice">语音对话</button>
+      </div>
+      <div class="seg" id="b-scene">
+        <button data-v="thinking" class="on">思考中</button>
+        <button data-v="speaking">说话中</button>
+        <button data-v="listen">听你说</button>
+      </div>
+    </div>
+  </div>
+  <div id="stage"></div>
+</div>
+<script>
+(function () {
+  var scheme = 'b';
+  var photo = '/call-preview-avatar.png';
+  var aDelays = [0,.08,.18,.05,.26,.12,.31,.07,.22,.15,.28,.1,.19,.04,.24,.14,.3,.09,.21,.16,.27,.06,.2];
+  var bDelays = [0,.07,.16,.04,.24,.11,.29,.06,.2,.14,.26,.09];
+  var aLines = ['嗯……是啊。风也软。','你要不要出门走走？','猫儿可以在这边听你讲路上看到的。','路上要是看到猫，也可以跟猫儿说一声。'];
+  var bLines = [
+    { cue: '（软软的）', text: '嗯……是啊。风也软。', tag: '', en: 'Yeah… the wind’s soft too.' },
+    { cue: '', text: '你要不要出门走走？', tag: '叹气', en: 'Wanna step outside for a bit?' },
+    { cue: '', text: '猫儿可以在这边听你讲路上看到的。', tag: '', en: 'I can stay here and listen to what you see.' }
+  ];
+  var aScene = 'idle';
+  var aPlay = 0;
+  var aTimer = null;
+  var bMode = 'keys';
+  var bScene = 'thinking';
+  var bPlay = 0;
+  var bTimer = null;
+  var speakerOn = true;
+  var translateOn = true;
+  var recording = false;
+  var sheetOpen = false;
+  var overlay = '';
+  var holdSide = 'ai';
+  var hint = '';
+  var hintTimer = null;
+  var ico = {
+    speaker: '<svg width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M11.26 3.69A.75.75 0 0112 4.5v15a.75.75 0 01-1.28.53L5.53 15.75H3.75A1.75 1.75 0 012 14V10c0-.97.78-1.75 1.75-1.75h1.78l5.19-4.28a.75.75 0 011.04.07zm5.52 3.42a.75.75 0 011.06 0 6.75 6.75 0 010 9.55.75.75 0 11-1.06-1.06 5.25 5.25 0 000-7.43.75.75 0 010-1.06zm2.65-2.65a.75.75 0 011.06 0 11.25 11.25 0 010 15.9.75.75 0 11-1.06-1.06 9.75 9.75 0 000-13.78.75.75 0 010-1.06z" clip-rule="evenodd"/></svg>',
+    chat: '<svg width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" d="M4.5 5.25A2.25 2.25 0 016.75 3h7.5A2.25 2.25 0 0116.5 5.25v6A2.25 2.25 0 0114.25 13.5H9.31L5.6 16.4A.75.75 0 014.5 15.8V5.25z"/></svg>',
+    mic: '<svg width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" d="M8.25 4.5A3.75 3.75 0 0112 .75 3.75 3.75 0 0115.75 4.5v4.5a3.75 3.75 0 01-7.5 0V4.5zM6.75 11.25a.75.75 0 01.75.75 4.5 4.5 0 009 0 .75.75 0 011.5 0 6 6 0 01-5.25 5.95V20.25h2.25a.75.75 0 010 1.5h-6a.75.75 0 010-1.5H11.25v-2.3A6 6 0 016 12a.75.75 0 01.75-.75z"/></svg>',
+    hang: '<svg width="26" height="26" viewBox="0 0 256 256"><path fill="currentColor" d="M236.28,161.84a16,16,0,0,1-18.38,5.06l-49-17.39-.29-.11a16,16,0,0,1-9.72-11.59l-6.21-29.75h0a76.52,76.52,0,0,0-49.68.11l-5.9,29.52a16,16,0,0,1-9.75,11.73l-.29.11-49,17.37A15.8,15.8,0,0,1,32.35,168a16,16,0,0,1-12.63-6.14c-17.23-22.22-15.3-51.71,4.69-71.71,56.15-56.17,151-56.17,207.18,0h0C251.58,110.13,253.51,139.62,236.28,161.84ZM216,192H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></svg>',
+    replay: '<svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M4.76 10.06a7.5 7.5 0 0112.54-3.36l1.9 1.9h-3.18a.75.75 0 000 1.5h4.99a.75.75 0 00.75-.75V4.36a.75.75 0 00-1.5 0v3.18l-1.9-1.9A9 9 0 003.31 9.67a.75.75 0 001.45.39zm15.4 3.35a.75.75 0 00-.92.53 7.5 7.5 0 01-12.54 3.36l-1.9-1.9h3.18a.75.75 0 000-1.5H2.98a.75.75 0 00-.75.75v4.99a.75.75 0 001.5 0v-3.18l1.9 1.9a9 9 0 0015.06-4.03.75.75 0 00-.53-.92z"/></svg>',
+    trans: '<svg width="26" height="26" viewBox="0 0 256 256"><path fill="currentColor" d="M247.15,212.42l-56-112a8,8,0,0,0-14.31,0l-21.71,43.43A88,88,0,0,1,108,126.93,103.65,103.65,0,0,0,135.69,64H160a8,8,0,0,0,0-16H104V32a8,8,0,0,0-16,0V48H32a8,8,0,0,0,0,16h87.63A87.76,87.76,0,0,1,96,116.35a87.74,87.74,0,0,1-19-31,8,8,0,1,0-15.08,5.34A103.63,103.63,0,0,0,84,127a87.55,87.55,0,0,1-52,17,8,8,0,0,0,0,16,103.46,103.46,0,0,0,64-22.08,104.18,104.18,0,0,0,51.44,21.31l-26.6,53.19a8,8,0,0,0,14.31,7.16L148.94,192h70.11l13.79,27.58A8,8,0,0,0,240,224a8,8,0,0,0,7.15-11.58ZM156.94,176,184,121.89,211.05,176Z"/></svg>',
+    up: '<svg width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M11.47 3.97a.75.75 0 011.06 0l7.5 7.5a.75.75 0 11-1.06 1.06L12.75 6.81V20a.75.75 0 01-1.5 0V6.81l-6.22 6.22a.75.75 0 11-1.06-1.06l7.5-7.5z"/></svg>',
+    wifi: '<svg width="15" height="12" viewBox="0 0 15 12"><path fill="#fff" d="M7.5 9.6a1.3 1.3 0 110 2.6 1.3 1.3 0 010-2.6zm0-3.5c1.5 0 2.8.6 3.7 1.6l-1.1 1.1A3.5 3.5 0 007.5 8a3.5 3.5 0 00-2.6.8L3.8 7.7A5.2 5.2 0 017.5 6.1zm0-3.3c2.4 0 4.5 1 6.1 2.6L12.5 6.5A6.8 6.8 0 007.5 4.5 6.8 6.8 0 002.5 6.5L1.4 5.4A9.1 9.1 0 017.5 2.8z"/></svg>',
+    cell: '<svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="7.5" width="3" height="4.5" rx=".6" fill="#fff"/><rect x="4.5" y="5" width="3" height="7" rx=".6" fill="#fff"/><rect x="9" y="2.5" width="3" height="9.5" rx=".6" fill="#fff"/><rect x="13.5" y="0" width="3" height="12" rx=".6" fill="rgba(255,255,255,.35)"/></svg>',
+    batt: '<svg width="25" height="12" viewBox="0 0 25 12"><rect x=".6" y=".6" width="21" height="10.8" rx="2.4" fill="none" stroke="#fff" stroke-width="1.2"/><rect x="2.2" y="2.2" width="15.2" height="7.6" rx="1.2" fill="#fff"/><rect x="22.4" y="3.6" width="1.8" height="4.8" rx=".7" fill="#fff"/></svg>'
+  };
+
+  function bindSeg(id, apply) {
+    var box = document.getElementById(id);
+    var buttons = box.getElementsByTagName('button');
+    var i;
+    for (i = 0; i < buttons.length; i++) {
+      buttons[i].onclick = (function (btn) {
+        return function () {
+          var j;
+          for (j = 0; j < buttons.length; j++) buttons[j].className = '';
+          btn.className = 'on';
+          apply(btn.getAttribute('data-v'));
+        };
+      })(buttons[i]);
+    }
+  }
+  function setOn(el, on) {
+    if (!el) return;
+    var c = el.className.replace(/\s*\bon\b/g, '').replace(/^\s+|\s+$/g, '');
+    el.className = on ? c + ' on' : c;
+  }
+  function showHint(t) {
+    hint = t || '';
+    var el = document.querySelector('.b-phone .hint');
+    if (el) el.innerHTML = hint;
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = setTimeout(function () {
+      hint = '';
+      var h = document.querySelector('.b-phone .hint');
+      if (h) h.innerHTML = '';
+    }, 1500);
+  }
+
+  function aStatus() {
+    if (aScene === 'play') return '正在说话';
+    if (aScene === 'done') return '在听你';
+    return '思考中';
+  }
+  function aVizClass() {
+    if (aScene === 'play') return 'viz live';
+    if (aScene === 'done') return 'viz listen';
+    return 'viz think';
+  }
+  function aLineClass(i) {
+    if (aScene === 'idle') return 'line pending';
+    if (aScene === 'done') return 'line done';
+    if (i === aPlay) return 'line active';
+    if (i < aPlay) return 'line done';
+    return 'line pending';
+  }
+  function drawA() {
+    var i;
+    var viz = '<div class="' + aVizClass() + '">';
+    for (i = 0; i < aDelays.length; i++) viz += '<i style="animation-delay:' + aDelays[i] + 's"></i>';
+    viz += '</div>';
+    var karaoke = '<div class="cue">（软软的）</div>';
+    for (i = 0; i < aLines.length; i++) karaoke += '<span class="' + aLineClass(i) + '">' + aLines[i] + '</span>';
+    return (
+      '<div class="a-phone">' +
+        '<span class="spark" style="top:11%;left:16%"></span><span class="spark" style="top:18%;left:78%"></span>' +
+        '<span class="spark" style="top:7%;left:62%"></span><span class="spark" style="top:24%;left:22%"></span>' +
+        '<span class="corner" style="left:14px;top:38%">✦</span><span class="corner" style="right:14px;bottom:22%">✦</span>' +
+        '<div class="overlay-meta"><span>PRIVATE CHANNEL</span><span>信号良好 ▂▃▅▇</span></div>' +
+        '<div class="both-head">' +
+          '<img class="avatar" src="' + photo + '" alt="Sully">' +
+          '<div class="both-name"><span class="hana">❀</span>Sully</div>' +
+          '<div class="both-timer">00:12</div>' +
+          viz +
+          '<div class="both-status">' + aStatus() + '</div>' +
+        '</div>' +
+        '<div class="card">' +
+          '<div class="row right"><div class="who">你 · 刚刚</div><div class="user-soft">今天天气也太好了吧</div></div>' +
+          '<div class="row"><div class="who"><span class="dot">◍</span>Sully · 刚刚</div>' +
+            '<div class="ai-soft">' + karaoke + '</div>' +
+            '<div class="pills"><span class="pill">播放语音</span><span class="pill">换个说法</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="dock">' +
+          '<div class="knob"><div class="c">麦</div>麦克风</div>' +
+          '<div class="knob"><div class="c">外</div>外放</div>' +
+          '<div class="knob"><div class="c">译</div>翻译</div>' +
+          '<div class="knob end"><div class="c">挂</div>结束</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function bStatus() {
+    if (bScene === 'speaking') return '说话中';
+    if (bScene === 'thinking') return '思考中';
+    return '听你说';
+  }
+  function bVizClass() {
+    if (bScene === 'speaking') return 'viz live';
+    if (bScene === 'thinking') return 'viz think';
+    return 'viz';
+  }
+  function bViz() {
+    var html = '<div class="' + bVizClass() + '">';
+    var i;
+    for (i = 0; i < bDelays.length; i++) html += '<i style="animation-delay:' + bDelays[i] + 's"></i>';
+    return html + '</div>';
+  }
+  function decorate(text, tag) {
+    return tag ? text + '<span class="badge">' + tag + '</span>' : text;
+  }
+  function bField() {
+    if (recording) return '<div class="field rec"><span class="rec-lab">录音中 0:03</span><button type="button" class="go">' + ico.up + '</button></div>';
+    return '<div class="field"><input type="text" placeholder="想对 Sully 说什么？"><button type="button" class="go" aria-label="发送">' + ico.up + '</button></div>';
+  }
+  function bBtn(inner, label, extra) {
+    return '<button type="button" class="btn ' + (extra || '') + '"><span class="c">' + inner + '</span>' + label + '</button>';
+  }
+  function bMini(inner, extra) {
+    return '<button type="button" class="mini ' + (extra || '') + '">' + inner + '</button>';
+  }
+  function bOverlay() {
+    if (overlay !== 'msg') return '';
+    if (holdSide === 'you') {
+      return '<div class="mask" id="mask"><div class="sheet-card"><h3>你的语音</h3><p>长按打开</p><div class="row">' +
+        '<button type="button" data-act="replay-you">回放语音</button>' +
+        '<button type="button" data-act="edit">改刚才的话</button>' +
+        '<button type="button" data-act="close">取消</button></div></div></div>';
+    }
+    return '<div class="mask" id="mask"><div class="sheet-card"><h3>这条语音</h3><p>重播、下载、换个说法、收藏</p><div class="row">' +
+      '<button type="button" data-act="replay">重播语音</button>' +
+      '<button type="button" data-act="dl">下载</button>' +
+      '<button type="button" data-act="reroll">换个说法</button>' +
+      '<button type="button" class="main" data-act="fav">收藏</button>' +
+      '<button type="button" data-act="close">取消</button></div></div></div>';
+  }
+  function drawB() {
+    var idx = bScene === 'listen' ? 0 : bPlay;
+    var cur = bLines[idx];
+    var old = idx > 0 ? bLines[idx - 1] : null;
+    var cls = 'b-phone' + (bMode === 'voice' ? ' is-voice' : '') + (bMode === 'voice' && sheetOpen ? ' sheet-on' : '') + (translateOn ? '' : ' no-tr');
+    var html = '<div class="' + cls + '">';
+    html += '<div class="wallpaper" style="background-image:url(\'' + photo + '\')"></div><div class="dim"></div>';
+    html += '<div class="sb"><span>9:41</span><span class="sb-r">' + ico.cell + ico.wifi + ico.batt + '</span></div>';
+    html += '<div class="top">';
+    if (bMode === 'voice') html += '<button type="button" class="back" id="b-back">‹</button>';
+    html += '<img class="avatar' + (bMode === 'voice' ? ' sm' : '') + '" src="' + photo + '" alt="Sully">';
+    html += '<div class="name">Sully</div><div class="timer">00:12</div>';
+    html += '<div class="live-row">' + bViz() + '<div class="state">' + bStatus() + '</div></div></div>';
+    if (bMode === 'keys') {
+      html += '<div class="caption"><div class="caption-inner hold" data-side="ai">';
+      if (cur.cue) html += '<div class="cue">' + cur.cue + '</div>';
+      html += '<div class="speak">';
+      if (old) html += '<span class="old">' + decorate(old.text, old.tag) + '</span>';
+      html += '<span class="now">' + decorate(cur.text, cur.tag) + '</span></div>';
+      html += '<div class="tr">' + cur.en + '</div></div></div>';
+      html += '<div class="hint">' + (hint || '') + '</div>';
+      html += '<div class="composer">' + bField() + '</div>';
+      html += '<div class="pad"><div class="grid">' +
+        bBtn(ico.speaker, '外放', speakerOn ? 'on' : '') +
+        bBtn(ico.chat, '对话') +
+        bBtn(ico.mic, '麦克风', recording ? 'on' : '') +
+        bBtn(ico.trans, '翻译', translateOn ? 'on' : '') +
+        bBtn(ico.hang, '结束', 'end') +
+        bBtn(ico.replay, '重播') +
+      '</div></div><button type="button" class="home"><span></span></button>';
+    } else {
+      html += '<div class="read">';
+      html += '<div class="msg you hold" data-side="you"><div class="who">你</div>今天天气也太好了吧</div>';
+      html += '<div class="msg you hold cont" data-side="you">风也软软的</div>';
+      var i;
+      for (i = 0; i < bLines.length; i++) {
+        var line = bLines[i];
+        var on = bScene === 'speaking' && i === bPlay;
+        html += '<div class="msg ai hold' + (i ? ' cont' : '') + '" data-side="ai">';
+        if (!i) html += '<div class="who">Sully</div>';
+        if (line.cue) html += '<div class="cue">' + line.cue + '</div>';
+        html += '<div class="' + (on ? 'now' : 'old') + '">' + decorate(line.text, line.tag) + '</div>';
+        html += '<div class="tr">' + line.en + '</div></div>';
+      }
+      html += '</div><div class="voice-foot">';
+      if (sheetOpen) {
+        html += '<div class="sheet">' + bField() + '<div class="mini-row">' +
+          bMini(ico.speaker, speakerOn ? 'on' : '') +
+          bMini(ico.chat, 'on') +
+          bMini(ico.mic, recording ? 'on' : '') +
+          bMini(ico.trans, translateOn ? 'on' : '') +
+          bMini(ico.hang, 'end') +
+          bMini(ico.replay, '') +
+        '</div></div>';
+      }
+      html += '<button type="button" class="home" id="b-home"><span></span></button></div>';
+    }
+    html += bOverlay() + '</div>';
+    return html;
+  }
+
+  function bindHold(root) {
+    var nodes = root.querySelectorAll('.hold');
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      (function (el) {
+        var t = null, sx = 0, sy = 0;
+        function clear() { if (t) { clearTimeout(t); t = null; } }
+        el.ontouchstart = function (e) {
+          sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+          t = setTimeout(function () { holdSide = el.getAttribute('data-side') || 'ai'; overlay = 'msg'; draw(); }, 450);
+        };
+        el.ontouchmove = function (e) {
+          if (!t) return;
+          if (Math.abs(e.touches[0].clientX - sx) > 10 || Math.abs(e.touches[0].clientY - sy) > 10) clear();
+        };
+        el.ontouchend = function () { clear(); };
+        el.oncontextmenu = function (e) {
+          if (e.preventDefault) e.preventDefault();
+          holdSide = el.getAttribute('data-side') || 'ai';
+          overlay = 'msg';
+          draw();
+        };
+      })(nodes[i]);
+    }
+  }
+  function bindB(root) {
+    var back = root.querySelector('#b-back');
+    if (back) back.onclick = function () {
+      bMode = 'keys';
+      var segs = document.getElementById('b-mode').getElementsByTagName('button');
+      segs[0].className = 'on'; segs[1].className = '';
+      draw();
+    };
+    var home = root.querySelector('#b-home') || (bMode === 'keys' ? null : root.querySelector('.home'));
+    if (bMode === 'voice') {
+      var h = root.querySelector('.home');
+      if (h) h.onclick = function (e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        sheetOpen = !sheetOpen;
+        draw();
+      };
+    }
+    var actions = root.querySelectorAll(bMode === 'voice' ? '.sheet .mini' : '.pad .btn');
+    function tap(el, fn) {
+      if (!el) return;
+      el.onclick = function (e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        fn();
+      };
+    }
+    if (actions.length) {
+      tap(actions[0], function () { speakerOn = !speakerOn; setOn(actions[0], speakerOn); showHint(speakerOn ? '外放开着' : '外放关了，字还在'); });
+      tap(actions[1], function () {
+        if (bMode === 'voice') { bMode = 'keys'; }
+        else { bMode = 'voice'; sheetOpen = false; }
+        var segs = document.getElementById('b-mode').getElementsByTagName('button');
+        segs[0].className = bMode === 'keys' ? 'on' : '';
+        segs[1].className = bMode === 'voice' ? 'on' : '';
+        draw();
+      });
+      tap(actions[2], function () {
+        recording = !recording;
+        setOn(actions[2], recording);
+        draw();
+        showHint(recording ? '对着说，说完发出去' : '');
+      });
+      tap(actions[3], function () { translateOn = !translateOn; setOn(actions[3], translateOn); draw(); });
+      tap(actions[4], function () { showHint('结束通话'); });
+      tap(actions[5], function () {
+        if (!speakerOn) speakerOn = true;
+        bScene = 'speaking';
+        var segs = document.getElementById('b-scene').getElementsByTagName('button');
+        segs[0].className = ''; segs[1].className = 'on'; segs[2].className = '';
+        startB();
+        showHint('重播这条语音');
+      });
+    }
+    bindHold(root);
+    var mask = root.querySelector('#mask');
+    if (mask) {
+      mask.onclick = function (e) { if (e.target === mask) { overlay = ''; draw(); } };
+      var btns = mask.getElementsByTagName('button');
+      var k;
+      for (k = 0; k < btns.length; k++) {
+        btns[k].onclick = (function (btn) {
+          return function (e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            var act = btn.getAttribute('data-act');
+            if (act === 'dl') showHint('已打开系统保存/分享');
+            else if (act === 'reroll') showHint('台词已换一种说法');
+            else if (act === 'replay') { if (!speakerOn) speakerOn = true; showHint('重播这条语音'); }
+            else if (act === 'replay-you') showHint('回放你刚才的语音');
+            else if (act === 'edit') showHint('改刚才说的话');
+            else if (act === 'fav') showHint('已收藏通话语音');
+            overlay = '';
+            draw();
+          };
+        })(btns[k]);
+      }
+    }
+  }
+
+  function stopA() { if (aTimer) { clearInterval(aTimer); aTimer = null; } }
+  function startA() {
+    stopA();
+    aPlay = 0;
+    aTimer = setInterval(function () {
+      aPlay += 1;
+      if (aPlay >= aLines.length) aPlay = 0;
+      draw();
+    }, 1600);
+  }
+  function stopB() { if (bTimer) { clearInterval(bTimer); bTimer = null; } }
+  function startB() {
+    stopB();
+    bPlay = 0;
+    draw();
+    bTimer = setInterval(function () {
+      bPlay += 1;
+      if (bPlay >= bLines.length) bPlay = 0;
+      draw();
+    }, 1800);
+  }
+
+  function draw() {
+    document.getElementById('page').className = 'page is-' + scheme;
+    var stage = document.getElementById('stage');
+    if (scheme === 'a') {
+      stopB();
+      stage.innerHTML = drawA();
+    } else {
+      stopA();
+      stage.innerHTML = drawB();
+      bindB(stage);
+    }
+  }
+
+  bindSeg('scheme', function (v) { scheme = v; overlay = ''; draw(); });
+  bindSeg('a-scene', function (v) {
+    aScene = v;
+    if (v === 'play') startA();
+    else { stopA(); aPlay = 0; }
+    draw();
+  });
+  bindSeg('b-mode', function (v) { bMode = v; sheetOpen = false; overlay = ''; draw(); });
+  bindSeg('b-scene', function (v) {
+    bScene = v;
+    if (v === 'speaking') startB();
+    else { stopB(); bPlay = 0; }
+    draw();
+  });
+  draw();
+})();
+</script>
+</body>
+</html>

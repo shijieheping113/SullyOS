@@ -60,3 +60,6 @@ xiaohongshu-skills/
 # TIAO-Capacitor local Android toolchain and caches (D: only, never committed)
 .android-sdk/
 .gradle-user-home/
+
+# 本地 HTTPS 自签证书（给手机麦克风用），不要进仓库
+.dev-certs/

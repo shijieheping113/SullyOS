@@ -39,6 +39,7 @@ import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import { useVoiceInput, type VoiceRecording } from '../hooks/useVoiceInput';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/VoiceFavoritesPortal';
@@ -845,7 +846,8 @@ const Chat: React.FC = () => {
     useEffect(() => {
         if (!messages.length) return;
         const map = voiceDataMap;
-        const toFetch = messages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
+        // 用户的语音消息（metadata.stt）原声也在同一个资产桶里，刷新后同样要恢复
+        const toFetch = messages.filter(m => m.id && m.type === 'text' && (m.role !== 'user' || !!(m.metadata as any)?.stt) && !map[m.id]);
         if (!toFetch.length) return;
         let cancelled = false;
         (async () => {
@@ -1227,6 +1229,31 @@ const Chat: React.FC = () => {
         else localStorage.removeItem(draftKey);
     };
 
+    // ---- 语音消息（STT）：麦克风说话 → 点停止 → 整段直接发成一条语音消息 ----
+    // 不经过输入框草稿；原声 WAV 存 IndexedDB（AI 语音消息同一套存储），
+    // MessageItem 用 sully-voice 同款类名渲染，用户自定义 CSS 自动匹配。
+    const handleVoiceMessage = async (text: string, rec: VoiceRecording | null) => {
+        const meta: any = { stt: { engine: apiConfig.sttApi?.engine || 'doubao', durationMs: rec?.durationMs } };
+        const savedId = await handleSendText(text, 'text', meta);
+        if (savedId && rec) {
+            try {
+                const url = URL.createObjectURL(rec.wav);
+                voiceBlobUrlsRef.current.add(url);
+                setVoiceDataMap(prev => ({ ...prev, [savedId]: { url, originalText: text } }));
+                await DB.saveAssetRaw(voiceAssetKey(savedId), { blob: rec.wav, originalText: text, favorite: false } as any);
+            } catch (e) {
+                console.warn('[Chat] 保存用户语音原声失败', e);
+            }
+        }
+    };
+    const voiceInput = useVoiceInput({
+        getConfig: () => apiConfig.sttApi,
+        onVoiceMessage: handleVoiceMessage,
+        onError: (msg) => addToast(msg, 'error'),
+    });
+    // 卸载时兜底停录音，防止麦克风灯常亮
+    useEffect(() => () => voiceInput.dispose(), []);
+
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
@@ -1600,11 +1627,12 @@ const Chat: React.FC = () => {
         if (type === 'text' && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
             // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
             // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
-            if (isTyping) return;
+            if (isTyping) return savedUserMsgId;
             // 标记"准备中"三个点：拼接+发送期间显示，SSE POST 入队 (onInstantPosted) 后清除。
             setInstantSendingActive(true);
             triggerAI(messages, undefined, () => setInstantSendingActive(false));
         }
+        return savedUserMsgId; // 语音消息路径要拿 id 存原声（voiceAssetKey）
     };
 
     // 用户点开「收到的转账」卡（角色发来、待处理）选择接收 / 退回：
@@ -3400,7 +3428,9 @@ const Chat: React.FC = () => {
     }), [emojis, activeCategory, hiddenCategoryIds]);
 
     // Memoize ChatInputArea callbacks
-    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
+    const handleSendCallback = useCallback(() => {
+        handleSendText(undefined, undefined, undefined);
+    }, [char, input, replyTarget]);
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     // 角色自定义聊天背景：字段值可能是 blobref 令牌（二进制在 IndexedDB），这里解析成能直接
     // 喂进 CSS url() 的地址；data: / http(s) 之类的非令牌值渲染期原样透传。
@@ -4328,6 +4358,9 @@ const Chat: React.FC = () => {
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
+                    voiceState={voiceInput.state}
+                    onToggleVoice={voiceInput.toggle}
+                    onCancelVoice={voiceInput.cancel}
                 />
             </div>
 

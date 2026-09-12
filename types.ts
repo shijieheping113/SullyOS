@@ -259,11 +259,45 @@ export interface VisionApiConfig {
   model: string;
 }
 
+// ===== 语音识别（STT）三引擎配置 =====
+// 聊天输入框的麦克风按钮使用；从 stt-test.html 验证过的三方案移植：
+//   doubao  → 豆包流式 2.0（火山引擎，走 /api/volc-ws 代理，情绪 5 格，1元/时按实说话计费）
+//   omni    → Qwen3-Omni 全模态（硅基流动，走 /v1/chat/completions 代理，情绪词库细腻，按段计费）
+//   teleasr → TeleASR 出字（硅基流动，走 /api/sf-stt 代理，可选 SenseVoice 后台补情绪，免费档）
+export type SttEngineId = 'doubao' | 'omni' | 'teleasr';
+
+export interface SttApiConfig {
+  engine: SttEngineId;
+  // 火山引擎 API Key（豆包流式 2.0 专用）
+  volcApiKey?: string;
+  // 硅基流动 API Key（Omni / TeleASR / SenseVoice 共用）
+  sfApiKey?: string;
+  // 热词，逗号/顿号分隔。豆包走 corpus 接口级热词，Omni 写进提示词。
+  hotwords?: string;
+  // 情绪标注开关（缺省 true）。豆包/Omni 是引擎自带情绪；TeleASR 是 SenseVoice 后台补。
+  emotionEnabled?: boolean;
+  // Omni 专属：自定义情绪识别提示词（留空 → utils/volcStt.ts 内置默认）
+  qwenEmotionPrompt?: string;
+}
+
+// STT 费用统计（本机 localStorage: stt_usage_stats_v1，不随云备份走）
+export interface SttUsageStats {
+  // 豆包累计实际发送毫秒数（计费口径：1元/小时 → 元 = ms/3600000）
+  doubaoMs: number;
+  // Omni 累计识别段数
+  omniSegments: number;
+  // TeleASR 累计识别段数（SenseVoice 情绪补识别不计费，不单独记）
+  teleasrSegments: number;
+  lastUpdated: number;
+}
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
   // 可选识图中转：给不支持 image_url 的主模型补视觉能力。
   visionApi?: VisionApiConfig;
+  // 可选语音识别：聊天麦克风按钮的三引擎配置。
+  sttApi?: SttApiConfig;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
   // 'domestic' → https://api.minimaxi.com (国内站)

@@ -1,6 +1,6 @@
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
@@ -13,7 +13,7 @@ import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptO
 import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
 import { canSynthesizeSpeech, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS, voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
-import { startStt, isSttSupported, type SttSession } from '../utils/speechToText';
+import { startVoiceInput, isSttSupported, type SttSession } from '../utils/volcStt';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -88,6 +88,7 @@ import { dataUrlToBlob, deleteBlobRef, isBlobRef, putImageBlob, useBlobRefUrl } 
 import TokenImg from '../components/os/TokenImg';
 import { CALL_LIGHT_THEME_CSS } from '../components/call/callLightTheme';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from '../components/call/AvatarTouchFeedback';
+import VoicePhoneB from '../components/call/VoicePhoneB';
 import { isBuiltinSullyLive2D, setBuiltinSullyLive2DQuality, type BuiltinSullyLive2DQuality } from '../utils/builtinSullyLive2D';
 import {
   buildUserCameraEmotionPrompt,
@@ -227,8 +228,8 @@ const extractLeadingEmotion = (raw: string): string | undefined => {
 };
 const sanitizeAssistantOutput = (raw: string) => {
   if (!raw) return '';
-  // Strip ALL [emotion]/【emotion】 tags (any position) so they're never shown or read.
-  return stripCallTextFormatting(stripEmotionTags(raw)
+  // 舞台指示（）和 [happy] 留给界面画斜体/徽章；TTS 合成时仍会剥情绪标签。
+  return stripCallTextFormatting(raw
     .replace(/^\s*(?:\[\s*通话\s*\]\s*)+/gim, '')
     .replace(/^\s*(?:\[\s*(?:聊天|约会)\s*\]\s*)+/gim, '')
     .replace(/^\s*\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*/gm, '')
@@ -345,8 +346,16 @@ const SOUND_TAG_META: Record<string, string> = {
   inhale: '吸气', exhale: '呼气', gasps: '倒吸气', sniffs: '吸鼻',
   snorts: '喷笑', 'lip-smacking': '咂嘴', humming: '哼唱', hissing: '嘶', emm: '嗯',
 };
+const EMOTION_ZH: Record<string, string> = {
+  happy: '开心', sad: '难过', angry: '生气', fearful: '害怕',
+  disgusted: '厌恶', surprised: '惊讶', calm: '平静', fluent: '流畅',
+};
 const SOUND_TAG_NAMES = Object.keys(SOUND_TAG_META).join('|');
-const SOUND_TAG_SPLIT_RE = new RegExp(`(（[^（）\\n]{1,48}）|\\((?:${SOUND_TAG_NAMES})\\)|\\n)`, 'gi');
+const EMOTION_NAMES = Object.keys(EMOTION_ZH).join('|');
+const SOUND_TAG_SPLIT_RE = new RegExp(
+  '(（[^（）\\n]{1,48}）|\\((?:' + SOUND_TAG_NAMES + ')\\)|\\n)',
+  'gi',
+);
 // 迷你声波条——呼应通话界面的波形主题，纯矢量（恒为浅色，避免深色主题下看不见）
 const SoundWaveGlyph = () => (
   <span className="inline-flex items-center gap-[1.5px] align-middle" style={{ height: '0.7em' }} aria-hidden>
@@ -373,31 +382,51 @@ const cleanCurrentVoiceMarkupForDisplay = (text?: string | null): string => {
   return text;
 };
 
-const renderAssistantLine = (text: string, accent = '#8b5cf6') => {
-  // 朗读用的停顿标记 <#0.4#> 不显示出来
-  let trimmed = text.replace(/<#[\d.]+#>/g, '').trim();
-  // 鱼声的 inline cue（[whispering]/[break] 等）是演出指令，不该显示给用户。
+// 逐句跟读：把通话文本切成"一句句"供播放时高亮推进。
+// 舞台指示（）与语气词标签留在句内，由 renderAssistantLine 渲染成紫斜体/徽章。
+// ⚠️ 不能用正则后行断言 (?<=...)——永恒浏览器等旧内核不支持，模块加载即抛
+// Invalid regular expression，整个 CallApp 直接崩（详见 utils/lookbehindFree.test.ts）。
+// 这里用逐字符扫描的兼容写法，任何内核都能跑。
+const SENTENCE_END_RE = /[。！？!?；;]/;
+const splitSpeakLines = (text: string): string[] => {
+  const out: string[] = [];
+  for (const seg of text.replace(/<#[\d.]+#>/g, '').split(/\n+/)) {
+    let buf = '';
+    for (const ch of seg) {
+      buf += ch;
+      if (SENTENCE_END_RE.test(ch)) {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+      }
+    }
+    const tail = buf.trim();
+    if (tail) out.push(tail);
+  }
+  return out;
+};
+const renderAssistantLine = (text: string, accent = '#8b5cf6', iosCue = false) => {
+  let trimmed = (text || '').replace(/<#[\d.]+#>/g, '').trim();
   trimmed = cleanCurrentVoiceMarkupForDisplay(trimmed);
-  // 按 中文舞台指示（…）、英文语气词标签 (sighs)、换行 切分，前两者作为特殊元素渲染
+  if (!trimmed) return trimmed;
   const parts = trimmed.split(SOUND_TAG_SPLIT_RE).filter(Boolean);
   return parts.map((part, idx) => {
-    if (part === '\n') return <div key={`br-${idx}`} className="h-2" />;
-    const soundMatch = part.match(new RegExp(`^\\((${SOUND_TAG_NAMES})\\)$`, 'i'));
+    if (part === '\n') return <div key={'br-' + idx} className="h-2" />;
+    const soundMatch = part.match(new RegExp('^\\((' + SOUND_TAG_NAMES + ')\\)$', 'i'));
     if (soundMatch) {
       const zh = SOUND_TAG_META[soundMatch[1].toLowerCase()];
-      // 文字恒为白色，accent 只用于淡底+描边，深色主题下也清晰可读
       return (
-        <span key={`snd-${idx}`} className="inline-flex items-center gap-1 align-middle mx-0.5 px-1.5 py-[1px] rounded-full text-[0.7em] font-medium tracking-wide text-white/90"
-          style={{ background: `${accent}33`, border: '1px solid rgba(255,255,255,0.22)' }}>
+        <span key={'snd-' + idx} className={(iosCue ? 'sully-voice-badge ' : '') + 'inline-flex items-center gap-1 align-middle mx-0.5 px-1.5 py-[1px] rounded-full text-[0.7em] font-medium tracking-wide text-white/90'}
+          style={{ background: accent + '33', border: '1px solid rgba(255,255,255,0.22)' }}>
           <SoundWaveGlyph />
           <span>{zh}</span>
         </span>
       );
     }
     if (/^（[^（）\n]{1,48}）$/.test(part)) {
-      return <div key={`cue-${idx}`} className="text-violet-300/95 italic my-1.5 text-[0.85em]">{part}</div>;
+      return <span key={'cue-' + idx} className={iosCue ? 'sully-voice-cue' : 'text-violet-300/95 italic my-1.5 text-[0.85em]'}>{part}</span>;
     }
-    return <React.Fragment key={`t-${idx}`}>{part}</React.Fragment>;
+    return <React.Fragment key={'t-' + idx}>{part}</React.Fragment>;
   });
 };
 // 语音/视频通话共用同一个 prompt 构建器：注入的上下文（核心设定、记忆、时间、
@@ -556,8 +585,12 @@ const CallApp: React.FC = () => {
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showInputPanel, setShowInputPanel] = useState(true);
+  const [voiceView, setVoiceView] = useState<'keys' | 'log'>('keys');
+  const [voiceSheetOpen, setVoiceSheetOpen] = useState(false);
+  const [translateVisible, setTranslateVisible] = useState(true);
   const [editingBubble, setEditingBubble] = useState<CallBubble | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [editAsReread, setEditAsReread] = useState(false);
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
   const [generatingAudioBubbleId, setGeneratingAudioBubbleId] = useState<string | null>(null);
   const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<{ bubble: CallBubble; charId: string; charName: string } | null>(null);
@@ -1217,7 +1250,7 @@ const CallApp: React.FC = () => {
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
   // MiniMax：缓存命中 → 单发合成 → 失败再分段兜底；Fish / ElevenLabs：共享 router 直接合成。
   // 抛错或返回空 url 都表示没有可播放音频，由调用方降级为纯文字。
-  const synthesizeCallAudioUrl = async (rawText: string, emotion?: string): Promise<{ url: string; traceIds: string[] }> => {
+  const synthesizeCallAudioUrl = async (rawText: string, emotion?: string, skipCache = false): Promise<{ url: string; traceIds: string[] }> => {
     if (activeTtsProvider !== 'minimax') {
       if (!selectedChar) throw new Error('未选择角色');
       const { url } = await synthesizeSpeechRoutedDetailed(rawText, selectedChar, apiConfig, {
@@ -1247,7 +1280,7 @@ const CallApp: React.FC = () => {
       });
 
       const chunkCacheKey = buildMiniMaxTtsCacheKey(ttsPayload, paramVersion);
-      const cachedChunk = await getCachedTts(chunkCacheKey);
+      const cachedChunk = skipCache ? null : await getCachedTts(chunkCacheKey);
       if (cachedChunk) {
         return { blob: cachedChunk, traceId: 'cache' };
       }
@@ -1371,7 +1404,8 @@ const CallApp: React.FC = () => {
     void promise.catch(() => undefined);
     prefetchedCallAudioRef.current.set(key, promise);
   };
-  const takeOrSynthesizeCallAudio = (rawText: string, emotion?: string) => {
+  const takeOrSynthesizeCallAudio = (rawText: string, emotion?: string, skipCache = false) => {
+    if (skipCache) return synthesizeCallAudioUrl(rawText, emotion, true);
     const key = callAudioPrefetchKey(rawText, emotion);
     const prefetched = prefetchedCallAudioRef.current.get(key);
     if (!prefetched) return synthesizeCallAudioUrl(rawText, emotion);
@@ -1411,21 +1445,98 @@ const CallApp: React.FC = () => {
     revokeSessionBlobs();
     sttSessionRef.current?.stop();
   }, []);
-  // Voice input: toggle speech-to-text into the draft input box.
+  // Voice input: 三引擎语音识别（跟聊天语音消息同一套 设置→语音识别 配置）。
+  // 打电话的用法（语音直达）：点麦克风说整段话 → 输入行切换成 LINE 式录音面板
+  // （红点+计时+声波）→ 点 ✓ → 整段直接作为一句话发给对方，全程不碰输入框。
+  const sttAccumRef = useRef('');
+  // 语音输入原声：stop 后暂存 blob URL，handleTurn 发消息时挂到用户气泡上（回放按钮用）
+  const pendingUserVoiceUrlRef = useRef<string | null>(null);
+  const [sttRecSec, setSttRecSec] = useState(0);
+  const [sttStarting, setSttStarting] = useState(false);
+  // 录音面板实时预览：显示引擎当前听到的话（豆包流式中间结果/切段引擎定句），
+  // 让"录了没反应"变成"看得见字在出来"。
+  const [sttPreview, setSttPreview] = useState('');
+  useEffect(() => {
+    if (!isListening) { setSttRecSec(0); return; }
+    const t = window.setInterval(() => setSttRecSec(s => s + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [isListening]);
+  // 通话防回声：AI 外放说话期间暂停喂识别（麦克风不断），说完自动恢复。
+  // 不暂停的话外放的人声会被识别成"你说的"、还按豆包时长计费。
+  const sttPausedByPlayback = isListening && isAudioPlaying;
+  useEffect(() => {
+    sttSessionRef.current?.setPaused?.(isAudioPlaying);
+  }, [isAudioPlaying]);
+  const cancelStt = async () => {
+    const sess = sttSessionRef.current;
+    sttSessionRef.current = null;
+    sttAccumRef.current = '';
+    setIsListening(false);
+    setSttStarting(false);
+    setSttPreview('');
+    trackEvent('切换语音输入', { action: 'stop' });
+    if (sess) {
+      try { await sess.stop(); } catch { /* ignore */ }
+      sess.takeRecording?.(); // 丢弃
+    }
+  };
   const toggleStt = async () => {
-    if (isListening) { sttSessionRef.current?.stop(); trackEvent('切换语音输入', { action: 'stop' }); return; }
+    if (isListening || sttSessionRef.current) {
+      // 停止 → 等尾句识别完 → 整段直接发成一句话（打电话不打字）
+      const sess = sttSessionRef.current;
+      sttSessionRef.current = null;
+      setIsListening(false);
+      trackEvent('切换语音输入', { action: 'stop' });
+      // ⚠️ 顺序关键：必须先 await stop()（负包/尾段会把最后一句吐回来）再抄字。
+      //   写反了会把没来得及上屏的尾句丢掉（曾致"听到第一句了但提示没听到内容"）。
+      if (sess) {
+        try { await sess.stop(); } catch { /* ignore */ }
+        const rec = sess.takeRecording?.() || null;
+        if (rec) {
+          const url = URL.createObjectURL(rec.wav);
+          trackBlobUrl(url);
+          pendingUserVoiceUrlRef.current = url;
+        }
+      }
+      const text = sttAccumRef.current.trim();
+      sttAccumRef.current = '';
+      setSttPreview('');
+      if (text) {
+        try {
+          await handleTurn(text); // await+catch：发送链路任何一步炸掉都要让用户看见，不能静默吞
+        } catch (e: any) {
+          addToast(`语音消息没发出去：${e?.message || e}`, 'error');
+        }
+      } else {
+        pendingUserVoiceUrlRef.current = null;
+        addToast('没听到内容，靠近一点、声音大一点再试试', 'info');
+      }
+      return;
+    }
     if (!sttSupported) { addToast('当前环境不支持语音输入', 'info'); return; }
+    const sttCfg = apiConfig.sttApi;
+    if (!sttCfg || !sttCfg.engine || !((sttCfg.engine === 'doubao' ? sttCfg.volcApiKey : sttCfg.sfApiKey) || '').trim()) {
+      addToast('先到 设置 → 语音识别 选引擎、填 Key', 'info');
+      return;
+    }
     try {
+      sttAccumRef.current = '';
+      setSttPreview('');
       setIsListening(true);
+      setSttStarting(true);
       trackEvent('切换语音输入', { action: 'start' });
-      sttSessionRef.current = await startStt('zh-CN', {
-        onPartial: (t) => setDraftInput(t),
-        onFinal: (t) => setDraftInput(t),
-        onError: (m) => { if (m) addToast(m, 'info'); },
-        onEnd: () => { setIsListening(false); sttSessionRef.current = null; },
+      sttSessionRef.current = await startVoiceInput(sttCfg, {
+        onPartial: (t) => { setSttPreview(t.slice(-60)); }, // 实时预览：引擎听到了什么
+        onFinal: (t, emo) => {
+          sttAccumRef.current += (sttAccumRef.current ? '\n' : '') + (emo || '') + t;
+          setSttPreview(((emo || '') + t).slice(-60));
+        },
+        onError: (m) => { if (m) addToast(m, 'error'); },
       });
+      setSttStarting(false);
     } catch (e: any) {
       setIsListening(false);
+      setSttStarting(false);
       sttSessionRef.current = null;
       addToast(e?.message || '无法启动语音输入', 'error');
     }
@@ -1451,8 +1562,9 @@ const CallApp: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [callStartedAt, callState]);
   useEffect(() => {
+    if (callMode === 'voice') return;
     callScrollableRef.current?.scrollTo({ top: callScrollableRef.current.scrollHeight, behavior: 'smooth' });
-  }, [bubbles]);
+  }, [bubbles, callMode]);
   useEffect(() => {
     // 跳过初次挂载的自动聚焦，避免进入通话时键盘把界面顶飞；之后用户主动展开才聚焦。
     if (!inputPanelMountedRef.current) { inputPanelMountedRef.current = true; return; }
@@ -1565,6 +1677,8 @@ const CallApp: React.FC = () => {
     setCallStartedAt(null);
     setElapsedSeconds(0);
     setShowInputPanel(true);
+    setVoiceView('keys');
+    setVoiceSheetOpen(false);
     setCurrentSessionId(`call-${Date.now()}`);
   };
   const closeCallSetupGuide = () => {
@@ -2023,6 +2137,8 @@ ${sentencePlan}`;
   const performanceCueTimersRef = useRef<number[]>([]);
   const pendingCueScheduleRef = useRef<{ cues: AvatarPerformanceCue[]; fallbackMs: number } | null>(null);
   const silentSpeechTimerRef = useRef<number | null>(null);
+  // 逐句跟读：正在朗读的气泡 id + 播放进度 p（0~1）。timeupdate 驱动，ended/pause 清除。
+  const [speakingTrack, setSpeakingTrack] = useState<{ bubbleId: string; p: number } | null>(null);
   const clearPerformanceCueTimers = () => {
     performanceCueTimersRef.current.forEach(timer => window.clearTimeout(timer));
     performanceCueTimersRef.current = [];
@@ -2089,15 +2205,24 @@ ${sentencePlan}`;
       if (audioPrimingRef.current) return;
       setIsAudioPlaying(false);
       clearPerformanceCueTimers();
+      setSpeakingTrack(null);
       setCallState(previous => (previous === 'speaking' ? 'listening' : previous));
+    };
+    const handleTime = () => {
+      const d = audio.duration;
+      if (!Number.isFinite(d) || d <= 0) return;
+      const p = Math.min(1, audio.currentTime / d);
+      setSpeakingTrack(prev => prev ? { ...prev, p } : prev);
     };
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handleStop);
     audio.addEventListener('ended', handleStop);
+    audio.addEventListener('timeupdate', handleTime);
     return () => {
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handleStop);
       audio.removeEventListener('ended', handleStop);
+      audio.removeEventListener('timeupdate', handleTime);
       audio.pause();
       audio.removeAttribute('src');
       audio.load();
@@ -2107,6 +2232,16 @@ ${sentencePlan}`;
   useEffect(() => {
     if (audioRef.current) audioRef.current.muted = !isSpeakerOn;
   }, [isSpeakerOn]);
+
+  // 逐句跟读自动滚动：把当前朗读句保持在可视区（block:'nearest' 已在视口内时不打扰）。
+  // 语音小手机自己管滚动，这里只给视频用。旧内核不认 options 参数 → catch 降级为布尔式。
+  useEffect(() => {
+    if (callMode === 'voice') return;
+    if (!speakingTrack) return;
+    const el = callScrollableRef.current?.querySelector('.sully-speaking-line');
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { el.scrollIntoView(false); }
+  }, [callMode, speakingTrack?.bubbleId, speakingTrack?.p]);
 
   const startCallAudioElement = (audio: HTMLAudioElement, forceAudible = false): Promise<void> => {
     audio.muted = forceAudible ? false : !isSpeakerOn;
@@ -2129,6 +2264,7 @@ ${sentencePlan}`;
   const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false) => {
     const targetUrl = url || audioUrl;
     const estimatedDurationMs = fallbackMs || 4000;
+    setSpeakingTrack(null); // 换音频先清旧跟踪，调用方需要跟读时紧跟 setSpeakingTrack({bubbleId, p:0})
     if (!targetUrl || !audioRef.current) {
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
       return;
@@ -2162,6 +2298,7 @@ ${sentencePlan}`;
       const { url, traceIds } = await takeOrSynthesizeCallAudio(
         bubble.text,
         voiceTag.emotion || bubble.performance?.emotion,
+        forceRegenerate,
       );
       if (!url) throw new Error('未获得可播放音频');
       trackBlobUrl(url);
@@ -2187,6 +2324,7 @@ ${sentencePlan}`;
     if (bubble.audioUrl) {
       if (!isSpeakerOn) setIsSpeakerOn(true);
       playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+      setSpeakingTrack({ bubbleId: bubble.id, p: 0 });
       trackEvent('重播一条通话语音');
       return;
     }
@@ -2198,7 +2336,25 @@ ${sentencePlan}`;
     if (!url) return;
     if (!isSpeakerOn) setIsSpeakerOn(true);
     playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+    setSpeakingTrack({ bubbleId: bubble.id, p: 0 });
     trackEvent('按需生成并播放通话语音');
+  };
+  // 用户语音消息回放（语音输入的原声，会话内有效；挂断/重置随 sessionBlobUrls 一起回收）
+  const [playingUserBubbleId, setPlayingUserBubbleId] = useState<string | null>(null);
+  const userVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const handlePlayUserBubbleAudio = (bubble: CallBubble) => {
+    if (!bubble.audioUrl) return;
+    if (playingUserBubbleId === bubble.id) {
+      userVoiceAudioRef.current?.pause();
+      setPlayingUserBubbleId(null);
+      return;
+    }
+    userVoiceAudioRef.current?.pause();
+    const audio = userVoiceAudioRef.current || new Audio();
+    userVoiceAudioRef.current = audio;
+    audio.src = bubble.audioUrl;
+    audio.onended = () => setPlayingUserBubbleId(null);
+    audio.play().then(() => setPlayingUserBubbleId(bubble.id)).catch(() => { /* 挂断后 URL 已回收，静默 */ });
   };
   const callFavoriteSourceKey = (charId: string, bubble: CallBubble) => `${charId}:${bubble.dbId || bubble.id}`;
   const openCallVoiceFavorite = async (bubble: CallBubble, charId = selectedChar?.id || '', charName = selectedChar?.name || '未知角色') => {
@@ -2460,9 +2616,13 @@ ${sentencePlan}`;
     avatarTouchEffectTimersRef.current.forEach(timer => window.clearTimeout(timer));
     avatarTouchEffectTimersRef.current = [];
   }, []);
-  const handleTurn = async () => {
-    if (isListening) { sttSessionRef.current?.stop(); setIsListening(false); }
-    const typedInput = draftInput.trim();
+  const handleTurn = async (overrideText?: string) => {
+    if (isListening && typeof overrideText !== 'string') {
+      sttSessionRef.current?.stop();
+      setIsListening(false);
+      sttAccumRef.current = '';
+    }
+    const typedInput = (typeof overrideText === 'string' ? overrideText : draftInput).trim();
     const retryInput = getPendingReplyText(bubbles);
     const input = typedInput || retryInput;
     if (!input) return addToast('说点什么吧', 'info');
@@ -2503,7 +2663,9 @@ ${sentencePlan}`;
           time: now,
           timestamp: nowTs,
           ...(newSnapshotRef ? { cameraSnapshotRef: newSnapshotRef } : {}),
+          ...(pendingUserVoiceUrlRef.current ? { audioUrl: pendingUserVoiceUrlRef.current } : {}),
         };
+    pendingUserVoiceUrlRef.current = null; // 挂上气泡即清：重试/编辑沿用气泡上已有的 audioUrl
     if (isRetry && newSnapshotRef) {
       setBubbles(previous => previous.map(bubble => bubble.id === userBubble.id ? userBubble : bubble));
     } else if (!isRetry) {
@@ -2650,7 +2812,7 @@ ${sentencePlan}`;
       if (!finalUrl) throw new Error('未获得可播放音频');
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
-      setTimeout(() => playAudio(finalUrl, turnPerformanceCues, estimateSpeechMs(assistantText)), 0);
+      setTimeout(() => { playAudio(finalUrl, turnPerformanceCues, estimateSpeechMs(assistantText)); setSpeakingTrack({ bubbleId: assistantBubbleId, p: 0 }); }, 0);
       setTraceId(traceIds.filter(Boolean).join(' | '));
       setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: finalUrl } : b)));
       if (assistantDbId) {
@@ -2701,21 +2863,48 @@ ${sentencePlan}`;
     addToast('通话记录已删除', 'success');
     trackEvent('删除一条通话记录');
   };
-  const startEditBubble = (bubble: CallBubble) => {
-    if (bubble.role !== 'user') return;
+  const startEditBubble = (bubble: CallBubble, reread = false) => {
+    if (!reread && bubble.role !== 'user') return;
     setEditingBubble(bubble);
-    setEditingText(bubble.text);
+    setEditAsReread(!!reread);
+    if (reread) {
+      const parsed = extractVoiceTag(bubble.text);
+      setEditingText((parsed.voiceText && parsed.voiceText.trim()) || bubble.text);
+    } else {
+      setEditingText(bubble.text);
+    }
   };
   const saveEditedBubble = async () => {
     if (!editingBubble) return;
     const next = editingText.trim();
     if (!next) return addToast('内容不能为空', 'error');
-    setBubbles(prev => prev.map(b => b.id === editingBubble.id ? { ...b, text: next } : b));
-    if (editingBubble.dbId) await DB.updateMessage(editingBubble.dbId, next);
+    const target = editingBubble;
+    const reread = editAsReread && target.role === 'assistant';
+    let stored = next;
+    if (reread) {
+      const replaced = target.text.replace(/(<[语語]音[^>]*>)([\s\S]*?)(<\/\s*[语語]音\s*>)/, '$1' + next + '$3');
+      if (replaced !== target.text) stored = replaced;
+    }
+    setBubbles(prev => prev.map(b => b.id === target.id ? { ...b, text: stored, ...(reread ? { audioUrl: undefined } : {}) } : b));
+    if (target.dbId) await DB.updateMessage(target.dbId, stored);
     setEditingBubble(null);
     setEditingText('');
-    addToast('已更新发言', 'success');
-    trackEvent('修改自己的通话发言');
+    setEditAsReread(false);
+    if (!reread) {
+      addToast('已更新发言', 'success');
+      trackEvent('修改自己的通话发言');
+      return;
+    }
+    stopPlayback();
+    addToast('正在按新稿合成…', 'info');
+    trackEvent('编辑后重读通话语音');
+    const url = await ensureCallBubbleAudio({ ...target, text: stored, audioUrl: undefined }, true);
+    if (!url) {
+      addToast('合成失败，字已改好', 'info');
+      return;
+    }
+    playAudio(url, target.performanceTimeline, estimateSpeechMs(stored), true);
+    setSpeakingTrack({ bubbleId: target.id, p: 0 });
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
     if (!selectedChar || bubble.role !== 'assistant') return;
@@ -2724,8 +2913,10 @@ ${sentencePlan}`;
     const prevUser = bubbles[idx - 1];
     if (!prevUser || prevUser.role !== 'user') return;
     try {
+      stopPlayback();
       setRerollingBubbleId(bubble.id);
       setCallState('thinking');
+      addToast('正在换一种说法…', 'info');
       trackEvent('重掷角色的通话台词');
       const rerollReply = prepareCallAssistantReply(
         await requestAssistantReply(prevUser.text, bubble.dbId),
@@ -2768,7 +2959,7 @@ ${sentencePlan}`;
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
             setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
-            setTimeout(() => playAudio(rerollAudioUrl, rerollReply.performanceCues, estimateSpeechMs(rerolled)), 0);
+            setTimeout(() => { playAudio(rerollAudioUrl, rerollReply.performanceCues, estimateSpeechMs(rerolled)); setSpeakingTrack({ bubbleId: bubble.id, p: 0 }); }, 0);
             rerollAudioPlayed = true;
           }
         } catch (ttsErr: any) {
@@ -2844,7 +3035,7 @@ ${sentencePlan}`;
             trackBlobUrl(url);
             setAudioUrl(url);
             setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url } : bubble));
-            window.setTimeout(() => playAudio(url, reply.performanceCues, estimateSpeechMs(reply.text)), 0);
+            window.setTimeout(() => { playAudio(url, reply.performanceCues, estimateSpeechMs(reply.text)); setSpeakingTrack({ bubbleId: nudgeBubble.id, p: 0 }); }, 0);
             playbackStarted = true;
           }
         } catch {
@@ -3456,6 +3647,156 @@ ${sentencePlan}`;
     : displayCallState === 'error' ? { cn: '连接异常', en: 'SIGNAL ERROR' }
     : { cn: '聆听中', en: 'LISTENING' };
   const latestCallBubble = bubbles[bubbles.length - 1];
+  if (callMode === 'voice') {
+    const voiceStatus =
+      displayCallState === 'speaking' ? '说话中'
+      : displayCallState === 'thinking' ? '思考中'
+      : displayCallState === 'connecting' ? '接通中'
+      : displayCallState === 'error' ? '连接异常'
+      : '听你说';
+    return (
+      <div className="h-full w-full relative overflow-hidden bg-[#1c1c1e]" data-avatar-touch-pending={pendingAvatarTouchCount}>
+        <VoicePhoneB
+          charName={selectedChar?.name || '对方'}
+          charAvatar={selectedChar?.avatar}
+          wallpaperUrl={blurredAvatarUrl || undefined}
+          elapsedLabel={formatDuration(elapsedSeconds)}
+          statusWord={rerollingBubbleId ? '思考中' : voiceStatus}
+          waveMode={rerollingBubbleId ? 'think' : displayCallState === 'speaking' ? 'live' : (displayCallState === 'thinking' || displayCallState === 'connecting') ? 'think' : 'off'}
+          bubbles={bubbles}
+          speakingTrack={speakingTrack}
+          translateVisible={translateVisible}
+          voiceView={voiceView}
+          sheetOpen={voiceSheetOpen}
+          speakerOn={isSpeakerOn}
+          isListening={isListening}
+          sttSupported={sttSupported}
+          sttRecSec={sttRecSec}
+          sttStarting={sttStarting}
+          sttPausedByPlayback={sttPausedByPlayback}
+          sttPreview={sttPreview}
+          draftInput={draftInput}
+          sendingBusy={sendingBusy}
+          placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
+          pendingRetry={!!pendingCallRetryText && !draftInput.trim() && !isListening && !sendingBusy}
+          errorMessage={errorMessage}
+          generatingId={generatingAudioBubbleId}
+          rerollingId={rerollingBubbleId}
+          playingUserId={playingUserBubbleId}
+          draftInputRef={draftInputRef}
+          scrollRef={callScrollableRef}
+          renderLine={(text) => renderAssistantLine(text, '#ffffff', true)}
+          pokeNonce={voiceAvatarPokeNonce}
+          touchEffects={avatarTouchEffects}
+          splitSpeakLines={splitSpeakLines}
+          parseVoice={extractVoiceTag}
+          stripVoice={(text) => stripTtsMarkupForDisplay(text, apiConfig)}
+          onVoiceView={(view) => { setVoiceView(view); setVoiceSheetOpen(false); }}
+          onSheetOpen={setVoiceSheetOpen}
+          onSpeaker={() => {
+            const next = !isSpeakerOn;
+            setIsSpeakerOn(next);
+            if (!next && isAudioPlaying) pauseAudio();
+            if (next) primeCallAudioFromGesture(true);
+          }}
+          onMic={() => { void toggleStt(); }}
+          onHoldRecordStart={() => { if (!isListening && !sttSessionRef.current) void toggleStt(); }}
+          onHoldRecordEnd={() => { if (isListening || sttSessionRef.current) void toggleStt(); }}
+          onCancelStt={() => { void cancelStt(); }}
+          onTranslateTap={() => setTranslateVisible(v => !v)}
+          onTranslateHold={() => setShowLangPicker(true)}
+          onHangup={handleHangup}
+          onSend={() => { void handleTurn(); }}
+          onDraft={setDraftInput}
+          onPlayAssistant={(bubble) => { void handlePlayBubbleAudio(bubble as CallBubble); }}
+          onDownload={(bubble) => { void handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp); }}
+          onReroll={(bubble) => { void handleRerollAssistant(bubble as CallBubble); }}
+          onFavorite={(bubble) => { void openCallVoiceFavorite(bubble as CallBubble); }}
+          onPlayUser={(bubble) => handlePlayUserBubbleAudio(bubble as CallBubble)}
+          onEdit={(bubble) => startEditBubble(bubble as CallBubble)}
+          onEditReread={(bubble) => startEditBubble(bubble as CallBubble, true)}
+          onPokeDown={handleVoiceAvatarPointerDown}
+          onPokeMove={handleVoiceAvatarPointerMove}
+          onPokeUp={handleVoiceAvatarPointerUp}
+          onPokeCancel={handleVoiceAvatarPointerCancel}
+          onPokeKey={handleVoiceAvatarKeyboardPoke}
+        />
+        {showLangPicker && (
+          <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={() => setShowLangPicker(false)}>
+            <div className={`w-full border-t border-white/10 rounded-t-3xl p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#2c2c2e]'}`} onClick={e => e.stopPropagation()}>
+              <div className="text-sm text-white/80 font-medium">语音语种</div>
+              <p className="text-xs text-white/40">选择后，角色会用中文回复，语音则用对应语种朗读</p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {VOICE_LANGUAGE_OPTIONS.map(opt => (
+                  <button key={opt.value} onClick={() => { setVoiceLang(opt.value); if (selectedChar) updateCharacter(selectedChar.id, { callVoiceLang: opt.value }); setShowLangPicker(false); trackEvent('设置通话语音语种', { 语种: voiceLanguageAnalyticsValue(opt.value) }); }}
+                    className={`text-xs px-3 py-2 rounded-full font-medium transition-colors text-white ${voiceLang === opt.value ? 'keep-white' : ''}`}
+                    style={voiceLang === opt.value ? { backgroundColor: accentColor } : { background: 'rgba(255,255,255,0.1)' }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {voiceLang === 'yue' && <p className="text-[10px] text-amber-300/70">{CANTONESE_VOICE_SUPPORT_NOTE}</p>}
+            </div>
+          </div>
+        )}
+        {showHangupConfirm && (
+          <div className="absolute inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
+            <div className="w-full max-w-sm rounded-3xl border border-white/15 bg-[#2c2c2e] p-5 shadow-2xl">
+              <div className="text-lg font-semibold text-white">要挂了吗？</div>
+              <p className="mt-2 text-sm text-white/65 leading-relaxed">和{selectedChar?.name || '对方'}聊了 {formatDuration(elapsedSeconds)}，这通电话会好好保存下来。</p>
+              <div className="mt-5 space-y-2">
+                <button onClick={() => {
+                  setShowHangupConfirm(false);
+                  if (selectedChar) {
+                    suspendCall({
+                      charId: selectedChar.id,
+                      charName: selectedChar.name,
+                      charAvatar: selectedChar.avatar,
+                      startedAt: callStartedAt || Date.now(),
+                      bubbles,
+                      sessionId: currentSessionId,
+                      elapsedSeconds,
+                      voiceLang,
+                      pendingAvatarTouches: pendingAvatarTouchesRef.current,
+                    });
+                    addToast('通话已挂起，点击顶部绿色条可随时回来', 'success');
+                    trackEvent('挂起通话到后台');
+                  }
+                }} className="keep-white w-full py-2.5 rounded-2xl bg-emerald-500/80 text-white font-semibold transition active:scale-[0.97]">
+                  <span>先忙别的</span><span className="text-xs opacity-70">（挂起通话）</span>
+                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setShowHangupConfirm(false)} className="py-2.5 rounded-2xl border border-white/20 text-white/80">再聊会儿</button>
+                  <button onClick={finishCall} className="py-2.5 rounded-2xl bg-rose-500/20 border border-rose-300/40 text-rose-200 font-semibold">挂了吧</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {editingBubble && (
+          <div className="absolute inset-0 bg-black/60 flex items-end z-50">
+            <div className="w-full border-t border-white/10 p-5 space-y-3 bg-[#2c2c2e]">
+              <div className="text-sm text-white/70">{editAsReread ? '编辑朗读原文（不是中文译文）' : '改一下刚才说的话'}</div>
+              <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus style={{ colorScheme: 'dark' }} />
+              <div className="flex gap-2">
+                <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70">算了</button>
+                <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white" style={{ backgroundColor: accentColor }}>就这样</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <VoiceFavoriteActionSheet
+          open={!!voiceFavoriteTarget}
+          favorited={voiceFavoriteSaved}
+          busy={voiceFavoriteBusy}
+          title="通话语音"
+          preview={voiceFavoriteTarget ? (stripCallTextFormatting(extractVoiceTag(voiceFavoriteTarget.bubble.text).display) || stripTtsMarkupForDisplay(extractVoiceTag(voiceFavoriteTarget.bubble.text).voiceText, apiConfig)) : ''}
+          onToggle={() => void toggleCallVoiceFavorite()}
+          onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }}
+        />
+      </div>
+    );
+  }
   const compactVideoTranscript = callMode === 'video' && videoCallLayout === 'stage' && !videoTranscriptExpanded;
   const videoStageSize = videoCallLayout === 'stage'
     ? 'min-h-0'
@@ -3651,10 +3992,10 @@ ${sentencePlan}`;
           )}
         </div>
       ) : (
-      <div className="sully-call-hero pt-3 pb-1 flex flex-col items-center justify-center">
+      <div className="sully-call-hero pt-2.5 pb-1 flex items-center justify-center gap-4">
         <button
           type="button"
-          className="relative h-40 w-40 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          className="relative h-16 w-16 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           aria-label={`戳戳${selectedChar?.name || '对方'}`}
           onPointerDown={handleVoiceAvatarPointerDown}
           onPointerMove={handleVoiceAvatarPointerMove}
@@ -3670,12 +4011,12 @@ ${sentencePlan}`;
               ? { animation: 'sully-touch-avatar-bounce 420ms cubic-bezier(.2,.9,.3,1) both' }
               : undefined}
           >
-            <div className={`absolute -inset-3 rounded-full blur-xl ${waveActive ? 'animate-pulse' : ''}`} style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)`, opacity: waveActive ? 0.8 : 0.4 }} />
-            <div className="absolute -inset-1 rounded-full" style={{ boxShadow: `0 0 0 1px ${accentColor}55, inset 0 0 24px ${accentColor}33` }} />
+            <div className={`absolute -inset-2 rounded-full blur-lg ${waveActive ? 'animate-pulse' : ''}`} style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)`, opacity: waveActive ? 0.8 : 0.4 }} />
+            <div className="absolute -inset-0.5 rounded-full" style={{ boxShadow: `0 0 0 1px ${accentColor}55, inset 0 0 18px ${accentColor}33` }} />
             <div className={`absolute inset-0 rounded-full border ${displayCallState === 'speaking' ? 'animate-ping' : 'opacity-40'}`} style={{ borderColor: `${accentColor}66` }} />
             {selectedChar?.avatar
-              ? <TokenImg value={selectedChar.avatar} alt={selectedChar.name} draggable={false} className="relative z-10 h-full w-full rounded-full object-cover" style={{ boxShadow: `0 0 30px ${accentColor}55` }} />
-              : <div className="relative z-10 flex h-full w-full items-center justify-center rounded-full text-4xl font-serif" style={{ backgroundColor: `${accentColor}55` }}>{selectedChar?.name?.[0] || '角'}</div>}
+              ? <TokenImg value={selectedChar.avatar} alt={selectedChar.name} draggable={false} className="relative z-10 h-full w-full rounded-full object-cover" style={{ boxShadow: `0 0 24px ${accentColor}55` }} />
+              : <div className="relative z-10 flex h-full w-full items-center justify-center rounded-full text-2xl font-serif" style={{ backgroundColor: `${accentColor}55` }}>{selectedChar?.name?.[0] || '角'}</div>}
             <AvatarTouchFeedback
               characterName={selectedChar?.name || '对方'}
               accentColor={accentColor}
@@ -3684,16 +4025,15 @@ ${sentencePlan}`;
             />
           </div>
         </button>
-        {/* analyzing status + waveform */}
-        <div className="mt-5 flex flex-col items-center gap-2">
-          <div className="text-center leading-tight">
-            <div className="text-sm text-white/85">{analyzeLabel.cn}{waveActive ? '…' : ''}</div>
-            <div className="text-[9px] tracking-[0.3em] text-white/35 mt-0.5">{analyzeLabel.en}</div>
-          </div>
-          <div className="flex items-center justify-center gap-[3px] h-7">
+        {/* analyzing status + waveform —— 头像横排化：从"大饼居中"变"胸章+右侧状态"，
+            给下面正文/消息区让出约一屏四分之一的高度，长文本阅读不再挤。 */}
+        <div className="flex flex-col items-start gap-1 max-w-[62%]">
+          <div className="text-sm text-white/85 leading-tight">{analyzeLabel.cn}{waveActive ? '…' : ''}</div>
+          <div className="text-[9px] tracking-[0.3em] text-white/35">{analyzeLabel.en}</div>
+          <div className="flex items-end justify-center gap-[3px] h-4">
             {CALL_WAVE.map((h, i) => (
               <span key={i} className={`w-[3px] rounded-full transition-all duration-300 ${waveActive ? 'animate-pulse' : ''}`}
-                style={{ height: `${waveActive ? h : 3}px`, background: `linear-gradient(to top, ${accentColor}33, ${accentColor})`, animationDelay: `${i * 60}ms` }} />
+                style={{ height: `${waveActive ? Math.max(4, h * 0.7) : 3}px`, background: `linear-gradient(to top, ${accentColor}33, ${accentColor})`, animationDelay: `${i * 60}ms` }} />
             ))}
           </div>
         </div>
@@ -3726,7 +4066,7 @@ ${sentencePlan}`;
           <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
         </div>
       ) : (
-      <div ref={callScrollableRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md" style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
+      <div ref={callScrollableRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-4 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md" style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
         {callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded && (
           <div className="sticky top-0 z-10 -mx-1 flex justify-end pb-1">
             <button onClick={() => setVideoTranscriptExpanded(false)} className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[9px] text-white/48 backdrop-blur">收成字幕</button>
@@ -3749,8 +4089,9 @@ ${sentencePlan}`;
           const fromBottom = bubbles.length - 1 - index;
           const isLatest = fromBottom === 0;
           const line = bubble.text.trim();
-          const opacity = Math.max(0.35, 1 - fromBottom * 0.16);
-          const sizeClass = isLatest ? 'text-[15px]' : fromBottom === 1 ? 'text-sm' : 'text-xs';
+          // 文字层级：最新一条最大最亮，往上逐级收小；渐隐放缓（旧版 0.16/最低0.35 太难读）
+          const opacity = Math.max(0.65, 1 - fromBottom * 0.07);
+          const sizeClass = isLatest ? 'text-base' : fromBottom === 1 ? 'text-[15px]' : 'text-sm';
           return (
           <div
             key={bubble.id}
@@ -3783,16 +4124,32 @@ ${sentencePlan}`;
             style={{ opacity }}
             className={`px-1 py-1 ${bubble.role === 'user' ? 'text-right' : ''}`}
           >
-            <div className={`text-[10px] text-white/45 mb-1 flex items-center gap-1 ${bubble.role === 'user' ? 'justify-end' : ''}`}>
+            <div className={`text-[10px] text-white/40 mb-0.5 flex items-center gap-1 ${bubble.role === 'user' ? 'justify-end' : ''}`}>
               {bubble.role !== 'user' && <span className="text-[8px]" style={{ color: accentColor }}>◍</span>}
               <span style={bubble.role !== 'user' ? { color: `${accentColor}dd` } : undefined}>{bubble.role === 'user' ? '你' : selectedChar?.name}</span>
               <span>· {bubble.time}</span>
             </div>
             {bubble.role === 'user' && <CallSnapshotImage imageRef={bubble.cameraSnapshotRef} expired={bubble.cameraSnapshotExpired} compact />}
-            <div className={`${sizeClass} whitespace-pre-wrap leading-relaxed ${bubble.role === 'user' ? 'inline-block text-left text-white/90 bg-white/[0.06] border border-white/10 rounded-2xl rounded-tr-sm px-3 py-1.5' : 'text-white/95'}`}>
+            <div className={`${sizeClass} whitespace-pre-wrap leading-[1.75] ${bubble.role === 'user' ? 'inline-block text-left text-white/90 bg-white/[0.06] border border-white/10 rounded-2xl rounded-tr-sm px-3.5 py-2' : 'text-white/95'}`}>
               {bubble.role === 'assistant' ? (() => {
                 const { display, voiceText } = extractVoiceTag(line || bubble.text);
                 const cleanVoice = stripTtsMarkupForDisplay(voiceText, apiConfig);
+                // 逐句跟读：播放中把正文切成一句句，当前句全亮+辉光、已读微亮、未读压暗，
+                // 并自动滚动到可视区。翻译模式下读的是 <语音> 翻译文本，进度按比例映射到原文句子。
+                // 高亮推进按"字符数加权"（语音时长≈字数正比），比按句数均分准得多，修"慢半拍"。
+                const tracking = speakingTrack?.bubbleId === bubble.id ? speakingTrack : null;
+                const speakLines = tracking && display ? splitSpeakLines(display) : null;
+                let activeIdx = -1;
+                if (tracking && speakLines && speakLines.length) {
+                  const totalChars = speakLines.reduce((sum, line) => sum + line.length, 0);
+                  const target = tracking.p * totalChars;
+                  let acc = 0;
+                  for (let li = 0; li < speakLines.length; li++) {
+                    acc += speakLines[li].length;
+                    activeIdx = li;
+                    if (target < acc) break;
+                  }
+                }
                 return <>
                   {bubble.thinkingChain && (
                     <details className="group mb-2 rounded-xl border border-white/10 bg-white/[0.035] px-2.5 py-2 text-[11px] text-white/55">
@@ -3800,11 +4157,35 @@ ${sentencePlan}`;
                       <div className="mt-2 whitespace-pre-wrap border-t border-white/8 pt-2 leading-relaxed text-white/60">{bubble.thinkingChain}</div>
                     </details>
                   )}
-                  {renderAssistantLine(display, accentColor)}
-                  {cleanVoice && <div className="mt-1 text-[11px] text-white/45 italic">{cleanVoice}</div>}
+                  {speakLines ? (
+                    <div className="space-y-1">
+                      {speakLines.map((sl, i) => (
+                        <span
+                          key={i}
+                          className={`block transition-colors duration-300 ${i === activeIdx ? 'text-white sully-speaking-line' : i < activeIdx ? 'text-white/75' : 'text-white/30'}`}
+                          style={i === activeIdx ? { textShadow: `0 0 14px ${accentColor}cc` } : undefined}
+                        >
+                          {renderAssistantLine(sl, accentColor)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : renderAssistantLine(display, accentColor)}
+                  {cleanVoice && <div className={`mt-1.5 text-[11px] italic transition-colors ${tracking ? 'text-white/65' : 'text-white/45'}`}>{cleanVoice}</div>}
                 </>;
-              })() : (line || bubble.text)}
+              })() : renderAssistantLine(line || bubble.text, accentColor)}
             </div>
+            {/* 用户语音消息回放：与 AI 的 播放语音/重播语音 同款 pill，配色一致、右对齐 */}
+            {bubble.role === 'user' && bubble.audioUrl && (
+              <div className="mt-1.5 flex justify-end">
+                <button
+                  onClick={() => handlePlayUserBubbleAudio(bubble)}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15"
+                >
+                  <Microphone size={11} weight="fill" className="opacity-70" />
+                  {playingUserBubbleId === bubble.id ? '停止回放' : '回放语音'}
+                </button>
+              </div>
+            )}
             {bubble.role === 'assistant' && (
               <div className="mt-2 flex gap-2 flex-wrap">
                 <button
@@ -3829,28 +4210,76 @@ ${sentencePlan}`;
       {showInputPanel && (
         <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-1.5' : 'px-4 pb-2'}`}>
           <div className={`${callMode === 'video' ? 'rounded-[1.15rem] p-1.5' : 'rounded-2xl p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-center`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
-            {sttSupported && (
+            {sttSupported && !isListening && (
               <button
                 onClick={toggleStt}
                 disabled={sendingBusy}
-                title={isListening ? '结束语音输入' : '按一下开始说话'}
+                title="按一下开始说话"
                 className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition active:scale-90 disabled:opacity-40"
-                style={isListening ? { background: '#f0569f', boxShadow: '0 0 14px #f0569f99' } : { background: 'rgba(255,255,255,0.08)' }}
+                style={{ background: 'rgba(255,255,255,0.08)' }}
               >
-                <Microphone size={18} weight="fill" className={isListening ? 'text-white animate-pulse' : 'text-white/70'} />
+                <Microphone size={18} weight="fill" className="text-white/70" />
               </button>
             )}
-            <input
-              ref={draftInputRef}
-              value={draftInput}
-              onChange={(e) => setDraftInput(e.target.value)}
-              className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
-              placeholder={isListening ? '在听你说……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
-            />
-            <button onClick={handleTurn} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
+            {isListening ? (
+              /* LINE 式录音面板（通话版）：语音直达——不进输入框，点 ✓ 直接发给对方 */
+              <>
+                <button
+                  onClick={cancelStt}
+                  title="取消本次语音"
+                  className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition active:scale-90 bg-white/8 border border-white/15 text-white/70 hover:bg-white/15"
+                >
+                  <X size={18} weight="bold" />
+                </button>
+                <div className="flex-1 min-w-0 flex flex-col items-center justify-center py-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${sttStarting ? 'bg-slate-300' : sttPausedByPlayback ? 'bg-amber-400' : 'bg-red-500 animate-pulse'}`} />
+                    <span className="text-sm font-bold tabular-nums text-white/90">
+                      {sttStarting ? '连接中…' : sttPausedByPlayback ? '对方说话中…' : `录音中 ${Math.floor(sttRecSec / 60)}:${String(sttRecSec % 60).padStart(2, '0')}`}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-white/40 mt-0.5">
+                    {sttStarting ? '正在连接识别引擎' : sttPausedByPlayback ? 'TA说完自动继续听你说' : '说完点右侧 ✓ 直接发送'}
+                  </div>
+                  {sttPreview
+                    ? <div className="w-full text-center text-[11px] leading-snug text-white/60 truncate px-1 mt-0.5">「{sttPreview}」</div>
+                    : null}
+                  <div className="flex items-end gap-[3px] h-4 mt-1">
+                    {[6, 12, 8, 14, 10, 5, 11, 7, 13, 6, 10, 8, 12, 5, 9, 11, 7, 13, 6, 10].map((h, i) => (
+                      <span
+                        key={i}
+                        className={`w-[2.5px] rounded-full transition-all duration-200 ${!sttPausedByPlayback && !sttStarting ? 'animate-pulse' : ''}`}
+                        style={{
+                          height: !sttPausedByPlayback && !sttStarting ? `${4 + (h % 5) * 2.5}px` : '3px',
+                          backgroundColor: !sttPausedByPlayback && !sttStarting ? 'rgba(244,63,94,0.7)' : 'rgba(148,163,184,0.4)',
+                          animationDelay: `${i * 70}ms`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={toggleStt}
+                  title="完成并发送"
+                  className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition active:scale-90 bg-red-500 text-white shadow-lg"
+                >
+                  <Check size={18} weight="bold" />
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  ref={draftInputRef}
+                  value={draftInput}
+                  onChange={(e) => setDraftInput(e.target.value)}
+                  className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
+                  placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
+                />
+                <button onClick={() => handleTurn()} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
+              </>
+            )}
           </div>
-          {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
-          {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">正在聆听，点麦克风结束</div>}
+          {!sendingBusy && pendingCallRetryText && !draftInput.trim() && !isListening && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
         </div>
       )}
       <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-2 pt-0.5' : 'px-7 pb-2 pt-1.5'}`} data-testid={callMode === 'video' ? 'video-call-compact-controls' : undefined}>
@@ -4011,7 +4440,7 @@ ${sentencePlan}`;
         <div className="absolute inset-0 bg-black/60 flex items-end z-50">
           <div className={`w-full border-t border-white/10 p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`}>
             <div className="text-sm text-white/70">改一下刚才说的话</div>
-            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus />
+            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus style={{ colorScheme: 'dark' }} />
             <div className="flex gap-2">
               <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70 transition active:scale-[0.97]">算了</button>
               <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white transition active:scale-[0.97]" style={{ backgroundColor: accentColor }}>就这样</button>

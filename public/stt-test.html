@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语音识别测试页 v3</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0f172a; color: #e2e8f0; padding: 16px; max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { font-size: 12px; color: #94a3b8; margin-bottom: 16px; }
+  .card { background: #1e293b; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 15px; margin-bottom: 10px; color: #7dd3fc; }
+  button { background: #0ea5e9; color: white; border: none; border-radius: 10px; padding: 12px 20px; font-size: 16px; margin: 4px 6px 4px 0; }
+  button.stop { background: #ef4444; }
+  button:disabled { background: #475569; }
+  .result { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px; margin-top: 10px; min-height: 44px; font-size: 16px; line-height: 1.5; }
+  .interim { color: #94a3b8; }
+  .final { color: #4ade80; }
+  .err { color: #f87171; font-size: 14px; margin-top: 6px; white-space: pre-wrap; }
+  .ok { color: #4ade80; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 14px; flex-wrap: wrap; }
+  .tag { display:inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; margin-right: 6px; }
+  .tag.ok { background: #14532d; color: #4ade80; }
+  .tag.bad { background: #7f1d1d; color: #f87171; }
+  .copy-btn { font-size: 13px; padding: 8px 14px; background: #475569; }
+  #log { font-size: 13px; color: #94a3b8; max-height: 200px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; }
+  label.chk { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #cbd5e1; }
+</style>
+</head>
+<body>
+<h1>语音识别测试页 v3</h1>
+<div class="sub">v3 策略：TeleSpeechASR 秒出文字（2并发）＋ SenseVoice 后台追情绪。测完复制日志给猫儿</div>
+
+<div class="card">
+  <h2>API Key</h2>
+  <div class="row"><input id="sf-key" type="password" placeholder="硅基流动 API Key（sk-开头）" style="flex:1;min-width:220px;padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px"></div>
+  <div class="row"><input id="volc-key" type="password" placeholder="火山引擎 API Key（豆包流式2.0 用）" style="flex:1;min-width:220px;padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px"></div>
+  <div class="row"><input id="volc-hot" value="诚哥" placeholder="热词（逗号或顿号分隔，越多越好）：豆包走热词接口，Omni 写进提示词。如：诚哥,猫儿,阿贝贝" style="flex:1;min-width:220px;padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px"></div>
+</div>
+
+<div class="card">
+  <h2>实时切句识别 v3</h2>
+  <div class="sub">玩法：点「开始说话」→ 随便聊，停顿约0.7秒自动切一句（文字先出）→ 全说完点「说完了」</div>
+  <div class="row">
+    <select id="seg-engine" style="padding:8px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px">
+      <option value="tele">TeleASR快出字 + 声学特征（推荐·免费）</option>
+      <option value="omni">Qwen3-Omni 多模态（试试能不能出情绪）</option>
+      <option value="doubao">豆包流式2.0（火山·带情绪·按发送计费）</option>
+    </select>
+  </div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="seg-emo" checked> 追加SenseVoice情绪（仅TeleASR模式，后台慢补）</label>
+  </div>
+  <button onclick="startSeg()">开始说话</button>
+  <button class="stop" onclick="stopSeg()" disabled>说完了</button>
+  <div class="row" id="seg-live" style="color:#7dd3fc">待命</div>
+  <div id="seg-list"></div>
+  <div class="err" id="seg-err"></div>
+</div>
+
+<div class="card">
+  <h2>测试日志</h2>
+  <button class="copy-btn" onclick="copyLog()">复制日志</button>
+  <div id="log"></div>
+</div>
+
+<script>
+const logEl = document.getElementById('log');
+const logs = [];
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logs.push(`[${t}] ${msg}`);
+  logEl.textContent = logs.join('\n');
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function copyLog() {
+  const text = logs.join('\n');
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(()=>alert('已复制，发给猫儿吧'));
+  else alert('复制失败，手动截图发给猫儿');
+}
+
+// ============ 核心工具 ============
+const EMO_MAP = { '😊':'HAPPY','😄':'HAPPY','😃':'HAPPY','😆':'HAPPY','🙂':'HAPPY','😢':'SAD','😔':'SAD','😠':'ANGRY','😡':'ANGRY','😲':'SURPRISED','😮':'SURPRISED','😨':'FEARFUL','😰':'FEARFUL','🤢':'DISGUSTED','😐':'NEUTRAL','😑':'NEUTRAL' };
+function modelEmotion(text) {
+  for (const k in EMO_MAP) if (text.includes(k)) return { emo: EMO_MAP[k], clean: text.split(k).join('').trim() };
+  const m = text.match(/<\|(\w+)\|>/);
+  if (m) return { emo: m[1], clean: text.replace(/<\|\w+\|>/g, '').trim() };
+  return { emo: '', clean: text.trim() };
+}
+const EMO_ZH = { HAPPY:'（开心）', SAD:'（低落）', ANGRY:'（生气）', SURPRISED:'（惊讶）', FEARFUL:'（紧张）', DISGUSTED:'（嫌弃）' };
+
+function encodeWav(samples, sampleRate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0,'RIFF'); v.setUint32(4, 36 + samples.length*2, true); ws(8,'WAVE');
+  ws(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,sampleRate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ws(36,'data'); v.setUint32(40, samples.length*2, true);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(o, s < 0 ? s*0x8000 : s*0x7FFF, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+function downsampleTo16k(input, inputRate) {
+  if (inputRate === 16000) return input;
+  const ratio = inputRate / 16000;
+  const outLen = Math.floor(input.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const s0 = Math.floor(i * ratio), s1 = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let acc = 0; for (let j = s0; j < s1; j++) acc += input[j];
+    out[i] = acc / (s1 - s0 || 1);
+  }
+  return out;
+}
+
+async function sfStt(wavBlob, model) {
+  const form = new FormData();
+  form.append('file', wavBlob, 'speech.wav');
+  form.append('model', model);
+  const res = await fetch('/api/sf-stt/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + document.getElementById('sf-key').value.trim() },
+    body: form,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${text.slice(0,100)}`);
+  return JSON.parse(text);
+}
+
+// ============ v3 切句识别 ============
+let segCtx = null, segStream = null, segProc = null, segSilence = null;
+let segRunning = false, segIndex = 0, segRate = 48000;
+let curChunks = [], curRms = [], curZc = [], speechActive = false, silenceMs = 0, segStartT = 0, segPeak = 0;
+let segSlots = 2, segInFlight = 0, segQueue = [], pendingSegs = [];
+const START_RMS = 0.02, SPLIT_SILENCE_MS = 650, MIN_SEG_MS = 350, MAX_SEG_MS = 15000;
+
+function refreshSegLive() {
+  const inFlight = pendingSegs.filter(p => p.state === 'working').length;
+  const queued = pendingSegs.filter(p => p.state === 'queued').length;
+  const tail = pendingSegs.length ? `（${inFlight}句识别中 / ${queued}句排队）` : '';
+  document.getElementById('seg-live').textContent =
+    segRunning ? `录音中… 已切 ${segIndex} 句 ${tail}`
+    : (pendingSegs.length ? `已结束，剩余处理中 ${tail}` : '全部完成');
+}
+
+function pumpSegQueue() {
+  while (segInFlight < segSlots && segQueue.length) {
+    const p = segQueue.shift();
+    segInFlight++;
+    runSeg(p).finally(() => { segInFlight--; pumpSegQueue(); });
+  }
+}
+
+async function startSeg() {
+  const engine = document.getElementById('seg-engine').value;
+  if (engine === 'doubao') {
+    if (!document.getElementById('volc-key').value.trim()) { document.getElementById('seg-err').textContent = '豆包模式要先填上面的火山引擎 API Key'; return; }
+  } else {
+    if (!document.getElementById('sf-key').value.trim()) { document.getElementById('seg-err').textContent = '先填上面的 API Key'; return; }
+  }
+  document.getElementById('seg-err').textContent = '';
+  try {
+    segStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    segCtx = new (window.AudioContext||window.webkitAudioContext)();
+    segRate = segCtx.sampleRate;
+    const src = segCtx.createMediaStreamSource(segStream);
+    segSilence = segCtx.createGain(); segSilence.gain.value = 0;
+    segProc = segCtx.createScriptProcessor(4096, 1, 1);
+    segProc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      let sum = 0, zc = 0;
+      for (let i = 1; i < d.length; i++) { sum += d[i]*d[i]; if ((d[i] >= 0) !== (d[i-1] >= 0)) zc++; }
+      const rms = Math.sqrt(sum/d.length);
+      if (document.getElementById('seg-engine').value === 'doubao') { dbFeed(d, rms); return; }
+      if (!speechActive) {
+        if (rms >= START_RMS) { speechActive = true; silenceMs = 0; segStartT = performance.now(); segPeak = rms; curChunks = [new Float32Array(d)]; curRms = [rms]; curZc = [zc]; }
+      } else {
+        curChunks.push(new Float32Array(d)); curRms.push(rms); curZc.push(zc); segPeak = Math.max(segPeak, rms);
+        const dur = performance.now() - segStartT;
+        if (rms < START_RMS*0.7) silenceMs += (d.length/segRate)*1000; else silenceMs = 0;
+        if (silenceMs >= SPLIT_SILENCE_MS || dur >= MAX_SEG_MS) closeSeg();
+      }
+    };
+    src.connect(segProc); segProc.connect(segSilence); segSilence.connect(segCtx.destination);
+    segRunning = true; segIndex = 0; pendingSegs = []; segQueue = []; segInFlight = 0;
+    document.querySelector('button[onclick="startSeg()"]').disabled = true;
+    document.querySelector('button[onclick="stopSeg()"]').disabled = false;
+    refreshSegLive();
+    const engineName = document.getElementById('seg-engine').value === 'omni' ? 'Qwen3-Omni全模态'
+      : document.getElementById('seg-engine').value === 'doubao' ? '豆包流式2.0（火山）'
+      : ('TeleASR出字×2并发' + (document.getElementById('seg-emo').checked ? ' + SenseVoice补情绪' : ''));
+    if (document.getElementById('seg-engine').value === 'doubao') dbConnect();
+    log('v3 录音开始（' + engineName + '）');
+  } catch (e) { document.getElementById('seg-err').textContent = '启动失败: ' + e.message; }
+}
+
+function closeSeg() {
+  if (!curChunks.length) return;
+  let end = curRms.length;
+  while (end > 0 && curRms[end-1] < START_RMS*0.7) end--;
+  const keepChunks = Math.min(curChunks.length, end + 2);
+  let len = 0; for (let i = 0; i < keepChunks; i++) len += curChunks[i].length;
+  const merged = new Float32Array(len);
+  let o = 0; for (let i = 0; i < keepChunks; i++) { merged.set(curChunks[i], o); o += curChunks[i].length; }
+  const durMs = len / segRate * 1000;
+  let speechFrames = 0, zcSum = 0, zcN = 0;
+  for (let i = 0; i < end; i++) { if (curRms[i] > START_RMS) { speechFrames++; zcSum += curZc[i]; zcN++; } }
+  const feat = { peak: segPeak, zc: zcN ? zcSum/zcN : 0, ratio: end ? speechFrames/end : 0 };
+  const idx = ++segIndex;
+  curChunks = []; curRms = []; curZc = []; speechActive = false; silenceMs = 0; segPeak = 0;
+  if (durMs < MIN_SEG_MS) { log(`第${idx}段太短(${durMs.toFixed(0)}ms)丢弃`); refreshSegLive(); return; }
+  const wav = encodeWav(downsampleTo16k(merged, segRate), 16000);
+  const el = document.createElement('div');
+  el.className = 'result'; el.style.marginTop = '6px';
+  el.innerHTML = `<span style="color:#94a3b8">[第${idx}段 ${(durMs/1000).toFixed(1)}s]</span> <span class="interim">识别中…</span>`;
+  document.getElementById('seg-list').appendChild(el);
+  log(`第${idx}段切出: ${(durMs/1000).toFixed(1)}s ${wav.size}B`);
+  const payload = { idx, durMs, wav, feat, el, state: 'queued' };
+  pendingSegs.push(payload);
+  segQueue.push(payload);
+  refreshSegLive();
+  pumpSegQueue();
+}
+
+function segRender(p, text, emoTag, note) {
+  const cps = text.length ? (text.length/(p.durMs/1000)).toFixed(1) : '-';
+  p.el.innerHTML = `<span style="color:#94a3b8">[第${p.idx}段 ${(p.durMs/1000).toFixed(1)}s ${cps}字/秒 ${note}]</span><div class="final">${emoTag}${text}</div>`;
+}
+
+async function runSeg(p) {
+  p.state = 'working'; refreshSegLive();
+  const engine = document.getElementById('seg-engine').value;
+  try {
+    if (engine === 'omni') {
+      // Qwen3-Omni：音频直接喂多模态模型（硅基流动用 audio_url + data URL 格式）
+      const t0 = performance.now();
+      const b64 = await blobToBase64(p.wav);
+      const hot = document.getElementById('volc-hot').value.split(/[,，、\s]+/).filter(Boolean);
+      const prompt = [
+        '请完成以下任务：',
+        '1. 逐字转写这段语音，输出纯文字（不要标点外的任何标记）。',
+        hot.length ? '2. 人名/专有名词务必准确转写：' + hot.join('、') + '，不要写错字。' : '2. 人名务必准确转写。',
+        '3. 单独一行用括号描述说话人的语气情绪。词库：生气地、愤怒地、委屈地、伤心地、难过地、失落地、撒娇地、愉快地、开心地、兴奋地、平静地、冷淡地、厌烦地、不耐烦地、无奈地、惊讶地、害怕地、紧张地。',
+        '   要求：',
+        '   - 听到语气稍重、语调上扬带攻击性 → 标「生气地」或「愤怒地」，别标「惊讶地」。',
+        '   - 听到语调低沉、声音变小变慢 → 标「伤心地」或「失落地」，别轻易标「平静地」。',
+        '   - 有疑问语气但语气平和 → 标「平静地」；有疑问且语调上扬惊讶 → 标「惊讶地」。',
+        '   - 负面情绪宁可标重一档，不要标轻。不确定时按最可能的情绪标，不要写「不确定」。',
+        '输出格式严格为两行：',
+        '第一行：转写文字',
+        '第二行：（情绪地）',
+      ].join('\n');
+      const res = await fetch('/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + document.getElementById('sf-key').value.trim() },
+        body: JSON.stringify({
+          model: 'Qwen/Qwen3-Omni-30B-A3B-Instruct',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'audio_url', audio_url: { url: 'data:audio/wav;base64,' + b64 } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+        }),
+      });
+      const text = await res.text();
+      const cost = Math.round(performance.now() - t0);
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${text.slice(0,100)}`);
+      const data = JSON.parse(text);
+      const out = (data.choices?.[0]?.message?.content || '(空)').trim();
+      const lines = out.split('\n').filter(l => l.trim());
+      const toneLine = lines.length > 1 ? lines[lines.length-1] : '';
+      const mainText = lines.length > 1 ? lines.slice(0, -1).join('') : lines[0] || '';
+      segRender(p, mainText, toneLine, `${cost}ms Omni`);
+      log(`第${p.idx}段 Omni(${cost}ms): ${out.replace(/\n/g, ' / ')}`);
+    } else {
+      // TeleASR 快出字
+      const t0 = performance.now();
+      const r = await sfStt(p.wav, 'TeleAI/TeleSpeechASR');
+      const cost = Math.round(performance.now() - t0);
+      let text = (r.text || '(空)').trim();
+      segRender(p, text, '', `${cost}ms 文字版`);
+      log(`第${p.idx}段 文字(${cost}ms): ${text}`);
+      // SenseVoice 后台补情绪（可选）
+      if (document.getElementById('seg-emo').checked) {
+        try {
+          const t1 = performance.now();
+          const r2 = await sfStt(p.wav, 'FunAudioLLM/SenseVoiceSmall');
+          const cost2 = Math.round(performance.now() - t1);
+          const { emo, clean } = modelEmotion((r2.text || '').trim());
+          let finalText = clean && clean.length >= 2 ? clean : text;
+          let tag = '';
+          if (emo && EMO_ZH[emo]) {
+            if (emo === 'ANGRY' && p.feat.peak < 0.10) tag = '';
+            else if (emo === 'SAD' && p.feat.peak > 0.20) tag = '';
+            else tag = EMO_ZH[emo];
+          }
+          segRender(p, finalText, tag, `${cost}ms+${cost2}ms 情绪:${emo || '无'}${tag ? '' : (emo ? '(门控拦截)' : '')}`);
+          log(`第${p.idx}段 情绪(${cost2}ms): emo=${emo || '-'} peak=${p.feat.peak.toFixed(2)} → ${tag || '不标'} | 最终: ${tag}${finalText}`);
+        } catch (e) {
+          log(`第${p.idx}段 情绪识别失败: ${e.message}（文字保留）`);
+        }
+      }
+    }
+  } catch (e) {
+    p.el.innerHTML = `<span style="color:#94a3b8">[第${p.idx}段]</span> <span class="err">失败: ${e.message}</span>`;
+    log(`第${p.idx}段失败: ${e.message}`);
+  }
+  p.state = 'done';
+  pendingSegs = pendingSegs.filter(x => x !== p);
+  refreshSegLive();
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.split(',')[1]);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+function stopSeg() {
+  const isDoubao = document.getElementById('seg-engine').value === 'doubao';
+  try { segProc && segProc.disconnect(); segSilence && segSilence.disconnect(); } catch {}
+  if (isDoubao) {
+    dbFinish(); // 音频断流后再发负包，告诉服务端"说完了"
+  } else {
+    if (speechActive) closeSeg();
+  }
+  if (segCtx) { try { segCtx.close(); } catch {} segCtx = null; }
+  if (segStream) { segStream.getTracks().forEach(t => t.stop()); segStream = null; }
+  segRunning = false;
+  document.querySelector('button[onclick="startSeg()"]').disabled = false;
+  document.querySelector('button[onclick="stopSeg()"]').disabled = true;
+  refreshSegLive();
+  log('v3 录音结束');
+}
+
+// ============ 豆包双向流式 2.0（火山引擎 wss://…/sauc/bigmodel_async）============
+// 二进制协议（整数全大端）：4字节头 + [sequence 4B，仅 flags 带 0x01 时] + payload size(4B) + payload
+// 头：byte0=版本|头长(0x11)  byte1=消息类型|flags  byte2=序列化|压缩  byte3=保留
+// 消息类型：0x1 full client request  0x2 audio only request  0x9 服务端响应
+//          0xB 服务端确认帧（只有序列号，忽略）  0xF 服务端错误帧
+// flags：0x01=后跟sequence  0x02=最后一包  0x03=负sequence的最后一包（负包）
+// payload 可 gzip 压缩（byte2 低 4 位=1）；构造与解析对齐生产验证过的开源代理（doubao-asr2-openai-proxy）
+const VOLC_EMO_ZH = { angry:'（生气）', happy:'（开心）', neutral:'（平静）', sad:'（低落）', surprise:'（惊讶）' };
+const dbHasCS = typeof CompressionStream !== 'undefined'; // 老浏览器退化成不压缩
+let dbWs = null, dbAcc = [], dbPreRoll = [], dbSentMs = 0, dbSilentMs = 0, dbMuted = false, dbLastVoiceT = 0, dbDone = false, dbSeq = 1;
+let dbSendChain = Promise.resolve(); // 发送队列：保证 配置包→音频包→负包 顺序，压缩是异步的
+let dbDumpedFrame = false; // 只 dump 第一帧回信的原文，帮助诊断协议
+let dbServerMs = 0;        // 服务端回信里的 audio_info.duration（它实际收到=计费的时长）
+let dbLoggedKeys = new Set(); // 定句去重：服务端每封回信都带全量分句，只记录新出现的
+let dbRecStartMs = 0;      // 本次录音起点（算录音总时长，对比已发送时长=省下的沉默）
+
+function dbUuid() {
+  return (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c === 'x' ? r : (r&0x3|0x8)).toString(16); });
+}
+
+async function dbGzip(u8) {
+  const stream = new Blob([u8]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function dbGunzip(u8) {
+  const stream = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// 通用帧构造：seq 传 null 表示不带 sequence 字段；payload 为压缩后的最终字节
+function dbFrame(msgType, flags, serialization, compression, seq, payload) {
+  const body = payload || new Uint8Array(0);
+  const buf = new Uint8Array(4 + (seq !== null ? 4 : 0) + 4 + body.length);
+  buf.set(new Uint8Array([0x11, (msgType << 4) | flags, (serialization << 4) | compression, 0x00]), 0);
+  const dv = new DataView(buf.buffer);
+  let off = 4;
+  if (seq !== null) { dv.setInt32(off, seq); off += 4; } // 大端
+  dv.setUint32(off, body.length);
+  buf.set(body, off + 4);
+  return buf;
+}
+
+function float32ToPcm16LE(float32) {
+  const pcm = new Uint8Array(float32.length * 2);
+  const pdv = new DataView(pcm.buffer);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    pdv.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true); // s16le 小端
+  }
+  return pcm;
+}
+
+// 入队发送：配置包 / 音频包 / 负包都走这里，保证顺序
+function dbEnqueueSend(fn) {
+  dbSendChain = dbSendChain.then(fn).catch(e => log('豆包发送失败: ' + e.message));
+}
+
+async function dbSendFullRequest(payload) {
+  const json = new TextEncoder().encode(JSON.stringify(payload));
+  const body = dbHasCS ? await dbGzip(json) : json;
+  dbWs.send(dbFrame(0x01, 0x01, 0x01, dbHasCS ? 0x01 : 0x00, 1, body));
+}
+
+async function dbSendAudio(float32, isLast) {
+  if (!dbWs || dbWs.readyState !== 1) return;
+  const seq = ++dbSeq;
+  const flags = isLast ? 0x03 : 0x01;
+  let body = null;
+  if (float32.length) {
+    const pcm = float32ToPcm16LE(float32);
+    body = dbHasCS ? await dbGzip(pcm) : pcm;
+  } else if (isLast) {
+    body = dbHasCS ? await dbGzip(new Uint8Array(0)) : new Uint8Array(0); // 负包：空负载也要发，服务端靠它收尾
+  }
+  dbWs.send(dbFrame(0x02, flags, 0x00, body ? (dbHasCS ? 0x01 : 0x00) : 0x00, isLast ? -seq : seq, body));
+  if (!isLast) { dbSentMs += float32.length / 16; refreshDbLive(); } // 16000 samples/s → 时长ms = n/16
+}
+
+async function dbConnect() {
+  const key = document.getElementById('volc-key').value.trim();
+  const reqId = dbUuid();
+  dbWs = null; dbAcc = []; dbPreRoll = []; dbSentMs = 0; dbSilentMs = 0; dbMuted = false; dbDone = false; dbSeq = 1;
+  dbSendChain = Promise.resolve(); dbDumpedFrame = false; dbServerMs = 0; dbLoggedKeys = new Set(); dbRecStartMs = performance.now();
+  document.getElementById('seg-list').innerHTML = '';
+  document.getElementById('seg-live').textContent = '正在体检 Key…';
+  // 体检：让 vite 替咱们向火山做一次真实握手，把拒绝理由拿到明面上
+  // （浏览器的 WS onerror 不带任何细节，只能靠服务端探路）
+  let verdict = null;
+  try {
+    const r = await fetch(`/api/volc-check?key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`);
+    verdict = await r.json();
+  } catch (e) {
+    log('体检请求都没发出去（' + e.message + '）——电脑上的服务可能停了');
+  }
+  if (verdict && !verdict.ok) {
+    const msg = `火山拒绝握手：HTTP ${verdict.status} ${verdict.body || ''}`;
+    document.getElementById('seg-err').textContent = msg;
+    log('豆包 Key 体检失败 → ' + msg + '。多半是 Key 无效/填错，或没在火山开通「豆包流式语音识别2.0」服务');
+    document.getElementById('seg-live').textContent = '未连接';
+    return;
+  }
+  if (verdict && verdict.ok) log('Key 体检通过，火山放行，正在建立语音通道…');
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/api/volc-ws?key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    const hot = document.getElementById('volc-hot').value.split(/[,，、\s]+/).filter(Boolean);
+    dbEnqueueSend(() => dbSendFullRequest({
+      audio: { format: 'pcm', codec: 'raw', rate: 16000, bits: 16, channel: 1 },
+      request: {
+        model_name: 'bigmodel',
+        enable_itn: true, enable_punc: true, enable_ddc: false,
+        enable_nonstream: true,          // 二遍识别：实时上屏 + definite 最终句（更准）
+        enable_emotion_detection: true,  // 情绪：angry/happy/neutral/sad/surprise
+        show_utterances: true, show_speech_rate: true, show_volume: true,
+        result_type: 'full', end_window_size: 800, force_to_speech_time: 1000,
+        ...(hot.length ? { corpus: { context: JSON.stringify({ hotwords: hot.map(w => ({ word: w })) }) } } : {}),
+      },
+    }));
+    log(`豆包已连接（协议v2：gzip压缩+队列${dbHasCS ? '' : '，浏览器太老不支持压缩，发裸包'}，热词：${hot.join('/') || '无'}）。开始说话才发包计费`);
+    dbWs = ws;
+    refreshDbLive();
+  };
+  ws.onmessage = (e) => { dbOnMessage(e.data); };
+  ws.onerror = () => { log('豆包连接出错（若上面体检已通过，则多半是这台手机的浏览器拦了 WSS 握手）'); };
+  ws.onclose = (e) => {
+    document.getElementById('seg-live').textContent = `连接已关闭 · 已发送 ${(dbSentMs/1000).toFixed(1)}s${dbServerMs ? ' · 火山收到 ' + (dbServerMs/1000).toFixed(1) + 's' : ''} ≈ ${(dbSentMs/3600000).toFixed(4)}元`;
+    // 收到负包后服务端干完活会以 code=1000 reason="finish last sequence" 收尾——这是正常流程
+    const normalFinish = dbDone || (e.code === 1000 && /finish/i.test(e.reason || ''));
+    if (!normalFinish) log(`豆包连接被服务端/网络关闭（code=${e.code}${e.reason ? ' reason=' + e.reason : ''}，非正常收尾）。` + billSummary('截止关闭时'));
+    else if (!dbDone) log(billSummary(`豆包已收尾（${e.reason || '服务端正常关闭'}）`));
+    dbWs = null;
+  };
+}
+
+async function dbOnMessage(buf) {
+  try {
+    const dv = new DataView(buf);
+    const headerSize = dv.getUint8(0) & 0x0f;
+    const msgType = dv.getUint8(1) >> 4;
+    const flags = dv.getUint8(1) & 0x0f;
+    const serialization = dv.getUint8(2) >> 4;
+    const compression = dv.getUint8(2) & 0x0f;
+    let off = headerSize * 4;
+    if (flags & 0x01) off += 4; // 跳过 sequence
+
+    if (msgType === 0x0b) return; // 服务端确认帧（ack）：只有序列号没有内容，正常现象
+
+    if (msgType === 0x0f) { // 错误帧：errorCode(4B) + size(4B) + payload
+      const errorCode = dv.getInt32(off); off += 4;
+      const esize = dv.getUint32(off); off += 4;
+      let detail = '';
+      try {
+        let p = new Uint8Array(buf, off, esize);
+        if (compression === 1 && dbHasCS) p = await dbGunzip(p);
+        detail = new TextDecoder().decode(p);
+      } catch {}
+      const msg = `豆包错误帧 errorCode=${errorCode}: ${detail.slice(0, 200)}`;
+      document.getElementById('seg-err').textContent = msg;
+      log(msg);
+      return;
+    }
+    if (msgType !== 0x09) return;             // 其他未知类型：忽略
+    if (off + 4 > buf.byteLength) return;     // 没有负载的帧（如纯 ack）
+
+    const size = dv.getUint32(off); off += 4;
+    let payloadBytes = new Uint8Array(buf, off, size);
+    if (compression === 1) {
+      if (!dbHasCS) { log('回信是gzip压缩的，但这浏览器解不了（换个新点的浏览器）'); return; }
+      payloadBytes = await dbGunzip(payloadBytes);
+    }
+    const text = new TextDecoder().decode(payloadBytes);
+    if (!dbDumpedFrame) { // 第一帧原文 dump 出来，协议结构一眼见分晓
+      dbDumpedFrame = true;
+      log('首帧回信 type=0x' + msgType.toString(16) + ' zip=' + compression + ' : ' + text.slice(0, 220));
+    }
+    let json;
+    try { json = JSON.parse(text); }
+    catch (e) { log('豆包回信不是JSON: ' + text.slice(0, 120)); return; }
+
+    // 关键宽容点：回信里 code 字段可能不存在（确认/中间帧）——只有明确非 0 才算错误
+    const code = json.code != null ? json.code : (json.payload_msg && json.payload_msg.code);
+    if (code != null && code !== 0) {
+      const msg = `豆包错误 code=${code} ${json.message || (json.payload_msg && json.payload_msg.message) || ''}`;
+      document.getElementById('seg-err').textContent = msg;
+      log(msg);
+      return;
+    }
+
+    // result 结构多兼容：json.result / json.payload_msg.result，list / object 都接
+    let result = (json.payload_msg && json.payload_msg.result != null) ? json.payload_msg.result : json.result;
+    if (Array.isArray(result)) result = result[0];
+    // 服务端计费对账：audio_info.duration = 火山实际收到并处理的音频毫秒数
+    const ai = json.audio_info || (json.payload_msg && json.payload_msg.audio_info);
+    if (ai && ai.duration && ai.duration > dbServerMs) { dbServerMs = ai.duration; refreshDbLive(); }
+    if (result && Array.isArray(result.utterances) && result.utterances.length) {
+      dbRender(result.utterances);
+    } else if (result && typeof result.text === 'string' && result.text) {
+      dbRender([{ text: result.text, definite: true, additions: '' }]);
+    }
+
+    const lastFlag = !!(flags & 0x02) || json.is_last_package === true || (json.payload_msg && json.payload_msg.is_last_package === true);
+    if (lastFlag && !dbDone) {
+      dbDone = true;
+      log(billSummary('豆包识别完成'));
+      refreshDbLive();
+      try { dbWs && dbWs.close(); } catch {}
+    }
+  } catch (e) {
+    log('豆包回信处理异常: ' + e.message);
+  }
+}
+
+function dbRender(utts) {
+  const list = document.getElementById('seg-list');
+  list.innerHTML = utts.map(u => {
+    // additions 兼容三种形态：JSON字符串 / 现成对象 / 没有
+    let add = {};
+    if (typeof u.additions === 'string') { try { add = JSON.parse(u.additions) || {}; } catch {} }
+    else if (u.additions && typeof u.additions === 'object') add = u.additions;
+    const emo = add.emotion || '';
+    const t0 = (u.start_time != null ? u.start_time : 0) / 1000, t1 = (u.end_time != null ? u.end_time : 0) / 1000;
+    if (u.definite) {
+      // 去重：服务端每封回信都重发全量分句，同一句只记录一次
+      const key = u.start_time + '|' + u.end_time + '|' + u.text;
+      if (!dbLoggedKeys.has(key)) {
+        dbLoggedKeys.add(key);
+        const delay = dbLastVoiceT ? Math.round(performance.now() - dbLastVoiceT) : null;
+        log(`豆包定句: ${VOLC_EMO_ZH[emo] || ''}${u.text} | emo=${emo || '无'}${add.speech_rate ? ' 语速=' + add.speech_rate + 'tok/s' : ''}${add.volume != null ? ' 音量=' + add.volume + 'dB' : ''} 尾字延迟≈${delay != null ? delay + 'ms' : '未知'}`);
+        dbLastVoiceT = 0;
+      }
+      return `<div class="result" style="margin-top:6px"><span style="color:#94a3b8">[${t0.toFixed(1)}s→${t1.toFixed(1)}s 定]</span><div class="final">${VOLC_EMO_ZH[emo] || ''}${u.text}</div></div>`;
+    }
+    return `<div class="result" style="margin-top:6px"><span style="color:#94a3b8">[${t0.toFixed(1)}s→ 进行]</span><div class="interim">${u.text}</div></div>`;
+  }).join('');
+  refreshDbLive();
+}
+
+function refreshDbLive() {
+  const sent = `已发送 ${(dbSentMs/1000).toFixed(1)}s ≈ ${(dbSentMs/3600000).toFixed(4)}元`;
+  const srv = dbServerMs ? ` · 火山收到 ${(dbServerMs/1000).toFixed(1)}s` : '';
+  document.getElementById('seg-live').textContent =
+    dbDone ? `完成 · ${sent}${srv}`
+    : (dbWs ? (dbMuted ? `静音中·停发（不扣费） · ${sent}${srv}` : `识别中… ${sent}${srv}`) : sent + srv);
+}
+
+// 计费对账文案：录音总时长 vs 本地发送量 vs 火山自己上报的接收量（audio_info.duration）
+function billSummary(prefix) {
+  const sentS = (dbSentMs/1000).toFixed(1);
+  const yuan = (dbSentMs/3600000).toFixed(4);
+  const recS = dbRecStartMs ? ((performance.now() - dbRecStartMs)/1000).toFixed(1) : null;
+  const recPart = recS ? `录音 ${recS}s，` : '';
+  if (!dbServerMs) return `${prefix}：${recPart}本地发送 ${sentS}s ≈ ${yuan}元（火山没报时长，以本地发送量为准）`;
+  const srvS = (dbServerMs/1000).toFixed(1);
+  const diff = Math.abs(dbSentMs - dbServerMs);
+  const verdict = diff <= 1500 ? '✔ 两边对得上，只按实际发送的音频计费，沉默没扣钱'
+    : `⚠ 差了 ${(diff/1000).toFixed(1)}s（火山收到 ${srvS}s vs 本地发送 ${sentS}s），建议去控制台核对用量`;
+  return `${prefix}：${recPart}本地发送 ${sentS}s，火山收到 ${srvS}s ≈ ${yuan}元。${verdict}`;
+}
+
+// 喂音频帧（Float32@segRate）+ 本帧 RMS。
+// 计费护栏：说话照发；短静音(≤1.5s)照发（服务端 VAD 需要 800ms 静音才判停切句）；
+// 连续静音 >1.5s 停发且丢弃累积（沉默=不发=不扣费），恢复说话先补发 0.5s 前置音频防丢句首。
+function dbFeed(frame, rms) {
+  if (!dbWs || dbWs.readyState !== 1) return;
+  const d16 = segRate === 16000 ? new Float32Array(frame) : downsampleTo16k(frame, segRate);
+  dbPreRoll.push(d16); // 前置环形缓存：保留最近 ~0.5s（8000 samples @16k）
+  let preN = 0; for (const c of dbPreRoll) preN += c.length;
+  while (preN > 8000 && dbPreRoll.length) preN -= dbPreRoll.shift().length;
+
+  if (rms >= START_RMS) {
+    dbLastVoiceT = performance.now();
+    if (dbMuted) { dbAcc = dbPreRoll.slice(); dbMuted = false; dbSilentMs = 0; log('检测到说话，恢复发包（已补前置0.5s）'); }
+  } else if (!dbMuted) {
+    dbSilentMs += frame.length / segRate * 1000;
+    if (dbSilentMs > 1500) { dbMuted = true; dbAcc = []; log('连续静音1.5s，停发（不扣费）'); }
+  }
+  if (!dbMuted) dbAcc.push(d16); // 静音停发期间绝不累积，防恢复时把沉默音频一次性发出去
+  let n = 0; for (const c of dbAcc) n += c.length;
+  if (!dbMuted && n >= 3200) { // 凑满 200ms（3200 samples @16k）发一包
+    const out = new Float32Array(n);
+    let o = 0; for (const c of dbAcc) { out.set(c, o); o += c.length; }
+    dbAcc = [];
+    dbEnqueueSend(() => dbSendAudio(out, false));
+  }
+}
+
+function dbFinish() {
+  if (dbWs && dbWs.readyState === 1) {
+    // 没凑满一包的余量塞进负包里一起发，不丢尾音
+    let n = 0; for (const c of dbAcc) n += c.length;
+    let leftover = new Float32Array(0);
+    if (n) {
+      leftover = new Float32Array(n);
+      let o = 0; for (const c of dbAcc) { leftover.set(c, o); o += c.length; }
+      dbAcc = [];
+    }
+    dbEnqueueSend(() => dbSendAudio(leftover, true)); // 负包：说完了
+    setTimeout(() => { try { dbWs && dbWs.close(); } catch {} }, 5000); // 兜底：5秒后仍没等到收尾就强制关
+  }
+}
+</script>
+</body>
+</html>

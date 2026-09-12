@@ -3570,11 +3570,14 @@ const MessageItem = React.memo(({
         ?? ''
     ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    // 用户语音消息（语音识别直发 + 原声）：按 AI 语音条同款 sully-voice 类名渲染，
+    // 用户自定义 CSS 的语音条美化自动匹配；文本藏进「转文字」展开区。
+    const isUserVoiceMsg = isUser && m.type === 'text' && !!voiceData?.url && !!(m.metadata as any)?.stt;
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
     // Voice-only messages (no display text, only voice bar): skip bubble styling
-    const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
+    const isVoiceOnlyMsg = isUserVoiceMsg || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
 
     // 外语语音消息：语音条展开区（转文字）本身就完整呈现「口播原文 + 中文翻译」两行，
     // 顶部气泡再渲染一遍 displayContent 就成了重复——翻译模式下顶部是中文、语音条翻译行
@@ -3623,8 +3626,9 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
-            {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文 */}
-            {displayContent && !isForeignVoiceMsg && (
+            {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文；
+                用户语音消息同样把文字收进语音条「转文字」，顶部不重复 */}
+            {displayContent && !isForeignVoiceMsg && !isUserVoiceMsg && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
                 {showExpandedTranslation && (
@@ -3663,7 +3667,7 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 6: Voice Bar */}
-            {(voiceData?.url || voiceLoading || hasVoiceTag) && !isUser && m.type === 'text' && (() => {
+            {(voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMsg) && m.type === 'text' && (() => {
                 const vbBg = styleConfig.voiceBarBg;
                 const vbActiveBg = styleConfig.voiceBarActiveBg;
                 const vbBtn = styleConfig.voiceBarBtnColor;
@@ -3671,7 +3675,8 @@ const MessageItem = React.memo(({
                 const vbText = styleConfig.voiceBarTextColor;
                 // Voice-only mode: no visible text, voice bar is primary content.
                 // 外语语音消息顶部正文已隐藏（交给语音条渲染），同样按纯语音处理，去掉多余上间距。
-                const isVoiceOnly = !!voiceData?.url && (!displayContent || isForeignVoiceMsg);
+                // 用户语音消息同理：语音条就是消息本体，文字在「转文字」里。
+                const isVoiceOnly = isUserVoiceMsg || (!!voiceData?.url && (!displayContent || isForeignVoiceMsg));
                 return (
                 <div className={`sully-voice-bar-shell relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
                     {voiceData?.url ? (

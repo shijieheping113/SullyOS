@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { execSync } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
+import https from 'node:https';
+import crypto from 'node:crypto';
 import { bakeVoiceMiddleware } from './server/bake-voice-middleware';
 
 // 构建时抓 git 分支 + short commit + UTC+8 构建时间，注入到版本信息显示。
@@ -70,6 +73,58 @@ export default defineConfig({
         server.middlewares.use('/api/minimax/bake-voice', bakeVoiceMiddleware);
       },
     },
+    {
+      // 豆包 Key 体检：替浏览器向火山做一次真实的 WS 升级握手，
+      // 把火山的原话（401 Invalid X-Api-Key / 403 未开通服务等）带回给测试页。
+      // 浏览器的 WebSocket onerror 不带任何细节，这个接口用来把失败原因拿到明面上。
+      name: 'volc-ws-check',
+      configureServer(server) {
+        server.middlewares.use('/api/volc-check', (req, res) => {
+          const u = new URL(req.url || '/', 'http://localhost');
+          const key = u.searchParams.get('key') || '';
+          const reqId = u.searchParams.get('request_id') || crypto.randomUUID();
+          const finish = (data: { ok: boolean; status?: number; body?: string }) => {
+            console.log(`[volc-check] 探测结果: ok=${data.ok} status=${data.status ?? '-'}`);
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify(data));
+          };
+          const probe = https.request(
+            {
+              host: 'openspeech.bytedance.com',
+              path: '/api/v3/sauc/bigmodel_async',
+              method: 'GET',
+              headers: {
+                Connection: 'Upgrade',
+                Upgrade: 'websocket',
+                'Sec-WebSocket-Key': crypto.randomBytes(16).toString('base64'),
+                'Sec-WebSocket-Version': '13',
+                'X-Api-Key': key,
+                'X-Api-Resource-Id': 'volc.seedasr.sauc.duration',
+                'X-Api-Request-Id': reqId,
+                'X-Api-Sequence': '-1',
+              },
+              timeout: 8000,
+            },
+            (up) => {
+              // 非 101：握手被拒，读出火山的拒绝理由
+              let body = '';
+              up.on('data', (c) => (body += c));
+              up.on('end', () => finish({ ok: false, status: up.statusCode, body: body.slice(0, 300) }));
+            },
+          );
+          probe.on('upgrade', () => {
+            probe.destroy(); // Key 有效，火山放行握手 → 立刻断开（0 秒音频不计费）
+            finish({ ok: true });
+          });
+          probe.on('timeout', () => {
+            probe.destroy();
+            finish({ ok: false, status: 0, body: '探测超时（8秒，网络不通或被墙）' });
+          });
+          probe.on('error', (e) => finish({ ok: false, status: 0, body: '网络错误: ' + e.message }));
+          probe.end();
+        });
+      },
+    },
   ],
   define: {
     __BUILD_BRANCH__: JSON.stringify(gitInfo.branch),
@@ -84,7 +139,49 @@ export default defineConfig({
     drop: ['debugger'],
   },
   server: {
+    // 本地开发 HTTPS（自签证书在 .dev-certs/，给手机访问用——浏览器要求 HTTPS 才放开麦克风/语音识别）
+    ...(existsSync('.dev-certs/key.pem') && existsSync('.dev-certs/cert.pem')
+      ? { https: { key: readFileSync('.dev-certs/key.pem'), cert: readFileSync('.dev-certs/cert.pem') } }
+      : {}),
     proxy: {
+      // 二改：硅基流动语音识别（免费 SenseVoice）本地转发，绕开浏览器跨域
+      '/api/sf-stt': {
+        target: 'https://api.siliconflow.cn',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/api\/sf-stt/, '/v1/audio'),
+      },
+      // 二改：硅基流动聊天接口（Qwen3-Omni 多模态语音测试）
+      // 注意：主项目聊天请求都是「用户填的完整中转站 URL + /chat/completions」（绝对地址），
+      // 不会命中这个相对路径代理，已核实无劫持风险。
+      '/v1/chat/completions': {
+        target: 'https://api.siliconflow.cn',
+        changeOrigin: true,
+        secure: true,
+      },
+      // 二改：豆包（火山引擎）双向流式语音识别 2.0 的 WebSocket 本地转发。
+      // 浏览器 WebSocket 无法自定义 Header，而火山要求 X-Api-* 鉴权头 →
+      // Key 由测试页经 query 传入（路径仅本机 vite → 火山，中间无第三方），
+      // 在 proxyReqWs 里注入 Header、并把 query 从目标 URL 剥掉（Key 不出本机）。
+      '/api/volc-ws': {
+        target: 'https://openspeech.bytedance.com',
+        ws: true,
+        changeOrigin: true,
+        secure: true,
+        configure(proxy: any) {
+          proxy.on('proxyReqWs', (proxyReq: any, req: any) => {
+            const u = new URL(req.url, 'http://localhost');
+            const key = u.searchParams.get('key') || '';
+            const reqId = u.searchParams.get('request_id') || '';
+            if (key) proxyReq.setHeader('X-Api-Key', key);
+            proxyReq.setHeader('X-Api-Resource-Id', 'volc.seedasr.sauc.duration');
+            if (reqId) proxyReq.setHeader('X-Api-Request-Id', reqId);
+            proxyReq.setHeader('X-Api-Sequence', '-1');
+            // 目标路径重写：剥掉 query（含 Key），指向火山的真实接口
+            proxyReq.path = '/api/v3/sauc/bigmodel_async';
+          });
+        },
+      },
       '/api/minimax/t2a': {
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
