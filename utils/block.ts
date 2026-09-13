@@ -16,6 +16,15 @@ import { DB } from './db';
 export const BLOCK_SOURCE = 'block-status';
 export const BLOCK_FRIEND_REQUEST_SOURCE = 'friend-request';
 export const BLOCK_PEEK_SOURCE = 'peek-request';
+export const SYSTEM_LOG_LEAD = '[系统日志，不是对方发言]';
+
+export const isBlockSystemSource = (source?: string): boolean => (
+    source === BLOCK_SOURCE
+    || source === BLOCK_FRIEND_REQUEST_SOURCE
+    || source === BLOCK_PEEK_SOURCE
+    || source === 'incoming-call'
+    || source === 'block-call-hangup'
+);
 
 export interface BlockState {
     blocked: boolean;
@@ -42,9 +51,9 @@ export const getBlockStateFromMessages = (messages: BlockMessageLike[]): BlockSt
         if (meta.source !== BLOCK_SOURCE) continue;
         sawBlockRecord = true;
         if (meta.blockStatus === '已拉黑') {
+            if (!blocked) since = Number(messages[i].timestamp || 0);
             blocked = true;
             blockCallsToo = !!meta.blockCallsToo;
-            since = Number(messages[i].timestamp || 0);
             count += 1;
         } else if (meta.blockStatus === '已解除') {
             blocked = false;
@@ -82,26 +91,6 @@ export const getBlockStateForChar = async (charId: string): Promise<BlockState> 
         console.warn('[Block] 读取拉黑状态失败，按未拉黑处理:', e);
         return { ...EMPTY_STATE };
     }
-};
-
-/** 拉黑挽回卡低频限制：已有待处理申请不重复发，求看看也要留出冷静时间。 */
-export const canCreateBlockAction = async (charId: string, action: 'peek' | 'friend-request'): Promise<boolean> => {
-    const messages = await DB.getRecentMessagesByCharId(charId, 80, true);
-    const cards = messages.filter(message => {
-        const source = message.metadata?.source;
-        return source === BLOCK_PEEK_SOURCE || source === BLOCK_FRIEND_REQUEST_SOURCE;
-    });
-    if (action === 'friend-request') {
-        const pending = cards.some(message => message.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE
-            && (!message.metadata?.requestStatus || message.metadata.requestStatus === 'pending'));
-        if (pending) return false;
-        const latest = cards.filter(message => message.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE).pop();
-        if (latest && Date.now() - Number(latest.timestamp || 0) < 24 * 60 * 60 * 1000) return false;
-    } else {
-        const latest = cards.filter(message => message.metadata?.source === BLOCK_PEEK_SOURCE).pop();
-        if (latest && Date.now() - Number(latest.timestamp || 0) < 6 * 60 * 60 * 1000) return false;
-    }
-    return true;
 };
 
 /** 按历史 BLOCK 时间段恢复被误清掉的「未送达」标记。只恢复拉黑期间的角色消息，不碰解除后的消息。 */
@@ -146,11 +135,12 @@ export const formatBlockRecord = (opts: { at: number; status: '已拉黑' | '已
     return `[[记录:BLOCK|${parts.join('|')}]]`;
 };
 
-/** 落一条拉黑状态记录（拉黑/解除都走这里）。 */
+/** 落一条拉黑状态记录（拉黑/解除/事后补选电话都走这里）。 */
 export const saveBlockRecord = async (
     charId: string,
     status: '已拉黑' | '已解除',
     blockCallsToo?: boolean,
+    extra?: { patchedCalls?: boolean; relaxedCalls?: boolean },
 ): Promise<number> => {
     return DB.saveMessage({
         charId,
@@ -161,8 +151,19 @@ export const saveBlockRecord = async (
             source: BLOCK_SOURCE,
             blockStatus: status,
             blockCallsToo: !!blockCallsToo,
+            blockCallsPatched: !!extra?.patchedCalls,
+            blockCallsRelaxed: !!extra?.relaxedCalls,
         },
     });
+};
+
+/** 聊天里给人看的句子。方括号记录仍写在 content 里给代码用，界面不照抄。 */
+export const blockRecordDisplayText = (meta?: Message['metadata']): string => {
+    if (!meta || meta.blockStatus === '已解除') return '你重新接收 ta 的消息了';
+    if (meta.blockCallsRelaxed) return '你重新接收电话了';
+    if (meta.blockCallsPatched) return '你把电话也拒了';
+    if (meta.blockCallsToo) return '你拒收了 ta 的消息和电话';
+    return '你拒收了 ta 的消息';
 };
 
 /** 拒收记录（拼上下文时挂在角色被拒收的消息前，不落库）。 */
@@ -184,15 +185,29 @@ export const formatBlockFriendRequestRecord = (message: Pick<Message, 'timestamp
     return `[[记录:FRIEND_REQUEST|${parts.join('|')}]]`;
 };
 
-/** 求看看卡 → 上下文记录（用户点过「看看」就是已看，角色知道自己被看到了）。 */
+export type PeekOutcome = 'pending' | 'discard' | 'secret' | 'reveal';
+
+/** 角色看到的求看看结果：偷偷看 50% 当成已看，50% 当成扔掉。 */
+export const peekRecordStatus = (meta?: Message['metadata']): '已看' | '扔掉' | '未看' => {
+    const outcome = String(meta?.peekOutcome || '');
+    if (outcome === 'reveal') return '已看';
+    if (outcome === 'discard') return '扔掉';
+    if (outcome === 'secret') return meta?.peekCharacterKnows ? '已看' : '扔掉';
+    if (meta?.peekViewed) return '已看';
+    return '未看';
+};
+
+export const rollSecretPeekKnows = (): boolean => Math.random() < 0.5;
+
+/** 求看看卡 → 上下文记录。偷偷看的概率结果写在 metadata.peekCharacterKnows，刷新不重掷。 */
 export const formatBlockPeekRecord = (message: Pick<Message, 'timestamp' | 'metadata'>): string => {
     const meta = message.metadata || {};
     const d = new Date(Number(message.timestamp || Date.now()));
     const at = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-    const status = meta.peekViewed ? '已看' : '未看';
+    const status = peekRecordStatus(meta);
     const line = sanitizeBlockActionLine(String(meta.peekText || ''));
     const parts = [`at=${at}`, `status=${status}`];
-    if (line) parts.push(`line=${line}`);
+    if (line && status === '已看') parts.push(`line=${line}`);
     return `[[记录:PEEK|${parts.join('|')}]]`;
 };
 
@@ -234,18 +249,41 @@ export const extractBlockFriendRequestAction = (content: string): { text: string
 
 // ─── 注入文本（拼进 volatileTail，不落库；模型以它为当前状态准绳） ───
 
-export const buildBlockStatusBlock = (state: BlockState, traced: boolean, userName: string): string => {
+export interface BlockPromptOpts {
+    canCall?: boolean;
+    canVoice?: boolean;
+}
+
+export const buildBlockStatusBlock = (
+    state: BlockState,
+    traced: boolean,
+    userName: string,
+    opts?: BlockPromptOpts,
+): string => {
     if (state.blocked) {
         let sinceStr = '';
         if (state.since > 0) {
             const d = new Date(state.since);
-            sinceStr = `，自${d.getMonth() + 1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(d.getMinutes())}起`;
+            sinceStr = `${d.getMonth() + 1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(d.getMinutes())} 起，`;
         }
-        const phone = state.blockCallsToo ? '，连电话也打不通' : '（电话还通着）';
-        return `\n\n[拉黑状态] ${userName}暂时不想接收你的普通消息${sinceStr}${phone}。你发出的文字不会到达${userName}那里，但你仍然可以像真人一样表达委屈、道歉、想念、试探，或者先安静一会儿。不要假装对方已经看见，也不要把系统提示当成对方说的话。挽回方式要克制：先用普通消息好好说话，只有真的合适时才单独发 [[ACTION:PEEK|15字内短句]] 或 [[ACTION:FRIEND_REQUEST|15字内附言]]；已有待处理卡片、刚被忽略或刚发过同类卡片时，不要重复递卡。卡片不是每轮必做的事。`;
+        const canCall = !!opts?.canCall && !state.blockCallsToo;
+        const reach: string[] = [
+            '- 求看看卡：单独一行 `[[ACTION:PEEK|短句]]`',
+            '- 好友申请：单独一行 `[[ACTION:FRIEND_REQUEST|附言]]`',
+        ];
+        if (canCall) {
+            reach.push('- 打电话：单独一行 `[[ACTION:CALL]]` 或 `[[ACTION:CALL|附言]]`。对方手机真的会响，接了才算通话');
+        } else {
+            reach.push('- 电话现在打不通。那是没打出去，不是已经在通话里');
+        }
+        return `\n\n${SYSTEM_LOG_LEAD} 你被${userName}拒收了。${sinceStr}
+【对方看不见】你发的每一句普通文字${opts?.canVoice ? '和语音' : ''}，对方一条都看不到。发再多也等于没发出去。不要再把聊天当沟通，也不要以为对方正在读你的气泡。
+【对方能看见的只有这些】
+${reach.join('\n')}
+普通字可以打，但那只是你对着屏幕自言自语。想让对方看见，必须用上面的卡或电话。想靠近就换办法，不要句句复读对不起。记录里能看到求看看看没看、申请过了没过、电话打没打通。`;
     }
     if (traced) {
-        return `\n\n[拉黑状态] ${userName}当前没有拉黑你，你们正常聊天。历史里的拉黑/拒收记录是已经过去的事，以当前状态为准。`;
+        return `\n\n${SYSTEM_LOG_LEAD} ${userName}现在收得到你的消息。以前拒收过的还在记录里，那是过去的事。`;
     }
     return '';
 };

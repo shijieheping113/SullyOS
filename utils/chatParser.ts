@@ -19,7 +19,6 @@ import {
     BLOCK_PEEK_SOURCE,
     extractBlockFriendRequestAction,
     extractBlockPeekAction,
-    canCreateBlockAction,
 } from './block';
 
 export interface MusicActionSnapshot {
@@ -243,10 +242,10 @@ export const ChatParser = {
                         charId,
                         role: 'system',
                         type: 'system',
-                        content: `${charName}想打电话过来，但现在打不通`,
+                        content: '打不通',
                         metadata: {
                             source: 'incoming-call',
-                            callOutcome: 'rejected',
+                            callOutcome: 'blocked',
                             callBlocked: true,
                             callLine: callExtract.line,
                             calledAt: Date.now(),
@@ -279,22 +278,18 @@ export const ChatParser = {
         if (peekExtract.consumed) {
             content = peekExtract.text;
             try {
-                if (!(await canCreateBlockAction(charId, 'peek'))) {
-                    addToast('这次先好好说话，别急着再递卡片', 'info');
-                } else {
-                    await persist({
-                        charId,
-                        role: 'system',
-                        type: 'system',
-                        content: peekExtract.line ? `[求看看] ${peekExtract.line}` : '[求看看]',
-                        metadata: {
-                            source: BLOCK_PEEK_SOURCE,
-                            peekText: peekExtract.line,
-                            peekViewed: false,
-                            askedAt: Date.now(),
-                        },
-                    });
-                }
+                await persist({
+                    charId,
+                    role: 'system',
+                    type: 'system',
+                    content: peekExtract.line ? `[求看看] ${peekExtract.line}` : '[求看看]',
+                    metadata: {
+                        source: BLOCK_PEEK_SOURCE,
+                        peekText: peekExtract.line,
+                        peekViewed: false,
+                        askedAt: Date.now(),
+                    },
+                });
             } catch (e) {
                 console.warn('[Block] 落求看看卡失败，已剥标签:', e);
             }
@@ -306,22 +301,18 @@ export const ChatParser = {
         if (frExtract.consumed) {
             content = frExtract.text;
             try {
-                if (!(await canCreateBlockAction(charId, 'friend-request'))) {
-                    addToast('这次先好好说话，别急着再递申请', 'info');
-                } else {
-                    await persist({
-                        charId,
-                        role: 'system',
-                        type: 'system',
-                        content: frExtract.line ? `[好友申请] ${frExtract.line}` : '[好友申请]',
-                        metadata: {
-                            source: BLOCK_FRIEND_REQUEST_SOURCE,
-                            requestText: frExtract.line,
-                            requestStatus: 'pending',
-                            askedAt: Date.now(),
-                        },
-                    });
-                }
+                await persist({
+                    charId,
+                    role: 'system',
+                    type: 'system',
+                    content: frExtract.line ? `[好友申请] ${frExtract.line}` : '[好友申请]',
+                    metadata: {
+                        source: BLOCK_FRIEND_REQUEST_SOURCE,
+                        requestText: frExtract.line,
+                        requestStatus: 'pending',
+                        askedAt: Date.now(),
+                    },
+                });
             } catch (e) {
                 console.warn('[Block] 落好友申请卡失败，已剥标签:', e);
             }

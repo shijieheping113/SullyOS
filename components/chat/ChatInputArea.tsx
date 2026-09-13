@@ -856,14 +856,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <GearSix className="w-6 h-6" weight="bold" /></div>)}
                                 <span className="text-xs font-bold">设置</span>
                             </button>
-
-                            {/* 拉黑入口和设置放在一起，保持第一页原来的横排网格 */}
-                            <button onClick={() => onPanelAction('block-toggle')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-500 border-rose-100'}`}>
-                                    {blockActive ? <LockOpen className="w-6 h-6" weight="bold" /> : <Lock className="w-6 h-6" weight="bold" />}
-                                </div>
-                                <span className="text-xs font-bold">{blockActive ? '解除拉黑' : '拉黑'}</span>
-                            </button>
                             
                             {/* Regenerate Button */}
                             <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
@@ -1047,6 +1039,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <Star className="w-6 h-6" weight="fill" />
                               </span>
                               <span className="text-xs font-bold">收藏</span>
+                            </button>
+
+                            <button onClick={() => onPanelAction('block-toggle')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-500 border-rose-100'}`}>
+                                    {blockActive ? <LockOpen className="w-6 h-6" weight="bold" /> : <Lock className="w-6 h-6" weight="bold" />}
+                                </div>
+                                <span className="text-xs font-bold">{blockActive ? '重新接收' : '拉黑'}</span>
                             </button>
                           </div>
 

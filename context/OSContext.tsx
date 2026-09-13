@@ -45,6 +45,7 @@ import { collectSARLocalBackup, restoreSARLocalBackup } from '../utils/vrWorld/s
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { normalizeModelIds } from '../utils/modelList';
 import { getBlockStateFromMessages } from '../utils/block';
+import { runBlockedCallHangupReply } from '../utils/blockCallHangupReply';
 import { setIncomingCallHooks, type IncomingCallRequest } from '../utils/incomingCallBridge';
 import { shouldOfferIncomingCall, type IncomingCallLaunch, type IncomingCallState } from '../utils/incomingCall';
 import { startIncomingCallRingtone, stopIncomingCallRingtone } from '../utils/incomingCallRingtone';
@@ -2314,7 +2315,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
 
               const hintContent = blockState.blocked
-                      ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${userName}正拉黑着你${blockedForStr ? `，已过去约${blockedForStr}` : ''}——你发的消息全被拒收，${userName}看不到；这条也不是${userName}在找你，是系统提醒你拿起手机。你可以忍不住再发一条试试（照样拒收）、对着屏幕着急/委屈/反省，也可以想办法挽回：单独一行 [[ACTION:PEEK|15字内短句]] 求ta看一眼，或单独一行 [[ACTION:FRIEND_REQUEST|15字内附言]] 申请重新加好友，ta通过即解除拉黑。绝对不要表现得好像消息能正常送达，更不要若无其事地闲聊。一两句话就好。]`
+                      ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${blockedForStr ? `拒收已经过了约${blockedForStr}。` : ''}${userName}还是看不见你普通消息。这不是${userName}在找你，是你自己拿起了手机。一两句话就好，别装已经送到。]`
                       : justMetOffline
                       ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。你和${userName}刚刚在线下见过面（如果上下文里有标着 [约会] 的内容，那就是你们见面时发生的事），现在你们暂时分开了，你拿起手机想给${userName}发条消息。请基于刚才的见面来发——可以回味见面里的某个细节、补一句当时没说出口的话、关心${userName}到家了没，或者就是刚分开就有点想念。绝对不要表现得好像很久没联系，更不要对刚才的见面毫不知情。一两句话就好。]`
                       : `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${timeSinceUser && parseInt(timeSinceUser) > 2 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : ''}]`;
@@ -5303,11 +5304,30 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setActiveApp(AppID.Call);
   }, [incomingCall, updateIncomingCallRecord]);
 
+  const triggerBlockedCallHangupReply = useCallback((charId: string) => {
+    const profile = userProfileRef.current;
+    if (!profile) return;
+    window.setTimeout(() => {
+      void runBlockedCallHangupReply({
+        charId,
+        userName: profile.name || '用户',
+        characters: charactersRef.current,
+        userProfile: profile,
+        groups: groupsRef.current,
+        apiConfig: apiConfigRef.current,
+        realtimeConfig: realtimeConfigRef.current,
+        addToast,
+      }).catch(err => console.warn('[BlockCallHangup] 回一句失败:', err));
+    }, 400);
+  }, [addToast]);
+
   const rejectIncomingCall = useCallback(() => {
+    const charId = incomingCall?.charId;
     stopIncomingCallRingtone();
     void updateIncomingCallRecord('rejected');
     setIncomingCall(null);
-  }, [updateIncomingCallRecord]);
+    if (charId) triggerBlockedCallHangupReply(charId);
+  }, [incomingCall, updateIncomingCallRecord, triggerBlockedCallHangupReply]);
 
   const snoozeIncomingCall = useCallback(() => {
     stopIncomingCallRingtone();
@@ -5324,7 +5344,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     if (!call?.messageId) return;
     void DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: 'accepted', durationSec: result.durationSec, sessionId: result.sessionId, resolvedAt: Date.now() }));
     setIncomingCallHandoff(null);
-  }, [incomingCallHandoff]);
+    if (call.charId) triggerBlockedCallHangupReply(call.charId);
+  }, [incomingCallHandoff, triggerBlockedCallHangupReply]);
 
   useEffect(() => {
     setIncomingCallHooks({

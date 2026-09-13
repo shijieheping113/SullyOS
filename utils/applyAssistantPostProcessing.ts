@@ -28,6 +28,7 @@
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeConfig, GroupProfile } from '../types';
 import { DB } from './db';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
+import { SYSTEM_LOG_LEAD } from './block';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -2260,6 +2261,33 @@ export async function applyAssistantPostProcessing(
             d.type === 'music_action' && !!d.song,
     )?.song;
     aiContent = await ChatParser.parseAndExecuteActions(aiContent, char.id, char.name, addToast, musicHooks, resolveCharTimeZone(char), messageTimestamp, mcdInheritMeta, frozenMusicSong);
+
+    if (!skipSecondPassLLM && !String(aiContent || '').trim()) {
+        try {
+            const recentAfterCall = await DB.getRecentMessagesByCharId(char.id, 8, true);
+            const blockedCall = [...recentAfterCall].reverse().find(m => m.metadata?.source === 'incoming-call' && m.metadata?.callBlocked);
+            if (blockedCall) {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        model: effectiveApi.model,
+                        messages: [
+                            ...fullMessages,
+                            { role: 'system', content: `${SYSTEM_LOG_LEAD} 你刚打的电话没打通。对方拒收了来电。这不是对方在说话。请只说一两句你自己的反应，不要假装接通，不要再输出打电话暗号。` },
+                        ],
+                        temperature: 0.8,
+                        max_tokens: 800,
+                        stream: false,
+                    }),
+                }, 2, 0, { ...apiLogMeta, purpose: '来电打不通反应' });
+                updateTokenUsage(data, historyMsgCount, 'blocked-call');
+                aiContent = normalizeAiContent(data?.choices?.[0]?.message?.content || '');
+            }
+        } catch (blockedCallErr) {
+            console.warn('[IncomingCall] 打不通后补反应失败:', blockedCallErr);
+        }
+    }
 
     // ─── Step 4: thinking chain 抽取 (本轮末尾展示用) ───
     // 跑过二轮 (data !== initialData) → 取二轮 data 的 reasoning; 没跑二轮 → 取一轮 (round1ThinkingChain,

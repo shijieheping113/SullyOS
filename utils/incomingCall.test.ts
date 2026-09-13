@@ -97,6 +97,15 @@ describe('formatIncomingCallRecord', () => {
         expect(text.startsWith('[[记录:CALL|')).toBe(true);
         expect(text.endsWith(']]')).toBe(true);
     });
+
+    it('电话被拒收写成打不通，不是已拒', () => {
+        const text = formatIncomingCallRecord({
+            timestamp: Date.parse('2026-09-13T13:04:00'),
+            metadata: { callOutcome: 'blocked', callBlocked: true, calledAt: Date.parse('2026-09-13T13:04:00') },
+        });
+        expect(text).toContain('status=打不通');
+        expect(text).not.toContain('status=已拒');
+    });
 });
 
 describe('DEFAULT_INCOMING_CALL_PROMPT', () => {

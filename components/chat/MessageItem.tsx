@@ -16,6 +16,8 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
+import { BLOCK_SOURCE, blockRecordDisplayText } from '../../utils/block';
+import './blockCards.css';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
@@ -1426,8 +1428,8 @@ interface MessageItemProps {
     onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
     /** 用户点「生活记录」卡 → 确认 / 否决（角色代记的记录） */
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
-    /** 拉黑玩法：求看看卡「看看」/ 好友申请卡「通过」「忽略」 */
-    onResolveBlockAction?: (m: Message, action: 'peek-viewed' | 'request-accept' | 'request-ignore') => void;
+    /** 拉黑玩法：求看看三键 / 好友申请通过忽略 */
+    onResolveBlockAction?: (m: Message, action: 'peek-viewed' | 'peek-discard' | 'peek-secret' | 'request-accept' | 'request-ignore') => void;
     /** 打开协同文件柜里的原始 Blob；消息本身只保存 assetId 引用。 */
     onOpenCollaborationFile?: (m: Message) => void | Promise<void>;
     /** 思考链卡片视觉与交互 */
@@ -1820,9 +1822,28 @@ const MessageItem = React.memo(({
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
 
+        if (m.metadata?.source === BLOCK_SOURCE) {
+            return (
+                <div className={`flex items-center justify-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="px-6 py-2" {...interactionProps}>
+                        <p className="text-[11px] leading-relaxed text-slate-400 text-center">{blockRecordDisplayText(m.metadata)}</p>
+                    </div>
+                </div>
+            );
+        }
+
         if (m.metadata?.source === 'incoming-call') {
             const outcome = String(m.metadata?.callOutcome || 'ringing');
-            const label = outcome === 'accepted' ? '已接听' : outcome === 'rejected' ? '已拒绝' : outcome === 'snoozed' ? '稍后决定' : outcome === 'missed' ? '未接' : '来电中';
+            const label = m.metadata?.callBlocked || outcome === 'blocked'
+                ? '打不通'
+                : outcome === 'accepted' ? '已接听' : outcome === 'rejected' ? '已拒绝' : outcome === 'snoozed' ? '稍后决定' : outcome === 'missed' ? '未接' : '来电中';
             const line = String(m.metadata?.callLine || '').trim();
             const durationSec = Number(m.metadata?.durationSec || 0);
             const durationText = outcome === 'accepted'
@@ -1857,12 +1878,24 @@ const MessageItem = React.memo(({
             );
         }
 
-        // 拉黑玩法 · 求看看卡：短句直接显示在卡上，一个「看看」按钮（看看≠通过，拉黑不解除）
         if (m.metadata?.source === 'peek-request') {
             const line = String(m.metadata?.peekText || '').trim();
-            const viewed = !!m.metadata?.peekViewed;
+            const outcome = String(m.metadata?.peekOutcome || (m.metadata?.peekViewed ? 'reveal' : ''));
+            const discarded = outcome === 'discard';
+            const secret = outcome === 'secret';
+            const revealed = outcome === 'reveal';
+            const pending = !outcome;
+            const showLine = !!line && (secret || revealed || peekExpanded);
+            const statusText = discarded
+                ? '你把它扔掉了……猫儿暂时不知道。'
+                : secret
+                    ? '悄悄看过了，不告诉猫儿。'
+                    : revealed
+                        ? '你看过了，猫儿知道。'
+                        : '选一种回应……猫儿会记住';
+            const cardState = discarded ? 'discarded' : secret ? 'secret-view' : revealed ? 'revealed' : '';
             return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
                     {selectionMode && (
                         <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -1870,41 +1903,41 @@ const MessageItem = React.memo(({
                             </div>
                         </div>
                     )}
-                    <div className="w-full px-5 my-3" {...interactionProps}>
-                        <div className="rounded-[1.4rem] bg-gradient-to-br from-sky-50 via-white to-indigo-50 border border-sky-200/70 p-4 shadow-[0_8px_24px_rgba(56,189,248,0.10)]">
-                            <div className="flex items-center gap-3">
-                                <TokenImg value={charAvatar} alt={charName} className="h-9 w-9 rounded-full object-cover ring-1 ring-sky-100" loading="lazy" decoding="async" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                    <div className="text-sm font-semibold text-slate-700 truncate">{charName} 想让你看一眼</div>
-                                    <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-600">{viewed ? '已看' : '等你'}</span>
-                                </div>
+                    <div className="w-full px-4 my-2" {...interactionProps}>
+                        <article className={`block-card peek ${cardState}`}>
+                            <div className="card-head">
+                                <div className="avatar"><TokenImg value={charAvatar} alt={charName} className="w-full h-full object-cover" loading="lazy" decoding="async" /></div>
+                                <div>
+                                    <div className="eyebrow">A LITTLE LOOK</div>
+                                    <div className="title">求你看看</div>
+                                    <div className="subtitle">只想确认你还在不在</div>
                                 </div>
                             </div>
-                            {line && peekExpanded ? (
-                                <div className="mt-3 rounded-2xl bg-white/70 border border-sky-100/60 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-500">
-                                    {line}
-                                </div>
+                            {line ? (
+                                <p className={`copy${showLine ? '' : ' hidden'}`}>{showLine ? line : line}</p>
                             ) : null}
-                            {!viewed && (
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); setPeekExpanded(true); onResolveBlockAction?.(m, 'peek-viewed'); }}
-                                    className="mt-3 w-full rounded-full bg-sky-400/90 text-white text-xs font-semibold py-2 active:scale-[0.98] transition-transform"
-                                >看看</button>
+                            {pending && (
+                                <div className="actions peek-actions">
+                                    <button type="button" className="peek-choice discard" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-discard'); }}>不看，扔掉</button>
+                                    <button type="button" className="peek-choice secret" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-secret'); }}>偷偷看一下</button>
+                                    <button type="button" className="peek-choice reveal" onClick={(e) => { e.stopPropagation(); setPeekExpanded(true); onResolveBlockAction?.(m, 'peek-viewed'); }}>看看</button>
+                                </div>
                             )}
-                        </div>
+                            <div className="status">{statusText}</div>
+                        </article>
                     </div>
                 </div>
             );
         }
 
-        // 拉黑玩法 · 好友申请卡：附言直接显示在卡上，「通过」「忽略」两个按钮；通过即全部解除
         if (m.metadata?.source === 'friend-request') {
             const line = String(m.metadata?.requestText || '').trim();
             const status = String(m.metadata?.requestStatus || 'pending');
-            const statusLabel = status === 'accepted' ? '已通过' : status === 'ignored' ? '已忽略' : '待处理';
+            const done = status === 'accepted' || status === 'ignored';
+            const title = status === 'accepted' ? '已重新加好友' : status === 'ignored' ? '已忽略' : '重新加好友';
+            const statusText = status === 'accepted' ? '门已经打开一条缝。' : status === 'ignored' ? '猫儿会先安静一会儿。' : '通过后，聊天会慢慢恢复';
             return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
                     {selectionMode && (
                         <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -1912,35 +1945,25 @@ const MessageItem = React.memo(({
                             </div>
                         </div>
                     )}
-                    <div className="w-full px-5 my-3" {...interactionProps}>
-                        <div className="rounded-[1.4rem] bg-gradient-to-br from-rose-50 via-white to-pink-50 border border-rose-200/70 p-4 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
-                            <div className="flex items-center gap-3">
-                                <TokenImg value={charAvatar} alt={charName} className="h-9 w-9 rounded-full object-cover ring-1 ring-rose-100" loading="lazy" decoding="async" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                    <div className="text-sm font-semibold text-slate-700 truncate">{charName} 想和你重新联系</div>
-                                    <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-600">{statusLabel}</span>
-                                </div>
+                    <div className="w-full px-4 my-2" {...interactionProps}>
+                        <article className={`block-card request${done ? ' done' : ''}`}>
+                            <div className="card-head">
+                                <div className="avatar"><TokenImg value={charAvatar} alt={charName} className="w-full h-full object-cover" loading="lazy" decoding="async" /></div>
+                                <div>
+                                    <div className="eyebrow">ONE MORE CHANCE</div>
+                                    <div className="title">{title}</div>
+                                    <div className="subtitle">把门留一条缝，好吗</div>
                                 </div>
                             </div>
-                            {line ? (
-                                <div className="mt-3 rounded-2xl bg-white/70 border border-rose-100/60 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-500">
-                                    {line}
-                                </div>
-                            ) : null}
+                            {line ? <p className="copy">{line}</p> : null}
                             {status === 'pending' && (
-                                <div className="mt-3 flex gap-2">
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-accept'); }}
-                                        className="flex-1 rounded-full bg-rose-400/90 text-white text-xs font-semibold py-2 active:scale-[0.98] transition-transform"
-                                    >通过</button>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-ignore'); }}
-                                        className="flex-1 rounded-full bg-slate-200/80 text-slate-600 text-xs font-semibold py-2 active:scale-[0.98] transition-transform"
-                                    >忽略</button>
+                                <div className="actions">
+                                    <button type="button" className="primary" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-accept'); }}>通过</button>
+                                    <button type="button" className="secondary" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-ignore'); }}>忽略</button>
                                 </div>
                             )}
-                        </div>
+                            <div className="status">{statusText}</div>
+                        </article>
                     </div>
                 </div>
             );

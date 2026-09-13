@@ -490,7 +490,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 用同一份窗口数据，拉黑中/有痕迹/全无痕迹三分支。
     const blockState = getBlockStateFromMessages(historyMsgsForPrompt);
     const blockTraced = blockState.blocked || hasBlockTrace(historyMsgsForPrompt);
-    const blockBlock = buildBlockStatusBlock(blockState, blockTraced, userProfile?.name || '用户');
+    const blockBlock = buildBlockStatusBlock(blockState, blockTraced, userProfile?.name || '用户', {
+        canCall: !!char.allowProactiveCall,
+        canVoice: !!char.chatVoiceEnabled,
+    });
     if (blockBlock) volatileTail += blockBlock;
 
     // 「关于对方的表达」+「回到你自己」必须是易变尾段的最后内容：修复旧版把双语/HTML/

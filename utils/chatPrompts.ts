@@ -14,10 +14,12 @@ import {
     BLOCK_SOURCE,
     BLOCK_FRIEND_REQUEST_SOURCE,
     BLOCK_PEEK_SOURCE,
+    SYSTEM_LOG_LEAD,
     formatBlockFriendRequestRecord,
     formatBlockPeekRecord,
     formatBlockRecord,
     formatBlockSendFailedRecord,
+    isBlockSystemSource,
 } from './block';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
@@ -1472,6 +1474,13 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 // 标记在 metadata.blockSendFailed（落库时打），这里只拼前缀记录，不改原文。
                 if (m.role === 'assistant' && m.metadata?.blockSendFailed) {
                     content = `${formatBlockSendFailedRecord(Number(m.timestamp || 0))}\n${content}`;
+                }
+
+                const asSystemLog = m.role === 'system'
+                    || isBlockSystemSource(m.metadata?.source);
+                if (asSystemLog && typeof content === 'string') {
+                    const body = content.indexOf(SYSTEM_LOG_LEAD) >= 0 ? content : `${SYSTEM_LOG_LEAD} ${content}`;
+                    return { role: 'system', content: body };
                 }
 
                 return { role: m.role, content };

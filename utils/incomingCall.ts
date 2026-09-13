@@ -50,7 +50,8 @@ export const extractIncomingCallAction = (content: string): { text: string; line
     return { text, line, consumed };
 };
 
-export const incomingCallStatusLabel = (status?: string): string => {
+export const incomingCallStatusLabel = (status?: string, callBlocked?: boolean): string => {
+    if (callBlocked || status === 'blocked') return '打不通';
     if (status === 'accepted') return '已接';
     if (status === 'rejected') return '已拒';
     if (status === 'snoozed') return '稍后';
@@ -71,7 +72,7 @@ export const formatIncomingCallRecord = (message: Pick<Message, 'timestamp' | 'm
     const d = new Date(atMs);
     const pad = (n: number) => String(n).padStart(2, '0');
     const at = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    const status = incomingCallStatusLabel(String(meta.callOutcome || 'ringing'));
+    const status = incomingCallStatusLabel(String(meta.callOutcome || 'ringing'), !!meta.callBlocked);
     const duration = formatIncomingCallDuration(meta.durationSec);
     const line = sanitizeIncomingCallLine(String(meta.callLine || ''));
     const parts = [`at=${at}`, `status=${status}`, `duration=${duration}`];
