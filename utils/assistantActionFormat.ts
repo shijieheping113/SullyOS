@@ -42,8 +42,12 @@ export const normalizeAssistantActionFormatting = (raw: string): string => {
     // 转账：只修明确的 ACTION token；口语版 [转账 520] 仍由 transferFormat 的
     // 容错解析器负责，方向和金额安全校验也仍在那里完成。
     content = content.replace(
-        /(^|[^\[])\[\s*ACTION\s*[:：]\s*(TRANSFER_(?:ACCEPT|RETURN))\s*\](?!\])/gim,
+        /(^|[^\[])\[\s*ACTION\s*[:：]\s*(TRANSFER_(?:ACCEPT|RETURN)|CALL)\s*\](?!\])/gim,
         (_all, prefix: string, verb: string) => `${prefix}[[ACTION:${verb.toUpperCase()}]]`,
+    );
+    content = content.replace(
+        /(^|[^\[])\[\s*ACTION\s*[:：]\s*CALL\s*([|｜][^\]\r\n]*)\s*\](?!\])/gim,
+        (_all, prefix: string, args: string) => `${prefix}[[ACTION:CALL${args.replace(/｜/g, '|')}]]`,
     );
     content = content.replace(
         /(^|[^\[])\[\s*ACTION\s*[:：]\s*TRANSFER\s*([|｜][^\]\r\n]*)\s*\](?!\])/gim,

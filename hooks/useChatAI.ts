@@ -2036,10 +2036,10 @@ export const useChatAI = ({
             // 详见 utils/applyAssistantPostProcessing.ts。Phase 0 行为字节级不变;
             // Phase 1 会让 instant push 路径也调它 (skipSecondPassLLM=true);
             // Phase 2 会让 worker 端把识别的副作用打包成 directives 传过来重放。
-            // 预览气泡的无缝交棒：不提前清（提前清 = 气泡集体消失→再劈里啪啦重放，用户实报），
-            // 而是包装 setMessages——后处理第一条真实消息落库上屏的**同一帧**清预览。
-            // 交接前预览一直挂着，交接后 instantRender 秒速回填，视觉上是"预览定格成正式消息"。
-            let previewHandedOver = false;
+            // 预览气泡的无缝交棒：整轮落库结束再撤预览。
+            // 旧实现在第一条正式气泡 setMessages 时就把整排预览清掉，后面的正式气泡再补上，
+            // 用户看见「一句句流式 → 突然撤回 → 再一次性倒出来」。预览留到 finally 再清；
+            // Chat 在预览还在时不画这轮新正式气泡，交棒那一帧定格成正式消息。
             const previewHandoverIds = new Set<number>();
             const previewBaselineMaxId = contextMsgs.reduce(
                 (maxId, message) => Math.max(maxId, message.id),
@@ -2053,6 +2053,13 @@ export const useChatAI = ({
                     previewHandoverIds,
                 );
                 const handoverIds = new Set(newlyHandedOverIds);
+                if (streamPreviewShown) {
+                    for (const message of msgs) {
+                        if (message.id > previewBaselineMaxId && message.role === 'assistant' && !previewHandoverIds.has(message.id)) {
+                            handoverIds.add(message.id);
+                        }
+                    }
+                }
                 if (streamThinkingShown) {
                     const thinkingHost = msgs.find(message =>
                         message.id > previewBaselineMaxId && message.role === 'assistant'
@@ -2065,11 +2072,6 @@ export const useChatAI = ({
                     onStreamPreviewHandover?.(char.id, [...handoverIds]);
                 }
                 setMessages(msgs);
-                if (!previewHandedOver) {
-                    previewHandedOver = true;
-                    setStreamingBubbles([]);
-                    setStreamingThinking('');
-                }
             };
             const rawAiContent = data.choices?.[0]?.message?.content || '';
             const sarReply = parseSARModuleReply(rawAiContent, sarModulePlan);

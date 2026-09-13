@@ -13,6 +13,12 @@ describe('normalizeAssistantActionFormatting', () => {
         expect(normalize('[[SEND_EMOJI: 开心]]')).toBe('[[SEND_EMOJI: 开心]]');
     });
 
+    it('修复 CALL 单括号', () => {
+        expect(normalize('[ACTION:CALL]')).toBe('[[ACTION:CALL]]');
+        expect(normalize('[ACTION:CALL|宝宝想你啦]')).toBe('[[ACTION:CALL|宝宝想你啦]]');
+        expect(normalize('[[ACTION:CALL|宝宝想你啦]]')).toBe('[[ACTION:CALL|宝宝想你啦]]');
+    });
+
     it('修复转账 ACTION 的单括号，不碰普通转账叙述', () => {
         expect(normalize('[ACTION:TRANSFER|to=user|amount=520]'))
             .toBe('[[ACTION:TRANSFER|to=user|amount=520]]');

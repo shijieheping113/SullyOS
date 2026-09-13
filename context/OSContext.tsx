@@ -44,6 +44,9 @@ import { markBackupDone } from '../utils/backupReminder';
 import { collectSARLocalBackup, restoreSARLocalBackup } from '../utils/vrWorld/sarBackup';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { normalizeModelIds } from '../utils/modelList';
+import { setIncomingCallHooks, type IncomingCallRequest } from '../utils/incomingCallBridge';
+import { shouldOfferIncomingCall, type IncomingCallLaunch, type IncomingCallState } from '../utils/incomingCall';
+import { startIncomingCallRingtone, stopIncomingCallRingtone } from '../utils/incomingCallRingtone';
 import {
   CONTEXT_RANGE_POLICY_VERSION,
   DEFAULT_MANUAL_CONTEXT_LIMIT,
@@ -436,6 +439,15 @@ interface OSContextType {
   suspendCall: (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; pendingAvatarTouches?: AvatarTouchRecord[] }) => void;
   resumeCall: () => void;
   clearSuspendedCall: () => void;
+  incomingCall: IncomingCallState | null;
+  acceptIncomingCall: () => void;
+  rejectIncomingCall: () => void;
+  snoozeIncomingCall: () => void;
+  incomingCallLaunch: IncomingCallLaunch | null;
+  consumeIncomingCallLaunch: () => void;
+  incomingCallHandoff: IncomingCallRequest | null;
+  bindIncomingCallSession: (sessionId: string) => void;
+  completeIncomingCall: (result: { durationSec: number; sessionId: string }) => void;
 
   // 从聊天「见面」按钮跳进见面：携带目标角色，DateApp 挂载时自动进入该角色的见面流程
   dateAutoStartCharId: string | null;
@@ -965,6 +977,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; pendingAvatarTouches?: AvatarTouchRecord[] } | null>(null);
+  const [incomingCall, setIncomingCall] = useState<IncomingCallState | null>(null);
+  const incomingCallRef = useRef(incomingCall);
+  incomingCallRef.current = incomingCall;
+  const [incomingCallLaunch, setIncomingCallLaunch] = useState<IncomingCallLaunch | null>(null);
+  const [incomingCallHandoff, setIncomingCallHandoff] = useState<IncomingCallRequest | null>(null);
   // 聊天「见面」按钮 → 见面：记录目标角色，DateApp 挂载后消费一次并自动进入见面
   const [dateAutoStartCharId, setDateAutoStartCharId] = useState<string | null>(null);
 
@@ -5254,6 +5271,70 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setSuspendedCall(null);
   };
 
+  const updateIncomingCallRecord = useCallback(async (outcome: 'accepted' | 'rejected' | 'snoozed') => {
+    const call = incomingCall;
+    if (!call?.messageId) return;
+    await DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: outcome, resolvedAt: Date.now() }));
+  }, [incomingCall]);
+
+  const acceptIncomingCall = useCallback(() => {
+    const call = incomingCall;
+    if (!call) return;
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('accepted');
+    setIncomingCallHandoff({ charId: call.charId, charName: call.charName, charAvatar: call.charAvatar, line: call.line, messageId: call.messageId, popupStyle: call.popupStyle, ringtone: call.ringtone });
+    setIncomingCallLaunch({ charId: call.charId, line: call.line, messageId: call.messageId });
+    setIncomingCall(null);
+    setActiveCharacterId(call.charId);
+    setActiveApp(AppID.Call);
+  }, [incomingCall, updateIncomingCallRecord]);
+
+  const rejectIncomingCall = useCallback(() => {
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('rejected');
+    setIncomingCall(null);
+  }, [updateIncomingCallRecord]);
+
+  const snoozeIncomingCall = useCallback(() => {
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('snoozed');
+    setIncomingCall(prev => prev ? { ...prev, status: 'snoozed' } : null);
+  }, [updateIncomingCallRecord]);
+
+  const consumeIncomingCallLaunch = useCallback(() => setIncomingCallLaunch(null), []);
+  const bindIncomingCallSession = useCallback((sessionId: string) => {
+    setIncomingCallHandoff(prev => prev ? { ...prev, sessionId } as IncomingCallRequest : prev);
+  }, []);
+  const completeIncomingCall = useCallback((result: { durationSec: number; sessionId: string }) => {
+    const call = incomingCallHandoff;
+    if (!call?.messageId) return;
+    void DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: 'accepted', durationSec: result.durationSec, sessionId: result.sessionId, resolvedAt: Date.now() }));
+    setIncomingCallHandoff(null);
+  }, [incomingCallHandoff]);
+
+  useEffect(() => {
+    setIncomingCallHooks({
+      canOffer: async (req) => {
+        const messages = await DB.getMessagesByCharId(req.charId, true);
+        const char = charactersRef.current.find(item => item.id === req.charId);
+        return shouldOfferIncomingCall({
+          char,
+          hasPending: !!incomingCallRef.current,
+          inCall: activeAppRef.current === AppID.Call,
+          suspended: !!suspendedCallRef.current,
+          hidden: false,
+          amsgReplay: !!req.amsgReplay,
+          messages,
+        });
+      },
+      offer: (req) => {
+        startIncomingCallRingtone(req.ringtone);
+        setIncomingCall({ ...req, startedAt: Date.now(), status: 'ringing' });
+      },
+    });
+    return () => setIncomingCallHooks(null);
+  }, []);
+
   // --- Back Handler Logic ---
   const registerBackHandler = useCallback((handler: () => boolean) => {
       backHandlerRef.current = handler;
@@ -5367,6 +5448,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     suspendCall,
     resumeCall,
     clearSuspendedCall,
+    incomingCall,
+    acceptIncomingCall,
+    rejectIncomingCall,
+    snoozeIncomingCall,
+    incomingCallLaunch,
+    consumeIncomingCallLaunch,
+    incomingCallHandoff,
+    bindIncomingCallSession,
+    completeIncomingCall,
     dateAutoStartCharId,
     openDateWithChar,
     consumeDateAutoStart

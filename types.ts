@@ -3070,6 +3070,18 @@ export interface CharacterProfile {
   dateVoiceLang?: string;
   // Call (voice phone) — remembered translation language for this character
   callVoiceLang?: string;
+  /** 聊天里这个角色能不能打语音过来。空 = 关。 */
+  allowProactiveCall?: boolean;
+  /** 来电弹窗：长条通知 / 全屏。空 = 长条。 */
+  incomingCallPopupStyle?: 'banner' | 'fullscreen';
+  /** 教角色什么时候打电话。空 = 用内置默认。不是语音合成提示词。 */
+  incomingCallPrompt?: string;
+  /** 拒接后再打间隔（分钟）。空 = 不额外卡时间。 */
+  incomingCallCooldownMin?: number;
+  /** 每天最多几通。空 = 不额外卡次数。 */
+  incomingCallDailyMax?: number;
+  /** 这个角色的来电铃声。空 = 不响。 */
+  incomingCallRingtone?: { src: string; volume?: number };
 
   // Cross-session guidebook insights: what char has discovered about user across games
   guidebookInsights?: string[];

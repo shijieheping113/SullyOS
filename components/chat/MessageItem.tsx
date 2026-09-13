@@ -1813,6 +1813,43 @@ const MessageItem = React.memo(({
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
 
+        if (m.metadata?.source === 'incoming-call') {
+            const outcome = String(m.metadata?.callOutcome || 'ringing');
+            const label = outcome === 'accepted' ? '已接听' : outcome === 'rejected' ? '已拒绝' : outcome === 'snoozed' ? '稍后决定' : outcome === 'missed' ? '未接' : '来电中';
+            const line = String(m.metadata?.callLine || '').trim();
+            const durationSec = Number(m.metadata?.durationSec || 0);
+            const durationText = outcome === 'accepted'
+                ? `${String(Math.floor(Math.max(0, durationSec) / 60)).padStart(2, '0')}:${String(Math.max(0, durationSec) % 60).padStart(2, '0')}`
+                : '';
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-5 my-3" {...interactionProps}>
+                        <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100/80 border border-slate-200/50 p-4 shadow-sm">
+                            <div className="flex items-center gap-3">
+                                <TokenImg value={charAvatar} alt={charName} className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200/80" loading="lazy" decoding="async" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-slate-600 truncate">{charName} 打来的电话</div>
+                                    <div className="text-xs text-slate-400 mt-0.5">{label}{durationText ? ` · ${durationText}` : ''}</div>
+                                </div>
+                            </div>
+                            {line ? (
+                                <div className="mt-3 rounded-2xl bg-white/70 border border-slate-100 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-500">
+                                    {line}
+                                </div>
+                            ) : null}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         if (isCallSummary) {
             const durationSec = Math.max(1, Number(m.metadata?.durationSec || 0));
             const turnCount = Math.max(1, Number(m.metadata?.turnCount || 1));
@@ -3608,7 +3645,7 @@ const MessageItem = React.memo(({
     const voiceMarkupContent = hasSarSurface && !showSarTruth && /<[语語]音[^>]*>/.test(sarSurfaceText)
         ? sarSurfaceText
         : m.content;
-    const hasVoiceTag = !isUser && /<[语語]音[^>]*>/.test(voiceMarkupContent);
+    const hasVoiceTag = /<[语語]音[^>]*>/.test(voiceMarkupContent);
     // Spoken text inside the <语音> tag — lets the placeholder bar offer a 转文字 toggle
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
@@ -3630,7 +3667,10 @@ const MessageItem = React.memo(({
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
     // 用户语音消息（语音识别直发 + 原声）：按 AI 语音条同款 sully-voice 类名渲染，
     // 用户自定义 CSS 的语音条美化自动匹配；文本藏进「转文字」展开区。
-    const isUserVoiceMsg = isUser && m.type === 'text' && !!voiceData?.url && !!(m.metadata as any)?.stt;
+    const isUserVoiceMsg = isUser && m.type === 'text' && (
+        (hasVoiceTag)
+        || (!!voiceData?.url && !!(m.metadata as any)?.stt)
+    );
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 

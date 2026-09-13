@@ -50,7 +50,7 @@ const SEG_SLOTS = 2;             // omni/teleasr 并发请求数
 const VOLC_EMO_ZH: Record<string, string> = { angry: '（生气）', happy: '（开心）', neutral: '（平静）', sad: '（低落）', surprise: '（惊讶）' };
 const EMO_ZH: Record<string, string> = { HAPPY: '（开心）', SAD: '（低落）', ANGRY: '（生气）', SURPRISED: '（惊讶）', FEARFUL: '（紧张）', DISGUSTED: '（嫌弃）' };
 
-// ---------- Omni 默认提示词（设置页可整体替换） ----------
+// ---------- Omni 默认提示词（设置页可自定义；这是用户听写，不是角色语音指南） ----------
 export function defaultQwenEmotionPrompt(hotwords: string[]): string {
   const hot = hotwords.length ? hotwords.join('、') : '';
   return [
@@ -367,6 +367,7 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
   let silentMs = 0;
   let muted = false;
   let done = false;
+  let lastPacketSent = false; // 负包发出后禁止再喂音频，否则火山报 last packet has been received already
   let seq = 1;
   let sendChain: Promise<void> = Promise.resolve();
   const loggedKeys = new Set<string>();    // 定句去重（服务端每封回信带全量分句）
@@ -519,7 +520,8 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
 
   async function sendAudio(float32: Float32Array, isLast: boolean): Promise<void> {
     if (!ws || ws.readyState !== 1) return;
-    const s = ++seq;
+    if (!isLast && lastPacketSent) return;
+    if (isLast) lastPacketSent = true;
     let body: Uint8Array<ArrayBuffer> | null = null;
     if (float32.length) {
       const pcm = float32ToPcm16LE(float32);
@@ -527,12 +529,16 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
     } else if (isLast) {
       body = hasCS ? await dbGzip(new Uint8Array(0)) : new Uint8Array(0); // 负包：空负载也要发
     }
+    // gzip 期间可能已经发过负包；负包之后再发会被火山打回 45000000
+    if (!ws || ws.readyState !== 1) return;
+    if (!isLast && lastPacketSent) return;
+    const s = ++seq;
     ws.send(dbFrame(0x02, isLast ? 0x03 : 0x01, 0x00, body ? (hasCS ? 0x01 : 0x00) : 0x00, isLast ? -s : s, body));
     if (!isLast) sentMs += float32.length / 16; // 16000 samples/s → ms = n/16
   }
 
   ec.proc.onaudioprocess = (e) => {
-    if (done) return;
+    if (done || lastPacketSent || ec.getStopped()) return;
     const d = e.inputBuffer.getChannelData(0);
     const rms = frameRms(d);
     const d16 = ec.rate === 16000 ? new Float32Array(d) : downsampleTo16k(d, ec.rate);
@@ -569,6 +575,7 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
 
   // --- 收尾：负包（说完了）---
   ec.setStop(async () => {
+    lastPacketSent = true;
     if (ws && ws.readyState === 1) {
       // 没凑满一包的余量塞进负包里一起发，不丢尾音
       let n = 0; for (const c of acc) n += c.length;

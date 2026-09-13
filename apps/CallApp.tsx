@@ -25,6 +25,7 @@ import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPala
 import { RealtimeContextManager } from '../utils/realtimeContext';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
+import { incomingCallGreetingPrompt } from '../utils/incomingCall';
 import { Message, ChatTheme, AppID, type CharacterProfile } from '../types';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -540,7 +541,7 @@ ${currentVoiceActingGuide()}
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, incomingCallLaunch, consumeIncomingCallLaunch, incomingCallHandoff, bindIncomingCallSession, completeIncomingCall } = useOS();
 
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   const [selectedCharId, setSelectedCharId] = useState<string>(activeCharacterId || characters[0]?.id || '');
@@ -640,6 +641,7 @@ const CallApp: React.FC = () => {
   const localCallAudioRef = useRef(audioRef.current);
   const remoteCallAudioRef = useRef<HTMLAudioElement | null>(null);
   if (!remoteCallAudioRef.current && typeof Audio !== 'undefined') remoteCallAudioRef.current = new Audio();
+  const pendingAutoPlayRef = useRef<{ url: string; cues?: AvatarPerformanceCue[]; fallbackMs?: number; bubbleId?: string } | null>(null);
   const nativeCallAudioOnly = useMemo(() => shouldKeepNativeCallAudio(), []);
   const userCameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const userCameraStreamRef = useRef<MediaStream | null>(null);
@@ -1438,6 +1440,9 @@ const CallApp: React.FC = () => {
       if (suspendedCall.sessionId) setCurrentSessionId(suspendedCall.sessionId);
       if (typeof suspendedCall.elapsedSeconds === 'number') setElapsedSeconds(suspendedCall.elapsedSeconds);
       if (suspendedCall.voiceLang) setVoiceLang(suspendedCall.voiceLang);
+      if (suspendedCall.voiceView === 'log' || suspendedCall.voiceView === 'keys') {
+        setVoiceView(suspendedCall.voiceView);
+      }
       const restoredTouches = suspendedCall.pendingAvatarTouches?.slice(-20) || [];
       pendingAvatarTouchesRef.current = restoredTouches;
       setPendingAvatarTouchCount(restoredTouches.length);
@@ -1707,6 +1712,23 @@ const CallApp: React.FC = () => {
     setShowCallPreferences(true);
     trackEvent('打开通话偏好');
   };
+  const stopSilentUnlockHold = () => {
+    for (const element of [localCallAudioRef.current, remoteCallAudioRef.current, audioRef.current]) {
+      if (!element) continue;
+      element.loop = false;
+      const src = element.src || '';
+      if (src.indexOf('data:audio/wav') === 0) {
+        element.pause();
+        element.removeAttribute('src');
+        try { element.load(); } catch { /* ignore */ }
+      }
+    }
+  };
+  const killedBadUnlockRef = useRef(false);
+  if (!killedBadUnlockRef.current) {
+    killedBadUnlockRef.current = true;
+    stopSilentUnlockHold();
+  }
   const primeCallAudioFromGesture = (forceManualPlayback = false) => {
     if (!forceManualPlayback && (!callPreferences.voiceAutoPlay || !isSpeakerOn)) return;
     const audio = audioRef.current;
@@ -1718,6 +1740,7 @@ const CallApp: React.FC = () => {
     // directly in the click stack; never wait for React onPlay/useEffect.
     if (!nativeCallAudioOnly) void getAudioFeed().unlock();
 
+    stopSilentUnlockHold();
     for (const element of [localCallAudioRef.current, remoteCallAudioRef.current]) {
       if (!element) continue;
       element.muted = false;
@@ -1730,7 +1753,7 @@ const CallApp: React.FC = () => {
     primeCallAudioFromGesture();
     setViewMode('in-call');
     setCallStartedAt(Date.now());
-    setCallState('listening');
+    setCallState(callPreferences.characterInitiative ? 'connecting' : 'listening');
     trackEvent('发起通话');
     if (callMode !== 'video' || cameraMode === 'off') {
       stopUserCamera();
@@ -1772,13 +1795,24 @@ const CallApp: React.FC = () => {
         callMode,
         endedAt: Date.now(),
       };
+      const fromIncoming = !!incomingCallHandoff?.messageId;
       await DB.saveMessage({
         charId: selectedChar.id,
         role: 'system',
         type: 'system',
         content: `通话结束 · ${selectedChar.name}｜${formatDuration(elapsedSeconds)}｜${Math.max(1, userTurns)}轮对话`,
-        metadata: { source: 'call-end-popup', callSessionId: currentSessionId, ...payload },
+        metadata: {
+          source: 'call-end-popup',
+          callSessionId: currentSessionId,
+          incomingFromChat: fromIncoming,
+          incomingCallMessageId: incomingCallHandoff?.messageId,
+          ...payload,
+        },
       });
+      if (fromIncoming) {
+        completeIncomingCall({ durationSec: elapsedSeconds, sessionId: currentSessionId });
+        incomingFromChatRef.current = null;
+      }
       await loadCallRecords(selectedChar.id);
       trackEvent('结束一通通话', { 模式: callMode === 'video' ? '视频' : '语音' });
       // 挂断这一下最要紧：用户多半接着就把 App 关了，得把这最后一条也打脏——
@@ -2182,6 +2216,7 @@ ${sentencePlan}`;
     const handlePlay = (event: Event) => {
       const audio = event.currentTarget as HTMLAudioElement;
       if (audio !== audioRef.current || isVoiceAudioPriming(audio)) return;
+      pendingAutoPlayRef.current = null;
       clearSilentSpeechTimer();
       setIsAudioPlaying(true);
       setCallState('speaking');
@@ -2265,7 +2300,7 @@ ${sentencePlan}`;
     return playbackAttempt;
   };
 
-  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false) => {
+  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false, bubbleId?: string) => {
     const targetUrl = url || audioUrl;
     const estimatedDurationMs = fallbackMs || 4000;
     setSpeakingTrack(null); // 换音频先清旧跟踪，调用方需要跟读时紧跟 setSpeakingTrack({bubbleId, p:0})
@@ -2284,16 +2319,39 @@ ${sentencePlan}`;
       previousAudio.pause();
     }
     audioFeedRef.current?.setActive(callMode === 'video' && audio === localCallAudioRef.current);
+    stopSilentUnlockHold();
+    audio.loop = false;
     audio.src = targetUrl;
     audio.currentTime = 0;
     startCallAudioElement(audio, forceAudible).catch(error => {
       if (audioRef.current !== audio || audio.src !== targetUrl) return;
       pendingCueScheduleRef.current = null;
+      const blocked = (error as { name?: string })?.name === 'NotAllowedError';
+      if (blocked && targetUrl) {
+        pendingAutoPlayRef.current = { url: targetUrl, cues, fallbackMs: estimatedDurationMs, bubbleId };
+        addToast('点一下就能听', 'info');
+        setSpeakingTrack(null);
+        setCallState('listening');
+        return;
+      }
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
-      else setCallState('listening');
+      else {
+        setSpeakingTrack(null);
+        setCallState('listening');
+      }
       addToast(voicePlaybackErrorMessage(error, '重播语音'), 'info');
     });
-    setCallState('speaking');
+  };
+  const startReplyPlayback = (url: string, cues: AvatarPerformanceCue[] | undefined, text: string, bubbleId: string) => {
+    playAudio(url, cues, estimateSpeechMs(text), true, bubbleId);
+    setSpeakingTrack({ bubbleId, p: 0 });
+  };
+  const flushPendingCallAudio = () => {
+    const pending = pendingAutoPlayRef.current;
+    if (!pending) return;
+    pendingAutoPlayRef.current = null;
+    playAudio(pending.url, pending.cues, pending.fallbackMs, true, pending.bubbleId);
+    if (pending.bubbleId) setSpeakingTrack({ bubbleId: pending.bubbleId, p: 0 });
   };
   const ensureCallBubbleAudio = async (bubble: CallBubble, forceRegenerate = false): Promise<string | null> => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return null;
@@ -2332,9 +2390,10 @@ ${sentencePlan}`;
   };
   const handlePlayBubbleAudio = async (bubble: CallBubble) => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return;
+    pendingAutoPlayRef.current = null;
     if (bubble.audioUrl) {
       if (!isSpeakerOn) setIsSpeakerOn(true);
-      playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+      playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true, bubble.id);
       setSpeakingTrack({ bubbleId: bubble.id, p: 0 });
       trackEvent('重播一条通话语音');
       return;
@@ -2449,18 +2508,46 @@ ${sentencePlan}`;
     };
   }, [isAudioPlaying, nativeCallAudioOnly]);
 
+  const incomingFromChatRef = useRef<{ line: string; messageId?: number } | null>(null);
+  useEffect(() => {
+    if (!incomingCallLaunch) return;
+    const launch = incomingCallLaunch;
+    consumeIncomingCallLaunch();
+    const char = characters.find(c => c.id === launch.charId);
+    if (!char) return;
+    incomingFromChatRef.current = { line: launch.line || '', messageId: launch.messageId };
+    setCallMode('voice');
+    setSelectedCharId(char.id);
+    resetCurrentCall();
+    primeCallAudioFromGesture();
+    setViewMode('in-call');
+    setCallStartedAt(Date.now());
+    setCallState('connecting');
+    trackEvent('接听角色来电');
+  }, [incomingCallLaunch]);
+  useEffect(() => {
+    if (!incomingCallHandoff?.messageId || viewMode !== 'in-call') return;
+    bindIncomingCallSession(currentSessionId);
+  }, [incomingCallHandoff?.messageId, viewMode, currentSessionId]);
+
   // 接通后由角色先说第一句。它和后续静默主动接话共用一个显式通话偏好，
   // 默认开启；关闭后 CallApp 会等待用户先说，ChatApp 不受影响。
+  // 聊天里接过来的来电：只加会话标记，不改全局「谁先开口」偏好。
   const greetingFiredRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!callPreferences.characterInitiative || viewMode !== 'in-call' || bubbles.length > 0) return;
+    const forceIncomingFirst = !!incomingFromChatRef.current || !!incomingCallHandoff;
+    if ((!forceIncomingFirst && !callPreferences.characterInitiative) || viewMode !== 'in-call' || bubbles.length > 0) return;
     if (!selectedChar?.id || greetingFiredRef.current === currentSessionId) return;
     greetingFiredRef.current = currentSessionId;
     void (async () => {
       try {
         setCallState('connecting');
+        const incomingLaunch = incomingFromChatRef.current || incomingCallHandoff;
+        const greetingSeed = incomingLaunch
+          ? incomingCallGreetingPrompt(userProfile?.name?.trim() || '用户', incomingLaunch.line)
+          : '（电话刚接通。你先开口——像平时接到这个人电话一样自然地说第一句话。不要解释规则，就是最自然的那个“喂”“诶”或者符合你性格的开场。）';
         const greetingReply = prepareCallAssistantReply(
-          await requestAssistantReply('（电话刚接通。你先开口——像平时接到这个人电话一样自然地说第一句话。不要解释规则，就是最自然的那个“喂”“诶”或者符合你性格的开场。）'),
+          await requestAssistantReply(greetingSeed),
           callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
         );
         const greetingText = greetingReply.text;
@@ -2477,7 +2564,7 @@ ${sentencePlan}`;
           performance: greetingReply.performance,
           performanceTimeline: greetingReply.performanceCues,
         };
-        setCallState('speaking');
+        setCallState('thinking');
         setBubbles([greetingBubble]);
         const dbId = await DB.saveMessage({
           charId: selectedChar.id,
@@ -2503,7 +2590,7 @@ ${sentencePlan}`;
               trackBlobUrl(url);
               setAudioUrl(url);
               setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url } : bubble));
-              window.setTimeout(() => playAudio(url, greetingReply.performanceCues, estimateSpeechMs(greetingText)), 0);
+              startReplyPlayback(url, greetingReply.performanceCues, greetingText, greetingBubble.id);
               playbackStarted = true;
             }
           } catch {
@@ -2818,24 +2905,26 @@ ${sentencePlan}`;
       if (isSpeakerOn) addToast('语音未配置，先用文字聊吧', 'info');
       return;
     }
+    setGeneratingAudioBubbleId(assistantBubbleId);
     try {
       const { url: finalUrl, traceIds } = await takeOrSynthesizeCallAudio(assistantText, turnSpeechEmotion);
       if (!finalUrl) throw new Error('未获得可播放音频');
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
-      setTimeout(() => { playAudio(finalUrl, turnPerformanceCues, estimateSpeechMs(assistantText)); setSpeakingTrack({ bubbleId: assistantBubbleId, p: 0 }); }, 0);
       setTraceId(traceIds.filter(Boolean).join(' | '));
       setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: finalUrl } : b)));
       if (assistantDbId) {
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
       }
-      setCallState('listening');
+      startReplyPlayback(finalUrl, turnPerformanceCues, assistantText, assistantBubbleId);
     } catch (e: any) {
       setErrorMessage(e?.message || '语音生成失败');
       if (callMode === 'video') playSilentAvatarSpeech(assistantText, turnPerformanceCues);
       else setCallState('listening');
       addToast(`TTS失败：${e?.message || '语音生成失败'}，已保留文本并启用无声表演`, 'info');
+    } finally {
+      setGeneratingAudioBubbleId(null);
     }
   };
   const sendingBusy = ['connecting', 'thinking'].includes(callState);
@@ -2964,13 +3053,13 @@ ${sentencePlan}`;
       let rerollAudioPlayed = false;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
-          setCallState('speaking');
+          setCallState('thinking');
           const { url: rerollAudioUrl } = await takeOrSynthesizeCallAudio(rerolled, rerollReply.speechEmotion);
           if (rerollAudioUrl) {
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
             setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
-            setTimeout(() => { playAudio(rerollAudioUrl, rerollReply.performanceCues, estimateSpeechMs(rerolled)); setSpeakingTrack({ bubbleId: bubble.id, p: 0 }); }, 0);
+            startReplyPlayback(rerollAudioUrl, rerollReply.performanceCues, rerolled, bubble.id);
             rerollAudioPlayed = true;
           }
         } catch (ttsErr: any) {
@@ -3046,7 +3135,7 @@ ${sentencePlan}`;
             trackBlobUrl(url);
             setAudioUrl(url);
             setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url } : bubble));
-            window.setTimeout(() => { playAudio(url, reply.performanceCues, estimateSpeechMs(reply.text)); setSpeakingTrack({ bubbleId: nudgeBubble.id, p: 0 }); }, 0);
+            startReplyPlayback(url, reply.performanceCues, reply.text, nudgeBubble.id);
             playbackStarted = true;
           }
         } catch {
@@ -3056,10 +3145,6 @@ ${sentencePlan}`;
       if (!playbackStarted) {
         if (callMode === 'video' && callPreferences.voiceAutoPlay) {
           playSilentAvatarSpeech(reply.text, reply.performanceCues);
-        } else if (callPreferences.voiceAutoPlay) {
-          setCallState('speaking');
-          const speakingMs = Math.max(1200, Math.min(4200, reply.text.length * 90));
-          window.setTimeout(() => setCallState(previous => previous === 'speaking' ? 'listening' : previous), speakingMs);
         } else {
           setCallState('listening');
         }
@@ -3664,16 +3749,22 @@ ${sentencePlan}`;
       : displayCallState === 'thinking' ? '思考中'
       : displayCallState === 'connecting' ? '接通中'
       : displayCallState === 'error' ? '连接异常'
+      : generatingAudioBubbleId ? '思考中'
       : '听你说';
     return (
-      <div className="h-full w-full relative overflow-hidden bg-[#1c1c1e]" data-avatar-touch-pending={pendingAvatarTouchCount}>
+      <div className="h-full w-full relative overflow-hidden bg-[#1c1c1e]" data-avatar-touch-pending={pendingAvatarTouchCount} onPointerDown={flushPendingCallAudio}>
         <VoicePhoneB
           charName={selectedChar?.name || '对方'}
           charAvatar={selectedChar?.avatar}
           wallpaperUrl={blurredAvatarUrl || undefined}
           elapsedLabel={formatDuration(elapsedSeconds)}
           statusWord={rerollingBubbleId ? '思考中' : voiceStatus}
-          waveMode={rerollingBubbleId ? 'think' : displayCallState === 'speaking' ? 'live' : (displayCallState === 'thinking' || displayCallState === 'connecting') ? 'think' : 'off'}
+          emptyPrompt={
+            callPreferences.characterInitiative
+              ? (displayCallState === 'connecting' ? `${selectedChar?.name || '对方'}正在接听…` : `${selectedChar?.name || '对方'}正在想第一句…`)
+              : `${selectedChar?.name || '对方'}在等你开口……`
+          }
+          waveMode={rerollingBubbleId ? 'think' : displayCallState === 'speaking' ? 'live' : (displayCallState === 'thinking' || displayCallState === 'connecting' || !!generatingAudioBubbleId) ? 'think' : 'off'}
           bubbles={bubbles}
           speakingTrack={speakingTrack}
           translateVisible={translateVisible}
@@ -3769,6 +3860,7 @@ ${sentencePlan}`;
                       elapsedSeconds,
                       voiceLang,
                       pendingAvatarTouches: pendingAvatarTouchesRef.current,
+                      voiceView,
                     });
                     addToast('通话已挂起，点击顶部绿色条可随时回来', 'success');
                     trackEvent('挂起通话到后台');
@@ -4071,7 +4163,9 @@ ${sentencePlan}`;
                   : latestCallBubble.text
                 : callState === 'connecting'
                   ? '正在接通，请稍等……'
-                  : `${selectedChar?.name || '对方'}在等你开口。`}
+                  : callPreferences.characterInitiative
+                    ? `${selectedChar?.name || '对方'}正在想第一句…`
+                    : `${selectedChar?.name || '对方'}在等你开口。`}
             </div>
           </div>
           <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
@@ -4089,7 +4183,9 @@ ${sentencePlan}`;
             <p className="text-sm text-white/55 mt-2">
               {callState === 'connecting'
                 ? `${selectedChar?.name || '对方'}正在接听……`
-                : selectedChar?.name ? `${selectedChar.name}在等你开口……` : '对方在等你开口……'}
+                : callPreferences.characterInitiative
+                  ? `${selectedChar?.name || '对方'}正在想第一句…`
+                  : selectedChar?.name ? `${selectedChar.name}在等你开口……` : '对方在等你开口……'}
             </p>
             {callState === 'connecting'
               ? <p className="text-xs text-white/35 mt-4 animate-pulse">请稍等</p>
@@ -4432,6 +4528,7 @@ ${sentencePlan}`;
                     elapsedSeconds,
                     voiceLang,
                     pendingAvatarTouches: pendingAvatarTouchesRef.current,
+                    voiceView,
                   });
                   addToast('通话已挂起，点击顶部绿色条可随时回来', 'success');
                   trackEvent('挂起通话到后台');

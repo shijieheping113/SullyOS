@@ -34,7 +34,7 @@ const SPARKLES = [
   { top: '48%', left: '54%', s: 2 }, { top: '12%', left: '58%', s: 2 },
   { top: '78%', left: '64%', s: 3 }, { top: '64%', left: '38%', s: 2 },
 ];
-const THEMES = ['ink', 'violet'];
+const THEMES = ['ink', 'violet', 'day'];
 const THEME_KEY = 'sully-voice-b-theme';
 const readTheme = () => {
   try {
@@ -51,6 +51,7 @@ type Props = {
   elapsedLabel: string;
   statusWord: string;
   waveMode: 'live' | 'think' | 'off';
+  emptyPrompt: string;
   bubbles: VoicePhoneBubble[];
   speakingTrack: SpeakingTrack;
   translateVisible: boolean;
@@ -123,8 +124,12 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   const capHold = useRef(false);
   const capDrag = useRef(false);
   const capStartY = useRef(0);
+  const logHold = useRef(false);
+  const logDrag = useRef(false);
+  const logStartY = useRef(0);
   const lingerLine = useRef<string | null>(null);
   const nameHold = useRef<number | null>(null);
+  const didInitScroll = useRef(false);
 
   const bubbleLen = props.bubbles.length;
   const prevView = useRef(props.voiceView);
@@ -144,13 +149,8 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     }
     const el = (props.scrollRef && props.scrollRef.current) || readBox.current;
     if (!el) return;
-    if (switched || (grew && last && last.role === 'user')) {
-      try { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); } catch (e) { el.scrollTop = el.scrollHeight; }
-      return;
-    }
-    if (!grew) return;
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (dist < 96) {
+    if (logHold.current) return;
+    if (switched || grew) {
       try { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); } catch (e) { el.scrollTop = el.scrollHeight; }
     }
   }, [bubbleLen, props.voiceView]);
@@ -258,7 +258,7 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   const trackBubbleId = props.speakingTrack ? props.speakingTrack.bubbleId : '';
   const trackIdx = trackBubbleId ? props.bubbles.findIndex((item) => item.id === trackBubbleId) : -1;
   let followKey = '';
-  if (props.voiceView === 'keys' && trackIdx >= 0) {
+  if (trackIdx >= 0) {
     const tracked = props.bubbles[trackIdx];
     if (tracked && tracked.role === 'assistant') {
       const { useLines } = bubbleLines(tracked);
@@ -266,6 +266,36 @@ const VoicePhoneB: React.FC<Props> = (props) => {
       if (idx >= 0) followKey = tracked.id + ':' + idx;
     }
   }
+
+  const centerLogLine = (el: HTMLElement, smooth: boolean) => {
+    const box = readBox.current;
+    if (!box) return;
+    const boxRect = box.getBoundingClientRect();
+    const lineRect = el.getBoundingClientRect();
+    const delta = (lineRect.top + lineRect.height / 2) - (boxRect.top + boxRect.height / 2);
+    if (Math.abs(delta) < 3) return;
+    const next = box.scrollTop + delta;
+    if (smooth) {
+      try { box.scrollTo({ top: next, behavior: 'smooth' }); } catch (e) { box.scrollTop = next; }
+    } else {
+      box.scrollTop = next;
+    }
+  };
+
+  useEffect(() => {
+    if (didInitScroll.current) return;
+    if (!bubbleLen) return;
+    didInitScroll.current = true;
+    if (props.voiceView === 'keys') {
+      const box = capBox.current;
+      const nodes = box ? box.querySelectorAll('[data-k-line]') : [];
+      const last = nodes.length ? (nodes[nodes.length - 1] as HTMLElement) : null;
+      if (last) centerCapLine(last, false);
+      return;
+    }
+    const el = (props.scrollRef && props.scrollRef.current) || readBox.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [bubbleLen, props.voiceView]);
 
   useEffect(() => {
     if (props.voiceView !== 'keys') return;
@@ -276,6 +306,17 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     const box = capBox.current;
     const el = box ? (box.querySelector('[data-k-now]') as HTMLElement | null) : null;
     if (el) centerCapLine(el, true);
+  }, [props.voiceView, followKey]);
+
+  useEffect(() => {
+    if (props.voiceView !== 'log') return;
+    if (!followKey) return;
+    if (logHold.current) return;
+    if (lingerLine.current === followKey) return;
+    lingerLine.current = null;
+    const box = readBox.current;
+    const el = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
+    if (el) centerLogLine(el, true);
   }, [props.voiceView, followKey]);
 
   const renderKeysAi = (bubble: VoicePhoneBubble, index: number) => {
@@ -517,7 +558,7 @@ const VoicePhoneB: React.FC<Props> = (props) => {
             >
               <div className="vb-k-pad" />
               <div className="vb-caption-inner">
-                {!props.bubbles.length && <div className="vb-k-name">{props.charName}在等你开口……</div>}
+                {!props.bubbles.length && <div className="vb-k-name">{props.emptyPrompt}</div>}
                 {props.bubbles.map((bubble, index) => {
                   const prev = index > 0 ? props.bubbles[index - 1] : null;
                   const cont = !!(prev && prev.role === bubble.role);
@@ -560,8 +601,30 @@ const VoicePhoneB: React.FC<Props> = (props) => {
               readBox.current = el;
               if (props.scrollRef) (props.scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
             }}
+            onPointerDown={(event) => {
+              logHold.current = true;
+              logDrag.current = false;
+              logStartY.current = event.clientY;
+            }}
+            onPointerMove={(event) => {
+              if (!logHold.current) return;
+              if (Math.abs(event.clientY - logStartY.current) > 8) logDrag.current = true;
+            }}
+            onPointerUp={() => {
+              const dragged = logDrag.current;
+              logHold.current = false;
+              logDrag.current = false;
+              if (!dragged) return;
+              const box = readBox.current;
+              const cur = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
+              if (cur && followKey) lingerLine.current = followKey;
+            }}
+            onPointerCancel={() => {
+              logHold.current = false;
+              logDrag.current = false;
+            }}
           >
-            {!props.bubbles.length && <div className="vb-old">{props.charName}在等你开口……</div>}
+            {!props.bubbles.length && <div className="vb-empty">{props.emptyPrompt}</div>}
             {props.bubbles.map((bubble, index) => {
               const prev = index > 0 ? props.bubbles[index - 1] : null;
               const cont = !!(prev && prev.role === bubble.role);

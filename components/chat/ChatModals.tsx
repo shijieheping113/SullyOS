@@ -7,6 +7,7 @@ import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import ChatInputSettings from './ChatInputSettings';
 import ChatSettingsSection from './ChatSettingsSection';
+import WhiteboxSoundEditor from './WhiteboxSoundEditor';
 import type { ChatInputPreferences } from '../../utils/chatInputPreferences';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
 import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatContextRange';
@@ -159,6 +160,13 @@ interface ChatModalsProps {
     onAddApiPreset?: (name: string, config: APIConfig) => void;
     onSaveEmotion?: (config: NonNullable<CharacterProfile['emotionConfig']>) => void;
     onClearBuffs?: () => void;
+    onUpdateIncomingCall?: (patch: Partial<CharacterProfile>) => void;
+    incomingCallPromptDraft?: string;
+    setIncomingCallPromptDraft?: (v: string) => void;
+    incomingCallCooldownDraft?: string;
+    setIncomingCallCooldownDraft?: (v: string) => void;
+    incomingCallDailyMaxDraft?: string;
+    setIncomingCallDailyMaxDraft?: (v: string) => void;
 }
 
 interface TranslationLanguagePickerProps {
@@ -273,6 +281,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
     retainRecentForVectorize, setRetainRecentForVectorize, vectorizeResult, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
+    onUpdateIncomingCall,
+    incomingCallPromptDraft, setIncomingCallPromptDraft,
+    incomingCallCooldownDraft, setIncomingCallCooldownDraft,
+    incomingCallDailyMaxDraft, setIncomingCallDailyMaxDraft,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
@@ -652,6 +664,82 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 </div>
                             )}
                         </div>
+                    </ChatSettingsSection>
+                    <ChatSettingsSection title="角色来电" summary="聊天里角色可以打语音给你，不是主动消息">
+                        <div className="flex justify-between items-center cursor-pointer" onClick={() => onUpdateIncomingCall?.({ allowProactiveCall: !activeCharacter.allowProactiveCall })}>
+                            <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">允许角色打电话</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${activeCharacter.allowProactiveCall ? 'bg-primary' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${activeCharacter.allowProactiveCall ? 'translate-x-4' : ''}`}></div>
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">开启后，聊天时角色觉得合适就会打语音过来。跟加号里的「主动消息」不是一回事。</p>
+                        {activeCharacter.allowProactiveCall && (
+                            <div className="space-y-4 pt-2 border-t border-slate-100">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">弹窗样式</label>
+                                    <div className="flex gap-2">
+                                        {([
+                                            { id: 'banner', label: '长条' },
+                                            { id: 'fullscreen', label: '全屏' },
+                                        ] as const).map(opt => (
+                                            <button
+                                                key={opt.id}
+                                                type="button"
+                                                onClick={() => onUpdateIncomingCall?.({ incomingCallPopupStyle: opt.id })}
+                                                className={`flex-1 py-2 rounded-xl text-[11px] font-bold ${(activeCharacter.incomingCallPopupStyle || 'banner') === opt.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                                            >
+                                                {opt.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">来电提示词</label>
+                                    <textarea
+                                        value={incomingCallPromptDraft ?? ''}
+                                        onChange={e => setIncomingCallPromptDraft?.(e.target.value)}
+                                        placeholder="在这里改角色什么时候打电话"
+                                        className="w-full h-28 bg-slate-50 rounded-2xl p-3 text-[12px] leading-relaxed resize-none outline-none focus:ring-1 focus:ring-primary/30"
+                                    />
+                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">教角色什么时候打、怎么打。空着就用内置默认。不是语音合成提示词。</p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">拒接后再打间隔（分钟）</label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            inputMode="numeric"
+                                            value={incomingCallCooldownDraft ?? ''}
+                                            onChange={e => setIncomingCallCooldownDraft?.(e.target.value)}
+                                            placeholder="空=不卡"
+                                            className="w-full bg-slate-50 rounded-xl px-3 py-2 text-[12px] outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">每天最多几通</label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            inputMode="numeric"
+                                            value={incomingCallDailyMaxDraft ?? ''}
+                                            onChange={e => setIncomingCallDailyMaxDraft?.(e.target.value)}
+                                            placeholder="空=不卡"
+                                            className="w-full bg-slate-50 rounded-xl px-3 py-2 text-[12px] outline-none"
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">来电铃声</label>
+                                    <WhiteboxSoundEditor
+                                        sound={activeCharacter.incomingCallRingtone || null}
+                                        showBind={false}
+                                        onChangeSound={sound => onUpdateIncomingCall?.({ incomingCallRingtone: sound || undefined })}
+                                        hint={<>每个角色一份。空着就不响，只靠画面。</>}
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </ChatSettingsSection>
                     <ChatSettingsSection title="扩展功能" summary="小红书与 HTML 卡片">
                         {/* XHS Toggle */}

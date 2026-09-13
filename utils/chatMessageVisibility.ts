@@ -7,7 +7,7 @@ export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): 
     && message.metadata?.source !== 'call'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
-    && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card')
+    && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card' && message.metadata?.source !== 'incoming-call' && !(message.metadata?.source === 'call-end-popup' && message.metadata?.incomingFromChat))
 );
 
 /** 点击后进入私聊的桌面消息卡，与聊天页共用来源过滤，不展示系统日志。 */

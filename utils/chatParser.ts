@@ -12,6 +12,8 @@ import {
     extractCollaborationFileDirectives,
     resolveCollaborationFileByTitle,
 } from '../features/collaboration/chatLibrary';
+import { extractIncomingCallAction, resolveIncomingCallPopupStyle } from './incomingCall';
+import { canOfferIncomingCallNow, offerIncomingCall } from './incomingCallBridge';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -209,6 +211,43 @@ export const ChatParser = {
         if (content.includes('[[ACTION:POKE]]')) {
             await persist({ charId, role: 'assistant', type: 'interaction', content: '[戳一戳]' });
             content = content.replace('[[ACTION:POKE]]', '').trim();
+        }
+
+        // CALL — 角色在聊天里打语音过来。主动消息 2.0 重放只剥标签不弹。
+        const callExtract = extractIncomingCallAction(content);
+        if (callExtract.consumed) {
+            content = callExtract.text;
+            const amsgReplay = !!(inheritMeta && (inheritMeta as any).activeMsg2);
+            try {
+                const chars = await DB.getAllCharacters();
+                const charProfile = chars.find(c => c.id === charId);
+                const req = {
+                    charId,
+                    charName,
+                    charAvatar: charProfile?.avatar,
+                    line: callExtract.line,
+                    popupStyle: resolveIncomingCallPopupStyle(charProfile),
+                    ringtone: charProfile?.incomingCallRingtone,
+                    amsgReplay,
+                };
+                if (await canOfferIncomingCallNow(req)) {
+                    const messageId = await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: callExtract.line ? `[来电] ${callExtract.line}` : '[来电]',
+                        metadata: {
+                            source: 'incoming-call',
+                            callOutcome: 'ringing',
+                            callLine: callExtract.line,
+                            calledAt: Date.now(),
+                        },
+                    });
+                    offerIncomingCall({ ...req, messageId });
+                }
+            } catch (e) {
+                console.warn('[IncomingCall] 处理来电暗号失败，已剥标签:', e);
+            }
         }
 
         // TRANSFER_ACCEPT / TRANSFER_RETURN — char 收下 / 退回 user 最近一笔待处理的转账。

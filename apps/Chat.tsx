@@ -77,6 +77,7 @@ import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { collectRelatedCallMessageIds, DEFAULT_INCOMING_CALL_PROMPT, isCallRecordCard } from '../utils/incomingCall';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import { formatHours } from '../utils/format';
@@ -197,6 +198,8 @@ const Chat: React.FC = () => {
     const activeCharIdRef = useRef(activeCharacterId);
     // 流式预览接棒过的正式消息在当前会话内始终跳过入场动画，避免后续 DB 刷新时动画类又被加回来。
     const streamPreviewHandoverIdsRef = useRef<Set<number>>(new Set());
+    // 预览还在时，不画这轮新落库的正式气泡，避免和预览叠两份。
+    const streamHideAfterIdRef = useRef<number | null>(null);
     const registerStreamPreviewHandover = useCallback((charId: string, messageIds: number[]) => {
         if (activeCharIdRef.current !== charId) return;
         messageIds.forEach(id => streamPreviewHandoverIdsRef.current.add(id));
@@ -235,6 +238,9 @@ const Chat: React.FC = () => {
     const [inputPreferences, setInputPreferences] = useState(loadChatInputPreferences);
     const [settingsInputPreferences, setSettingsInputPreferences] = useState(loadChatInputPreferences);
     const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
+    const [settingsIncomingCallPrompt, setSettingsIncomingCallPrompt] = useState('');
+    const [settingsIncomingCallCooldownMin, setSettingsIncomingCallCooldownMin] = useState('');
+    const [settingsIncomingCallDailyMax, setSettingsIncomingCallDailyMax] = useState('');
     const contextSuiteAnyEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         || memoryPalaceConfig.featureFlags?.interactionAdaptation === true
         || memoryPalaceConfig.featureFlags?.deepEngagement === true;
@@ -1038,6 +1044,9 @@ const Chat: React.FC = () => {
                 setSettingsContextRangeMode(resolveContextRangeMode(char));
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
                 setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
+                setSettingsIncomingCallPrompt((char.incomingCallPrompt || '').trim() || DEFAULT_INCOMING_CALL_PROMPT);
+                setSettingsIncomingCallCooldownMin(char.incomingCallCooldownMin == null ? '' : String(char.incomingCallCooldownMin));
+                setSettingsIncomingCallDailyMax(char.incomingCallDailyMax == null ? '' : String(char.incomingCallDailyMax));
                 clearUnread(char.id);
             }
             // Per-character translation toggle + language pair
@@ -1178,6 +1187,9 @@ const Chat: React.FC = () => {
         setSettingsContextRangeMode(resolveContextRangeMode(char));
         setSettingsHideSysLogs(char.hideSystemLogs || false);
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
+        setSettingsIncomingCallPrompt((char.incomingCallPrompt || '').trim() || DEFAULT_INCOMING_CALL_PROMPT);
+        setSettingsIncomingCallCooldownMin(char.incomingCallCooldownMin == null ? '' : String(char.incomingCallCooldownMin));
+        setSettingsIncomingCallDailyMax(char.incomingCallDailyMax == null ? '' : String(char.incomingCallDailyMax));
         setSettingsInputPreferences(inputPreferences);
     }, [modalType, char?.id]);
 
@@ -1251,9 +1263,21 @@ const Chat: React.FC = () => {
     // ---- 语音消息（STT）：麦克风说话 → 点停止 → 整段直接发成一条语音消息 ----
     // 不经过输入框草稿；原声 WAV 存 IndexedDB（AI 语音消息同一套存储），
     // MessageItem 用 sully-voice 同款类名渲染，用户自定义 CSS 自动匹配。
+    // 新发送包 <语音>，和 AI 同一套标签；旧消息不回写。编辑框露出标签，删掉标签即变回纯文字。
+    const userContentHasVoiceTag = (content?: string) => /<[语語]音[^>]*>/.test(content || '');
+    const wrapUserVoiceContent = (text: string) => {
+        const t = (text || '').trim();
+        if (!t || userContentHasVoiceTag(t)) return t;
+        return `<语音>${t}</语音>`;
+    };
+    const extractVoiceInner = (content: string) => {
+        const tagged = (content || '').match(/<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/)
+            || (content || '').match(/<[语語]音[^>]*>([\s\S]*)$/);
+        return ((tagged && tagged[1]) ? tagged[1] : content).trim();
+    };
     const handleVoiceMessage = async (text: string, rec: VoiceRecording | null) => {
         const meta: any = { stt: { engine: apiConfig.sttApi?.engine || 'doubao', durationMs: rec?.durationMs } };
-        const savedId = await handleSendText(text, 'text', meta);
+        const savedId = await handleSendText(wrapUserVoiceContent(text), 'text', meta);
         if (savedId && rec) {
             try {
                 const url = URL.createObjectURL(rec.wav);
@@ -2412,6 +2436,9 @@ const Chat: React.FC = () => {
             contextUserStartMessageId: nextUserStart,
             hideSystemLogs: settingsHideSysLogs,
             htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
+            incomingCallPrompt: settingsIncomingCallPrompt.trim() === DEFAULT_INCOMING_CALL_PROMPT.trim() ? '' : settingsIncomingCallPrompt,
+            incomingCallCooldownMin: settingsIncomingCallCooldownMin.trim() === '' ? undefined : Math.max(0, Number(settingsIncomingCallCooldownMin) || 0),
+            incomingCallDailyMax: settingsIncomingCallDailyMax.trim() === '' ? undefined : Math.max(0, Number(settingsIncomingCallDailyMax) || 0),
         } as any);
         setInputPreferences(settingsInputPreferences);
         saveChatInputPreferences(settingsInputPreferences);
@@ -2909,17 +2936,23 @@ const Chat: React.FC = () => {
     // --- Message Management ---
     const handleDeleteMessage = async () => {
         if (!selectedMessage) return;
-        const deletedId = selectedMessage.id;
-        await DB.deleteMessage(deletedId);
-        discardVoiceForMessages([deletedId]);
+        let ids = [selectedMessage.id];
+        if (isCallRecordCard(selectedMessage) && char?.id) {
+            const all = await DB.getMessagesByCharId(char.id, true);
+            ids = collectRelatedCallMessageIds(all, selectedMessage);
+        }
+        const idSet = new Set(ids);
+        if (ids.length === 1) await DB.deleteMessage(ids[0]);
+        else await DB.deleteMessages(ids);
+        discardVoiceForMessages(ids);
         // 满血主动消息：云端 fire_pack 里带最近对话原文，删了消息不打脏的话，角色到点
         // 还会提起这条已经不存在的消息（快照的消息在 flush 时从 DB 重读，这里只管打脏）。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        setMessages(prev => prev.filter(m => m.id !== deletedId));
-        setTotalMsgCount(prev => Math.max(0, prev - 1));
+        setMessages(prev => prev.filter(m => !idSet.has(m.id)));
+        setTotalMsgCount(prev => Math.max(0, prev - ids.length));
         setModalType('none');
         setSelectedMessage(null);
-        addToast('消息已删除', 'success');
+        addToast(ids.length > 1 ? '这通通话记录已删除' : '消息已删除', 'success');
         trackEvent('删除一条消息');
     };
 
@@ -2927,8 +2960,26 @@ const Chat: React.FC = () => {
         if (!selectedMessage) return;
         const contentChanged = editContent !== selectedMessage.content;
         await DB.updateMessage(selectedMessage.id, editContent);
-        // 内容变了旧语音就作废，否则语音条仍会播放编辑前的音频。
-        if (contentChanged) discardVoiceForMessages([selectedMessage.id]);
+        // 用户语音：标签还在就留原声，还能重播；把 <语音> 删掉 = 改回纯文字，这时才扔掉原声。
+        // AI 语音仍是「字变了旧合成作废」。旧用户语音（没有标签、靠 stt 标记）不批量回写。
+        const keepUserVoice = selectedMessage.role === 'user'
+            && userContentHasVoiceTag(editContent)
+            && (!!voiceDataMap[selectedMessage.id] || !!(selectedMessage.metadata as any)?.stt);
+        if (contentChanged && keepUserVoice) {
+            const inner = extractVoiceInner(editContent);
+            setVoiceDataMap(prev => {
+                const cur = prev[selectedMessage.id];
+                if (!cur) return prev;
+                return { ...prev, [selectedMessage.id]: { ...cur, originalText: inner } };
+            });
+            try {
+                const stored = await DB.getAssetRaw(voiceAssetKey(selectedMessage.id));
+                if (stored) await DB.saveAssetRaw(voiceAssetKey(selectedMessage.id), { ...stored, originalText: inner });
+            } catch (e) {
+                console.warn('[Chat] 更新用户语音转写失败', e);
+            }
+        }
+        if (contentChanged && !keepUserVoice) discardVoiceForMessages([selectedMessage.id]);
         // 同 handleDeleteMessage：正文改了要让云端 fire_pack 跟上。
         if (contentChanged) markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
         setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
@@ -3072,6 +3123,14 @@ const Chat: React.FC = () => {
                 const { thinkingChain, ...rest } = prev;
                 return rest;
             });
+        }
+        if (char?.id) {
+            const all = await DB.getMessagesByCharId(char.id, true);
+            for (const m of all) {
+                if (msgIdsToDelete.has(m.id) && isCallRecordCard(m)) {
+                    collectRelatedCallMessageIds(all, m).forEach(id => msgIdsToDelete.add(id));
+                }
+            }
         }
         const ids = Array.from(msgIdsToDelete);
         if (ids.length > 0) {
@@ -3409,6 +3468,21 @@ const Chat: React.FC = () => {
         }
         return chatDisplayMessages.slice(-visibleCount);
     }, [chatDisplayMessages, visibleCount, windowedFocusMsgId, historyWindowRange]);
+
+    if (streamingBubbles.length > 0) {
+        if (streamHideAfterIdRef.current == null) {
+            let maxId = Number.NEGATIVE_INFINITY;
+            for (const m of messages) {
+                if (typeof m.id === 'number' && m.id > maxId) maxId = m.id;
+            }
+            streamHideAfterIdRef.current = Number.isFinite(maxId) ? maxId : 0;
+        }
+    } else {
+        streamHideAfterIdRef.current = null;
+    }
+    const streamListMessages = streamingBubbles.length > 0 && streamHideAfterIdRef.current != null
+        ? displayMessages.filter(m => typeof m.id !== 'number' || m.id <= streamHideAfterIdRef.current!)
+        : displayMessages;
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
     const hasOlderHistoryWindow = windowedFocusMsgId !== null && !!historyWindowRange && historyWindowRange.start > 0;
@@ -3847,6 +3921,13 @@ const Chat: React.FC = () => {
                     updateCharacter(char.id, { chatVoiceLang: lang });
                     trackEvent('设置聊天语音语种', { 语种: voiceLanguageAnalyticsValue(lang) });
                 }}
+                onUpdateIncomingCall={(patch) => updateCharacter(char.id, patch)}
+                incomingCallPromptDraft={settingsIncomingCallPrompt}
+                setIncomingCallPromptDraft={setSettingsIncomingCallPrompt}
+                incomingCallCooldownDraft={settingsIncomingCallCooldownMin}
+                setIncomingCallCooldownDraft={setSettingsIncomingCallCooldownMin}
+                incomingCallDailyMaxDraft={settingsIncomingCallDailyMax}
+                setIncomingCallDailyMaxDraft={setSettingsIncomingCallDailyMax}
                 voiceAvailable={characterHasVoice(char, apiConfig)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
                 voiceDownloadable={!!(selectedMessage?.id && voiceDataMap[selectedMessage.id])}
@@ -4092,9 +4173,9 @@ const Chat: React.FC = () => {
                     </div>
                 )}
 
-                {displayMessages.map((m, i) => {
-                    const prevMessage = i > 0 ? displayMessages[i - 1] : null;
-                    const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
+                {streamListMessages.map((m, i) => {
+                    const prevMessage = i > 0 ? streamListMessages[i - 1] : null;
+                    const nextMessage = i < streamListMessages.length - 1 ? streamListMessages[i + 1] : null;
                     const messageGroupGapMs = 30 * 60 * 1000;
                     const breaksWithPrevious =
                         !prevMessage ||
