@@ -41,6 +41,7 @@ import { materializeVisionDescriptions } from './visionApi';
 import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
 import { loadCollaborationFileCabinetBlock } from '../features/collaboration/chatLibrary';
 import { getSARModuleRuntimePlan } from './vrWorld/sarModuleRuntime';
+import { buildBlockStatusBlock, getBlockStateFromMessages, hasBlockTrace } from './block';
 
 export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
@@ -482,6 +483,15 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             );
         }
     }
+
+    // 拉黑状态注入（冷战玩法）：判定取历史窗口里最后一条 BLOCK 记录 + 拒收标记兜底，
+    // 不落库、只拼进易变尾段。窗口无关的「第几次/是否拉黑」以 DB 记录为准的读法在
+    // 需要精确计数的入口（入口按钮/来电闸门）走 getBlockStateForChar；这里零额外 IO，
+    // 用同一份窗口数据，拉黑中/有痕迹/全无痕迹三分支。
+    const blockState = getBlockStateFromMessages(historyMsgsForPrompt);
+    const blockTraced = blockState.blocked || hasBlockTrace(historyMsgsForPrompt);
+    const blockBlock = buildBlockStatusBlock(blockState, blockTraced, userProfile?.name || '用户');
+    if (blockBlock) volatileTail += blockBlock;
 
     // 「关于对方的表达」+「回到你自己」必须是易变尾段的最后内容：修复旧版把双语/HTML/
     // 思考链/点单块拼在钢印之后、模型开口前最后读到的是格式说明书的问题。

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Briefcase, Microphone, X, Check } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, LockOpen, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Briefcase, Microphone, X, Check } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import TokenImg from '../os/TokenImg';
@@ -56,6 +56,8 @@ interface ChatInputAreaProps {
     canReroll: boolean;
     // Proactive messaging
     isProactiveActive?: boolean;
+    /** 拉黑玩法：当前是否拉黑中（决定加号面板「拉黑/解除拉黑」按钮的图标与文案） */
+    blockActive?: boolean;
     // 麦当劳 MCP
     mcdConfigured?: boolean;   // 设置里 token 已填且启用
     mcdActivated?: boolean;    // 当前会话已发"麦请求"
@@ -95,6 +97,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
+    blockActive = false,
     mcdConfigured = false,
     mcdActivated = false,
     luckinConfigured = false,
@@ -853,6 +856,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <GearSix className="w-6 h-6" weight="bold" /></div>)}
                                 <span className="text-xs font-bold">设置</span>
                             </button>
+
+                            {/* 拉黑入口和设置放在一起，保持第一页原来的横排网格 */}
+                            <button onClick={() => onPanelAction('block-toggle')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-500 border-rose-100'}`}>
+                                    {blockActive ? <LockOpen className="w-6 h-6" weight="bold" /> : <Lock className="w-6 h-6" weight="bold" />}
+                                </div>
+                                <span className="text-xs font-bold">{blockActive ? '解除拉黑' : '拉黑'}</span>
+                            </button>
                             
                             {/* Regenerate Button */}
                             <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
@@ -873,6 +884,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 </div>)}
                                 <span className="text-xs font-bold">日程/情绪</span>
                             </button>
+
 
                           </div>
 

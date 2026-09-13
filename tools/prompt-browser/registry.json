@@ -1,0 +1,684 @@
+{
+  "groups": [
+    { "id": "chat", "title": "聊天" },
+    { "id": "call", "title": "电话/语音" },
+    { "id": "date", "title": "约会" },
+    { "id": "story", "title": "剧情" },
+    { "id": "song", "title": "写歌" },
+    { "id": "lifesim", "title": "人生模拟" },
+    { "id": "guidebook", "title": "指南书" },
+    { "id": "group", "title": "群聊" },
+    { "id": "like520", "title": "Like520" },
+    { "id": "vr", "title": "VR" },
+    { "id": "worldhome", "title": "世界家" },
+    { "id": "extra", "title": "相关" }
+  ],
+  "entries": [
+    {
+      "id": "chat-core-context",
+      "group": "chat",
+      "title": "人设记忆底座",
+      "blurb": "所有 App 共用的角色人设、记忆、世界书底座。改「他是谁」先看这个。",
+      "file": "utils/context.ts",
+      "kind": "method",
+      "object": "ContextBuilder",
+      "name": "buildCoreContext"
+    },
+    {
+      "id": "chat-system",
+      "group": "chat",
+      "title": "聊天主提示词",
+      "blurb": "角色在微信式聊天里怎么说话、能用哪些工具。改聊天脾气先看这个。",
+      "file": "utils/chatPrompts.ts",
+      "kind": "method",
+      "object": "ChatPrompts",
+      "name": "buildSystemPromptParts"
+    },
+    {
+      "id": "chat-time-gap",
+      "group": "chat",
+      "title": "聊天间隔提示",
+      "blurb": "隔了几分钟/几小时/几天没聊时，系统塞给模型的那句提示。",
+      "file": "utils/chatPrompts.ts",
+      "kind": "method",
+      "object": "ChatPrompts",
+      "name": "getTimeGapHint"
+    },
+    {
+      "id": "chat-thinking-chain",
+      "group": "chat",
+      "title": "心象（思考链）",
+      "blurb": "打开「心象」时，教模型用角色内心独白写 thinking，而不是 AI 推理。",
+      "file": "utils/thinkingChainPrompt.ts",
+      "kind": "function",
+      "name": "buildThinkingChainPrompt"
+    },
+    {
+      "id": "chat-html-card",
+      "group": "chat",
+      "title": "HTML 卡片规则",
+      "blurb": "聊天里用 [html] 发邀请函、票据、小卡片时的写法。里面的 CSS 是卡片规则，不是样式文件。",
+      "file": "utils/htmlPrompt.ts",
+      "kind": "const",
+      "name": "BUILTIN_HTML_PROMPT"
+    },
+    {
+      "id": "chat-incoming-call-tag",
+      "group": "chat",
+      "title": "角色来电暗号",
+      "blurb": "聊天里角色怎么打语音过来：[[ACTION:CALL]]。不是语音合成提示词。",
+      "file": "utils/incomingCall.ts",
+      "kind": "const",
+      "name": "DEFAULT_INCOMING_CALL_PROMPT"
+    },
+    {
+      "id": "chat-archive",
+      "group": "chat",
+      "title": "每日聊天归档",
+      "blurb": "把当天聊天压成日记式记忆的默认模板。",
+      "file": "components/chat/ChatConstants.ts",
+      "kind": "const",
+      "name": "DEFAULT_ARCHIVE_PROMPTS"
+    },
+    {
+      "id": "chat-refine",
+      "group": "chat",
+      "title": "月度记忆精炼",
+      "blurb": "把每天的记忆碎片收成一个月的核心回忆。",
+      "file": "components/chat/ChatConstants.ts",
+      "kind": "const",
+      "name": "DEFAULT_REFINE_PROMPTS"
+    },
+    {
+      "id": "call-minimax-guide",
+      "group": "call",
+      "title": "MiniMax 语音演出",
+      "blurb": "教模型把字写成能被 MiniMax 念出来的对白（停顿、呼吸、语气）。",
+      "file": "utils/minimaxTts.ts",
+      "kind": "const",
+      "name": "VOICE_ACTING_GUIDE"
+    },
+    {
+      "id": "call-fish-guide",
+      "group": "call",
+      "title": "鱼声语音演出",
+      "blurb": "鱼声音色那一套怎么写对白。和 MiniMax 的标签不是同一套。",
+      "file": "utils/fishAudioTts.ts",
+      "kind": "const",
+      "name": "FISH_VOICE_ACTING_GUIDE"
+    },
+    {
+      "id": "call-eleven-v3",
+      "group": "call",
+      "title": "ElevenLabs v3 语音演出",
+      "blurb": "ElevenLabs v3 模型的语音表演规则。",
+      "file": "utils/elevenLabsTts.ts",
+      "kind": "const",
+      "name": "ELEVENLABS_V3_VOICE_ACTING_GUIDE"
+    },
+    {
+      "id": "call-eleven-standard",
+      "group": "call",
+      "title": "ElevenLabs 普通语音演出",
+      "blurb": "非 v3 的 ElevenLabs 语音表演规则。",
+      "file": "utils/elevenLabsTts.ts",
+      "kind": "const",
+      "name": "ELEVENLABS_STANDARD_VOICE_ACTING_GUIDE"
+    },
+    {
+      "id": "call-incoming-greeting",
+      "group": "call",
+      "title": "来电接通第一句",
+      "blurb": "角色打过来、对方接了之后，强制角色先开口的那句系统提示。",
+      "file": "utils/incomingCall.ts",
+      "kind": "function",
+      "name": "incomingCallGreetingPrompt"
+    },
+    {
+      "id": "call-omni-stt",
+      "group": "call",
+      "title": "用户听写 Omni",
+      "blurb": "把用户说的话转成文字并标语气。这是听写，不是角色怎么念。设置里两格不要混。",
+      "file": "utils/volcStt.ts",
+      "kind": "function",
+      "name": "defaultQwenEmotionPrompt"
+    },
+    {
+      "id": "call-avatar-performance",
+      "group": "call",
+      "title": "视频通话演出",
+      "blurb": "视频通话时教模型写表情/动作/镜头指令。只动提示词，不动视频界面。",
+      "file": "utils/avatarPerformance.ts",
+      "kind": "function",
+      "name": "buildAvatarPerformancePrompt"
+    },
+    {
+      "id": "call-avatar-touch",
+      "group": "call",
+      "title": "摸头反应",
+      "blurb": "点到角色身上时，模型怎么接这一下触摸。",
+      "file": "utils/avatarTouch.ts",
+      "kind": "function",
+      "name": "buildAvatarTouchSystemPrompt"
+    },
+    {
+      "id": "call-companion-startup",
+      "group": "call",
+      "title": "开机问候",
+      "blurb": "伴侣开机/登场时那句开场怎么写。",
+      "file": "utils/companionStartup.ts",
+      "kind": "function",
+      "name": "buildCompanionStartupPrompt"
+    },
+    {
+      "id": "date-peek",
+      "group": "date",
+      "title": "约会感知开场",
+      "blurb": "用户还没走过去、悄悄靠近时，第三人称描写角色当下在干什么。",
+      "file": "utils/datePrompts.ts",
+      "kind": "method",
+      "object": "DatePrompts",
+      "name": "buildPeekPayload"
+    },
+    {
+      "id": "date-session",
+      "group": "date",
+      "title": "见面对话",
+      "blurb": "面对面 VN 格式：每行情绪标签、叙述和台词怎么写。",
+      "file": "utils/datePrompts.ts",
+      "kind": "method",
+      "object": "DatePrompts",
+      "name": "buildSessionPayload"
+    },
+    {
+      "id": "date-voice-guide",
+      "group": "date",
+      "title": "见面语音情绪",
+      "blurb": "约会台词末尾的 [v:xxx]。跟聊天/电话那套语音指南不是同一份。",
+      "file": "utils/datePrompts.ts",
+      "kind": "const",
+      "name": "DATE_VOICE_GUIDE"
+    },
+    {
+      "id": "date-continue",
+      "group": "date",
+      "title": "见面点继续",
+      "blurb": "见面时用户点「继续」、自己没说话，角色怎么把这一刻接着演下去。",
+      "file": "utils/meetingContinue.ts",
+      "kind": "function",
+      "name": "buildInPersonContinueInstruction"
+    },
+    {
+      "id": "story-preset-json",
+      "group": "story",
+      "title": "剧情内置预设（夜班放映室）",
+      "blurb": "剧情模式默认那一整包：框架、人称、转述档位、小剧场、关系温度等。改剧情先看这个。",
+      "file": "assets/presets/night-screening-v6.14.sully.json",
+      "kind": "file",
+      "name": "night-screening-v6.14.sully.json"
+    },
+    {
+      "id": "story-compile",
+      "group": "story",
+      "title": "剧情预设怎么拼起来",
+      "blurb": "把上面那包预设，按槽位（角色/世界书/身份/历史）拼成真正发给模型的消息。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "compileStoryPreset"
+    },
+    {
+      "id": "story-identity",
+      "group": "story",
+      "title": "剧情身份与人称",
+      "blurb": "故事里的「你」是用户侧身份，不是 AI 自己。人称锚点。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryIdentityGuard"
+    },
+    {
+      "id": "story-memory-guard",
+      "group": "story",
+      "title": "共同记忆不许编",
+      "blurb": "剧情里不能把没发生过的事说成你俩的共同记忆。",
+      "file": "utils/storyTheater.ts",
+      "kind": "const",
+      "name": "REAL_COMPANION_MEMORY_GUARD"
+    },
+    {
+      "id": "story-relation-texture",
+      "group": "story",
+      "title": "关系温度质地",
+      "blurb": "高好感不是每轮都涨跌。教模型写关系质地，不要空喊甜蜜。",
+      "file": "utils/storyTheater.ts",
+      "kind": "const",
+      "name": "RELATIONSHIP_TEXTURE_GUIDE"
+    },
+    {
+      "id": "story-affinity-multi",
+      "group": "story",
+      "title": "多人关系温度",
+      "blurb": "好几个角色同台时，每个人的好感分开记，不许串号。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryMultiAffinityGuide"
+    },
+    {
+      "id": "story-affinity-aware",
+      "group": "story",
+      "title": "关系变化察觉",
+      "blurb": "用户填了关系变化后，角色这一轮知不知道、能不能演出来。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryAffinityAwarenessReminder"
+    },
+    {
+      "id": "story-mini-theater",
+      "group": "story",
+      "title": "小剧场结尾",
+      "blurb": "正篇后面那个侧拍小剧场模块，必须按启用的规则收尾。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryMiniTheaterReminder"
+    },
+    {
+      "id": "story-backstage",
+      "group": "story",
+      "title": "幕后与余波",
+      "blurb": "正文结束后的暗格、镜头债，折叠成一个幕后模块。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryBackstageAftermathReminder"
+    },
+    {
+      "id": "story-continue",
+      "group": "story",
+      "title": "剧情点继续",
+      "blurb": "用户这轮没写新动作，故事自己往下走，不要停下来问你要做什么。",
+      "file": "utils/meetingContinue.ts",
+      "kind": "function",
+      "name": "buildStoryContinueInstruction"
+    },
+    {
+      "id": "story-actor-memory",
+      "group": "story",
+      "title": "角色专属记忆套",
+      "blurb": "召回的记忆只属于这个角色，不能改绑到别人身上。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryActorMemoryEnvelope"
+    },
+    {
+      "id": "story-archive-memory",
+      "group": "story",
+      "title": "剧情档案召回",
+      "blurb": "本剧情自己的叙事档案，不是某个人的私人记忆。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildStoryArchiveMemoryEnvelope"
+    },
+    {
+      "id": "story-persona",
+      "group": "story",
+      "title": "用户侧执笔身份",
+      "blurb": "你在剧情里扮演的那个人：名字、边界、世界观。",
+      "file": "utils/storyTheater.ts",
+      "kind": "function",
+      "name": "buildTheaterPersona"
+    },
+    {
+      "id": "call-main-prompt",
+      "group": "call",
+      "title": "电话/视频主提示词",
+      "blurb": "拿着手机在讲话：怎么像真人打电话，不要像客服念稿。之前漏收了。",
+      "file": "apps/CallApp.tsx",
+      "kind": "function",
+      "name": "buildCallPrompt"
+    },
+    {
+      "id": "chat-emotion-eval",
+      "group": "chat",
+      "title": "聊天情绪评估",
+      "blurb": "副 API 用来判断这一轮角色情绪的提示词。",
+      "file": "hooks/useChatAI.ts",
+      "kind": "function",
+      "name": "buildEmotionEvalPrompt"
+    },
+    {
+      "id": "extra-dream",
+      "group": "extra",
+      "title": "梦境演出",
+      "blurb": "梦剧场：写角色自己的潜意识梦，不要做成围着用户转的梦。",
+      "file": "apps/DreamTheater.tsx",
+      "kind": "function",
+      "name": "buildDreamPrompt"
+    },
+    {
+      "id": "song-mentor",
+      "group": "song",
+      "title": "写歌工作室",
+      "blurb": "角色当歌词共写人：怎么点评、怎么只改指定那一句。",
+      "file": "utils/songPrompts.ts",
+      "kind": "method",
+      "object": "SongPrompts",
+      "name": "buildMentorSystemPrompt"
+    },
+    {
+      "id": "song-user-message",
+      "group": "song",
+      "title": "本轮歌词任务",
+      "blurb": "把歌词本现状和用户这一句要求塞给模型的那条 user 消息。",
+      "file": "utils/songPrompts.ts",
+      "kind": "method",
+      "object": "SongPrompts",
+      "name": "buildUserMessage"
+    },
+    {
+      "id": "song-completion-system",
+      "group": "song",
+      "title": "完成评语人设",
+      "blurb": "歌写完后，角色用自己的口吻说一段完成评语，不要像评委。",
+      "file": "utils/songPrompts.ts",
+      "kind": "method",
+      "object": "SongPrompts",
+      "name": "buildCompletionSystemPrompt"
+    },
+    {
+      "id": "song-completion-user",
+      "group": "song",
+      "title": "完成评语任务",
+      "blurb": "完成评语时塞给模型的作品上下文。",
+      "file": "utils/songPrompts.ts",
+      "kind": "method",
+      "object": "SongPrompts",
+      "name": "buildCompletionPrompt"
+    },
+    {
+      "id": "lifesim-char-turn",
+      "group": "lifesim",
+      "title": "角色当玩家",
+      "blurb": "人生模拟里，角色作为玩家操控游戏小人时的系统提示。",
+      "file": "utils/lifeSimPrompts.ts",
+      "kind": "function",
+      "name": "buildCharTurnSystemPrompt"
+    },
+    {
+      "id": "lifesim-world-drama",
+      "group": "lifesim",
+      "title": "世界戏剧策划",
+      "blurb": "给这一回合安排世界事件、冲突和八卦的策划提示。",
+      "file": "utils/lifeSimPrompts.ts",
+      "kind": "function",
+      "name": "buildWorldDramaPlannerPrompt"
+    },
+    {
+      "id": "lifesim-summary",
+      "group": "lifesim",
+      "title": "一局结束总结",
+      "blurb": "把这一整局的世界线收成一张小卡片文案。",
+      "file": "utils/lifeSimSessionSummary.ts",
+      "kind": "function",
+      "name": "buildLifeSimSessionSummaryPrompt"
+    },
+    {
+      "id": "guidebook-opening",
+      "group": "guidebook",
+      "title": "指南书开场",
+      "blurb": "攻略本第一局：角色当玩家、用户当被攻略对象的开场。",
+      "file": "utils/guidebookPrompts.ts",
+      "kind": "function",
+      "name": "buildOpeningPrompt"
+    },
+    {
+      "id": "guidebook-round",
+      "group": "guidebook",
+      "title": "指南书一回合",
+      "blurb": "手动模式下每一回合 GM 旁白和选项怎么写。",
+      "file": "utils/guidebookPrompts.ts",
+      "kind": "function",
+      "name": "buildRoundPrompt"
+    },
+    {
+      "id": "guidebook-auto",
+      "group": "guidebook",
+      "title": "指南书自动回合",
+      "blurb": "自动推进时的回合提示。",
+      "file": "utils/guidebookPrompts.ts",
+      "kind": "function",
+      "name": "buildAutoRoundPrompt"
+    },
+    {
+      "id": "guidebook-option-assist",
+      "group": "guidebook",
+      "title": "指南书选项协助",
+      "blurb": "帮角色想选项、分析选项时用的提示。",
+      "file": "utils/guidebookPrompts.ts",
+      "kind": "function",
+      "name": "buildOptionAssistPrompt"
+    },
+    {
+      "id": "guidebook-end",
+      "group": "guidebook",
+      "title": "指南书结束卡",
+      "blurb": "一局攻略结束时的结算卡片。",
+      "file": "utils/guidebookPrompts.ts",
+      "kind": "function",
+      "name": "buildEndCardPrompt"
+    },
+    {
+      "id": "group-director",
+      "group": "group",
+      "title": "群聊导演模式",
+      "blurb": "AI 当导演，一次写多个角色在群里怎么接话。",
+      "file": "utils/groupChat/prompts.ts",
+      "kind": "function",
+      "name": "buildDirectorInstruction"
+    },
+    {
+      "id": "group-round-robin",
+      "group": "group",
+      "title": "群聊轮流发言",
+      "blurb": "一个角色一轮、轮流说话时的任务指令。",
+      "file": "utils/groupChat/prompts.ts",
+      "kind": "function",
+      "name": "buildRoundRobinInstruction"
+    },
+    {
+      "id": "group-topic",
+      "group": "group",
+      "title": "群聊公共话题盒",
+      "blurb": "把一大段群聊收成公共话题摘要。",
+      "file": "utils/groupChat/topicBoxes.ts",
+      "kind": "function",
+      "name": "buildGroupTopicPrompt"
+    },
+    {
+      "id": "like520-a",
+      "group": "like520",
+      "title": "520 第一通",
+      "blurb": "520 活动 Call A：通过角色让用户看见自己。",
+      "file": "utils/like520/prompts.ts",
+      "kind": "function",
+      "name": "buildCallAPrompt"
+    },
+    {
+      "id": "like520-b",
+      "group": "like520",
+      "title": "520 第二通",
+      "blurb": "520 活动 Call B：后半段的走向和禁词。和第一通不是同一份。",
+      "file": "utils/like520/prompts.ts",
+      "kind": "function",
+      "name": "buildCallBPrompt"
+    },
+    {
+      "id": "vr-system",
+      "group": "vr",
+      "title": "VR 房间总则",
+      "blurb": "角色进 VR 房间时追加的总规则。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildVRSystemAddendum"
+    },
+    {
+      "id": "vr-music",
+      "group": "vr",
+      "title": "听歌房回合",
+      "blurb": "听歌房这一回合角色输出什么。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildMusicRoomTurn"
+    },
+    {
+      "id": "vr-library",
+      "group": "vr",
+      "title": "图书馆回合",
+      "blurb": "图书馆这一回合角色输出什么。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildLibraryRoomTurn"
+    },
+    {
+      "id": "vr-guestbook",
+      "group": "vr",
+      "title": "留言板回合",
+      "blurb": "留言板这一回合角色输出什么。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildGuestbookRoomTurn"
+    },
+    {
+      "id": "vr-gym",
+      "group": "vr",
+      "title": "健身房回合",
+      "blurb": "健身房这一回合角色输出什么。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildGymRoomTurn"
+    },
+    {
+      "id": "vr-signal",
+      "group": "vr",
+      "title": "信号室回合",
+      "blurb": "信号室写诗/信号时的回合提示。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildSignalRoomTurn"
+    },
+    {
+      "id": "vr-post-write",
+      "group": "vr",
+      "title": "邮局写信",
+      "blurb": "邮局里写信那一回合。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildPostOfficeRoomTurn"
+    },
+    {
+      "id": "vr-post-read",
+      "group": "vr",
+      "title": "邮局读信",
+      "blurb": "邮局里读信那一回合。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildPostOfficeReadTurn"
+    },
+    {
+      "id": "vr-theater",
+      "group": "vr",
+      "title": "剧场回合",
+      "blurb": "剧场房间角色这一回合做什么。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildTheaterRoomTurn"
+    },
+    {
+      "id": "vr-director",
+      "group": "vr",
+      "title": "剧场导演",
+      "blurb": "剧场导演怎么排这一场。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildDirectorTurn"
+    },
+    {
+      "id": "vr-script",
+      "group": "vr",
+      "title": "剧场写剧本",
+      "blurb": "让模型写/续写剧本的提示。",
+      "file": "utils/vrWorld/prompts.ts",
+      "kind": "function",
+      "name": "buildLLMScriptTurn"
+    },
+    {
+      "id": "vr-sar-module",
+      "group": "vr",
+      "title": "SAR 模块注入",
+      "blurb": "彼方 SAR 模块挂到聊天/约会时追加的那一段。",
+      "file": "utils/vrWorld/sarModuleRuntime.ts",
+      "kind": "function",
+      "name": "buildSARModulePrompt"
+    },
+    {
+      "id": "world-addendum",
+      "group": "worldhome",
+      "title": "世界家总则",
+      "blurb": "世界家里角色要遵守的时间、房子、模式规则。",
+      "file": "utils/worldHome/prompts.ts",
+      "kind": "function",
+      "name": "buildWorldSystemAddendum"
+    },
+    {
+      "id": "world-char-turn",
+      "group": "worldhome",
+      "title": "世界家角色回合",
+      "blurb": "世界家里一个角色这一拍要输出什么。",
+      "file": "utils/worldHome/prompts.ts",
+      "kind": "function",
+      "name": "buildWorldCharTurn"
+    },
+    {
+      "id": "world-npc-roll",
+      "group": "worldhome",
+      "title": "世界家生成路人",
+      "blurb": "给这个世界临时捏几个路人 NPC。",
+      "file": "utils/worldHome/prompts.ts",
+      "kind": "function",
+      "name": "buildNpcRollPrompt"
+    },
+    {
+      "id": "world-npc-turn",
+      "group": "worldhome",
+      "title": "世界家路人回合",
+      "blurb": "路人 NPC 这一拍的场景和反应。",
+      "file": "utils/worldHome/prompts.ts",
+      "kind": "function",
+      "name": "buildNpcTurn"
+    },
+    {
+      "id": "extra-luckin",
+      "group": "extra",
+      "title": "瑞幸点单",
+      "blurb": "聊天里帮用户点瑞幸时的角色搭子规则。",
+      "file": "utils/luckinToolBridge.ts",
+      "kind": "const",
+      "name": "LUCKIN_SYSTEM_PROMPT"
+    },
+    {
+      "id": "extra-mcd",
+      "group": "extra",
+      "title": "麦当劳点单",
+      "blurb": "聊天里帮用户点麦当劳时的角色搭子规则。",
+      "file": "utils/mcdToolBridge.ts",
+      "kind": "const",
+      "name": "MCD_SYSTEM_PROMPT"
+    },
+    {
+      "id": "extra-collab-maker",
+      "group": "extra",
+      "title": "协作生成器",
+      "blurb": "协作里让模型做气泡/主题/角色卡等可安装成品的任务说明。",
+      "file": "features/collaboration/makers.ts",
+      "kind": "function",
+      "name": "getCollaborationMakerPrompt"
+    }
+  ]
+}

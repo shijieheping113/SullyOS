@@ -103,6 +103,28 @@ export const lastRejectedIncomingAt = (messages: Array<{ timestamp?: number; met
     return null;
 };
 
+/**
+ * 拉黑拦来电（纯函数，零额外 IO）。
+ * 聊天记录里的 [[记录:BLOCK|...]] 系统消息是事实源：最后一条「已拉黑」且电话=是 → 拦。
+ * 用户去电永不拦截，这里只决定「要不要弹角色来电」。
+ * 和 utils/block.ts 的 getBlockStateFromMessages 判定一致，但这里只读 metadata，
+ * 不依赖 role（该 helper 需要 role 字段做「最后一条带拒收标记」兜底，来电场景不需要——
+ * 电话拉黑必有一条带 blockCallsToo 的 BLOCK 记录，靠它即可）。
+ */
+export const isIncomingCallBlockedByBlock = (messages: Array<{ metadata?: Message['metadata'] }>): boolean => {
+    let blockedCalls = false;
+    for (let i = 0; i < messages.length; i += 1) {
+        const meta = messages[i].metadata;
+        if (!meta || meta.source !== 'block-status') continue;
+        if (meta.blockStatus === '已拉黑') {
+            blockedCalls = !!meta.blockCallsToo;
+        } else if (meta.blockStatus === '已解除') {
+            blockedCalls = false;
+        }
+    }
+    return blockedCalls;
+};
+
 export const shouldOfferIncomingCall = (opts: {
     char?: Pick<CharacterProfile, 'allowProactiveCall' | 'incomingCallCooldownMin' | 'incomingCallDailyMax'> | null;
     hasPending: boolean;
@@ -116,6 +138,7 @@ export const shouldOfferIncomingCall = (opts: {
     const char = opts.char;
     if (!char?.allowProactiveCall) return false;
     if (opts.hasPending || opts.inCall || opts.suspended || opts.hidden || opts.amsgReplay) return false;
+    if (isIncomingCallBlockedByBlock(opts.messages)) return false;
     const now = opts.now ?? Date.now();
     const cooldownMin = Number(char.incomingCallCooldownMin);
     if (Number.isFinite(cooldownMin) && cooldownMin > 0) {

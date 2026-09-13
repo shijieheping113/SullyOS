@@ -10,6 +10,15 @@ import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixi
 import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
 import { DEFAULT_INCOMING_CALL_PROMPT, formatIncomingCallRecord } from './incomingCall';
+import {
+    BLOCK_SOURCE,
+    BLOCK_FRIEND_REQUEST_SOURCE,
+    BLOCK_PEEK_SOURCE,
+    formatBlockFriendRequestRecord,
+    formatBlockPeekRecord,
+    formatBlockRecord,
+    formatBlockSendFailedRecord,
+} from './block';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
@@ -1218,6 +1227,15 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 // TODO(记录形态): 戳一戳 / 时间间隔提示等其他系统事件, 等转账的 [[记录:TRANSFER]]
                 // 观察一段时间后再迁 (transferFormat.ts 头注) —— 防线已按整个记录命名空间就位。
                 if (m.metadata?.source === 'incoming-call') content = `${timeStr} ${formatIncomingCallRecord(m)}`;
+                // 拉黑玩法的三类记录：状态 / 好友申请卡 / 求看看卡。跟 incoming-call 同款——
+                // 落库时正文已是 [[记录:...]] 形态，这里从 metadata 重建（申请/求看读 live 状态）。
+                else if (m.metadata?.source === BLOCK_SOURCE) {
+                    const bMeta = m.metadata || {};
+                    const bStatus = bMeta.blockStatus === '已解除' ? '已解除' : '已拉黑';
+                    content = `${timeStr} ${formatBlockRecord({ at: Number(m.timestamp || 0), status: bStatus, blockCallsToo: !!bMeta.blockCallsToo })}`;
+                }
+                else if (m.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE) content = `${timeStr} ${formatBlockFriendRequestRecord(m)}`;
+                else if (m.metadata?.source === BLOCK_PEEK_SOURCE) content = `${timeStr} ${formatBlockPeekRecord(m)}`;
                 else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
                 else if (m.type === 'collaboration_file') {
                     const fileName = String(m.metadata?.fileName || m.content || '未命名文件');
@@ -1449,6 +1467,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
                 }
                 else content = `${timeStr} ${sourceTag} ${content}`;
+
+                // 拉黑期间角色的消息被拒收：让角色看到自己这条是「已拒收」，以为什么都没送达。
+                // 标记在 metadata.blockSendFailed（落库时打），这里只拼前缀记录，不改原文。
+                if (m.role === 'assistant' && m.metadata?.blockSendFailed) {
+                    content = `${formatBlockSendFailedRecord(Number(m.timestamp || 0))}\n${content}`;
+                }
 
                 return { role: m.role, content };
             }),

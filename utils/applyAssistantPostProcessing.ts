@@ -56,6 +56,7 @@ import { announceScheduleChanges, applyAssistantScheduleChanges } from './schedu
 import { isBlobRef } from './blobRef';
 import { consumeSARChatSurfaceChunk, type SARModuleSurfaceMeta } from './vrWorld/sarModuleRuntime';
 import { stripLeakedSourceTags } from './sanitize';
+import { getBlockStateFromMessages } from './block';
 
 // ─── 模块内辅助 ──────────────────────────────────────────────────────────────
 
@@ -795,6 +796,12 @@ export async function applyAssistantPostProcessing(
 
     // 把一段文本 (parseAndExecuteActions / HTML 之外的部分) 渲染成气泡并落库 —— 双语 / 表情 / 引用 / 分段
     // 与原 inline 末尾逻辑一致。抽出来是为了让"执行功能前的本轮正文 A"能在二轮前先展示, 二轮结果 B 复用同一套。
+    // 拉黑（冷战玩法）：拉黑期间角色发的每条气泡照常落库，只是 metadata.blockSendFailed=true。
+    // 判定用 ctx.contextMsgs（调用方已给的本轮上下文窗口）零额外 IO；窗口里没有 BLOCK 记录时
+    // getBlockStateFromMessages 内部会按「最后一条 assistant 是否已带拒收标记」兜底，窗口无关。
+    // 挂点在 takeMeta：所有 assistant 正文/表情气泡都走它，一处收口。用户消息与系统卡不受影响。
+    const blockFailed = getBlockStateFromMessages((contextMsgs || []) as any).blocked;
+
     let sarSurfaceClaimed = false;
     const renderAndPersist = async (rawContent: string, firstThinkingChain: string | null): Promise<void> => {
         let firstMeta: any = firstThinkingChain ? { thinkingChain: firstThinkingChain } : null;
@@ -813,9 +820,10 @@ export async function applyAssistantPostProcessing(
             const sarMeta = surfaceChunk && sarModuleSurface
                 ? { sarModuleSurface: { ...sarModuleSurface, surface: surfaceChunk } }
                 : undefined;
-            const merged = firstMeta || sarMeta
+            let merged = firstMeta || sarMeta
                 ? { ...(base || {}), ...(sarMeta || {}), ...(firstMeta || {}) }
                 : base;
+            if (blockFailed) merged = { ...(merged || {}), blockSendFailed: true };
             firstMeta = null;
             return merged;
         };

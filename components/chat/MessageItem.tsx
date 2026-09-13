@@ -1426,6 +1426,8 @@ interface MessageItemProps {
     onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
     /** 用户点「生活记录」卡 → 确认 / 否决（角色代记的记录） */
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
+    /** 拉黑玩法：求看看卡「看看」/ 好友申请卡「通过」「忽略」 */
+    onResolveBlockAction?: (m: Message, action: 'peek-viewed' | 'request-accept' | 'request-ignore') => void;
     /** 打开协同文件柜里的原始 Blob；消息本身只保存 assetId 引用。 */
     onOpenCollaborationFile?: (m: Message) => void | Promise<void>;
     /** 思考链卡片视觉与交互 */
@@ -1477,6 +1479,7 @@ const MessageItem = React.memo(({
     onLuckinCandidate,
     onResolveTransfer,
     onResolveLifeRecord,
+    onResolveBlockAction,
     onOpenCollaborationFile,
     thinkingChainOptions,
 }: MessageItemProps) => {
@@ -1505,6 +1508,10 @@ const MessageItem = React.memo(({
     const bubbleBgUrl = useBlobRefUrl(styleConfig.backgroundImage);
     const [showVoiceText, setShowVoiceText] = useState(false);
     const [showSarTruth, setShowSarTruth] = useState(false);
+    const [peekExpanded, setPeekExpanded] = useState(false);
+    useEffect(() => {
+        setPeekExpanded(!!m.metadata?.peekViewed);
+    }, [m.id, m.metadata?.peekViewed]);
     const [openingCollaborationFile, setOpeningCollaborationFile] = useState(false);
     const [replyOffset, setReplyOffset] = useState(0);
     const [isReplyGestureActive, setIsReplyGestureActive] = useState(false);
@@ -1844,6 +1851,95 @@ const MessageItem = React.memo(({
                                     {line}
                                 </div>
                             ) : null}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // 拉黑玩法 · 求看看卡：短句直接显示在卡上，一个「看看」按钮（看看≠通过，拉黑不解除）
+        if (m.metadata?.source === 'peek-request') {
+            const line = String(m.metadata?.peekText || '').trim();
+            const viewed = !!m.metadata?.peekViewed;
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-5 my-3" {...interactionProps}>
+                        <div className="rounded-[1.4rem] bg-gradient-to-br from-sky-50 via-white to-indigo-50 border border-sky-200/70 p-4 shadow-[0_8px_24px_rgba(56,189,248,0.10)]">
+                            <div className="flex items-center gap-3">
+                                <TokenImg value={charAvatar} alt={charName} className="h-9 w-9 rounded-full object-cover ring-1 ring-sky-100" loading="lazy" decoding="async" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                    <div className="text-sm font-semibold text-slate-700 truncate">{charName} 想让你看一眼</div>
+                                    <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-600">{viewed ? '已看' : '等你'}</span>
+                                </div>
+                                </div>
+                            </div>
+                            {line && peekExpanded ? (
+                                <div className="mt-3 rounded-2xl bg-white/70 border border-sky-100/60 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-500">
+                                    {line}
+                                </div>
+                            ) : null}
+                            {!viewed && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setPeekExpanded(true); onResolveBlockAction?.(m, 'peek-viewed'); }}
+                                    className="mt-3 w-full rounded-full bg-sky-400/90 text-white text-xs font-semibold py-2 active:scale-[0.98] transition-transform"
+                                >看看</button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // 拉黑玩法 · 好友申请卡：附言直接显示在卡上，「通过」「忽略」两个按钮；通过即全部解除
+        if (m.metadata?.source === 'friend-request') {
+            const line = String(m.metadata?.requestText || '').trim();
+            const status = String(m.metadata?.requestStatus || 'pending');
+            const statusLabel = status === 'accepted' ? '已通过' : status === 'ignored' ? '已忽略' : '待处理';
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-5 my-3" {...interactionProps}>
+                        <div className="rounded-[1.4rem] bg-gradient-to-br from-rose-50 via-white to-pink-50 border border-rose-200/70 p-4 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
+                            <div className="flex items-center gap-3">
+                                <TokenImg value={charAvatar} alt={charName} className="h-9 w-9 rounded-full object-cover ring-1 ring-rose-100" loading="lazy" decoding="async" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                    <div className="text-sm font-semibold text-slate-700 truncate">{charName} 想和你重新联系</div>
+                                    <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-600">{statusLabel}</span>
+                                </div>
+                                </div>
+                            </div>
+                            {line ? (
+                                <div className="mt-3 rounded-2xl bg-white/70 border border-rose-100/60 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-500">
+                                    {line}
+                                </div>
+                            ) : null}
+                            {status === 'pending' && (
+                                <div className="mt-3 flex gap-2">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-accept'); }}
+                                        className="flex-1 rounded-full bg-rose-400/90 text-white text-xs font-semibold py-2 active:scale-[0.98] transition-transform"
+                                    >通过</button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-ignore'); }}
+                                        className="flex-1 rounded-full bg-slate-200/80 text-slate-600 text-xs font-semibold py-2 active:scale-[0.98] transition-transform"
+                                    >忽略</button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -3742,6 +3838,14 @@ const MessageItem = React.memo(({
                 <div className="sar-chat-speech-control" style={{ color: styleConfig.textColor }}>
                     <SARSpeechSwitch truth={showSarTruth} moduleTitle={m.metadata?.sarModuleSurface?.moduleTitle}
                         onToggle={() => setShowSarTruth(value => !value)} />
+                </div>
+            )}
+
+            {/* 拉黑（冷战玩法）：角色这条消息被拒收，气泡末尾挂「未送达」——用户全看得到，角色以为自己没送达 */}
+            {!isUser && m.metadata?.blockSendFailed && (
+                <div className="relative z-10 mt-1.5 flex items-center gap-1 text-[10px] font-medium text-amber-500/90 select-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 6a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 6Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" /></svg>
+                    <span>未送达</span>
                 </div>
             )}
 

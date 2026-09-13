@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+import { saveBlockRecord, getBlockStateForChar, restoreBlockDeliveryFlags, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, processImageToBlob } from '../utils/file';
@@ -215,7 +216,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result' | 'block-toggle'>('none');
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
     const [fineTuneOpen, setFineTuneOpen] = useState(false);          // 圆气泡在场
     const [fineTunePanelOpen, setFineTunePanelOpen] = useState(false); // 小面板展开/收起
@@ -1733,6 +1734,38 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
 
+    // 拉黑（冷战玩法）两张卡：
+    //  求看看卡「看看」→ 标记已看（角色知道自己被看到了，但拉黑没解除）；
+    //  好友申请卡「通过」→ 落一条「已解除」记录（聊天电话一起恢复）+ 卡标记已通过；
+    //  好友申请卡「忽略」→ 只标记已忽略，拉黑继续。
+    const handleResolveBlockAction = useCallback(async (msg: Message, action: 'peek-viewed' | 'request-accept' | 'request-ignore') => {
+        if (!char) return;
+        if (action === 'peek-viewed') {
+            if (msg.metadata?.peekViewed) return;
+            await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), peekViewed: true, viewedAt: Date.now() }));
+            setMessages(prev => prev.map(item => item.id === msg.id
+                ? { ...item, metadata: { ...(item.metadata || {}), peekViewed: true, viewedAt: Date.now() } }
+                : item));
+        } else if (action === 'request-accept') {
+            if (msg.metadata?.requestStatus && msg.metadata.requestStatus !== 'pending') return;
+            await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), requestStatus: 'accepted', resolvedAt: Date.now() }));
+            await saveBlockRecord(char.id, '已解除');
+            setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
+            setMessages(prev => prev.map(item => item.id === msg.id
+                ? { ...item, metadata: { ...(item.metadata || {}), requestStatus: 'accepted', resolvedAt: Date.now() } }
+                : item));
+            addToast('已通过好友申请，解除拉黑', 'success');
+        } else {
+            if (msg.metadata?.requestStatus && msg.metadata.requestStatus !== 'pending') return;
+            await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), requestStatus: 'ignored', resolvedAt: Date.now() }));
+            addToast('已忽略好友申请', 'info');
+        }
+        await reloadMessages(visibleCountRef.current);
+        if (action === 'request-accept' && char) {
+            setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
+        }
+    }, [char, reloadMessages, addToast]);
+
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
     // 与 autoTriggerOnSend 自动路径的指示器行为一致。本地模式无此指示器，直接 triggerAI。
@@ -1828,6 +1861,7 @@ const Chat: React.FC = () => {
             case 'active-msg-2': setShowActiveMsg2Modal(true); break;
             case 'emotion': setModalType('schedule'); break; // 情绪已并入日程，打开同一 modal
             case 'schedule': setModalType('schedule'); break;
+            case 'block-toggle': setBlockCallsTooChecked(false); setShowPanel('none'); setModalType('block-toggle'); break;
             case 'mcd-not-configured':
                 addToast('请先到设置 → 麦当劳 启用并填入 MCP Token', 'info');
                 break;
@@ -1874,6 +1908,21 @@ const Chat: React.FC = () => {
 
     // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
     const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
+    // 拉黑状态必须读完整聊天记录，不能只看前端过滤后的消息窗口。
+    const [blockState, setBlockState] = useState<BlockState>({ blocked: false, blockCallsToo: false, since: 0, count: 0 });
+    useEffect(() => {
+        if (!activeCharacterId) {
+            setBlockState({ blocked: false, blockCallsToo: false, since: 0, count: 0 });
+            return;
+        }
+        getBlockStateForChar(activeCharacterId).then(setBlockState).catch(() => {});
+        (async () => {
+            await restoreBlockDeliveryFlags(activeCharacterId);
+            await reloadMessages(visibleCountRef.current);
+        })().catch(() => {});
+    }, [activeCharacterId, messages.length, reloadMessages]);
+    // 拉黑确认弹窗里「连电话一起拉黑」的勾选
+    const [blockCallsTooChecked, setBlockCallsTooChecked] = useState(false);
     const [mcdAppOpen, setMcdAppOpen] = useState(false);
     // mcdMiniAppRef 声明在文件靠前 (传给 useChatAI), 这里仅占位
     const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
@@ -4249,6 +4298,7 @@ const Chat: React.FC = () => {
                             onMcdCandidate={handleMcdCandidate}
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
+                            onResolveBlockAction={handleResolveBlockAction}
                             onOpenCollaborationFile={handleOpenCollaborationFile}
                             thinkingChainOptions={thinkingChainOptions}
                         />
@@ -4488,6 +4538,7 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    blockActive={blockState.blocked}
                     mcdConfigured={mcdConfiguredFlag}
                     mcdActivated={mcdActivated}
                     luckinConfigured={luckinConfiguredFlag}
@@ -4504,6 +4555,61 @@ const Chat: React.FC = () => {
                 />
             </div>
 
+
+            {/* 拉黑确认弹窗：冷战玩法入口。拉黑只挂记录不动人设；解除=全部解除 */}
+            {char && (
+                <Modal
+                    isOpen={modalType === 'block-toggle'}
+                    title={blockState.blocked ? `解除对 ${char.name} 的拉黑？` : `拉黑 ${char.name}？`}
+                    onClose={() => setModalType('none')}
+                    footer={(
+                        <>
+                            <button
+                                onClick={() => setModalType('none')}
+                                className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                            >取消</button>
+                            <button
+                                onClick={async () => {
+                                    if (!char) return;
+                                    if (blockState.blocked) {
+                                        await saveBlockRecord(char.id, '已解除');
+                                        setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
+                                        addToast('好啦，你们又能正常聊天了', 'success');
+                                    } else {
+                                        await saveBlockRecord(char.id, '已拉黑', blockCallsTooChecked);
+                                        setBlockState(prev => ({ ...prev, blocked: true, blockCallsToo: blockCallsTooChecked, since: Date.now() }));
+                                        addToast('先冷静一下吧……你发来的消息，我还是会偷偷看到的', 'info');
+                                    }
+                                    setModalType('none');
+                                    await reloadMessages(visibleCountRef.current);
+                                }}
+                                className={`flex-1 py-3 font-bold rounded-2xl active:scale-95 transition-transform ${blockState.blocked ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}
+                            >{blockState.blocked ? '解除拉黑' : '确认拉黑'}</button>
+                        </>
+                    )}
+                >
+                    {blockState.blocked ? (
+                        <p className="text-sm text-slate-600 leading-relaxed">
+                            解除后 ta 的消息会正常生成、不再带「未送达」标记，{blockState.blockCallsToo ? '电话也一起恢复。' : ''}聊天、电话全部恢复正常。
+                        </p>
+                    ) : (
+                        <div className="space-y-4">
+                            <p className="text-sm text-slate-600 leading-relaxed">
+                                拉黑后 ta 发的消息你<b>照常看得到</b>，只是每条末尾会带「未送达」标记；ta 会以为你收不到，开始着急挽回。你发消息、打电话一切照常。
+                            </p>
+                            <label className="flex items-center gap-2 select-none cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={blockCallsTooChecked}
+                                    onChange={(e) => setBlockCallsTooChecked(e.target.checked)}
+                                    className="w-4 h-4 accent-rose-500"
+                                />
+                                <span className="text-sm text-slate-700 font-medium">连电话一起拉黑（ta 打不进来，你打给 ta 照常）</span>
+                            </label>
+                        </div>
+                    )}
+                </Modal>
+            )}
 
             {/* Proactive Settings Modal */}
             {char && (

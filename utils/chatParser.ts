@@ -12,8 +12,15 @@ import {
     extractCollaborationFileDirectives,
     resolveCollaborationFileByTitle,
 } from '../features/collaboration/chatLibrary';
-import { extractIncomingCallAction, resolveIncomingCallPopupStyle } from './incomingCall';
+import { extractIncomingCallAction, resolveIncomingCallPopupStyle, isIncomingCallBlockedByBlock } from './incomingCall';
 import { canOfferIncomingCallNow, offerIncomingCall } from './incomingCallBridge';
+import {
+    BLOCK_FRIEND_REQUEST_SOURCE,
+    BLOCK_PEEK_SOURCE,
+    extractBlockFriendRequestAction,
+    extractBlockPeekAction,
+    canCreateBlockAction,
+} from './block';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -230,7 +237,23 @@ export const ChatParser = {
                     ringtone: charProfile?.incomingCallRingtone,
                     amsgReplay,
                 };
-                if (await canOfferIncomingCallNow(req)) {
+                const recentCallMessages = await DB.getMessagesByCharId(charId, true);
+                if (isIncomingCallBlockedByBlock(recentCallMessages)) {
+                    await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: `${charName}想打电话过来，但现在打不通`,
+                        metadata: {
+                            source: 'incoming-call',
+                            callOutcome: 'rejected',
+                            callBlocked: true,
+                            callLine: callExtract.line,
+                            calledAt: Date.now(),
+                            resolvedAt: Date.now(),
+                        },
+                    });
+                } else if (await canOfferIncomingCallNow(req)) {
                     const messageId = await persist({
                         charId,
                         role: 'system',
@@ -247,6 +270,60 @@ export const ChatParser = {
                 }
             } catch (e) {
                 console.warn('[IncomingCall] 处理来电暗号失败，已剥标签:', e);
+            }
+        }
+
+        // PEEK — 拉黑期间角色求用户看一眼。短句直接显示在卡上（代码不截字数，只剥符号；
+        // 15 字是提示词里的玩法约束）。落一张系统卡，用户点「看看」即标记已看。
+        const peekExtract = extractBlockPeekAction(content);
+        if (peekExtract.consumed) {
+            content = peekExtract.text;
+            try {
+                if (!(await canCreateBlockAction(charId, 'peek'))) {
+                    addToast('这次先好好说话，别急着再递卡片', 'info');
+                } else {
+                    await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: peekExtract.line ? `[求看看] ${peekExtract.line}` : '[求看看]',
+                        metadata: {
+                            source: BLOCK_PEEK_SOURCE,
+                            peekText: peekExtract.line,
+                            peekViewed: false,
+                            askedAt: Date.now(),
+                        },
+                    });
+                }
+            } catch (e) {
+                console.warn('[Block] 落求看看卡失败，已剥标签:', e);
+            }
+        }
+
+        // FRIEND_REQUEST — 拉黑期间角色申请重新加好友。附言直接显示在卡上，
+        // 卡上有「通过」「忽略」两个按钮；通过即解除（聊天电话一起恢复）。
+        const frExtract = extractBlockFriendRequestAction(content);
+        if (frExtract.consumed) {
+            content = frExtract.text;
+            try {
+                if (!(await canCreateBlockAction(charId, 'friend-request'))) {
+                    addToast('这次先好好说话，别急着再递申请', 'info');
+                } else {
+                    await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: frExtract.line ? `[好友申请] ${frExtract.line}` : '[好友申请]',
+                        metadata: {
+                            source: BLOCK_FRIEND_REQUEST_SOURCE,
+                            requestText: frExtract.line,
+                            requestStatus: 'pending',
+                            askedAt: Date.now(),
+                        },
+                    });
+                }
+            } catch (e) {
+                console.warn('[Block] 落好友申请卡失败，已剥标签:', e);
             }
         }
 
