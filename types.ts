@@ -3732,6 +3732,8 @@ export interface SocialComment {
     isCharacter?: boolean;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 楼中楼：指向被回复的评论 id */
+    replyToId?: string;
 }
 
 export interface SocialPost {

@@ -1260,19 +1260,28 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     };
 
                     const postAuthorTag = tagAuthor(post.authorName || '路人');
-                    const commentsSample = (post.comments || []).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
+                    const commentsSample = (post.comments || []).slice(0, 10).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
 
-                    let identityHint = '';
-                    if (myHandles.length > 0) {
-                        identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
+                    const syncKind = (m.metadata as any)?.syncKind;
+                    if (m.role === 'assistant' && syncKind) {
+                        // 角色侧同步：让角色知道自己发布过/评论过什么，内容是什么
+                        const kindLine = syncKind === 'published'
+                            ? '你发布了这条笔记'
+                            : syncKind === 'commented' ? '你在这个帖子下留过言' : '你刷到过这条帖子';
+                        content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(这是你在 Spark 上的公开足迹，你自己当然记得；聊天里聊到相关话题时能自然对上，不必主动复述)`;
+                    } else {
+                        let identityHint = '';
+                        if (myHandles.length > 0) {
+                            identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
+                        }
+                        const authoredByChar = myHandleSet.has(post.authorName);
+                        const authoredByUser = (post.authorName || '') === userName;
+                        let authorshipLine = '';
+                        if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
+                        else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
+
+                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑。如果你想去 Spark 上公开评论这个帖子，可以在回复末尾另起一行写 [[ACTION:SPARK_COMMENT|评论内容]]——这条评论会真的发布到帖子里；去不去、怎么评，由你的人设决定，不强制。)`;
                     }
-                    const authoredByChar = myHandleSet.has(post.authorName);
-                    const authoredByUser = (post.authorName || '') === userName;
-                    let authorshipLine = '';
-                    if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
-                    else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
-
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
                 }
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};

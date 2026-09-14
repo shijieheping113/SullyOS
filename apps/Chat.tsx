@@ -3177,6 +3177,12 @@ const Chat: React.FC = () => {
         setCollaborationPreviewAssetId(null);
     }, []);
 
+    // 点击聊天里的 Spark 帖子卡片 → 跳回 Spark 打开原帖（localStorage 中转，SocialApp 挂载时读取）
+    const handleOpenSparkPost = useCallback((postId: string) => {
+        try { localStorage.setItem('spark_jump_post_id', postId); } catch {}
+        openApp(AppID.Social);
+    }, [openApp]);
+
     // 协同工作是独立 sidecar：只有用户点「发送给 ChatApp」时才通过这个窄桥写入主消息表。
     // 其它协同会话、提示词、API 与文件都留在独立数据库，不进入主聊天 pipeline。
     const handleCollaborationTransfer = useCallback(async (
@@ -4150,6 +4156,7 @@ const Chat: React.FC = () => {
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onOpenCollaborationFile={handleOpenCollaborationFile}
+                            onOpenSparkPost={handleOpenSparkPost}
                             thinkingChainOptions={thinkingChainOptions}
                         />
                         {showToolTrace && (

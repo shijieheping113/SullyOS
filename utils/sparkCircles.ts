@@ -47,12 +47,22 @@ export function saveActiveCircleId(id: string): void {
 }
 
 /**
- * 按当前视图过滤帖子：
- * - SPARK_CIRCLE_ALL → 全部帖子（含圈子帖与旧帖）
+ * 按当前视图过滤帖子（圈子间互相隔离，只能切换着看）：
+ * - SPARK_CIRCLE_ALL → 无圈子的旧帖 + 孤儿帖（circleId 指向已删除圈子，回收进「全部」）
  * - 指定圈子 → 只返回 post.circleId 等于该圈子的帖子
- *   circleId 指向已删除圈子的"孤儿帖"仅在「全部」可见
+ *
+ * validCircleIds：当前仍存在的圈子 id 集合，用于识别孤儿帖。
+ * 不传时「全部」只显示无圈子帖（保持纯函数可测）。
  */
-export function filterPostsByCircle(posts: SocialPost[], activeCircleId: string): SocialPost[] {
-    if (!activeCircleId || activeCircleId === SPARK_CIRCLE_ALL) return posts;
+export function filterPostsByCircle(
+    posts: SocialPost[],
+    activeCircleId: string,
+    validCircleIds?: Set<string>,
+): SocialPost[] {
+    if (!activeCircleId || activeCircleId === SPARK_CIRCLE_ALL) {
+        return posts.filter(post =>
+            !post.circleId || (validCircleIds !== undefined && !validCircleIds.has(post.circleId))
+        );
+    }
     return posts.filter(post => post.circleId === activeCircleId);
 }

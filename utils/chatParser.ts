@@ -1,7 +1,7 @@
 
 import { DB } from './db';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { CharacterProfile, CharPlaylistSong } from '../types';
+import { CharacterProfile, CharPlaylistSong, SocialComment } from '../types';
 import { sanitizeForBubble } from './sanitize';
 import { extractTransferCommands } from './transferFormat';
 import { executeLifeDirectives } from './lifeRecords';
@@ -209,6 +209,70 @@ export const ChatParser = {
         if (content.includes('[[ACTION:POKE]]')) {
             await persist({ charId, role: 'assistant', type: 'interaction', content: '[戳一戳]' });
             content = content.replace('[[ACTION:POKE]]', '').trim();
+        }
+
+        // SPARK_COMMENT — 角色在聊天里决定去 Spark 公开评论分享过的帖子。
+        // 找该角色最近一条 user 分享的 social_card 对应的帖子（按当前 DB 里的最新状态），
+        // 把评论写回帖子评论区。幂等：同角色同内容的评论已存在就跳过（主动消息重试会重跑这里）。
+        const sparkCommentMatch = content.match(/\[\[ACTION:SPARK_COMMENT\|([^\]]+)\]\]/);
+        if (sparkCommentMatch) {
+            const commentText = sparkCommentMatch[1].trim();
+            content = content.replace(sparkCommentMatch[0], '').trim();
+            if (commentText) {
+                try {
+                    const all = await DB.getMessagesByCharId(charId, true);
+                    const shared = [...all].reverse().find(
+                        x => x.type === 'social_card' && x.role === 'user' && (x.metadata as any)?.post?.id,
+                    );
+                    if (shared) {
+                        const postId = (shared.metadata as any).post.id as string;
+                        const posts = await DB.getSocialPosts();
+                        const livePost = posts.find(p => p.id === postId);
+                        if (livePost) {
+                            const already = (livePost.comments || []).some(
+                                c => c.authorCharId === charId && c.content === commentText,
+                            );
+                            if (!already) {
+                                // 角色 Spark 马甲：与 SocialApp getSparkHandles 同逻辑（配置 > 主账号 > 角色名）
+                                let handleName = charName;
+                                let avatar: string | undefined;
+                                try {
+                                    const chars = await DB.getAllCharacters();
+                                    const char = chars.find(c => c.id === charId);
+                                    if (char) {
+                                        avatar = char.avatar;
+                                        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
+                                        const configured = raw ? (JSON.parse(raw) || {})[charId] : [];
+                                        handleName = (Array.isArray(configured) && configured[0]?.handle?.trim())
+                                            || char.socialProfile?.handle || char.name;
+                                    }
+                                } catch {}
+                                const comment: SocialComment = {
+                                    id: `cmt-char-${Date.now()}-${Math.random()}`,
+                                    authorName: handleName,
+                                    authorAvatar: avatar,
+                                    content: commentText,
+                                    likes: 0,
+                                    isCharacter: true,
+                                    authorType: 'character',
+                                    authorCharId: charId,
+                                };
+                                await DB.saveSocialPost({ ...livePost, comments: [...(livePost.comments || []), comment] });
+                            }
+                            addToast('评论已发布到 Spark', 'success');
+                            // 正文留痕：聊天历史里角色自己也看得到评论过什么
+                            content = `${content}\n（你把这条评论发布到了 Spark：「${commentText}」）`.trim();
+                        } else {
+                            addToast('那条帖子已经不在了，评论没发出去', 'error');
+                        }
+                    } else {
+                        addToast('还没分享过帖子给角色，评论没发出去', 'error');
+                    }
+                } catch (error) {
+                    console.warn('[SparkComment] 发布评论失败:', error);
+                    addToast('Spark 评论发布失败', 'error');
+                }
+            }
         }
 
         // TRANSFER_ACCEPT / TRANSFER_RETURN — char 收下 / 退回 user 最近一笔待处理的转账。

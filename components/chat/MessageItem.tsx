@@ -1428,6 +1428,8 @@ interface MessageItemProps {
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
     /** 打开协同文件柜里的原始 Blob；消息本身只保存 assetId 引用。 */
     onOpenCollaborationFile?: (m: Message) => void | Promise<void>;
+    /** 点击 Spark 帖子卡片 → 跳回 Spark 原帖（ postId 由上层写 localStorage 并打开 social app ） */
+    onOpenSparkPost?: (postId: string) => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1479,6 +1481,7 @@ const MessageItem = React.memo(({
     onResolveLifeRecord,
     onOpenCollaborationFile,
     thinkingChainOptions,
+    onOpenSparkPost,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -3089,7 +3092,11 @@ const MessageItem = React.memo(({
             } catch {}
         }
         return commonLayout(
-            <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
+            <div
+                className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity"
+                onClick={() => onOpenSparkPost?.(post.id)}
+                title="点开原帖"
+            >
                 <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
                     {displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-12 h-12" />}
                     <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">

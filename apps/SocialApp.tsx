@@ -155,7 +155,7 @@ const Icons = {
 // --- Main App ---
 
 const SocialApp: React.FC = () => {
-    const { closeApp, characters, updateCharacter, apiConfig, addToast, userProfile, groups, characterGroups } = useOS();
+    const { closeApp, characters, updateCharacter, apiConfig, apiPresets, addToast, userProfile, groups, characterGroups } = useOS();
     const [feed, setFeed] = useState<SocialPost[]>([]);
     // Modes: 'home' (Feed) | 'me' (Profile) | 'create' (Modal Overlay)
     const [activeTab, setActiveTab] = useState<'home' | 'me'>('home');
@@ -173,6 +173,8 @@ const SocialApp: React.FC = () => {
     // Comment Input State
     const [commentInput, setCommentInput] = useState('');
     const [isReplyingToUser, setIsReplyingToUser] = useState(false);
+    // 楼中楼：当前正在回复的目标评论（null = 直接评论帖子）
+    const [replyTarget, setReplyTarget] = useState<SocialComment | null>(null);
 
     // Settings / Handle Management
     const [showSettings, setShowSettings] = useState(false);
@@ -184,9 +186,19 @@ const SocialApp: React.FC = () => {
     const [activeCircleId, setActiveCircleId] = useState<string>(() => loadActiveCircleId());
     const [editingCircle, setEditingCircle] = useState<SparkCircle | null>(null); // 非 null = 编辑器打开（id 空 = 新建）
 
+    // Spark 副API：从系统设置的预设里单独选一个用于 Spark 生成，省主 API 的量；不选 = 跟随主设置
+    const [sparkApiPresetId, setSparkApiPresetId] = useState<string>(() => {
+        try { return localStorage.getItem('spark_api_preset_id') || ''; } catch { return ''; }
+    });
+    const sparkApi = sparkApiPresetId ? (apiPresets.find(p => p.id === sparkApiPresetId)?.config ?? apiConfig) : apiConfig;
+
     // Sharing State
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareGroupId, setShareGroupId] = useState(GROUP_FILTER_ALL); // 分享帖子弹窗的角色分组筛选
+
+    // Sync to Character（让角色知道自己在 Spark 的动态 → 聊天角色侧插 social_card）
+    const [showSyncModal, setShowSyncModal] = useState(false);
+    const [syncGroupId, setSyncGroupId] = useState(GROUP_FILTER_ALL);
 
     // Profile Sub-tab
     const [profileTab, setProfileTab] = useState<'notes' | 'collects'>('notes');
@@ -320,12 +332,34 @@ const SocialApp: React.FC = () => {
         saveSparkCircles(circles);
     }, [circles]);
 
+    // 聊天里点 social_card 卡片跳回原帖：等 IndexedDB 帖子加载完再打开详情，最多等 5 秒
+    useEffect(() => {
+        let jumpId: string | null = null;
+        try { jumpId = localStorage.getItem('spark_jump_post_id'); } catch {}
+        if (!jumpId) return;
+        try { localStorage.removeItem('spark_jump_post_id'); } catch {}
+        const deadline = Date.now() + 5000;
+        const timer = setInterval(() => {
+            const target = feedRef.current.find(p => p.id === jumpId);
+            if (target) {
+                clearInterval(timer);
+                setSelectedPost(target);
+            } else if (Date.now() > deadline) {
+                clearInterval(timer);
+            }
+        }, 200);
+        return () => clearInterval(timer);
+    }, []);
+
     // --- Circle Actions ---
     const activeCircle = activeCircleId === SPARK_CIRCLE_ALL ? undefined : circles.find(c => c.id === activeCircleId);
+    // 现存圈子 id 集合：识别"孤儿帖"（圈子已删），让它们回收进「全部」
+    const validCircleIds = new Set(circles.map(c => c.id));
 
     const switchCircle = (id: string) => {
         setActiveCircleId(id);
         saveActiveCircleId(id);
+        setSelectedPost(null); // 切圈子关掉残留详情页，两边不互通
         trackEvent('切换 Spark 圈子', { view: id === SPARK_CIRCLE_ALL ? 'all' : 'circle' });
     };
 
@@ -489,7 +523,7 @@ const SocialApp: React.FC = () => {
     };
 
     const handleRefresh = async () => {
-        if (!apiConfig.apiKey) { addToast('请配置 API Key', 'error'); return; }
+        if (!sparkApi.apiKey) { addToast('请配置 API Key', 'error'); return; }
         if (refreshRequestRef.current) return;
         const controller = new AbortController();
         refreshRequestRef.current = controller;
@@ -514,7 +548,7 @@ const SocialApp: React.FC = () => {
    - **内容方向**: 公开发言，生活日常、吐槽、或者暗戳戳的记录。
 
 2. **路人/网友发帖 (70%)**: 
-   - 模拟真实的互联网生态：吃瓜群众、技术宅、美妆博主、情感树洞。${activeCircle ? `
+   - 模拟真实互联网的野生生态：刚下班的社畜在发疯、备考学生在焦虑摸鱼、话痨大妈唠家常、阴阳怪气网友在抬杠、潜水多年的路人甲突然冒泡、不知道从哪冲进来的乐子人。有人认真长文输出，有人就一句话，有人阴阳，有人真诚。${activeCircle ? `
    - **本社区属于「${activeCircle.name}」世界**：路人也是该世界的居民，网名、话题、知识都必须符合该世界观（见系统设定），禁止出现不属于该世界的事物。` : ''}
 
 ### 🚫 绝对禁令
@@ -535,10 +569,10 @@ const SocialApp: React.FC = () => {
   },
   ...
 ]`;
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            const response = await fetch(`${sparkApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'system', content: context }, { role: "user", content: prompt }], temperature: 0.8, max_tokens: 8000 }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sparkApi.apiKey}` },
+                body: JSON.stringify({ model: sparkApi.model, messages: [{ role: 'system', content: context }, { role: "user", content: prompt }], temperature: 0.8, max_tokens: 8000 }),
                 signal: controller.signal,
                 __sullyMeta: { appId: 'social', appName: 'Spark', purpose: '刷新推荐流' },
             } as RequestInit);
@@ -550,7 +584,7 @@ const SocialApp: React.FC = () => {
             
             const newPosts: SocialPost[] = json
                 .flatMap((item: any) => {
-                const author = resolveSparkAuthor(item, selectedChars, characters, characterHandles, [socialProfile.name, userProfile.name]);
+                const author = resolveSparkAuthor(item, selectedChars, pool, characterHandles, [socialProfile.name, userProfile.name]);
                 if (!author || typeof item.content !== 'string' || !item.content.trim()) return [];
                 item = { ...item, authorName: author.name };
                 let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${item.authorName}`;
@@ -597,7 +631,7 @@ const SocialApp: React.FC = () => {
     };
 
     const generateComments = async (post: SocialPost) => {
-        if (!post || !apiConfig.apiKey) return;
+        if (!post || !sparkApi.apiKey) return;
         const livePost = feedRef.current.find(item => item.id === post.id) || post;
         if (livePost.comments.length > 0) return;
         if (commentRequestRef.current?.postId === post.id) return;
@@ -643,18 +677,22 @@ ${post.content || '(楼主没写正文)'}
 请基于上面的【标题 + 正文】生成 4-6 条评论，评论要切实回应正文里提到的内容，不要只对着标题空泛地说。混合使用 **选定角色** 和 **随机路人**。
 角色评论时，请选择一个符合语境的马甲身份。${postCircle ? '路人也是「' + postCircle.name + '」世界的居民，言行必须符合该世界观。' : ''}
 
+### 楼中楼（评论区常见形态）
+- 4-6 条评论中，**至少 1-2 条**要回复前面的某条评论（作者之间互相接话、抬杠、玩梗），用 "replyTo" 填被回复评论的作者名。
+- 不回复别人的评论就不填 "replyTo"。
+
 ### 禁令
 - **绝对禁止** 生成 \`author\` 等于或近似 "${socialProfile.name}" (用户) 的评论。
 - 路人评论的 \`author\` 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合。
 
 ### 输出格式 (JSON Array)
 [
-  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容..." }
+  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "被回复的评论作者名，普通评论填null" }
 ]`;
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            const response = await fetch(`${sparkApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'system', content: context }, { role: "user", content: prompt }], temperature: 0.8 }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sparkApi.apiKey}` },
+                body: JSON.stringify({ model: sparkApi.model, messages: [{ role: 'system', content: context }, { role: "user", content: prompt }], temperature: 0.8 }),
                 signal: controller.signal,
                 __sullyMeta: { appId: 'social', appName: 'Spark', purpose: '生成帖子评论' },
             } as RequestInit);
@@ -665,7 +703,7 @@ ${post.content || '(楼主没写正文)'}
             if (Array.isArray(json)) {
                 const comments: SocialComment[] = json
                     .flatMap((c: any) => {
-                        const author = resolveSparkAuthor(c, selectedChars, characters, characterHandles, [socialProfile.name, userProfile.name]);
+                        const author = resolveSparkAuthor(c, selectedChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
                         if (!author || typeof c.content !== 'string' || !c.content.trim()) return [];
                         const authorName = author.name;
                         let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
@@ -680,7 +718,17 @@ ${post.content || '(楼主没写正文)'}
                             isCharacter: !!char,
                             authorType: char ? 'character' : 'stranger',
                             authorCharId: char?.id,
-                        } as SocialComment];
+                            // 楼中楼先按作者名记，下面再统一映射成 id
+                            _replyToName: (typeof c.replyTo === 'string' && c.replyTo.trim()) ? c.replyTo.trim() : undefined,
+                        } as SocialComment & { _replyToName?: string }];
+                    })
+                    .map((c, _idx, arr) => {
+                        // replyTo 作者名 → 本批已解析评论的 id（找不到就平铺，容错）
+                        const { _replyToName, ...rest } = c;
+                        if (!_replyToName) return rest;
+                        const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+                        const target = arr.find(x => x !== c && eq(x.authorName, _replyToName));
+                        return { ...rest, replyToId: target?.id };
                     });
                 if (!comments.length) throw new Error('模型返回的评论身份不匹配，未添加评论');
                 updatePostInFeed(post.id, current => ({
@@ -698,8 +746,8 @@ ${post.content || '(楼主没写正文)'}
         }
     };
 
-    const generateRepliesToUser = async (post: SocialPost, userContent: string) => {
-        if (!apiConfig.apiKey) return;
+    const generateRepliesToUser = async (post: SocialPost, userContent: string, userCommentId?: string) => {
+        if (!sparkApi.apiKey) return;
         if (replyRequestRef.current) return;
         const controller = new AbortController();
         replyRequestRef.current = { postId: post.id, controller };
@@ -745,10 +793,10 @@ ${buildSparkCommentHistory(post)}
 [
   { "author": "网名 (Handle)", "charId": "角色ID或null", "content": "回复内容..." }
 ]`;
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            const response = await fetch(`${sparkApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'system', content: context }, { role: "user", content: prompt }], temperature: 0.8 }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sparkApi.apiKey}` },
+                body: JSON.stringify({ model: sparkApi.model, messages: [{ role: 'system', content: context }, { role: "user", content: prompt }], temperature: 0.8 }),
                 signal: controller.signal,
                 __sullyMeta: { appId: 'social', appName: 'Spark', purpose: '回复用户评论' },
             } as RequestInit);
@@ -759,7 +807,7 @@ ${buildSparkCommentHistory(post)}
             if (Array.isArray(json)) {
                 const newReplies: SocialComment[] = json
                     .flatMap((c: any) => {
-                        const author = resolveSparkAuthor(c, selectedChars, characters, characterHandles, [socialProfile.name, userProfile.name]);
+                        const author = resolveSparkAuthor(c, selectedChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
                         if (!author || typeof c.content !== 'string' || !c.content.trim()) return [];
                         const authorName = author.name;
                         let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
@@ -769,11 +817,13 @@ ${buildSparkCommentHistory(post)}
                             id: `cmt-reply-${Date.now()}-${Math.random()}`,
                             authorName: authorName,
                             authorAvatar: avatar,
-                            content: `回复 @${socialProfile.name}: ${c.content}`,
+                            content: c.content, // 楼中楼关系由 replyToId 表达，不再写「回复 @xx:」前缀
                             likes: Math.floor(Math.random() * 10),
                             isCharacter: !!char,
                             authorType: char ? 'character' : 'stranger',
                             authorCharId: char?.id,
+                            // 挂在用户那条评论（或用户楼中楼评论）下面
+                            replyToId: userCommentId,
                         } as SocialComment];
                     });
                 if (!newReplies.length) throw new Error('模型返回的回复身份不匹配，未添加回复');
@@ -803,6 +853,24 @@ ${buildSparkCommentHistory(post)}
             addToast('分享成功', 'success');
             trackEvent('分享帖子到聊天');
         } catch (e) { addToast('分享失败', 'error'); }
+    };
+
+    // 「让角色知道」：把帖子快照作为角色侧（assistant）social_card 存进聊天，
+    // 下次角色回复时能看到「自己发布过/评论过这条动态」，卡片也渲染在角色那一侧
+    const handleSyncToChar = async (charId: string) => {
+        if (!selectedPost) return;
+        const post = feedRef.current.find(item => item.id === selectedPost.id) || selectedPost;
+        const char = characters.find(c => c.id === charId);
+        const handles = (characterHandles[charId] || []).map(h => h.handle);
+        const isAuthor = post.authorCharId === charId || handles.includes(post.authorName);
+        const myComment = (post.comments || []).some(c => c.authorCharId === charId || handles.includes(c.authorName));
+        const syncKind: 'published' | 'commented' | 'viewed' = isAuthor ? 'published' : myComment ? 'commented' : 'viewed';
+        try {
+            await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: '[Spark 动态]', metadata: { post, syncKind } });
+            setShowSyncModal(false);
+            addToast(`${char?.name || '角色'} 现在知道这条动态了`, 'success');
+            trackEvent('同步 Spark 动态给角色');
+        } catch (e) { addToast('同步失败', 'error'); }
     };
 
     const handleCreatePost = () => {
@@ -857,6 +925,7 @@ ${buildSparkCommentHistory(post)}
                 likes: 0,
                 isCharacter: false,
                 authorType: 'user' as const,
+                replyToId: replyTarget?.id, // 楼中楼：挂在被回复的评论下
         };
         const updatedPost = updatePostInFeed(selectedPost.id, current => ({
             ...current,
@@ -864,14 +933,16 @@ ${buildSparkCommentHistory(post)}
         }));
         if (!updatedPost) return;
         const contentToSend = commentInput; 
+        const replyToId = userComment.replyToId; 
         setCommentInput(''); 
-        await generateRepliesToUser(updatedPost, contentToSend); 
+        setReplyTarget(null);
+        await generateRepliesToUser(updatedPost, contentToSend, replyToId); 
     };
 
     const handleOpenPost = (post: SocialPost) => {
         const livePost = feedRef.current.find(item => item.id === post.id) || post;
+        // 评论不自动生成（省 token）：打开详情只展示已有评论，空时由用户手动点「加载评论」
         setSelectedPost(livePost);
-        generateComments(livePost);
     };
 
     const handleClosePost = () => {
@@ -879,6 +950,7 @@ ${buildSparkCommentHistory(post)}
         commentRequestRef.current = null;
         setLoadingComments(false);
         setSelectedPost(null);
+        setReplyTarget(null);
     };
 
     const handleClearFeed = () => {
@@ -954,7 +1026,10 @@ ${buildSparkCommentHistory(post)}
                             <TokenImg value={selectedPost.authorAvatar} className="w-8 h-8 rounded-full object-cover border border-white/50" />
                             <span className="text-sm font-bold text-slate-800">{selectedPost.authorName}</span>
                         </div>
-                        <button onClick={() => { setShowShareModal(true); trackEvent('打开分享帖子面板'); }} className="p-2 -m-2 active:opacity-60"><Icons.Share onClick={() => setShowShareModal(true)} className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" /></button>
+                        <div className="flex items-center gap-1">
+                            <button onClick={() => { setShowSyncModal(true); trackEvent('打开同步 Spark 动态面板'); }} className="p-2 -m-2 active:opacity-60" title="让角色知道"><Icons.ChatBubble className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" /></button>
+                            <button onClick={() => { setShowShareModal(true); trackEvent('打开分享帖子面板'); }} className="p-2 -m-2 active:opacity-60"><Icons.Share onClick={() => setShowShareModal(true)} className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" /></button>
+                        </div>
                     </div>
 
                     {/* Scrollable Area */}
@@ -984,22 +1059,62 @@ ${buildSparkCommentHistory(post)}
                             </div>
                             
                             <div className="space-y-6">
-                                {selectedPost.comments.length === 0 && !loadingComments && <div className="text-center text-slate-300 text-xs py-10">快来抢沙发...</div>}
-                                {selectedPost.comments.map(c => (
-                                    <div key={c.id} className="flex gap-3 animate-fade-in group">
-                                        <TokenImg value={c.authorAvatar} className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-100" />
-                                        <div className="flex-1">
-                                            <div className="flex justify-between items-start">
-                                                <span className={`text-xs font-bold ${c.isCharacter ? 'text-slate-800' : 'text-slate-500'}`}>{c.authorName}</span>
-                                                <div className="flex items-center gap-1 text-slate-400 cursor-pointer hover:text-[#ff2442]">
-                                                    <Icons.Heart filled={false} className="w-3.5 h-3.5" />
-                                                    <span className="text-[10px]">{c.likes}</span>
+                                {selectedPost.comments.length === 0 && !loadingComments && (
+                                    <button onClick={() => generateComments(selectedPost)} className="w-full py-6 text-center text-xs text-slate-400 bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 active:bg-slate-100 transition-colors">
+                                        点击加载评论
+                                    </button>
+                                )}
+                                {(() => {
+                                    // 楼中楼渲染：子评论挂回根评论楼层（小红书式两级）
+                                    const comments = selectedPost.comments;
+                                    const byId = new Map(comments.map(c => [c.id, c]));
+                                    const findRoot = (c: SocialComment): SocialComment | null => {
+                                        let cur = c;
+                                        const seen = new Set<string>();
+                                        while (cur.replyToId && !seen.has(cur.id)) {
+                                            seen.add(cur.id);
+                                            const parent = byId.get(cur.replyToId);
+                                            if (!parent) return null; // 指向已不存在的评论 → 孤儿，平铺兜底
+                                            cur = parent;
+                                        }
+                                        return cur.replyToId ? null : cur;
+                                    };
+                                    const roots = comments.filter(c => { const r = findRoot(c); return r === c || r === null; });
+                                    const childrenOf = (root: SocialComment) => comments.filter(c => c !== root && findRoot(c) === root);
+                                    const renderBody = (c: SocialComment, isChild: boolean, replyToName?: string) => (
+                                        <div key={c.id} className={`animate-fade-in group ${isChild ? 'flex gap-2' : 'flex gap-3'}`}>
+                                            <TokenImg value={c.authorAvatar} className={`${isChild ? 'w-6 h-6 mt-0.5' : 'w-9 h-9'} rounded-full object-cover shrink-0 border border-slate-100`} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex justify-between items-start gap-2">
+                                                    <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                                        <span className={`text-xs font-bold ${c.isCharacter ? 'text-slate-800' : 'text-slate-500'}`}>{c.authorName}</span>
+                                                        {replyToName && <span className="text-[10px] text-slate-300">回复 @{replyToName}</span>}
+                                                    </div>
+                                                    <div className="flex items-center gap-1 text-slate-400 cursor-pointer hover:text-[#ff2442] shrink-0">
+                                                        <Icons.Heart filled={false} className="w-3.5 h-3.5" />
+                                                        <span className="text-[10px]">{c.likes}</span>
+                                                    </div>
                                                 </div>
+                                                <p className="text-[13px] text-slate-700 mt-0.5 leading-normal font-light break-words">{c.content}</p>
+                                                <button onClick={() => setReplyTarget(c)} className="text-[10px] text-slate-300 hover:text-[#ff2442] mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">回复</button>
                                             </div>
-                                            <p className="text-[13px] text-slate-700 mt-0.5 leading-normal font-light">{c.content}</p>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                    return roots.map(root => (
+                                        <div key={root.id}>
+                                            {renderBody(root, false)}
+                                            {childrenOf(root).length > 0 && (
+                                                <div className="mt-3 ml-11 space-y-3 pl-3 border-l-2 border-slate-100">
+                                                    {childrenOf(root).map(child => {
+                                                        // 直接回复根评论不显示标签；回复楼层里的其他人显示「回复 @xx」
+                                                        const direct = child.replyToId ? byId.get(child.replyToId) : undefined;
+                                                        return renderBody(child, true, direct && direct.id !== root.id ? direct.authorName : undefined);
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ));
+                                })()}
                                 <div ref={commentsEndRef} />
                             </div>
                         </div>
@@ -1009,12 +1124,18 @@ ${buildSparkCommentHistory(post)}
                     <div className="absolute bottom-0 w-full pb-[var(--safe-bottom,0px)] z-30 pointer-events-none">
                          <div className="pointer-events-auto h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
                             <div className="flex-1 bg-slate-100/50 rounded-full px-5 py-2.5 flex items-center gap-2 focus-within:bg-white focus-within:ring-1 focus-within:ring-slate-200 transition-all border border-transparent focus-within:border-slate-200">
-                                <input 
+                                {replyTarget && (
+                                    <span className="shrink-0 flex items-center gap-1 bg-[#ff2442]/10 text-[#ff2442] text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                        回复 @{replyTarget.authorName}
+                                        <button onClick={() => setReplyTarget(null)} className="hover:text-slate-500">✕</button>
+                                    </span>
+                                )}
+                                <input
                                     value={commentInput}
                                     onChange={(e) => setCommentInput(e.target.value)}
                                     onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
                                     disabled={loadingComments || isReplyingToUser}
-                                    placeholder="说点什么..."
+                                    placeholder={replyTarget ? `回复 @${replyTarget.authorName}...` : "说点什么..."}
                                     className="bg-transparent text-sm w-full outline-none text-slate-800 placeholder:text-slate-400 disabled:opacity-50"
                                 />
                                 {commentInput.trim() && <button disabled={loadingComments || isReplyingToUser} onClick={handleSendComment} className="text-[#ff2442] font-bold text-sm animate-fade-in disabled:opacity-40">发送</button>}
@@ -1115,6 +1236,24 @@ ${buildSparkCommentHistory(post)}
                                 </>
                             )}
                         </div>
+                        {/* --- Spark 副API --- */}
+                        <div className="space-y-2">
+                            <span className="text-sm font-bold text-slate-700">生成 API（副 API）</span>
+                            {apiPresets.length === 0 ? (
+                                <p className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
+                                    在系统设置里先添加 API 预设，就能让 Spark 单独走另一个 API，省主 API 的量。
+                                </p>
+                            ) : (
+                                <select
+                                    value={sparkApiPresetId}
+                                    onChange={(e) => { setSparkApiPresetId(e.target.value); try { localStorage.setItem('spark_api_preset_id', e.target.value); } catch {} }}
+                                    className="w-full text-sm bg-white rounded-xl px-3 py-2.5 outline-none border border-slate-200 focus:border-[#ff2442]"
+                                >
+                                    <option value="">跟随主设置</option>
+                                    {apiPresets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                </select>
+                            )}
+                        </div>
                         <p className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
                             为角色添加“马甲”(Sub-Accounts)。AI 发帖时会根据内容选择合适的身份。
                         </p>
@@ -1184,6 +1323,19 @@ ${buildSparkCommentHistory(post)}
                         </button>
                     ))}
                 </div>
+            </Modal>
+
+            <Modal isOpen={showSyncModal} title="让角色知道" onClose={() => setShowSyncModal(false)}>
+                <CharacterGroupFilterBar characters={characters} groups={characterGroups} value={syncGroupId} onChange={setSyncGroupId} className="mb-1 px-2" />
+                <div className="grid grid-cols-4 gap-4 p-2">
+                    {filterCharactersByGroup(characters, characterGroups, syncGroupId).map(c => (
+                        <button key={c.id} onClick={() => handleSyncToChar(c.id)} className="flex flex-col items-center gap-2 group">
+                            <TokenImg value={c.avatar} className="w-12 h-12 rounded-full object-cover border border-slate-100 group-active:scale-90 transition-transform" />
+                            <span className="text-[10px] text-slate-600 truncate w-full text-center">{c.name}</span>
+                        </button>
+                    ))}
+                </div>
+                <p className="text-[10px] text-slate-400 text-center px-2 pb-1">把这条动态放进角色的记忆，让 TA 知道自己发布过 / 评论过 / 谁回复了用户</p>
             </Modal>
 
             {/* --- Create Post Modal (Full Screen Overlay) --- */}
@@ -1290,7 +1442,7 @@ ${buildSparkCommentHistory(post)}
                                 )}
                             </div>
                             <div className="columns-2 gap-2 space-y-2 pb-24">
-                                {filterPostsByCircle(feed, activeCircleId).map(post => renderFeedItem(post))}
+                                {filterPostsByCircle(feed, activeCircleId, validCircleIds).map(post => renderFeedItem(post))}
                             </div>
                         </div>
                     )}
@@ -1381,7 +1533,7 @@ ${buildSparkCommentHistory(post)}
 
                             <div className="p-2 min-h-[300px] bg-slate-50/50 pb-24">
                                 <div className="columns-2 gap-2 space-y-2">
-                                    {filterPostsByCircle(feed, activeCircleId).filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
+                                    {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
                                         <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
                                             <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{codepointToEmoji(post.images[0])}</div>
                                             <div className="p-3">
@@ -1394,7 +1546,7 @@ ${buildSparkCommentHistory(post)}
                                         </div>
                                     ))}
                                 </div>
-                                {filterPostsByCircle(feed, activeCircleId).filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).length === 0 && (
+                                {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
                                         <Package size={48} className="text-slate-300 opacity-30" />
                                         <span className="text-xs">空空如也</span>

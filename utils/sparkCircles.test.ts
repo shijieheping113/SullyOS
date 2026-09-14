@@ -40,9 +40,19 @@ describe('filterPostsByCircle', () => {
         post('orphan', 'deleted'),   // 孤儿帖：圈子已删
     ];
 
-    it('「全部」返回所有帖子（含圈子帖、旧帖、孤儿帖）', () => {
-        expect(filterPostsByCircle(posts, SPARK_CIRCLE_ALL)).toHaveLength(5);
-        expect(filterPostsByCircle(posts, '')).toHaveLength(5); // 空串同样视为全部
+    it('「全部」只显示无圈子帖和孤儿帖（圈子帖隔离，不互通）', () => {
+        const valid = new Set(['circle-1', 'circle-2']);
+        const ids = filterPostsByCircle(posts, SPARK_CIRCLE_ALL, valid).map(p => p.id);
+        expect(ids).toEqual(['old', 'orphan']);
+        expect(ids).not.toContain('c1-a'); // 圈子帖不进「全部」
+        expect(ids).not.toContain('c2-a');
+        // 空串同样视为全部
+        expect(filterPostsByCircle(posts, '', valid).map(p => p.id)).toEqual(['old', 'orphan']);
+    });
+
+    it('「全部」不传 validCircleIds 时只显示无圈子帖', () => {
+        const ids = filterPostsByCircle(posts, SPARK_CIRCLE_ALL).map(p => p.id);
+        expect(ids).toEqual(['old']);
     });
 
     it('指定圈子只返回该圈子的帖子', () => {
