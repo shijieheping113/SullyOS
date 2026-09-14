@@ -14,6 +14,7 @@ import {
     BLOCK_SOURCE,
     BLOCK_FRIEND_REQUEST_SOURCE,
     BLOCK_PEEK_SOURCE,
+    BLOCK_NOTICE_SOURCE,
     SYSTEM_LOG_LEAD,
     formatBlockFriendRequestRecord,
     formatBlockPeekRecord,
@@ -1133,6 +1134,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
         // 这里再次校验统一边界，兼容只提供内存快照的入口。
         let effectiveHistory = selectCharacterContextMessages(messages, char);
+        // 给用户看的浅灰句（求看看结果/好友申请结果/挂断提醒）不进模型，状态已经写在对应卡上。
+        effectiveHistory = effectiveHistory.filter(m => m.metadata?.source !== BLOCK_NOTICE_SOURCE);
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));

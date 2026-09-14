@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { saveBlockRecord, getBlockStateForChar, restoreBlockDeliveryFlags, type BlockState } from '../utils/block';
+import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDeliveryFlags, peekNoticeKind, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, processImageToBlob } from '../utils/file';
@@ -1746,6 +1746,11 @@ const Chat: React.FC = () => {
 
     const handleResolveBlockAction = useCallback(async (msg: Message, action: 'peek-viewed' | 'peek-discard' | 'peek-secret' | 'request-accept' | 'request-ignore') => {
         if (!char) return;
+        const appendNotice = async (kind: Parameters<typeof saveBlockNotice>[1]) => {
+            const noticeId = await saveBlockNotice(char.id, kind);
+            const row = await DB.getMessageById(noticeId);
+            if (row) setMessages(prev => prev.some(item => item.id === row.id) ? prev : [...prev, row]);
+        };
         if (action === 'peek-viewed' || action === 'peek-discard' || action === 'peek-secret') {
             if (msg.metadata?.peekOutcome || msg.metadata?.peekViewed) return;
             const knows = action === 'peek-secret' ? (Math.random() < 0.5) : action === 'peek-viewed';
@@ -1758,12 +1763,14 @@ const Chat: React.FC = () => {
             };
             patchMessageMeta(msg.id, patch);
             await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), ...patch }));
+            await appendNotice(peekNoticeKind(action, knows));
             return;
         }
         if (action === 'request-accept') {
             if (msg.metadata?.requestStatus && msg.metadata.requestStatus !== 'pending') return;
             patchMessageMeta(msg.id, { requestStatus: 'accepted', resolvedAt: Date.now() });
             await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), requestStatus: 'accepted', resolvedAt: Date.now() }));
+            await appendNotice('request-accept');
             await saveBlockRecord(char.id, '已解除');
             setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
             await reloadMessages(visibleCountRef.current);
@@ -1772,6 +1779,7 @@ const Chat: React.FC = () => {
         if (msg.metadata?.requestStatus && msg.metadata.requestStatus !== 'pending') return;
         patchMessageMeta(msg.id, { requestStatus: 'ignored', resolvedAt: Date.now() });
         await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), requestStatus: 'ignored', resolvedAt: Date.now() }));
+        await appendNotice('request-ignore');
     }, [char, patchMessageMeta, reloadMessages]);
 
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"

@@ -154,44 +154,61 @@
   opacity: 0.28;
   user-select: none;
 }
-.block-card .peek-actions {
-  display: grid;
-  grid-template-columns: 1.08fr 1fr 0.82fr;
+.block-card .actions {
+  display: flex;
+  gap: 9px;
+}
+.block-card .actions.peek-actions {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr 1fr !important;
   gap: 6px;
 }
 .block-card .peek-choice {
-  min-height: 42px;
-  padding: 0 5px;
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0;
+  min-height: 42px !important;
+  height: auto !important;
+  padding: 0 8px !important;
   border-radius: 12px;
-  font-size: 12px;
-  font-weight: 700;
+  font-family: inherit;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+  letter-spacing: 0 !important;
   white-space: nowrap;
+  overflow: visible;
+  text-indent: 0 !important;
   border: 1px solid rgba(255, 255, 255, 0.95);
 }
-.block-card .peek-choice.discard {
+.block-card .peek-choice::before,
+.block-card .peek-choice::after {
+  content: none !important;
+  display: none !important;
+}
+.block-card .peek-choice.peek-discard {
   background: rgba(255, 255, 255, 0.34);
-  color: #a292a7;
+  color: #a292a7 !important;
   border: 1px solid rgba(141, 120, 165, 0.22);
   box-shadow: none;
 }
-.block-card .peek-choice.secret {
+.block-card .peek-choice.peek-secret {
   background: linear-gradient(145deg, #fbeaff, #eccaf1);
-  color: #925796;
+  color: #925796 !important;
   border: 1px solid rgba(194, 133, 194, 0.3);
   box-shadow: 0 4px 10px rgba(180, 112, 184, 0.16);
 }
-.block-card .peek-choice.reveal {
+.block-card .peek-choice.peek-reveal {
   background: linear-gradient(145deg, #c6a2f5, #875fc0);
-  color: #fff;
+  color: #fff !important;
   border: 0;
   box-shadow: 0 6px 14px rgba(128, 89, 187, 0.32);
 }
 .block-card .peek-choice:active {
   transform: scale(0.96);
-}
-.block-card .actions {
-  display: flex;
-  gap: 9px;
 }
 .block-card .actions .primary,
 .block-card .actions .secondary {

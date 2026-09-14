@@ -4,7 +4,7 @@
  */
 import type { APIConfig, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
-import { getBlockStateForChar } from './block';
+import { getBlockStateForChar, saveBlockNotice } from './block';
 import { loadCharacterContextRange } from './chatContextRange';
 import { buildChatRequestPayload } from './chatRequestPayload';
 import { ChatPrompts } from './chatPrompts';
@@ -31,6 +31,9 @@ export async function runBlockedCallHangupReply(opts: {
 
     const blocked = await getBlockStateForChar(charId);
     if (!blocked.blocked) return;
+
+    await saveBlockNotice(charId, 'call-hangup');
+    window.dispatchEvent(new CustomEvent(CHAT_GEN_EVENTS.replyEnd));
 
     await DB.saveMessage({
         charId,

@@ -16,7 +16,7 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
-import { BLOCK_SOURCE, blockRecordDisplayText } from '../../utils/block';
+import { BLOCK_NOTICE_SOURCE, BLOCK_SOURCE, blockNoticeText, blockRecordDisplayText, peekCardStatusText, type BlockNoticeKind } from '../../utils/block';
 import './blockCards.css';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import McdCard from './McdCard';
@@ -1822,7 +1822,11 @@ const MessageItem = React.memo(({
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
 
-        if (m.metadata?.source === BLOCK_SOURCE) {
+        if (m.metadata?.source === BLOCK_SOURCE || m.metadata?.source === BLOCK_NOTICE_SOURCE) {
+            const noticeKind = m.metadata?.blockNoticeKind as BlockNoticeKind | undefined;
+            const line = m.metadata?.source === BLOCK_NOTICE_SOURCE
+                ? (noticeKind ? blockNoticeText(noticeKind) : String(m.content || ''))
+                : blockRecordDisplayText(m.metadata);
             return (
                 <div className={`flex items-center justify-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
                     {selectionMode && (
@@ -1833,7 +1837,7 @@ const MessageItem = React.memo(({
                         </div>
                     )}
                     <div className="px-6 py-2" {...interactionProps}>
-                        <p className="text-[11px] leading-relaxed text-slate-400 text-center">{blockRecordDisplayText(m.metadata)}</p>
+                        <p className="text-[11px] leading-relaxed text-slate-400 text-center">{line}</p>
                     </div>
                 </div>
             );
@@ -1886,13 +1890,7 @@ const MessageItem = React.memo(({
             const revealed = outcome === 'reveal';
             const pending = !outcome;
             const showLine = !!line && (secret || revealed || peekExpanded);
-            const statusText = discarded
-                ? '你把它扔掉了……猫儿暂时不知道。'
-                : secret
-                    ? '悄悄看过了，不告诉猫儿。'
-                    : revealed
-                        ? '你看过了，猫儿知道。'
-                        : '选一种回应……猫儿会记住';
+            const statusText = peekCardStatusText(m.metadata);
             const cardState = discarded ? 'discarded' : secret ? 'secret-view' : revealed ? 'revealed' : '';
             return (
                 <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
@@ -1918,9 +1916,9 @@ const MessageItem = React.memo(({
                             ) : null}
                             {pending && (
                                 <div className="actions peek-actions">
-                                    <button type="button" className="peek-choice discard" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-discard'); }}>不看，扔掉</button>
-                                    <button type="button" className="peek-choice secret" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-secret'); }}>偷偷看一下</button>
-                                    <button type="button" className="peek-choice reveal" onClick={(e) => { e.stopPropagation(); setPeekExpanded(true); onResolveBlockAction?.(m, 'peek-viewed'); }}>看看</button>
+                                    <button type="button" className="peek-choice peek-discard" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-discard'); }}>不看，扔掉</button>
+                                    <button type="button" className="peek-choice peek-secret" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-secret'); }}>偷偷看一下</button>
+                                    <button type="button" className="peek-choice peek-reveal" onClick={(e) => { e.stopPropagation(); setPeekExpanded(true); onResolveBlockAction?.(m, 'peek-viewed'); }}>看看</button>
                                 </div>
                             )}
                             <div className="status">{statusText}</div>

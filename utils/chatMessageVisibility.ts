@@ -6,6 +6,7 @@ const ALWAYS_VISIBLE_SYSTEM = {
     'block-status': true,
     'peek-request': true,
     'friend-request': true,
+    'block-notice': true,
 } as Record<string, boolean>;
 
 export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): boolean => (

@@ -16,6 +16,7 @@ import { DB } from './db';
 export const BLOCK_SOURCE = 'block-status';
 export const BLOCK_FRIEND_REQUEST_SOURCE = 'friend-request';
 export const BLOCK_PEEK_SOURCE = 'peek-request';
+export const BLOCK_NOTICE_SOURCE = 'block-notice';
 export const SYSTEM_LOG_LEAD = '[系统日志，不是对方发言]';
 
 export const isBlockSystemSource = (source?: string): boolean => (
@@ -276,14 +277,69 @@ export const buildBlockStatusBlock = (
         } else {
             reach.push('- 电话现在打不通。那是没打出去，不是已经在通话里');
         }
-        return `\n\n${SYSTEM_LOG_LEAD} 你被${userName}拒收了。${sinceStr}
-【对方看不见】你发的每一句普通文字${opts?.canVoice ? '和语音' : ''}，对方一条都看不到。发再多也等于没发出去。不要再把聊天当沟通，也不要以为对方正在读你的气泡。
+        return `\n\n${SYSTEM_LOG_LEAD} 你被${userName}拒收了。${sinceStr}现在仍在拒收，这一条是当前状态，不是旧事。
+【对方看不见】你发的每一句普通文字${opts?.canVoice ? '和语音' : ''}，对方一条都看不到。发再多也等于没发出去。不要再把聊天当沟通，也不要以为对方正在读你的气泡。你刚才想说的话，对方没有收到。
 【对方能看见的只有这些】
 ${reach.join('\n')}
-普通字可以打，但那只是你对着屏幕自言自语。想让对方看见，必须用上面的卡或电话。想靠近就换办法，不要句句复读对不起。记录里能看到求看看看没看、申请过了没过、电话打没打通。`;
+普通字可以打，但那只是你对着屏幕自言自语。想让对方看见，必须用求看看卡、好友申请${canCall ? '或电话' : ''}。想靠近就换办法，不要句句复读对不起。记录里能看到求看看看没看、申请过了没过、电话打没打通。`;
     }
     if (traced) {
         return `\n\n${SYSTEM_LOG_LEAD} ${userName}现在收得到你的消息。以前拒收过的还在记录里，那是过去的事。`;
     }
     return '';
+};
+
+/** 焊在「回到你自己」后面：开口前最后一眼仍是拒收。不加历史前缀。 */
+export const buildBlockRecencyStamp = (
+    state: BlockState,
+    userName: string,
+    opts?: BlockPromptOpts,
+): string => {
+    if (!state.blocked) return '';
+    const canCall = !!opts?.canCall && !state.blockCallsToo;
+    const ways = canCall ? '求看看卡、好友申请或打电话' : '求看看卡或好友申请';
+    return `\n\n【此刻仍被拒收】${userName}现在看不见你的普通文字。想被看见只能发${ways}。`;
+};
+
+export type BlockNoticeKind =
+    | 'peek-discard'
+    | 'peek-reveal'
+    | 'peek-secret-hidden'
+    | 'peek-secret-known'
+    | 'request-accept'
+    | 'request-ignore'
+    | 'call-hangup';
+
+export const blockNoticeText = (kind: BlockNoticeKind): string => {
+    if (kind === 'peek-discard') return '你扔掉了这条求看看';
+    if (kind === 'peek-reveal') return '你看了这条求看看';
+    if (kind === 'peek-secret-hidden') return '你偷偷看了一下，对方没察觉';
+    if (kind === 'peek-secret-known') return '你偷偷看了一下，对方察觉了';
+    if (kind === 'request-accept') return '你通过了这条好友申请';
+    if (kind === 'request-ignore') return '你忽略了这条好友申请';
+    return '你挂断了电话，ta 因此发来一条消息';
+};
+
+export const peekCardStatusText = (meta?: Message['metadata']): string => {
+    const outcome = String(meta?.peekOutcome || (meta?.peekViewed ? 'reveal' : ''));
+    if (outcome === 'discard') return blockNoticeText('peek-discard');
+    if (outcome === 'reveal') return blockNoticeText('peek-reveal');
+    if (outcome === 'secret') return blockNoticeText(meta?.peekCharacterKnows ? 'peek-secret-known' : 'peek-secret-hidden');
+    return '选一种回应……猫儿会记住';
+};
+
+export const peekNoticeKind = (action: 'peek-viewed' | 'peek-discard' | 'peek-secret', knows: boolean): BlockNoticeKind => {
+    if (action === 'peek-discard') return 'peek-discard';
+    if (action === 'peek-viewed') return 'peek-reveal';
+    return knows ? 'peek-secret-known' : 'peek-secret-hidden';
+};
+
+export const saveBlockNotice = async (charId: string, kind: BlockNoticeKind): Promise<number> => {
+    return DB.saveMessage({
+        charId,
+        role: 'system',
+        type: 'system',
+        content: blockNoticeText(kind),
+        metadata: { source: BLOCK_NOTICE_SOURCE, blockNoticeKind: kind },
+    });
 };

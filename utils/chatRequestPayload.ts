@@ -41,7 +41,7 @@ import { materializeVisionDescriptions } from './visionApi';
 import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
 import { loadCollaborationFileCabinetBlock } from '../features/collaboration/chatLibrary';
 import { getSARModuleRuntimePlan } from './vrWorld/sarModuleRuntime';
-import { buildBlockStatusBlock, getBlockStateFromMessages, hasBlockTrace } from './block';
+import { buildBlockRecencyStamp, buildBlockStatusBlock, getBlockStateFromMessages, hasBlockTrace } from './block';
 
 export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
@@ -500,6 +500,13 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 思考链/点单块拼在钢印之后、模型开口前最后读到的是格式说明书的问题。
     volatileTail += parts.recencyTail;
     if (sarModuleBlock) volatileTail += sarModuleBlock;
+    // 仍在拉黑时，拒收钢印要比「回到你自己」更靠后，否则开口前最后一眼是人设、会忘了被拒收。
+    if (blockState.blocked) {
+        volatileTail += buildBlockRecencyStamp(blockState, userProfile?.name || '用户', {
+            canCall: !!char.allowProactiveCall,
+            canVoice: !!char.chatVoiceEnabled,
+        });
+    }
 
     // 结构：[稳定 system] + [历史消息] + [易变状态 system] (+ 末尾 reminder)。
     // 稳定前缀不再包含分钟级时间戳等易变内容 → 支持前缀缓存的中转能跨轮命中；

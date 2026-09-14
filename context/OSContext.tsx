@@ -44,7 +44,7 @@ import { markBackupDone } from '../utils/backupReminder';
 import { collectSARLocalBackup, restoreSARLocalBackup } from '../utils/vrWorld/sarBackup';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { normalizeModelIds } from '../utils/modelList';
-import { getBlockStateFromMessages } from '../utils/block';
+import { getBlockStateFromMessages, restoreBlockDeliveryFlags } from '../utils/block';
 import { runBlockedCallHangupReply } from '../utils/blockCallHangupReply';
 import { setIncomingCallHooks, type IncomingCallRequest } from '../utils/incomingCallBridge';
 import { shouldOfferIncomingCall, type IncomingCallLaunch, type IncomingCallState } from '../utils/incomingCall';
@@ -2306,6 +2306,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 拉黑冷战：机制上主动消息照常发，只是叙事上角色知道自己被拉黑、
               // 发出去会拒收，换成「想办法挽回」的语境。用上面已读的 recentMsgs 判定，零额外 IO。
               const blockState = getBlockStateFromMessages(recentMsgs);
+              const tagBlock = (meta?: Record<string, unknown>) => (
+                  blockState.blocked ? { ...(meta || {}), blockSendFailed: true } : meta
+              );
               let blockedForStr = '';
               if (blockState.blocked && blockState.since > 0) {
                   const gapMin = Math.max(0, Math.floor((now.getTime() - blockState.since) / 60000));
@@ -2460,11 +2463,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               type: 'html_card',
                               content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
                               timestamp: baseTimestamp + offset,
-                              metadata: {
+                              metadata: tagBlock({
                                   htmlSource: blk.html,
                                   htmlTextPreview: blk.textPreview,
                                   ...(meta || {}),
-                              },
+                              }),
                           } as any);
                           if (blk.textPreview) savedPreviewChunks.push(blk.textPreview);
                           offset += 1;
@@ -2496,7 +2499,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               type: 'emoji',
                               content: foundEmoji.url,
                               timestamp: baseTimestamp + offset,
-                              ...(meta ? { metadata: meta } : {}),
+                              metadata: tagBlock(meta),
                           });
                           offset += 1;
                       };
@@ -2518,7 +2521,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'text',
                                       content: chunk,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                                   savedPreviewChunks.push(chunk);
                                   offset += 1;
@@ -2550,7 +2553,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   type: 'text',
                                   content: biContent,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
+                                  metadata: tagBlock(meta),
                               });
                               savedPreviewChunks.push(originalText || translatedText);
                               offset += 1;
@@ -2576,7 +2579,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'emoji',
                                       content: foundEmoji.url,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                               } else {
                                   const fallbackText = `发送了表情包：${part.content}`;
@@ -2587,7 +2590,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'text',
                                       content: fallbackText,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                                   savedPreviewChunks.push(fallbackText);
                               }
@@ -2607,7 +2610,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   type: 'text',
                                   content: chunk,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
+                                  metadata: tagBlock(meta),
                               });
                               savedPreviewChunks.push(chunk);
                               offset += 1;
@@ -2620,6 +2623,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120)
                       || `${char.name} sent a proactive message`;
+
+                  if (blockState.blocked) await restoreBlockDeliveryFlags(charId);
 
                   // 6. Notify OS for unread badge + toast
                   window.dispatchEvent(new CustomEvent('proactive-message-sent', {
