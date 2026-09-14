@@ -3750,12 +3750,24 @@ export interface SocialPost {
     bgStyle?: string;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 所属 Spark 圈子；undefined = 旧帖/「全部」视图（无圈子标记） */
+    circleId?: string;
 }
 
 export interface SubAccount {
     id: string;
-    handle: string; 
-    note: string;   
+    handle: string;
+    note: string;
+}
+
+/** Spark 圈子（用户自建的平行世界）：成员 + 可选世界观描述 */
+export interface SparkCircle {
+    id: string;
+    name: string;
+    /** 世界观描述，注入 Spark 生成 prompt，约束角色与路人的言行不 OOC */
+    worldPrompt: string;
+    memberCharIds: string[];
+    createdAt: number;
 }
 
 export interface SocialAppProfile {

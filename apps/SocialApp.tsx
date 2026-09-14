@@ -3,8 +3,9 @@ import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile } from '../types';
-import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants } from '../utils/socialGeneration';
+import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
+import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
+import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
 import Modal from '../components/os/Modal';
@@ -178,6 +179,11 @@ const SocialApp: React.FC = () => {
     const [characterHandles, setCharacterHandles] = useState<Record<string, SubAccount[]>>({});
     const [identityGroupId, setIdentityGroupId] = useState(GROUP_FILTER_ALL); // 身份管理弹窗的角色分组筛选
 
+    // Circles (平行世界圈子：用户自建，零预设)
+    const [circles, setCircles] = useState<SparkCircle[]>(() => loadSparkCircles());
+    const [activeCircleId, setActiveCircleId] = useState<string>(() => loadActiveCircleId());
+    const [editingCircle, setEditingCircle] = useState<SparkCircle | null>(null); // 非 null = 编辑器打开（id 空 = 新建）
+
     // Sharing State
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareGroupId, setShareGroupId] = useState(GROUP_FILTER_ALL); // 分享帖子弹窗的角色分组筛选
@@ -309,6 +315,52 @@ const SocialApp: React.FC = () => {
         }
     }, [characterHandles]);
 
+    // Save Circles to LocalStorage whenever updated
+    useEffect(() => {
+        saveSparkCircles(circles);
+    }, [circles]);
+
+    // --- Circle Actions ---
+    const activeCircle = activeCircleId === SPARK_CIRCLE_ALL ? undefined : circles.find(c => c.id === activeCircleId);
+
+    const switchCircle = (id: string) => {
+        setActiveCircleId(id);
+        saveActiveCircleId(id);
+        trackEvent('切换 Spark 圈子', { view: id === SPARK_CIRCLE_ALL ? 'all' : 'circle' });
+    };
+
+    const startCreateCircle = () => {
+        setEditingCircle({ id: '', name: '', worldPrompt: '', memberCharIds: [], createdAt: 0 });
+    };
+
+    const toggleCircleMember = (charId: string) => {
+        setEditingCircle(current => {
+            if (!current) return current;
+            const has = current.memberCharIds.includes(charId);
+            return { ...current, memberCharIds: has ? current.memberCharIds.filter(id => id !== charId) : [...current.memberCharIds, charId] };
+        });
+    };
+
+    const saveEditingCircle = () => {
+        if (!editingCircle) return;
+        const name = editingCircle.name.trim();
+        if (!name) { addToast('请给圈子起个名字', 'error'); return; }
+        if (editingCircle.memberCharIds.length === 0) { addToast('圈子至少要选一个角色', 'error'); return; }
+        const isNew = !editingCircle.id;
+        const finalCircle: SparkCircle = { ...editingCircle, name, createdAt: editingCircle.createdAt || Date.now() };
+        setCircles(prev => isNew ? [...prev, finalCircle] : prev.map(c => c.id === finalCircle.id ? finalCircle : c));
+        trackEvent(isNew ? '创建 Spark 圈子' : '编辑 Spark 圈子');
+        setEditingCircle(null);
+        addToast(isNew ? '圈子已创建' : '圈子已保存', 'success');
+    };
+
+    const deleteCircle = (circleId: string) => {
+        setCircles(prev => prev.filter(c => c.id !== circleId));
+        if (activeCircleId === circleId) switchCircle(SPARK_CIRCLE_ALL);
+        trackEvent('删除 Spark 圈子');
+        addToast('圈子已删除，其帖子保留在「全部」', 'success');
+    };
+
     // FIX: Only scroll to bottom if comment count INCREASES, not on initial load
     // This prevents the "jumping" behavior when opening a post
     useEffect(() => {
@@ -429,11 +481,11 @@ const SocialApp: React.FC = () => {
         setSelectedPost(current => (current?.id === postId ? null : current));
     };
 
-    // --- AI Logic (Updated for Multi-Handle) ---
-    const buildGenerationContext = async (participants: CharacterProfile[]) => {
+    // --- AI Logic (Updated for Multi-Handle + Circles) ---
+    const buildGenerationContext = async (participants: CharacterProfile[], circle?: SparkCircleWorld) => {
         const recent = await Promise.all(participants.map(async char =>
             [char.id, await loadCharacterContextMessages(char)] as const));
-        return buildSparkGenerationContext(participants, userProfile, socialProfile, characterHandles, Object.fromEntries(recent));
+        return buildSparkGenerationContext(participants, userProfile, socialProfile, characterHandles, Object.fromEntries(recent), circle);
     };
 
     const handleRefresh = async () => {
@@ -444,24 +496,26 @@ const SocialApp: React.FC = () => {
         setIsRefreshing(true);
         trackEvent('刷新 Spark 推荐流');
         try {
-            const shuffledChars = [...characters].sort(() => 0.5 - Math.random());
-            const selectedChars = shuffledChars.slice(0, Math.min(3, characters.length));
-            
-            const context = await buildGenerationContext(selectedChars);
+            // 圈子模式：候选池限定圈内成员；「全部」= 原版全角色随机
+            const pool = activeCircle ? characters.filter(c => activeCircle.memberCharIds.includes(c.id)) : characters;
+            const selectedChars = [...pool].sort(() => 0.5 - Math.random()).slice(0, Math.min(3, pool.length));
+
+            const context = await buildGenerationContext(selectedChars, activeCircle);
             if (controller.signal.aborted) return;
 
             const prompt = `### 任务: 模拟社交APP "Spark" 的推荐流
 你需要生成 6-8 条新的社交媒体帖子。
 
 ### 🎭 内容构成 (混合模式)
-1. **角色发帖 (30%)**: 
+1. **角色发帖 (30%)**:
    - 选中的角色: ${selectedChars.map(c => c.name).join(', ')}
    - **关键规则**: 每个角色有多个马甲(账号)。请根据内容需要，选择最合适的账号身份发帖。
    - 例如：如果是吐槽，可能用小号；如果是发美照，用大号。请务必使用 **Configured Handle (网名)**。
    - **内容方向**: 公开发言，生活日常、吐槽、或者暗戳戳的记录。
 
 2. **路人/网友发帖 (70%)**: 
-   - 模拟真实的互联网生态：吃瓜群众、技术宅、美妆博主、情感树洞。
+   - 模拟真实的互联网生态：吃瓜群众、技术宅、美妆博主、情感树洞。${activeCircle ? `
+   - **本社区属于「${activeCircle.name}」世界**：路人也是该世界的居民，网名、话题、知识都必须符合该世界观（见系统设定），禁止出现不属于该世界的事物。` : ''}
 
 ### 🚫 绝对禁令
 1. **禁止扮演用户**: 用户的网名是 "${socialProfile.name}"。绝对禁止生成 \`authorName\` 等于或近似 "${socialProfile.name}" 的帖子（无论是角色帖还是路人帖）。如果你想用类似的名字，请改成完全不同的网名。
@@ -526,6 +580,7 @@ const SocialApp: React.FC = () => {
                     bgStyle: getRandomStyle().bg,
                     authorType: isCharacterPost ? 'character' as const : 'stranger' as const,
                     authorCharId: matchedChar?.id,
+                    circleId: activeCircleId !== SPARK_CIRCLE_ALL ? activeCircleId : undefined,
                 }];
             });
             if (!newPosts.length) throw new Error('模型返回的作者身份不匹配，未添加帖子');
@@ -552,9 +607,11 @@ const SocialApp: React.FC = () => {
         post = livePost;
         setLoadingComments(true);
         try {
-            const shuffledChars = [...characters].sort(() => 0.5 - Math.random());
-            const selectedChars = selectSparkParticipants(post, shuffledChars, characterHandles);
-            const context = await buildGenerationContext(selectedChars);
+            // 圈子帖：候选池与世界观按帖子的 circleId 解析；旧帖（无圈子）保持原行为
+            const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
+            const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
+            const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
+            const context = await buildGenerationContext(selectedChars, postCircle);
             if (controller.signal.aborted) return;
             
             let authorType = "Stranger";
@@ -575,7 +632,7 @@ const SocialApp: React.FC = () => {
             }
 
             const prompt = `### 任务: 模拟社交APP评论区
-**帖子来源**: "Spark" 社区
+**帖子来源**: "Spark" 社区${postCircle ? `（所属世界:「${postCircle.name}」）` : ''}
 **楼主**: "${post.authorName}" (${authorType})
 **帖子标题**: "${post.title}"
 **帖子正文**:
@@ -584,7 +641,7 @@ ${post.content || '(楼主没写正文)'}
 """
 
 请基于上面的【标题 + 正文】生成 4-6 条评论，评论要切实回应正文里提到的内容，不要只对着标题空泛地说。混合使用 **选定角色** 和 **随机路人**。
-角色评论时，请选择一个符合语境的马甲身份。
+角色评论时，请选择一个符合语境的马甲身份。${postCircle ? '路人也是「' + postCircle.name + '」世界的居民，言行必须符合该世界观。' : ''}
 
 ### 禁令
 - **绝对禁止** 生成 \`author\` 等于或近似 "${socialProfile.name}" (用户) 的评论。
@@ -649,8 +706,11 @@ ${post.content || '(楼主没写正文)'}
         post = feedRef.current.find(item => item.id === post.id) || post;
         setIsReplyingToUser(true);
         try {
-            const selectedChars = selectSparkParticipants(post, [...characters].sort(() => 0.5 - Math.random()), characterHandles);
-            const context = await buildGenerationContext(selectedChars);
+            // 圈子帖：候选池与世界观按帖子的 circleId 解析；旧帖（无圈子）保持原行为
+            const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
+            const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
+            const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
+            const context = await buildGenerationContext(selectedChars, postCircle);
             if (controller.signal.aborted) return;
 
             // Tell the model who actually wrote the post — if it's the user themselves, replies
@@ -764,6 +824,8 @@ ${buildSparkCommentHistory(post)}
             tags: ['User'],
             bgStyle: getRandomStyle().bg,
             authorType: 'user',
+            // 在哪个圈子发的就归哪个圈子（「全部」视图发的 = 无圈子帖，处处可见）
+            circleId: activeCircleId !== SPARK_CIRCLE_ALL ? activeCircleId : undefined,
         };
         prependPostsToFeed([post]);
         setNewPostContent(''); setNewPostTitle(''); 
@@ -982,6 +1044,77 @@ ${buildSparkCommentHistory(post)}
             <Modal isOpen={showSettings} title="身份管理" onClose={() => setShowSettings(false)}>
                 <div className="space-y-6">
                     <div className="max-h-[50vh] overflow-y-auto no-scrollbar space-y-6 px-1">
+                        {/* --- 圈子管理（平行世界） --- */}
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm font-bold text-slate-700">圈子（平行世界）</span>
+                                {!editingCircle && (
+                                    <button onClick={startCreateCircle} className="text-[10px] bg-[#ff2442] text-white px-2 py-1 rounded-full shadow-sm active:scale-95 transition-transform">+ 新建圈子</button>
+                                )}
+                            </div>
+                            {editingCircle ? (
+                                <div className="bg-slate-50 rounded-xl p-3 space-y-3">
+                                    <div>
+                                        <label className="text-[9px] text-slate-400 uppercase font-bold">圈子名</label>
+                                        <input
+                                            value={editingCircle.name}
+                                            onChange={e => setEditingCircle(ec => ec ? { ...ec, name: e.target.value } : ec)}
+                                            placeholder="例如：古代世界"
+                                            className="w-full text-sm font-bold text-slate-800 border-b border-dashed border-slate-200 focus:border-[#ff2442] outline-none py-1"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] text-slate-400 uppercase font-bold">世界观（可选）</label>
+                                        <textarea
+                                            value={editingCircle.worldPrompt}
+                                            onChange={e => setEditingCircle(ec => ec ? { ...ec, worldPrompt: e.target.value } : ec)}
+                                            placeholder="描述这个世界：例如「这是古代世界，没有手机和网络，路人也是古人，大家用古代的语气和知识说话」"
+                                            className="w-full text-xs text-slate-600 bg-white rounded-lg px-2 py-1.5 outline-none border border-slate-200 focus:border-[#ff2442] resize-none"
+                                            rows={3}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] text-slate-400 uppercase font-bold">圈内角色（点击选/取消）</label>
+                                        <div className="grid grid-cols-4 gap-3 pt-1">
+                                            {characters.map(c => {
+                                                const selected = editingCircle.memberCharIds.includes(c.id);
+                                                return (
+                                                    <button key={c.id} onClick={() => toggleCircleMember(c.id)} className={`flex flex-col items-center gap-1 p-1 rounded-xl transition-all ${selected ? 'bg-red-50 ring-1 ring-[#ff2442]' : ''}`}>
+                                                        <TokenImg value={c.avatar} className={`w-10 h-10 rounded-full object-cover border-2 transition-colors ${selected ? 'border-[#ff2442]' : 'border-slate-100'}`} />
+                                                        <span className={`text-[9px] truncate w-full text-center ${selected ? 'text-[#ff2442] font-bold' : 'text-slate-500'}`}>{c.name}</span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2 pt-1">
+                                        <button onClick={() => setEditingCircle(null)} className="flex-1 py-2 bg-white border border-slate-200 text-slate-500 font-bold rounded-xl text-xs active:bg-slate-50">取消</button>
+                                        <button onClick={saveEditingCircle} className="flex-1 py-2 bg-[#ff2442] text-white font-bold rounded-xl text-xs shadow-md shadow-red-200 active:scale-95 transition-transform">保存圈子</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    {circles.length === 0 && (
+                                        <p className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
+                                            还没有圈子。建一个试试：起个名字、写上世界观、选几个角色，他们就拥有自己的平行小网络了。
+                                        </p>
+                                    )}
+                                    {circles.map(c => (
+                                        <div key={c.id} className="flex items-center gap-2 bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-sm font-bold text-slate-700 truncate">{c.name}</span>
+                                                    <span className="text-[9px] text-slate-400 shrink-0">{c.memberCharIds.length} 位角色</span>
+                                                </div>
+                                                {c.worldPrompt && <p className="text-[10px] text-slate-400 truncate">{c.worldPrompt}</p>}
+                                            </div>
+                                            <button onClick={() => setEditingCircle({ ...c })} className="text-slate-400 hover:text-[#ff2442] transition-colors p-1" title="编辑"><Icons.Pencil className="w-4 h-4" /></button>
+                                            <button onClick={() => deleteCircle(c.id)} className="text-slate-300 hover:text-red-400 transition-colors p-1" title="删除">×</button>
+                                        </div>
+                                    ))}
+                                </>
+                            )}
+                        </div>
                         <p className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
                             为角色添加“马甲”(Sub-Accounts)。AI 发帖时会根据内容选择合适的身份。
                         </p>
@@ -1127,6 +1260,23 @@ ${buildSparkCommentHistory(post)}
                     
                     {activeTab === 'home' && (
                         <div className="p-2 min-h-full">
+                            {/* Circle Switcher（建了圈子才显示） */}
+                            {circles.length > 0 && (
+                                <div className="flex gap-2 overflow-x-auto no-scrollbar px-1 pt-3 pb-1">
+                                    {[{ id: SPARK_CIRCLE_ALL, name: '全部' }, ...circles].map(c => {
+                                        const isActive = activeCircleId === c.id || (c.id === SPARK_CIRCLE_ALL && activeCircleId === SPARK_CIRCLE_ALL);
+                                        return (
+                                            <button
+                                                key={c.id}
+                                                onClick={() => switchCircle(c.id)}
+                                                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${isActive ? 'bg-[#ff2442] text-white border-[#ff2442] shadow-sm shadow-red-200' : 'bg-white/80 text-slate-500 border-slate-200 hover:text-[#ff2442]'}`}
+                                            >
+                                                {c.name}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
                             {/* Refresh Button - Above Posts */}
                             <div className="flex items-center justify-center py-3">
                                 {isRefreshing ? (
@@ -1140,7 +1290,7 @@ ${buildSparkCommentHistory(post)}
                                 )}
                             </div>
                             <div className="columns-2 gap-2 space-y-2 pb-24">
-                                {feed.map(post => renderFeedItem(post))}
+                                {filterPostsByCircle(feed, activeCircleId).map(post => renderFeedItem(post))}
                             </div>
                         </div>
                     )}
@@ -1231,7 +1381,7 @@ ${buildSparkCommentHistory(post)}
 
                             <div className="p-2 min-h-[300px] bg-slate-50/50 pb-24">
                                 <div className="columns-2 gap-2 space-y-2">
-                                    {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
+                                    {filterPostsByCircle(feed, activeCircleId).filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
                                         <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
                                             <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{codepointToEmoji(post.images[0])}</div>
                                             <div className="p-3">
@@ -1244,7 +1394,7 @@ ${buildSparkCommentHistory(post)}
                                         </div>
                                     ))}
                                 </div>
-                                {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).length === 0 && (
+                                {filterPostsByCircle(feed, activeCircleId).filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
                                         <Package size={48} className="text-slate-300 opacity-30" />
                                         <span className="text-xs">空空如也</span>
