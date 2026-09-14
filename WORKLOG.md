@@ -128,3 +128,19 @@
 4. 想要今天的圈子功能，就切到 `feature/company-spark-circle-mode` 分支用；想把它并进主线，跟我说一声我教你（或者下次见我时我来弄）
 
 **以后的习惯（推荐）：** 每天下班前推一下，第二天在哪台电脑都从最新开始。就一句话：做完就推，天下太平。
+
+---
+
+## 2026-09-14 晚 · 家里电脑 · 接手 + 一次工作区事故（已恢复）
+
+### 接手情况
+
+第三只猫儿接手。fetch 后检出本分支（与 origin 对齐在 `5c3f6cca`），读完交接文档 `HANDOFF-spark-v4.md` 和上面三修日志。八问题（P1-P8）根因已全部定位、代码现状已重新校准，行号与交接文档基本一致——**一行代码还没改，接下来按交接文档待办清单执行。**
+
+### 事故：切分支后工作区 1200+ 文件缺失（已恢复，无损失）
+
+- **发生了什么**：家里电脑第一次 `git checkout feature/company-spark-circle-mode` 之后，工作区相对 HEAD 出现约 1208 个文件显示「已删除」（components/、utils/ 等被标 ` D`），HEAD 和提交历史完好，远端 GitHub 也有完整副本——丢的只是磁盘文件，不是库。
+- **原因判断**：家里的 shell 环境残缺（每条命令报 `dirname: command not found`，grep/sed/wc 一堆工具没有），checkout 大量重写文件时大概率没执行完就断了。切完没跑 `git status` 验收是流程失误，下次必改。
+- **恢复**：`git restore .`（从 HEAD 原样写回，只写不删；未跟踪文件没动）。
+- **验证**：`git diff 5c3f6cca --stat` 为空（工作区与 HEAD 逐字节一致），关键文件抽查在位。
+- **给下一只猫儿的规矩**：这个 shell 别用 grep/head/wc/sed 管道组合；任何 checkout/restore 之后立刻 `git status --short` + `git diff HEAD --stat` 验收；看到大片文件"被删"先看 HEAD 和远端——`git restore .` 就能救回来，不用慌。
