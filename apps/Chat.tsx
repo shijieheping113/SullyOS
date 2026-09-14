@@ -3178,10 +3178,18 @@ const Chat: React.FC = () => {
     }, []);
 
     // 点击聊天里的 Spark 帖子卡片 → 跳回 Spark 打开原帖（localStorage 中转，SocialApp 挂载时读取）
-    const handleOpenSparkPost = useCallback((postId: string) => {
+    // P7：清空推荐流后聊天里会残留已删帖的卡片——点开前先查活，查无此帖就地提示、不跳转。
+    const handleOpenSparkPost = useCallback(async (postId: string) => {
+        try {
+            const posts = await DB.getSocialPosts();
+            if (!posts.some(p => p.id === postId)) {
+                addToast('这条帖子已经不在了', 'info');
+                return;
+            }
+        } catch {}
         try { localStorage.setItem('spark_jump_post_id', postId); } catch {}
         openApp(AppID.Social);
-    }, [openApp]);
+    }, [openApp, addToast]);
 
     // 协同工作是独立 sidecar：只有用户点「发送给 ChatApp」时才通过这个窄桥写入主消息表。
     // 其它协同会话、提示词、API 与文件都留在独立数据库，不进入主聊天 pipeline。

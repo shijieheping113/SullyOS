@@ -23,11 +23,14 @@ export function buildSparkGenerationContext(
     circle?: SparkCircleWorld,
 ): string {
     const profiles = participants.map(char => {
-        const recent = (recentMessages[char.id] || []).slice(-6);
+        // 与主聊天完全对齐：调用方（SocialApp buildGenerationContext）已按角色上下文范围
+        // 加载好消息（自适应/手动范围 + 隐藏旧消息边界），这里不再截断——
+        // 记录带够，帖子与评论自然会贴着最近聊过的事长出来（Ann 定稿：不做条数上限）。
+        const recent = recentMessages[char.id] || [];
         const core = ContextBuilder.buildCoreContext(char, user, true, undefined, {
             skipUserProfile: true,
             headerOverride: `[角色资料，仅属于 charId=${JSON.stringify(char.id)}]`,
-        }, { worldbookMessages: recent });
+        }, { worldbookMessages: recent }, { skipEmotionBuff: true });
         return `<<< 角色档案 charId=${JSON.stringify(char.id)} >>>
 角色名: ${char.name}
 可用账号: ${JSON.stringify(getSparkHandles(char, handles).map(h => ({ authorName: h.handle, note: h.note })))}

@@ -1,4 +1,5 @@
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
@@ -219,7 +220,6 @@ const SocialApp: React.FC = () => {
     // Refs
     const commentsEndRef = useRef<HTMLDivElement>(null);
     const detailScrollRef = useRef<HTMLDivElement>(null);
-    const prevCommentCountRef = useRef(0); // Track comment count to prevent initial jump
     const feedRef = useRef<SocialPost[]>([]);
     const mountedRef = useRef(true);
     const refreshRequestRef = useRef<AbortController | null>(null);
@@ -344,7 +344,8 @@ const SocialApp: React.FC = () => {
     // 聊天里点 social_card 卡片跳回原帖。
     // 旧版挂载时"读到 key 就立刻删"——dev 有 StrictMode 双挂载：第一个实例把 key 读走删掉，
     // 真正存活的第二个实例读不到，跳转必落空。改成"轮询消费"：key 在且找到帖子才删；
-    // 5 秒没等到就保留 key 停手（下次挂载/进 Spark 还能再试）。
+    // 5 秒没等到就清 key 停手——P7：Chat 侧点卡前已查活，走到超时只剩竞态窗口
+    // （点了卡、几秒内帖子被清空），此时查无此帖即止，不再保留 key 反复空跳。
     useEffect(() => {
         const deadline = Date.now() + 5000;
         const timer = setInterval(() => {
@@ -362,6 +363,8 @@ const SocialApp: React.FC = () => {
                 setSelectedPost(target);
             } else if (Date.now() > deadline) {
                 clearInterval(timer);
+                try { localStorage.removeItem('spark_jump_post_id'); } catch {}
+                addToast('原帖已经不在了', 'info');
             }
         }, 200);
         return () => clearInterval(timer);
@@ -421,27 +424,8 @@ const SocialApp: React.FC = () => {
         addToast('圈子已删除，其帖子保留在「全部」', 'success');
     };
 
-    // FIX: Only scroll to bottom if comment count INCREASES, not on initial load
-    // This prevents the "jumping" behavior when opening a post
-    useEffect(() => {
-        if (selectedPost) {
-            const currentCount = selectedPost.comments.length;
-            if (currentCount > prevCommentCountRef.current) {
-                // New comment added: only scroll the internal detail panel.
-                // Avoid scrollIntoView(), which can scroll outer containers and shift the whole app layout.
-                const detailScroller = detailScrollRef.current;
-                if (detailScroller) {
-                    detailScroller.scrollTo({
-                        top: detailScroller.scrollHeight,
-                        behavior: 'smooth'
-                    });
-                }
-            }
-            prevCommentCountRef.current = currentCount;
-        } else {
-            prevCommentCountRef.current = 0; // Reset
-        }
-    }, [selectedPost?.comments.length]);
+    // 五修-6：不再自动滚动。旧逻辑在打开帖子时会误判"评论新增"直接飞到底部，
+    // Ann 要求看帖滚动完全交给用户自己（AI 回复来了也不抢滚动）。
 
     // --- Helpers ---
 
@@ -558,8 +542,19 @@ const SocialApp: React.FC = () => {
 
     // --- AI Logic (Updated for Multi-Handle + Circles) ---
     const buildGenerationContext = async (participants: CharacterProfile[], circle?: SparkCircleWorld) => {
-        const recent = await Promise.all(participants.map(async char =>
-            [char.id, await loadCharacterContextMessages(char)] as const));
+        const recent = await Promise.all(participants.map(async char => {
+            const msgs = await loadCharacterContextMessages(char);
+            // P1：Spark 生成前刷新记忆宫殿召回（与主聊天 chatRequestPayload 同一步骤）。
+            // buildCoreContext 只读 char.memoryPalaceInjection 字段，而该字段全靠
+            // injectMemoryPalace 刷新——原三条 Spark 生成路径从不调它，召回一直是空/旧的。
+            // injectMemoryPalace 内部自管 memoryPalaceEnabled 开关；失败时退回旧注入，不炸生成。
+            try {
+                await injectMemoryPalace(char, msgs, undefined, userProfile.name, { entryPoint: 'spark' });
+            } catch (e) {
+                console.warn('[Spark] 记忆宫殿召回失败，沿用旧注入:', e);
+            }
+            return [char.id, msgs] as const;
+        }));
         return buildSparkGenerationContext(participants, userProfile, socialProfile, characterHandles, Object.fromEntries(recent), circle);
     };
 
@@ -606,6 +601,7 @@ const SocialApp: React.FC = () => {
     "title": "简短吸睛的标题",
     "content": "正文内容...",
     "emojis": ["🎈", "✨"],
+    "tags": ["按这条帖子的内容和发帖人视角自然打的 tag，数量不限（一条可以只有 1 个也可以打 5-6 个），像真实社交平台那样，中英文、长短、风格随意，贴合帖子主题就好。下面的示例仅供参考，禁止照抄：美食探店、深夜emo、职场吐槽、武侠日常、猫猫日记、健身打卡、旅行碎片"],
     "likes": 随机数 (0 - 10000)
   },
   ...
@@ -651,7 +647,13 @@ const SocialApp: React.FC = () => {
                     isLiked: false,
                     comments: [],
                     timestamp: Date.now(),
-                    tags: ['Life', 'Vlog'],
+                    // P8：tag 由模型按帖子和发帖人视角自由生成（数量不限）；没解析出有效 tag 才回退默认
+                    tags: (() => {
+                        const parsed = Array.isArray(item.tags)
+                            ? item.tags.filter((t: any) => typeof t === 'string' && t.trim()).map((t: string) => t.trim())
+                            : [];
+                        return parsed.length ? parsed : ['Life', 'Vlog'];
+                    })(),
                     bgStyle: getRandomStyle().bg,
                     authorType: isCharacterPost ? 'character' as const : 'stranger' as const,
                     authorCharId: matchedChar?.id,
@@ -787,7 +789,7 @@ ${post.content || '(楼主没写正文)'}
         }
     };
 
-    const generateRepliesToUser = async (post: SocialPost, userContent: string, userCommentId?: string) => {
+    const generateRepliesToUser = async (post: SocialPost, userContent: string, userCommentId?: string, repliedToCommentId?: string) => {
         if (!sparkApi.apiKey) return;
         if (replyRequestRef.current) return;
         const controller = new AbortController();
@@ -799,14 +801,21 @@ ${post.content || '(楼主没写正文)'}
             const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
             const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
             let selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
+            // P3：两个 id 各司其职——
+            //   repliedToCommentId = 用户正在回复的那条评论（楼中楼目标），用于找"被回复者"；
+            //   userCommentId      = 用户自己刚发的评论，AI 回复应以它为挂靠点（replyToId）。
+            // 原实现把前者当后者传，导致 AI 回复挂错位置：回路人时与用户评论平级
+            // （显示"角色回复了路人"）、直接评论时落成顶层普通评论。
             // 用户在楼中楼里回复某条评论时，模型几乎必然让被回复的那个角色接话——
-            // 但 selectSparkParticipants 未必把它选进身份表，导致评论被整条丢弃报「身份不匹配」。
-            // 这里强制把被回复评论的作者角色塞进身份表头位。
-            if (userCommentId) {
-                const repliedTo = (post.comments || []).find(c => c.id === userCommentId);
-                const repliedChar = repliedTo?.authorCharId
+            // 但 selectSparkParticipants 未必把它选进身份表，导致评论被整条丢弃报
+            // 「身份不匹配」，这里强制把被回复评论的作者角色塞进身份表头位。
+            const repliedTo = repliedToCommentId
+                ? (post.comments || []).find(c => c.id === repliedToCommentId)
+                : undefined;
+            if (repliedTo) {
+                const repliedChar = repliedTo.authorCharId
                     ? candidatePool.find(c => c.id === repliedTo.authorCharId)
-                    : repliedTo ? candidatePool.find(c => (characterHandles[c.id] || []).some(h => h.handle === repliedTo.authorName) || (c.socialProfile?.handle || c.name) === repliedTo.authorName) : undefined;
+                    : candidatePool.find(c => (characterHandles[c.id] || []).some(h => h.handle === repliedTo.authorName) || (c.socialProfile?.handle || c.name) === repliedTo.authorName);
                 if (repliedChar && !selectedChars.some(c => c.id === repliedChar.id)) {
                     selectedChars = [repliedChar, ...selectedChars].slice(0, 4);
                 }
@@ -825,6 +834,11 @@ ${post.content || '(楼主没写正文)'}
                 postAuthorInfo += ' (用户本人)';
             }
 
+            // P3：把"用户在回复谁"明确告诉模型，并加两条硬约束——
+            // 被回复者是角色时必须本人接话；账号名必须从身份表原样复制（防 3c 名字错位）。
+            const repliedToLine = repliedTo
+                ? `\n**用户这条评论是在楼中楼里回复「${repliedTo.authorName}」的这条评论**: "${(repliedTo.content || '').slice(0, 300)}"${repliedTo.authorType === 'character' || repliedTo.isCharacter ? '\n**硬性要求**: 被回复的角色若在下方身份表中，第一条回复必须由 Ta 本人发出（author 从身份表原样复制该角色的对应账号），直接接用户的话。' : ''}`
+                : `\n**用户这条评论是直接评论帖子（不在任何人的楼中楼下）**`;
             const prompt = `### 任务: 回复用户的评论
 **帖子楼主**: ${postAuthorInfo}
 **帖子标题**: "${post.title}"
@@ -832,12 +846,14 @@ ${post.content || '(楼主没写正文)'}
 """
 ${post.content || '(楼主没写正文)'}
 """
-**用户 "${socialProfile.name}" 刚在帖子下发的评论**: "${userContent}"
+**用户 "${socialProfile.name}" 刚在帖子下发的评论**: "${userContent}"${repliedToLine}
 **已有评论对话（最后一条可能就是上述新评论，不要重复回复旧内容）**:
 ${buildSparkCommentHistory(post)}
 
-请基于楼主帖子的【标题 + 正文】+ 用户的评论上下文，生成 1-3 条对用户这条评论的回复，要扣题，不能脱离正文凭空发挥。
+请基于楼主帖子的【标题 + 正文】+ 用户的评论上下文，决定"谁来回、回几条"，要扣题，不能脱离正文凭空发挥。
+可能没人接话（返回空数组 []），可能只有一个人回，也可能几个人你一言我一语——由内容和各角色的性格自然决定，别为了凑数硬回，也别每次都固定同样的人数。
 优先由楼主或正在对话的角色回复；只能使用本次角色档案中的身份。
+回复内容不要复述用户评论原文；author/账号名必须从身份表或已有评论原样复制，绝对不要张冠李戴。
 
 ### 禁令
 - **绝对禁止** \`author\` 等于或近似 "${socialProfile.name}" (用户自己)。回复必须来自其他人。
@@ -879,8 +895,10 @@ ${buildSparkCommentHistory(post)}
                             replyToId: userCommentId,
                         } as SocialComment];
                     });
-                if (!newReplies.length) throw new Error('模型返回的回复身份不匹配，未添加回复');
-                if (newReplies.length > 0) {
+                // P5：零条回复是自然的"没人接话"，不是错误——静默提示即可，不再 throw 报错
+                if (!newReplies.length) {
+                    addToast('暂时没人接话', 'info');
+                } else {
                     updatePostInFeed(post.id, current => ({
                         ...current,
                         comments: mergeSocialComments(current.comments || [], newReplies),
@@ -990,11 +1008,12 @@ ${buildSparkCommentHistory(post)}
             comments: mergeSocialComments(current.comments || [], [userComment]),
         }));
         if (!updatedPost) return;
-        const contentToSend = commentInput; 
-        const replyToId = userComment.replyToId; 
-        setCommentInput(''); 
+        const contentToSend = commentInput;
+        // P3：传"用户自己那条评论"的 id（AI 回复挂它楼中楼下）+ 被回复评论的 id（楼中楼目标）
+        const repliedToCommentId = replyTarget?.id;
+        setCommentInput('');
         setReplyTarget(null);
-        await generateRepliesToUser(updatedPost, contentToSend, replyToId); 
+        await generateRepliesToUser(updatedPost, contentToSend, userComment.id, repliedToCommentId);
     };
 
     const handleOpenPost = (post: SocialPost) => {
@@ -1510,9 +1529,20 @@ ${buildSparkCommentHistory(post)}
                                     </button>
                                 )}
                             </div>
-                            <div className="columns-2 gap-2 space-y-2 pb-24">
-                                {filterPostsByCircle(feed, activeCircleId, validCircleIds).map(post => renderFeedItem(post))}
-                            </div>
+                            {/* P4：CSS columns 是"先填满左列再填右列"，右列开头天然是旧帖，
+                                视觉上"新帖在上、旧帖夹中间"。改双列轮转：奇偶交替分列，
+                                两列都从最新开始交错往下——观感保持瀑布流、顺序保持时间线 */}
+                            {(() => {
+                                const timeline = filterPostsByCircle(feed, activeCircleId, validCircleIds);
+                                const colA = timeline.filter((_, i) => i % 2 === 0);
+                                const colB = timeline.filter((_, i) => i % 2 === 1);
+                                return (
+                                    <div className="flex gap-2 items-start pb-24">
+                                        <div className="flex-1 space-y-2 min-w-0">{colA.map(post => renderFeedItem(post))}</div>
+                                        <div className="flex-1 space-y-2 min-w-0">{colB.map(post => renderFeedItem(post))}</div>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     )}
 
@@ -1601,9 +1631,13 @@ ${buildSparkCommentHistory(post)}
                             </div>
 
                             <div className="p-2 min-h-[300px] bg-slate-50/50 pb-24">
-                                <div className="columns-2 gap-2 space-y-2">
-                                    {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
-                                        <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
+                                {/* P4：同首页——columns 改双列轮转，笔记/收藏两列从最新交错往下 */}
+                                {(() => {
+                                    const mine = feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected);
+                                    const colA = mine.filter((_, i) => i % 2 === 0);
+                                    const colB = mine.filter((_, i) => i % 2 === 1);
+                                    const renderMiniCard = (post: SocialPost) => (
+                                        <div key={post.id} onClick={() => handleOpenPost(post)} className="bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
                                             <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{codepointToEmoji(post.images[0])}</div>
                                             <div className="p-3">
                                                 <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{post.title}</h4>
@@ -1613,8 +1647,14 @@ ${buildSparkCommentHistory(post)}
                                                 </div>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
+                                    );
+                                    return (
+                                        <div className="flex gap-2 items-start">
+                                            <div className="flex-1 space-y-2 min-w-0">{colA.map(renderMiniCard)}</div>
+                                            <div className="flex-1 space-y-2 min-w-0">{colB.map(renderMiniCard)}</div>
+                                        </div>
+                                    );
+                                })()}
                                 {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
                                         <Package size={48} className="text-slate-300 opacity-30" />

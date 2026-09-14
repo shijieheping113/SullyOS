@@ -2,7 +2,7 @@
 import { DB } from './db';
 import { loadTrackedSparkPosts, saveTrackedSparkPosts } from './sparkCircles';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { CharacterProfile, CharPlaylistSong, SocialComment } from '../types';
+import { CharacterProfile, CharPlaylistSong, SocialComment, SocialPost } from '../types';
 import { sanitizeForBubble } from './sanitize';
 import { extractTransferCommands } from './transferFormat';
 import { executeLifeDirectives } from './lifeRecords';
@@ -213,27 +213,84 @@ export const ChatParser = {
         }
 
         // SPARK_COMMENT — 角色在聊天里决定去 Spark 公开评论分享过的帖子。
-        // 找该角色最近一条 user 分享的 social_card 对应的帖子（按当前 DB 里的最新状态），
-        // 把评论写回帖子评论区。幂等：同角色同内容的评论已存在就跳过（主动消息重试会重跑这里）。
+                        // P6/SPARK_COMMENT：角色在聊天里决定去 Spark 公开评论分享过的帖子。
+        // 可及范围 = 该角色见过的 social_card（user 分享卡 + assistant 同步卡）对应的活帖；
+        // 支持指定帖子（按标题匹配）和楼中楼回复（作者:原话片段定位）。幂等：同角色同内容已存在就跳过。
         const sparkCommentMatch = content.match(/\[\[ACTION:SPARK_COMMENT\|([^\]]+)\]\]/);
         if (sparkCommentMatch) {
-            const commentText = sparkCommentMatch[1].trim();
+            // P6：SPARK_COMMENT 支持三种写法。段数判定用「验证式」——第一段能按标题匹配到
+            // 角色见过的活帖才算新格式，否则整段视为老格式的评论内容（内容里碰巧含 | 不会误判）：
+            //   [[ACTION:SPARK_COMMENT|评论内容]]                       → 最近互动的活帖，顶层
+            //   [[ACTION:SPARK_COMMENT|帖子标题|评论内容]]               → 指定帖子，顶层
+            //   [[ACTION:SPARK_COMMENT|帖子标题|作者:原话片段|评论内容]]  → 指定帖子里那条评论的楼中楼
+            const rawAction = sparkCommentMatch[1].trim();
             content = content.replace(sparkCommentMatch[0], '').trim();
+            const segments = rawAction.split('|').map(s => s.trim()).filter(s => s.length > 0);
+            let commentText = rawAction;
+            let requestedTitle: string | null = null;
+            let replyTargetHint: string | null = null;
+            if (segments.length >= 2) {
+                requestedTitle = segments[0];
+                if (segments.length >= 3) {
+                    replyTargetHint = segments[1];
+                    commentText = segments.slice(2).join('|');
+                } else {
+                    commentText = segments.slice(1).join('|');
+                }
+            }
             if (commentText) {
                 try {
                     const all = await DB.getMessagesByCharId(charId, true);
-                    const shared = [...all].reverse().find(
-                        x => x.type === 'social_card' && x.role === 'user' && (x.metadata as any)?.post?.id,
+                    // P2：匹配放宽——user 分享卡和 assistant 同步卡（「让角色知道」写入的）都算
+                    // "角色见过的帖子"。原来只认 user 卡，同步卡永远匹配不到 → 误报"帖子不在了"。
+                    const candidates = [...all].reverse().filter(
+                        x => x.type === 'social_card' && (x.metadata as any)?.post?.id,
                     );
-                    if (shared) {
-                        const postId = (shared.metadata as any).post.id as string;
-                        const posts = await DB.getSocialPosts();
-                        const livePost = posts.find(p => p.id === postId);
-                        if (livePost) {
-                            const already = (livePost.comments || []).some(
-                                c => c.authorCharId === charId && c.content === commentText,
-                            );
-                            if (!already) {
+                    const posts = await DB.getSocialPosts();
+                    // 角色可及的活帖 = 见过的卡对应的活帖（信息边界：只能评论见过的帖子），由新到旧
+                    const liveSeen = candidates
+                        .map(x => posts.find(p => p.id === ((x.metadata as any).post.id as string)))
+                        .filter((p): p is SocialPost => !!p);
+                    let livePost = liveSeen[0];
+                    if (requestedTitle) {
+                        // 标题匹配：去书名号/引号/空白后双向 includes，命中不到回退最近活帖
+                        const strip = (s: string) => s.replace(/[《》「」『』“”‘’"']/g, '').replace(/\s+/g, '');
+                        const key = strip(requestedTitle);
+                        const hit = key ? liveSeen.find(p => {
+                            const t = strip(p.title || '');
+                            return !!t && (t.includes(key) || key.includes(t));
+                        }) : undefined;
+                        if (hit) livePost = hit;
+                    }
+                    if (livePost) {
+                        const postId = livePost.id;
+                        // P6：四段式楼中楼定位。兜底链：作者+片段 → 只作者（取最近一条）→ 只片段 → 顶层降级
+                        let replyToId: string | undefined;
+                        if (replyTargetHint) {
+                            const colonIdx = replyTargetHint.search(/[:：]/);
+                            const authorPart = colonIdx >= 0 ? replyTargetHint.slice(0, colonIdx).trim().toLowerCase() : '';
+                            const snippetPart = colonIdx >= 0 ? replyTargetHint.slice(colonIdx + 1).trim() : replyTargetHint.trim();
+                            const pool = livePost.comments || [];
+                            const byAuthor = authorPart
+                                ? pool.filter(c => (c.authorName || '').trim().toLowerCase() === authorPart)
+                                : [];
+                            const bySnippet = snippetPart ? byAuthor.filter(c => (c.content || '').includes(snippetPart)) : [];
+                            const looseBySnippet = snippetPart && bySnippet.length === 0
+                                ? pool.filter(c => (c.content || '').includes(snippetPart))
+                                : [];
+                            const noAuthorBySnippet = !authorPart && snippetPart
+                                ? pool.filter(c => (c.content || '').includes(snippetPart))
+                                : [];
+                            const target = bySnippet[bySnippet.length - 1]
+                                || byAuthor[byAuthor.length - 1]
+                                || looseBySnippet[looseBySnippet.length - 1]
+                                || noAuthorBySnippet[noAuthorBySnippet.length - 1];
+                            if (target) replyToId = target.id;
+                        }
+                        const already = (livePost.comments || []).some(
+                            c => c.authorCharId === charId && c.content === commentText,
+                        );
+                        if (!already) {
                             // 角色 Spark 马甲：与 SocialApp getSparkHandles 同逻辑（配置 > 主账号 > 角色名）
                             let handleName = charName;
                             let avatar: string | undefined;
@@ -257,6 +314,8 @@ export const ChatParser = {
                                 isCharacter: true,
                                 authorType: 'character',
                                 authorCharId: charId,
+                                // P6：四段式命中楼中楼目标时挂进去；没命中保持顶层（undefined）
+                                ...(replyToId ? { replyToId } : {}),
                             };
                             await DB.saveSocialPost({ ...livePost, comments: [...(livePost.comments || []), comment] });
                             // 帖子追踪：这条帖子被分享追踪过的话，给每个追踪中的角色
@@ -278,19 +337,33 @@ export const ChatParser = {
                                     saveTrackedSparkPosts(tracked);
                                 }
                             } catch {}
-                        }
-                        addToast('评论已发布到 Spark', 'success');
-                        // 留痕不再写进气泡正文（会露馅成"（你把这条评论发布到了……）"）；
-                        // 角色的自我认知由上面追加的追踪通知消息承担
+                            addToast(replyToId ? '评论已发布到 Spark（挂进了楼中楼）' : '评论已发布到 Spark', 'success');
+                            // 留痕不再写进气泡正文（会露馅成"（你把这条评论发布到了……）"）；
+                            // 角色的自我认知由上面追加的追踪通知消息承担
                         } else {
-                            addToast('那条帖子已经不在了，评论没发出去', 'error');
+                            // 幂等：同角色同内容的评论已存在 → 不重发（主动消息重试会重跑这里）
+                            addToast('这条评论刚才已经发过了', 'info');
                         }
+                    } else if (candidates.length > 0) {
+                        // P7 失败回写：见过的卡还在但帖子全没了（典型：用户清空了推荐流）；
+                        // 不写这条的话，角色下一轮还以为自己评论成功了
+                        const deadTitle = ((candidates[0].metadata as any).post?.title) || '之前互动过的帖子';
+                        addToast('那些帖子都已经不在了，评论没发出去', 'error');
+                        try {
+                            await persist({ charId, role: 'system', type: 'text', content: `[系统: ${charName} 想去 Spark 评论「${deadTitle}」，但那些帖子都已经不在了（推荐流可能被清空过），评论没有发出去。之后别再提去评论这件事。]` });
+                        } catch {}
                     } else {
                         addToast('还没分享过帖子给角色，评论没发出去', 'error');
+                        try {
+                            await persist({ charId, role: 'system', type: 'text', content: `[系统: ${charName} 想去 Spark 评论，但当前没有任何分享给 Ta 的帖子，评论没有发出去。Ta 只能评论用户分享过的帖子。]` });
+                        } catch {}
                     }
                 } catch (error) {
                     console.warn('[SparkComment] 发布评论失败:', error);
                     addToast('Spark 评论发布失败', 'error');
+                    try {
+                        await persist({ charId, role: 'system', type: 'text', content: `[系统: ${charName} 想去 Spark 评论，但发布过程出了故障，评论没有发出去。可以下次再试一次。]` });
+                    } catch {}
                 }
             }
         }

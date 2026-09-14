@@ -1128,6 +1128,21 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         const historySlice = effectiveHistory.slice(-limit);
         const charTz = resolveCharTimeZone(char);
 
+        // P6：Spark 卡总览。统计 historySlice 里的帖子卡（用户分享 / 角色同步 / 动态通知），
+        // 把「最近 Spark 足迹」总览 + SPARK_COMMENT 三种写法的说明**只挂在最后一张卡**上；
+        // 更早的卡片正文原样保留（不压缩、不改写——防止误伤中间消息），只摘掉重复的
+        // "可以去评论"催促尾巴，多卡时模型不再被多次催到注意力涣散。
+        const sparkCardIdx = historySlice.reduce((acc, m, i) => (m.type === 'social_card' ? i : acc), -1);
+        const sparkTitles: string[] = [];
+        historySlice.forEach((m) => {
+            const t = (m.metadata as any)?.post?.title;
+            if (m.type === 'social_card' && typeof t === 'string' && t.trim()) sparkTitles.push(t.trim());
+        });
+        const sparkTitleLine = [...new Set(sparkTitles)].slice(-5).reverse().join('、《');
+        const sparkFootprintLine = sparkTitleLine
+            ? `\n\n[你最近的 Spark 足迹] 最近你（和用户）在 Spark 互动过这些帖子（由新到旧）：《${sparkTitleLine}》——都是你真实看过/互动过的，聊到时自然对得上即可，不必主动复述。想去 Spark 公开评论时：随便评一条最近的帖子，用 [[ACTION:SPARK_COMMENT|你的评论内容]]；想指定某条帖子，用 [[ACTION:SPARK_COMMENT|帖子标题|你的评论内容]]；想回复帖子里某位网友的评论（挂进 Ta 的楼中楼），用 [[ACTION:SPARK_COMMENT|帖子标题|那位网友:Ta那条评论的原话片段|你的评论内容]]。去不去、怎么评、评哪条，都由你的人设决定。`
+            : '';
+
         let timeGapHint = "";
         if (historySlice.length >= 2) {
             const currentMsg = historySlice[historySlice.length - 1];
@@ -1286,7 +1301,18 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
                         else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
 
-                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑。如果你想去 Spark 上公开评论这个帖子，可以在回复末尾另起一行写 [[ACTION:SPARK_COMMENT|评论内容]]——这条评论会真的发布到帖子里；去不去、怎么评，由你的人设决定，不强制。)`;
+                        // P6：SPARK_COMMENT 的催促尾巴只保留在最后一张卡上（写法说明统一见「Spark 足迹」总览）；
+                        // 旧卡只留"发表看法"，不再被重复催评。
+                        const isLatestSparkCard = index === sparkCardIdx;
+                        const commentHintLine = isLatestSparkCard
+                            ? '如果你想去 Spark 上公开评论这个帖子，写法见本条末尾「你最近的 Spark 足迹」的说明；去不去、怎么评，由你的人设决定，不强制。'
+                            : '';
+                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑。${commentHintLine})`;
+                    }
+                    // P6：「最近 Spark 足迹」总览 + 三种评论写法，只挂在最后一张 Spark 卡上，
+                    // 让模型对连续多卡互动有自然全貌认知（卡片正文本身不压缩）。
+                    if (index === sparkCardIdx) {
+                        content += sparkFootprintLine;
                     }
                 }
                 else if ((m.type as string) === 'xhs_card') {

@@ -144,6 +144,12 @@ export const ContextBuilder = {
              * 只有聊天主路径（chatPrompts.buildSystemPromptParts）用；其他 App 不传，行为不变。
              */
             deferVolatile?: boolean;
+            /**
+             * Spark 等公开内容生成场景：情绪 buff 是跟着「主回复」的对话节奏走的
+             * （为下一句回复定基调），公开帖子/评论不需要它 → 单独跳过注入。
+             * 与 deferVolatile 独立：时间感知和记忆宫殿召回仍正常内联输出。
+             */
+            skipEmotionBuff?: boolean;
         },
     ): string => {
         const skipBookIds = groupOptions?.skipWorldbookIds;
@@ -301,7 +307,8 @@ export const ContextBuilder = {
         // 放在角色设定之后，使所有调用 ContextBuilder 的 App 都能感知情绪状态
         // 总开关关闭时完全跳过，防止残留 buff 继续污染 prompt
         // deferVolatile：buff 每轮情绪评估后都可能变 → 移交 buildVolatileCoreState。
-        if (!layout?.deferVolatile && isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
+        // skipEmotionBuff：Spark 等公开内容生成场景不需要对话节奏的情绪基调 → 跳过。
+        if (!layout?.deferVolatile && !layout?.skipEmotionBuff && isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
             context += `${char.buffInjection}\n\n`;
             console.log(`🎭 [Context] Buff injected for ${char.name}:\n`, char.buffInjection);
             console.log(`🎭 [Context] Active buffs:`, JSON.stringify(char.activeBuffs || [], null, 2));
