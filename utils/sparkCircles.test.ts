@@ -101,3 +101,27 @@ describe('circles persistence (localStorage)', () => {
         expect(localStorage.getItem(SPARK_ACTIVE_CIRCLE_KEY)).toBe(SPARK_CIRCLE_ALL);
     });
 });
+
+describe('空 id 圈子的存量迁移', () => {
+    it('空 id 圈子按数组顺序补发 circle-legacy-N，且写回存储', () => {
+        localStorage.setItem(SPARK_CIRCLES_KEY, JSON.stringify([
+            circle('', '武侠世界', ['char-a']),
+            circle('real-id', '现代世界', ['char-b']),
+            circle('', '太空世界', ['char-c']),
+        ]));
+        const loaded = loadSparkCircles();
+        expect(loaded.map(c => c.id)).toEqual(['circle-legacy-0', 'real-id', 'circle-legacy-1']);
+        // 写回后存储里已无空 id → 再 load 幂等，id 不再变
+        const again = loadSparkCircles();
+        expect(again.map(c => c.id)).toEqual(loaded.map(c => c.id));
+        // 其它字段原样保留
+        expect(loaded[0].name).toBe('武侠世界');
+        expect(loaded[0].memberCharIds).toEqual(['char-a']);
+    });
+
+    it('全部圈子都有真实 id 时不做任何重写', () => {
+        const data = [circle('circle-1', 'A'), circle('circle-2', 'B')];
+        saveSparkCircles(data);
+        expect(loadSparkCircles()).toEqual(data);
+    });
+});

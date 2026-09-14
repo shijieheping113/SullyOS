@@ -53,8 +53,9 @@ describe('Spark author attribution', () => {
         expect(resolve({ authorName: '小花园', charId: 'b-id', isCharacter: true })).toBeNull();
         expect(resolve({ author: '小花园', charId: 'invented-id' })).toBeNull();
     });
-    it('rejects unselected characters, user impersonation and strangers using character handles', () => {
-        expect(resolve({ author: '阿白', charId: 'c-id' })).toBeNull();
+    it('accepts pool characters even when absent from the participant table; still rejects user impersonation and handle misuse', () => {
+        // 池内但不在身份表（participants=[a,b]）：放行——旧版整条丢弃会报「身份不匹配」
+        expect(resolve({ author: '阿白', charId: 'c-id' })?.character).toBe(c);
         expect(resolve({ author: ' 林雨 ' })).toBeNull();
         expect(resolve({ author: social.name })).toBeNull();
         expect(resolve({ author: '小花园', isCharacter: false })).toBeNull();

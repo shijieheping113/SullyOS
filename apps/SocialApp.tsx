@@ -5,7 +5,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
 import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
-import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL } from '../utils/sparkCircles';
+import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
 import Modal from '../components/os/Modal';
@@ -240,13 +240,22 @@ const SocialApp: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        DB.getSocialPosts().then(posts => {
+        DB.getSocialPosts().then(async posts => {
             if (posts.length > 0) {
                 const sorted = posts.sort((a,b) => b.timestamp - a.timestamp);
                 // IndexedDB can be slow on mobile. If the user already created
                 // something while this read was pending, keep that live version.
                 const liveIds = new Set(feedRef.current.map(post => post.id));
-                const next = [...feedRef.current, ...sorted.filter(post => !liveIds.has(post.id))];
+                let next = [...feedRef.current, ...sorted.filter(post => !liveIds.has(post.id))];
+                // 存量迁移：旧 bug 圈子 id 为空 → 帖子存了 circleId: ''。
+                // '' 无法确定属于哪个圈子（多个空 id 圈子撞车），统一归为无圈子帖
+                // （与旧版实际显示行为一致：都在「全部」）。只重写命中的帖子。
+                const badPosts = next.filter(p => p.circleId === '');
+                if (badPosts.length > 0) {
+                    const fixed = new Map(badPosts.map(p => [p.id, { ...p, circleId: undefined }]));
+                    next = next.map(p => fixed.get(p.id) || p);
+                    await Promise.all(badPosts.map(p => DB.saveSocialPost({ ...p, circleId: undefined })));
+                }
                 feedRef.current = next;
                 setFeed(next);
             }
@@ -332,17 +341,24 @@ const SocialApp: React.FC = () => {
         saveSparkCircles(circles);
     }, [circles]);
 
-    // 聊天里点 social_card 卡片跳回原帖：等 IndexedDB 帖子加载完再打开详情，最多等 5 秒
+    // 聊天里点 social_card 卡片跳回原帖。
+    // 旧版挂载时"读到 key 就立刻删"——dev 有 StrictMode 双挂载：第一个实例把 key 读走删掉，
+    // 真正存活的第二个实例读不到，跳转必落空。改成"轮询消费"：key 在且找到帖子才删；
+    // 5 秒没等到就保留 key 停手（下次挂载/进 Spark 还能再试）。
     useEffect(() => {
-        let jumpId: string | null = null;
-        try { jumpId = localStorage.getItem('spark_jump_post_id'); } catch {}
-        if (!jumpId) return;
-        try { localStorage.removeItem('spark_jump_post_id'); } catch {}
         const deadline = Date.now() + 5000;
         const timer = setInterval(() => {
+            let jumpId: string | null = null;
+            try { jumpId = localStorage.getItem('spark_jump_post_id'); } catch {}
+            if (!jumpId) { clearInterval(timer); return; }
             const target = feedRef.current.find(p => p.id === jumpId);
             if (target) {
                 clearInterval(timer);
+                try { localStorage.removeItem('spark_jump_post_id'); } catch {}
+                // 目标帖可能在别的圈子：切过去再开详情，列表上下文才对得上
+                if (target.circleId && target.circleId !== activeCircleIdRef.current) {
+                    switchCircle(target.circleId);
+                }
                 setSelectedPost(target);
             } else if (Date.now() > deadline) {
                 clearInterval(timer);
@@ -355,6 +371,9 @@ const SocialApp: React.FC = () => {
     const activeCircle = activeCircleId === SPARK_CIRCLE_ALL ? undefined : circles.find(c => c.id === activeCircleId);
     // 现存圈子 id 集合：识别"孤儿帖"（圈子已删），让它们回收进「全部」
     const validCircleIds = new Set(circles.map(c => c.id));
+    // 跳转 effect（挂载时启动）需要读"当前"活跃圈子，但 switchCircle 定义在其后 → 用 ref 桥接
+    const activeCircleIdRef = useRef(activeCircleId);
+    activeCircleIdRef.current = activeCircleId;
 
     const switchCircle = (id: string) => {
         setActiveCircleId(id);
@@ -381,7 +400,14 @@ const SocialApp: React.FC = () => {
         if (!name) { addToast('请给圈子起个名字', 'error'); return; }
         if (editingCircle.memberCharIds.length === 0) { addToast('圈子至少要选一个角色', 'error'); return; }
         const isNew = !editingCircle.id;
-        const finalCircle: SparkCircle = { ...editingCircle, name, createdAt: editingCircle.createdAt || Date.now() };
+        // 新建圈子必须发真实 id：旧 bug 是 id 留空，帖子 circleId 存了 ''（falsy）
+        // 被当成无圈子帖串进「全部」，评论候选池也回退成全角色
+        const finalCircle: SparkCircle = {
+            ...editingCircle,
+            id: isNew ? `circle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : editingCircle.id,
+            name,
+            createdAt: editingCircle.createdAt || Date.now(),
+        };
         setCircles(prev => isNew ? [...prev, finalCircle] : prev.map(c => c.id === finalCircle.id ? finalCircle : c));
         trackEvent(isNew ? '创建 Spark 圈子' : '编辑 Spark 圈子');
         setEditingCircle(null);
@@ -504,6 +530,21 @@ const SocialApp: React.FC = () => {
         setFeed(result.feed);
         setSelectedPost(current => (current?.id === postId ? result.post! : current));
         DB.saveSocialPost(result.post).catch(console.error);
+        // 帖子追踪：帖子被分享/同步追踪过且评论数超过水位 → 给追踪角色追加「新动态」通知消息。
+        // 通知是 user 侧 social_card（syncKind: 'update'）：UI 渲染成卡片，上下文里角色看得到新评论内容。
+        try {
+            const tracked = loadTrackedSparkPosts();
+            const entry = tracked[postId];
+            const commentCount = result.post.comments?.length || 0;
+            if (entry && commentCount > entry.lastSyncedCommentCount) {
+                const newComments = (result.post.comments || []).slice(entry.lastSyncedCommentCount);
+                Promise.all(entry.charIds.map(charId =>
+                    DB.saveMessage({ charId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: result.post, syncKind: 'update', newComments } }),
+                )).catch(console.error);
+                entry.lastSyncedCommentCount = commentCount;
+                saveTrackedSparkPosts(tracked);
+            }
+        } catch {}
         return result.post;
     };
 
@@ -757,7 +798,19 @@ ${post.content || '(楼主没写正文)'}
             // 圈子帖：候选池与世界观按帖子的 circleId 解析；旧帖（无圈子）保持原行为
             const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
             const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
-            const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
+            let selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
+            // 用户在楼中楼里回复某条评论时，模型几乎必然让被回复的那个角色接话——
+            // 但 selectSparkParticipants 未必把它选进身份表，导致评论被整条丢弃报「身份不匹配」。
+            // 这里强制把被回复评论的作者角色塞进身份表头位。
+            if (userCommentId) {
+                const repliedTo = (post.comments || []).find(c => c.id === userCommentId);
+                const repliedChar = repliedTo?.authorCharId
+                    ? candidatePool.find(c => c.id === repliedTo.authorCharId)
+                    : repliedTo ? candidatePool.find(c => (characterHandles[c.id] || []).some(h => h.handle === repliedTo.authorName) || (c.socialProfile?.handle || c.name) === repliedTo.authorName) : undefined;
+                if (repliedChar && !selectedChars.some(c => c.id === repliedChar.id)) {
+                    selectedChars = [repliedChar, ...selectedChars].slice(0, 4);
+                }
+            }
             const context = await buildGenerationContext(selectedChars, postCircle);
             if (controller.signal.aborted) return;
 
@@ -849,26 +902,31 @@ ${buildSparkCommentHistory(post)}
         if (!selectedPost) return;
         try {
             await DB.saveMessage({ charId: isGroup ? 'user' : targetId, groupId: isGroup ? targetId : undefined, role: 'user', type: 'social_card', content: '[分享帖子]', metadata: { post: selectedPost } });
+            // 帖子追踪：分享给私聊角色 = 注册追踪，之后帖子里的新评论会通知到角色上下文
+            if (!isGroup) trackSparkPost(selectedPost.id, targetId, selectedPost.comments?.length || 0);
             setShowShareModal(false);
-            addToast('分享成功', 'success');
+            addToast('分享成功，帖子有新动态会同步给 Ta', 'success');
             trackEvent('分享帖子到聊天');
         } catch (e) { addToast('分享失败', 'error'); }
     };
 
     // 「让角色知道」：把帖子快照作为角色侧（assistant）social_card 存进聊天，
-    // 下次角色回复时能看到「自己发布过/评论过这条动态」，卡片也渲染在角色那一侧
+    // 下次角色回复时能看到「自己发布过/评论过这条动态」，卡片也渲染在角色那一侧。
+    // 同时注册帖子追踪：之后这帖的新评论会以通知消息形式进角色上下文。
     const handleSyncToChar = async (charId: string) => {
         if (!selectedPost) return;
         const post = feedRef.current.find(item => item.id === selectedPost.id) || selectedPost;
         const char = characters.find(c => c.id === charId);
         const handles = (characterHandles[charId] || []).map(h => h.handle);
         const isAuthor = post.authorCharId === charId || handles.includes(post.authorName);
-        const myComment = (post.comments || []).some(c => c.authorCharId === charId || handles.includes(c.authorName));
+        const myComment = (post.comments || []).find(c => c.authorCharId === charId || handles.includes(c.authorName));
         const syncKind: 'published' | 'commented' | 'viewed' = isAuthor ? 'published' : myComment ? 'commented' : 'viewed';
+        const kindLabel = syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
         try {
-            await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: '[Spark 动态]', metadata: { post, syncKind } });
+            await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: `[Spark 动态·${kindLabel}]`, metadata: { post, syncKind } });
+            trackSparkPost(post.id, charId, post.comments?.length || 0);
             setShowSyncModal(false);
-            addToast(`${char?.name || '角色'} 现在知道这条动态了`, 'success');
+            addToast(`${char?.name || '角色'} 现在知道这条动态了，帖子有新动态会同步给 Ta`, 'success');
             trackEvent('同步 Spark 动态给角色');
         } catch (e) { addToast('同步失败', 'error'); }
     };
@@ -967,6 +1025,8 @@ ${buildSparkCommentHistory(post)}
         setFeed([]);
         setSelectedPost(null);
         DB.clearSocialPosts();
+        // 帖子都没了，追踪无意义——全部断开（用户决策：清空推荐流断开追踪）
+        saveTrackedSparkPosts({});
         setShowSettings(false);
         addToast('推荐流已清空', 'success');
         trackEvent('清空 Spark 推荐流');
@@ -1323,6 +1383,15 @@ ${buildSparkCommentHistory(post)}
                         </button>
                     ))}
                 </div>
+                <p className="text-[10px] text-slate-400 text-center px-2 pb-1">分享后帖子有新动态（评论/回复）会同步进 Ta 的聊天</p>
+                {selectedPost && (loadTrackedSparkPosts()[selectedPost.id]) && (
+                    <button
+                        onClick={() => { if (selectedPost) { untrackSparkPost(selectedPost.id); addToast('已断开这条帖子的动态同步', 'success'); } }}
+                        className="w-[calc(100%-32px)] mx-4 mb-3 py-2.5 bg-white border border-slate-200 text-slate-500 font-bold rounded-xl text-xs active:bg-slate-50"
+                    >
+                        断开这条帖子的动态同步
+                    </button>
+                )}
             </Modal>
 
             <Modal isOpen={showSyncModal} title="让角色知道" onClose={() => setShowSyncModal(false)}>

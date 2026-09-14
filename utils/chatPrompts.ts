@@ -1269,6 +1269,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                             ? '你发布了这条笔记'
                             : syncKind === 'commented' ? '你在这个帖子下留过言' : '你刷到过这条帖子';
                         content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(这是你在 Spark 上的公开足迹，你自己当然记得；聊天里聊到相关话题时能自然对上，不必主动复述)`;
+                    } else if (syncKind === 'update') {
+                        // 帖子追踪通知：分享/追踪过的帖子有新评论，同步进上下文让角色跟上最新互动
+                        const newComments = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
+                        const bySelf = (m.metadata as any)?.bySelf === true;
+                        const newLines = newComments.slice(0, 10).map((c: any) => `${tagAuthor(c.authorName || '路人')}: ${c.content}`).join('\n') || '(无)';
+                        content = `${timeStr}[Spark 帖子有新动态]\n标题: ${post.title}\n新增评论:\n${newLines}\n(这是「${post.title}」这条帖子的最新评论区动态${bySelf ? '，其中你自己发的那条评论已经成功发布' : ''}；聊到时自然对得上即可，不必主动复述)`;
                     } else {
                         let identityHint = '';
                         if (myHandles.length > 0) {

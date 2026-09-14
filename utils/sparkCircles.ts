@@ -18,7 +18,7 @@ function safeParseArray(raw: string | null): unknown[] {
 
 export function loadSparkCircles(): SparkCircle[] {
     if (typeof localStorage === 'undefined') return [];
-    return safeParseArray(localStorage.getItem(SPARK_CIRCLES_KEY)).filter((c): c is SparkCircle => {
+    const loaded = safeParseArray(localStorage.getItem(SPARK_CIRCLES_KEY)).filter((c): c is SparkCircle => {
         const circle = c as Partial<SparkCircle>;
         return typeof circle?.id === 'string'
             && typeof circle?.name === 'string'
@@ -30,6 +30,16 @@ export function loadSparkCircles(): SparkCircle[] {
         memberCharIds: c.memberCharIds,
         createdAt: typeof c.createdAt === 'number' ? c.createdAt : Date.now(),
     }));
+    // 存量迁移：旧版建圈时 id 是空字符串（saveEditingCircle 从不生成 id），
+    // 多个圈子全撞在 '' 上，帖子归属/候选池全失效。这里按数组顺序补发稳定 id，
+    // 只跑一次（写回后 id 已非空，天然幂等）。
+    if (loaded.some(c => !c.id)) {
+        let legacyIndex = 0;
+        const migrated = loaded.map(c => c.id ? c : { ...c, id: `circle-legacy-${legacyIndex++}` });
+        try { localStorage.setItem(SPARK_CIRCLES_KEY, JSON.stringify(migrated)); } catch {}
+        return migrated;
+    }
+    return loaded;
 }
 
 export function saveSparkCircles(circles: SparkCircle[]): void {
@@ -44,6 +54,59 @@ export function loadActiveCircleId(): string {
 
 export function saveActiveCircleId(id: string): void {
     localStorage.setItem(SPARK_ACTIVE_CIRCLE_KEY, id || SPARK_CIRCLE_ALL);
+}
+
+// --- 帖子追踪（分享到聊天的帖子，新互动追加通知消息给角色） ---
+
+export interface TrackedSparkPost {
+    /** 追踪这条帖子的角色（分享对象/同步对象），新评论时给它们各追加一条通知 */
+    charIds: string[];
+    /** 上次已同步进聊天的评论数：新评论数超过它才发通知，发完更新 */
+    lastSyncedCommentCount: number;
+}
+
+const SPARK_TRACKED_KEY = 'spark_tracked_posts';
+
+export function loadTrackedSparkPosts(): Record<string, TrackedSparkPost> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SPARK_TRACKED_KEY) || '{}');
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        const out: Record<string, TrackedSparkPost> = {};
+        for (const [postId, v] of Object.entries(parsed)) {
+            const entry = v as Partial<TrackedSparkPost>;
+            if (Array.isArray(entry?.charIds) && typeof entry?.lastSyncedCommentCount === 'number') {
+                out[postId] = { charIds: entry.charIds, lastSyncedCommentCount: entry.lastSyncedCommentCount };
+            }
+        }
+        return out;
+    } catch {
+        return {};
+    }
+}
+
+export function saveTrackedSparkPosts(tracked: Record<string, TrackedSparkPost>): void {
+    try { localStorage.setItem(SPARK_TRACKED_KEY, JSON.stringify(tracked)); } catch {}
+}
+
+/** 把帖子注册进某角色的追踪名单（分享/同步到私聊时调用），评论水位 = 当前评论数 */
+export function trackSparkPost(postId: string, charId: string, commentCount: number): void {
+    const tracked = loadTrackedSparkPosts();
+    const entry = tracked[postId];
+    if (entry) {
+        if (!entry.charIds.includes(charId)) entry.charIds.push(charId);
+        entry.lastSyncedCommentCount = Math.max(entry.lastSyncedCommentCount, commentCount);
+    } else {
+        tracked[postId] = { charIds: [charId], lastSyncedCommentCount: commentCount };
+    }
+    saveTrackedSparkPosts(tracked);
+}
+
+/** 断开某帖的全部追踪（清空推荐流/手动断开） */
+export function untrackSparkPost(postId: string): void {
+    const tracked = loadTrackedSparkPosts();
+    delete tracked[postId];
+    saveTrackedSparkPosts(tracked);
 }
 
 /**

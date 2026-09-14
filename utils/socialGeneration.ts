@@ -24,7 +24,7 @@ export function buildSparkGenerationContext(
 ): string {
     const profiles = participants.map(char => {
         const recent = (recentMessages[char.id] || []).slice(-6);
-        const core = ContextBuilder.buildCoreContext(char, user, false, undefined, {
+        const core = ContextBuilder.buildCoreContext(char, user, true, undefined, {
             skipUserProfile: true,
             headerOverride: `[角色资料，仅属于 charId=${JSON.stringify(char.id)}]`,
         }, { worldbookMessages: recent });
@@ -79,12 +79,20 @@ export function selectSparkParticipants(post: SocialPost, candidates: CharacterP
         if (selected.length >= 2) break;
         if (!selected.some(c => c.id === char.id)) selected.push(char);
     }
-    return selected.slice(0, 3);
+    // 上限 4（原 3）：楼中楼作者 + 楼主 + 随机 2 —— 模型多选一个圈内角色回复时
+    // 不至于因为不在身份表里被整条丢弃（配合 resolveSparkAuthor 的池内放行）
+    return selected.slice(0, 4);
 }
 
 export type SparkAuthor = { name: string; character?: CharacterProfile };
 
-/** Reject conflicting or out-of-scope identities instead of relabelling them as strangers. */
+/**
+ * Reject conflicting or out-of-scope identities instead of relabelling them as strangers.
+ * 身份表（participants）只约束"给谁发了档案"；校验放行到候选池（allCharacters）：
+ * 模型选了池内、但不在本次身份表里的角色时（最常见：用户回复某角色的评论，
+ * 模型让被回复的角色回话，但 selectSparkParticipants 没把它选进身份表），
+ * 评论照常接受，不再整条丢弃报"身份不匹配"。
+ */
 export function resolveSparkAuthor(
     item: { author?: unknown; authorName?: unknown; charId?: unknown; isCharacter?: unknown },
     participants: CharacterProfile[], allCharacters: CharacterProfile[], handles: Handles, userNames: string[],
@@ -98,7 +106,7 @@ export function resolveSparkAuthor(
     const hasId = item.charId != null && item.charId !== '';
     const char = hasId ? owners.find(c => c.id === item.charId) : owners.length === 1 ? owners[0] : undefined;
     if (char) {
-        if (item.isCharacter === false || !participants.some(c => c.id === char.id)) return null;
+        if (item.isCharacter === false) return null;
         return { character: char, name: getSparkHandles(char, handles).find(h => normalizeName(h.handle) === normalized)!.handle };
     }
     if (hasId || owners.length || item.isCharacter === true) return null;

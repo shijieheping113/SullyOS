@@ -1,5 +1,6 @@
 
 import { DB } from './db';
+import { loadTrackedSparkPosts, saveTrackedSparkPosts } from './sparkCircles';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { CharacterProfile, CharPlaylistSong, SocialComment } from '../types';
 import { sanitizeForBubble } from './sanitize';
@@ -233,35 +234,54 @@ export const ChatParser = {
                                 c => c.authorCharId === charId && c.content === commentText,
                             );
                             if (!already) {
-                                // 角色 Spark 马甲：与 SocialApp getSparkHandles 同逻辑（配置 > 主账号 > 角色名）
-                                let handleName = charName;
-                                let avatar: string | undefined;
-                                try {
-                                    const chars = await DB.getAllCharacters();
-                                    const char = chars.find(c => c.id === charId);
-                                    if (char) {
-                                        avatar = char.avatar;
-                                        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
-                                        const configured = raw ? (JSON.parse(raw) || {})[charId] : [];
-                                        handleName = (Array.isArray(configured) && configured[0]?.handle?.trim())
-                                            || char.socialProfile?.handle || char.name;
+                            // 角色 Spark 马甲：与 SocialApp getSparkHandles 同逻辑（配置 > 主账号 > 角色名）
+                            let handleName = charName;
+                            let avatar: string | undefined;
+                            try {
+                                const chars = await DB.getAllCharacters();
+                                const char = chars.find(c => c.id === charId);
+                                if (char) {
+                                    avatar = char.avatar;
+                                    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
+                                    const configured = raw ? (JSON.parse(raw) || {})[charId] : [];
+                                    handleName = (Array.isArray(configured) && configured[0]?.handle?.trim())
+                                        || char.socialProfile?.handle || char.name;
+                                }
+                            } catch {}
+                            const comment: SocialComment = {
+                                id: `cmt-char-${Date.now()}-${Math.random()}`,
+                                authorName: handleName,
+                                authorAvatar: avatar,
+                                content: commentText,
+                                likes: 0,
+                                isCharacter: true,
+                                authorType: 'character',
+                                authorCharId: charId,
+                            };
+                            await DB.saveSocialPost({ ...livePost, comments: [...(livePost.comments || []), comment] });
+                            // 帖子追踪：这条帖子被分享追踪过的话，给每个追踪中的角色
+                            // 追加一条「帖子有新动态」通知消息（含角色自己刚发的评论），
+                            // 上下文里角色自然知道评论已发出、帖子最新状态——不再往气泡正文里塞留痕
+                            try {
+                                const tracked = loadTrackedSparkPosts();
+                                const entry = tracked[postId];
+                                if (entry) {
+                                    const updatedPost = { ...livePost, comments: [...(livePost.comments || []), comment] };
+                                    for (const trackedCharId of entry.charIds) {
+                                        if (trackedCharId === charId) {
+                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: updatedPost, syncKind: 'update', newComments: [comment], bySelf: true } });
+                                        } else {
+                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: updatedPost, syncKind: 'update', newComments: [comment] } });
+                                        }
                                     }
-                                } catch {}
-                                const comment: SocialComment = {
-                                    id: `cmt-char-${Date.now()}-${Math.random()}`,
-                                    authorName: handleName,
-                                    authorAvatar: avatar,
-                                    content: commentText,
-                                    likes: 0,
-                                    isCharacter: true,
-                                    authorType: 'character',
-                                    authorCharId: charId,
-                                };
-                                await DB.saveSocialPost({ ...livePost, comments: [...(livePost.comments || []), comment] });
-                            }
-                            addToast('评论已发布到 Spark', 'success');
-                            // 正文留痕：聊天历史里角色自己也看得到评论过什么
-                            content = `${content}\n（你把这条评论发布到了 Spark：「${commentText}」）`.trim();
+                                    entry.lastSyncedCommentCount = (livePost.comments?.length || 0) + 1;
+                                    saveTrackedSparkPosts(tracked);
+                                }
+                            } catch {}
+                        }
+                        addToast('评论已发布到 Spark', 'success');
+                        // 留痕不再写进气泡正文（会露馅成"（你把这条评论发布到了……）"）；
+                        // 角色的自我认知由上面追加的追踪通知消息承担
                         } else {
                             addToast('那条帖子已经不在了，评论没发出去', 'error');
                         }
