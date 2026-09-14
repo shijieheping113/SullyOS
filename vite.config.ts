@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { execSync } from 'node:child_process';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { bakeVoiceMiddleware } from './server/bake-voice-middleware';
 
 // 构建时抓 git 分支 + short commit + UTC+8 构建时间，注入到版本信息显示。
@@ -49,6 +50,14 @@ let showBuildBadge = !isReleaseBranch;
 if (process.env.VITE_HIDE_BUILD_BADGE === '1') showBuildBadge = false;
 if (process.env.VITE_SHOW_BUILD_BADGE === '1') showBuildBadge = true;
 
+// 开发环境出站代理（可选）：某些网络（如公司内网）直连不了外网 TTS/语音 API，
+// 设 DEV_OUTBOUND_PROXY=http://127.0.0.1:7890 后，下面的 dev proxy 转发改走该代理。
+// 不设置时行为与原来完全一致（直连）。
+const outboundProxyUrl = process.env.DEV_OUTBOUND_PROXY || '';
+const outboundAgent = outboundProxyUrl ? new HttpsProxyAgent(outboundProxyUrl) : undefined;
+const withOutboundProxy = <T extends object>(cfg: T): T & { agent?: HttpsProxyAgent<string> } =>
+  outboundAgent ? { ...cfg, agent: outboundAgent } : cfg;
+
 export default defineConfig({
   resolve: {
     // Live2D subclasses Pixi containers, so both the renderer and the engine
@@ -85,7 +94,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/minimax/t2a': {
+      '/api/minimax/t2a': withOutboundProxy({
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
         secure: true,
@@ -95,8 +104,8 @@ export default defineConfig({
           const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
           return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
         },
-      },
-      '/api/minimax/get-voice': {
+      }),
+      '/api/minimax/get-voice': withOutboundProxy({
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
         secure: true,
@@ -105,8 +114,8 @@ export default defineConfig({
           const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
           return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
         },
-      },
-      '/api/minimax/music': {
+      }),
+      '/api/minimax/music': withOutboundProxy({
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
         secure: true,
@@ -115,16 +124,16 @@ export default defineConfig({
           const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
           return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
         },
-      },
+      }),
       // 鱼声 Fish Audio TTS：转发到 https://api.fish.audio/v1/tts（返回二进制音频）
-      '/api/fishaudio/tts': {
+      '/api/fishaudio/tts': withOutboundProxy({
         target: 'https://api.fish.audio',
         changeOrigin: true,
         secure: true,
         rewrite: () => '/v1/tts',
-      },
+      }),
       // ElevenLabs TTS：开发环境把同源查询参数改写到官方 voice_id 路径。
-      '/api/elevenlabs/tts': {
+      '/api/elevenlabs/tts': withOutboundProxy({
         target: 'https://api.elevenlabs.io',
         changeOrigin: true,
         secure: true,
@@ -134,7 +143,7 @@ export default defineConfig({
           const outputFormat = parsed.searchParams.get('output_format') || 'mp3_44100_128';
           return `/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=${encodeURIComponent(outputFormat)}`;
         },
-      },
+      }),
     }
   },
   build: {
