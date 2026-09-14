@@ -274,3 +274,45 @@ SPARK_COMMENT 支持三种写法，完全兼容老格式：
 
 - **这台机器的局域网预览必须挂 https**：`.dev-certs/` 有自签证书，Ann 手机的测试数据和输入习惯绑在 https origin（纯 http 起服务手机会报 ERR_SSL_PROTOCOL_ERROR）。启动方式：临时脚本 dev-https.tmp.mjs（createServer + server.https，用完删，不入 git），地址以 Vite 当次打印的 Network 行为准（2026-09-15 凌晨为 https://192.168.0.103:5173）
 - dev server 起不来且报 SAFE_DELETE_BULK_CONFIRM_REQUIRED = 环境的批量删除保护拦了缓存重建，手动 `rm -rf node_modules/.vite/deps` 绕过
+
+### 五修完成记录（2026-09-15 凌晨，Ann 验收后 commit/push 等点头）
+
+改动文件：`apps/SocialApp.tsx`（主体）、`apps/Chat.tsx`（无新改）、`utils/chatPrompts.ts`、`utils/db.ts`（无净变更——getAllAssets 原本就有）、`context/OSContext.tsx`、`types.ts`
+
+1. **① 6 号去滚动**：删掉"评论数增加就滚底"的 useEffect（打开帖子时 prevCount=0 → 误判新增飞到底）。看帖滚动完全交给用户。
+2. **② 4 号 tag**：发布面板加 tag 输入（`parsePostTags` 支持中英文逗号/顿号/空格分隔、去 # 去重），`tags: ['User']` 写死删除；`chatPrompts.ts` 三个卡片分支（角色同步卡/追踪通知/用户分享卡）统一加 `tagsLine`——tag 跟帖子内容一起给模型。
+3. **③ 11 号分区+编辑删除**：推荐流过滤 `authorType==='user'`（用户帖只在主页笔记 tab）；主页笔记卡加编辑/删除按钮；编辑复用发布面板（`editingPostId` 状态，原地更新，id/评论/点赞/时间戳不变）。
+4. **④ 1 号手动触发**：发评论只发评论（`handleSendComment` 不再自动触发生成）；输入框**为空**时同一按钮 = "搅动评论区"（`refreshCommentSection`），不评论也能按。`evolveCommentSection` 全新 prompt：「模拟过一会儿后评论区的样子」——数量/人选/挂靠全交给模型，空数组合法；**反八股红线**（禁"哈哈哈/太xx了吧"式空洞灌水）；用户最近评论只作背景信息不强制回应；`replyTo` 字段支持路人/角色互相接话（按作者名匹配挂楼中楼）。
+5. **⑤ 7+9 号多样化+私聊路**：演化输出加 `"toPrivateChat": true`——角色有话只想跟用户说时落成主聊天的 assistant 消息（不进评论区），提示词明确「评论区公开/私聊只有你们俩」两个场景的区别（9 号），路人和没设置的角色不受影响。产出不强制。
+6. **⑥ 2 号评论管理**：任何帖子的任何评论可删/改（按钮常显，手机友好）。删除连带楼中楼子回复（不动点收集）；两步 confirm，第二步"让角色知道"→ 对所有追踪该帖的角色落系统消息（RP：用户动了权限）；`syncPostSnapshotToChats` 用 `DB.updateMessageMetadata` 把新评论列表原地写进所有相关 social_card 快照（分享卡+同步卡），不留旧记录。
+7. **⑦ 10 号 @ 角色**：`SocialPost.mentions?: string[]`；发布面板点选角色自动插 `@网名` 进正文；发布后 `syncPostToChar(post, cid, true)` 自动同步（`metadata.mentioned: true`，卡片标题「用户 @ 了你」），chatPrompts 对应 kindLine 明确"Ta 想让你看到这条笔记"；之后评论走正常同步路子。
+8. **⑧ 5 号图片**：发布面板多图选择（≤9 张）→ `processImageToBlob`（长边 1280、JPEG 0.8）压缩 → 存 assets 表（`spark_img_` 前缀）→ 帖子 images 存 `sparkimg:<assetId>` 引用；不选图保持 emoji 贴纸。渲染：`renderPostMedia`/`SparkPostImage` 组件（引用丢失时占位 🖼️，文字评论不受影响），详情页多图横滑。识图：`buildSparkFetchInit`——评论生成/演化请求带 image_url，**独立识图 API 优先，没设置就用 Spark 全局模型直发**。删帖/编辑换图清理 assets；身份管理面板加"清理 Spark 图片缓存"（只删无引用的）。**备份互通**：`OSContext.isRedundantManagedAssetId` 排除 `spark_img_` 前缀——图片不进任何档位备份，zip 格式与原版完全一致（Ann 拍板）。
+9. **⑧ 8 号提示词收口**：主聊天（SPARK_COMMENT 三写法+足迹总览）与 Spark 界面（演化/toPrivateChat）两条通道语义分明；无卡不注入；被艾特/失败回写/催促尾巴各归各位，通读无矛盾。
+
+### 五修验收情况
+
+- Spark 相关测试 60/60（socialGeneration 7、chatParser 四文件 31、chatPrompts 9、sparkCircles 10、socialFeedMerge 3）
+- build 通过（40.66s；Circular chunk 警告为历史遗留）。build 抓出一处 `getAllAssets` 重复键（db.ts 里本来就有，重复添加已删）
+- **未 commit、未 push**——等 Ann 手机验收 + 点头
+
+### 五修验收重点（手机 https://192.168.0.103:5173）
+
+1. 发帖：tag 输入生效；选图（多张）发布后图显示；不选图 emoji 贴纸正常；@ 角色后该角色聊天里出现「用户 @ 了你」卡片
+2. 帖子详情：打开不飞到底
+3. 评论：发评论不再自动触发 AI；空输入框按"搅动评论区"→ 评论区自然演化（可能没动静、可能多人接话、内容具体不八股）；角色可能私聊你（消息出现在主聊天）
+4. 评论管理：编辑/删除任意评论 → 删除时可选"让角色知道"；同步过的帖子快照跟着变
+5. 主页：用户帖只在这里；编辑/删除入口可用；推荐流看不到用户帖
+6. 备份：导出 full 备份，zip 里无 spark_img_ 图片（帖子在）——与原版互通
+
+### 二轮验收：六问题清单（2026-09-15 凌晨 2 点，Ann 困了先睡）
+
+Ann 手机验收后回了一批新问题，**代码未动**，已逐条定位根因，详细根因+改法写在 `HANDOFF-spark-v5.md`（同分支），明天回公司照单开工。速记：
+
+1. 发帖面板选图后 emoji 背景区该隐藏（重复设计）——互斥 UI，改发布面板
+2. @ 显示角色真名不是社交 id——handle 初始化回退真名（SocialApp 约 L356），不许回退
+3. 带图帖同步进聊天卡片，图变一串 `sparkimg:...` 图名——Chat.tsx 渲染 social_card 要处理 images 引用
+4. 删评论没联动聊天卡片（追踪名单漏了只评论过的角色 + feedRef 时序存疑）；用户评论自己帖子没进私聊——**意图待问 Ann**
+5. 路人认知不隔离 + 抄袭已有回复——演化 prompt 加两条硬线
+6. 私聊只能一条——改 `"privateChat": []` 数组结构，兼容旧格式
+
+本提交 = 五修全部代码 + 本日志 + HANDOFF-spark-v5.md（Ann 点头授权提交推送）。

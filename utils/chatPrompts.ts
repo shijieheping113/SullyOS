@@ -1276,20 +1276,26 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 
                     const postAuthorTag = tagAuthor(post.authorName || '路人');
                     const commentsSample = (post.comments || []).slice(0, 10).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
+                    // 五修-4：tag 跟着帖子内容一起给模型（用户自定义 tag / AI 打的 tag 都在此列）
+                    const tagsLine = Array.isArray(post.tags) && post.tags.length ? `\n标签: ${post.tags.join(' ')}` : '';
 
                     const syncKind = (m.metadata as any)?.syncKind;
                     if (m.role === 'assistant' && syncKind) {
                         // 角色侧同步：让角色知道自己发布过/评论过什么，内容是什么
-                        const kindLine = syncKind === 'published'
+                        // 五修-10：被艾特的卡片明确告诉角色"用户 @ 了你"
+                        const mentioned = (m.metadata as any)?.mentioned === true;
+                        const kindLine = mentioned
+                            ? '用户在帖子下 @ 了你——Ta 想让你看到这条笔记，可以像刷到熟人帖子那样自然回应（去评论区说话、或跟你私聊说都行）'
+                            : syncKind === 'published'
                             ? '你发布了这条笔记'
                             : syncKind === 'commented' ? '你在这个帖子下留过言' : '你刷到过这条帖子';
-                        content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(这是你在 Spark 上的公开足迹，你自己当然记得；聊天里聊到相关话题时能自然对上，不必主动复述)`;
+                        content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}\n(这是你在 Spark 上的公开足迹，你自己当然记得；聊天里聊到相关话题时能自然对上，不必主动复述)`;
                     } else if (syncKind === 'update') {
                         // 帖子追踪通知：分享/追踪过的帖子有新评论，同步进上下文让角色跟上最新互动
                         const newComments = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
                         const bySelf = (m.metadata as any)?.bySelf === true;
                         const newLines = newComments.slice(0, 10).map((c: any) => `${tagAuthor(c.authorName || '路人')}: ${c.content}`).join('\n') || '(无)';
-                        content = `${timeStr}[Spark 帖子有新动态]\n标题: ${post.title}\n新增评论:\n${newLines}\n(这是「${post.title}」这条帖子的最新评论区动态${bySelf ? '，其中你自己发的那条评论已经成功发布' : ''}；聊到时自然对得上即可，不必主动复述)`;
+                        content = `${timeStr}[Spark 帖子有新动态]\n标题: ${post.title}${tagsLine}\n新增评论:\n${newLines}\n(这是「${post.title}」这条帖子的最新评论区动态${bySelf ? '，其中你自己发的那条评论已经成功发布' : ''}；聊到时自然对得上即可，不必主动复述)`;
                     } else {
                         let identityHint = '';
                         if (myHandles.length > 0) {
@@ -1307,7 +1313,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         const commentHintLine = isLatestSparkCard
                             ? '如果你想去 Spark 上公开评论这个帖子，写法见本条末尾「你最近的 Spark 足迹」的说明；去不去、怎么评，由你的人设决定，不强制。'
                             : '';
-                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑。${commentHintLine})`;
+                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑。${commentHintLine})`;
                     }
                     // P6：「最近 Spark 足迹」总览 + 三种评论写法，只挂在最后一张 Spark 卡上，
                     // 让模型对连续多卡互动有自然全貌认知（卡片正文本身不压缩）。

@@ -3754,6 +3754,8 @@ export interface SocialPost {
     authorCharId?: string;
     /** 所属 Spark 圈子；undefined = 旧帖/「全部」视图（无圈子标记） */
     circleId?: string;
+    /** 五修-10：用户发帖 @ 的角色 charId 列表（发帖时自动同步给这些角色并告知被艾特）。旧数据无此字段 */
+    mentions?: string[];
 }
 
 export interface SubAccount {

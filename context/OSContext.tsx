@@ -3837,6 +3837,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               id === 'custom_font_data' ||
               id === 'spark_social_profile' ||
               id === 'spark_user_bg' ||
+              // 五修-5：Spark 用户发帖的图片是本地缓存（Ann 定稿：不进备份——
+              // 原版没有这套数据，进备份会破坏导出 zip 与原版的互通）。只存本机，删帖即清理。
+              id.startsWith('spark_img_') ||
               id === 'room_custom_assets_list' ||
               id.startsWith('widget_') ||
               id.startsWith('deco_') ||
