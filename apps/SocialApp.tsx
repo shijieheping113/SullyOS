@@ -401,6 +401,8 @@ const SocialApp: React.FC = () => {
                 if (target.circleId && target.circleId !== activeCircleIdRef.current) {
                     switchCircle(target.circleId);
                 }
+                // v9 四修（Ann 复检命中）：私聊跳帖也要走水位初始化，否则冒满屏红点
+                initReplyWatermarks(target);
                 setSelectedPost(target);
             } else if (Date.now() > deadline) {
                 clearInterval(timer);
@@ -1330,33 +1332,37 @@ ${buildSparkCommentHistory(post)}${recentLine}
         }
     };
 
+    // v9 四修（Ann 复检命中）：已读水位初始化——**所有**打开帖子的入口都必须走这里。
+    // 私聊卡片跳帖曾绕过它 → 内存水位为空 → 全部回复算没看过 → 冒红点。
+    const initReplyWatermarks = (post: SocialPost) => {
+        seenRepliesRef.current = {};
+        const all = loadSparkReplyWatermarks();
+        const saved = all[post.id] || {};
+        const byId = new Map(post.comments.map(c => [c.id, c]));
+        const rootCounts: Record<string, number> = {};
+        for (const c of post.comments) {
+            let cur = c; const seen = new Set<string>();
+            while (cur.replyToId && !seen.has(cur.id)) { seen.add(cur.id); const p = byId.get(cur.replyToId); if (!p) break; cur = p; }
+            // v9 三修：守门条件必须用原始评论 c —— cur 已挪到根，根无 replyToId，旧写法永假＝死代码
+            if (c.replyToId) rootCounts[cur.id] = (rootCounts[cur.id] || 0) + 1;
+        }
+        for (const [rootId, count] of Object.entries(rootCounts)) {
+            if (typeof saved[rootId] === 'number') {
+                seenRepliesRef.current[rootId] = saved[rootId];
+            } else {
+                seenRepliesRef.current[rootId] = count;
+                saveSparkReplyWatermark(post.id, rootId, count);
+            }
+        }
+    };
+
     const handleOpenPost = (post: SocialPost) => {
         const livePost = feedRef.current.find(item => item.id === post.id) || post;
         // 评论不自动生成（省 token）：打开详情只展示已有评论，空时由用户手动点「加载评论」
         setSelectedPost(livePost);
         // v9 二轮（Ann 拍板 B 案）：已读水位 localStorage 持久化——点开看过永久消失，退出重进不复发。
         // 打开时：已有记录的楼层沿用旧水位（打开期间新长出的回复才冒点）；无记录的楼层记当前数（打开前的不算新）。
-        seenRepliesRef.current = {};
-        {
-            const all = loadSparkReplyWatermarks();
-            const saved = all[livePost.id] || {};
-            const byId = new Map(livePost.comments.map(c => [c.id, c]));
-            const rootCounts: Record<string, number> = {};
-            for (const c of livePost.comments) {
-                let cur = c; const seen = new Set<string>();
-                while (cur.replyToId && !seen.has(cur.id)) { seen.add(cur.id); const p = byId.get(cur.replyToId); if (!p) break; cur = p; }
-                // v9 三修（Ann 复检命中）：守门条件必须用原始评论 c —— cur 已挪到根，根无 replyToId，旧写法永假＝死代码，水位从未落库
-                if (c.replyToId) rootCounts[cur.id] = (rootCounts[cur.id] || 0) + 1;
-            }
-            for (const [rootId, count] of Object.entries(rootCounts)) {
-                if (typeof saved[rootId] === 'number') {
-                    seenRepliesRef.current[rootId] = saved[rootId];
-                } else {
-                    seenRepliesRef.current[rootId] = count;
-                    saveSparkReplyWatermark(livePost.id, rootId, count);
-                }
-            }
-        }
+        initReplyWatermarks(livePost);
     };
 
     const handleClosePost = () => {
