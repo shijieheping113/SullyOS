@@ -1,5 +1,7 @@
 # 工作日志（给猫儿和未来的自己看）
 
+> ⚠️ **开工前必读：[检讨-未等开工令擅自改码事故.md](./检讨-未等开工令擅自改码事故.md)** —— 2026-09-15 擅自开工连环返工事故全文 + 八条铁律（模式规矩/复述拦错/功能不丢/危险操作单独确认）。所有猫儿动手前先过一遍，别让 Ann 再教第二遍。
+
 ## 2026-09-14 · 公司电脑 · Spark 圈子模式（平行世界）
 
 ### 今天干了什么（大白话版）
@@ -316,3 +318,126 @@ Ann 手机验收后回了一批新问题，**代码未动**，已逐条定位根
 6. 私聊只能一条——改 `"privateChat": []` 数组结构，兼容旧格式
 
 本提交 = 五修全部代码 + 本日志 + HANDOFF-spark-v5.md（Ann 点头授权提交推送）。
+
+---
+
+## 2026-09-15 上午 · 公司电脑 · 七改-UI：评论区 + 输入弹层 xhs 复刻（Ann 拍板后施工）
+
+### 背景与依据
+
+Ann 出题：照 `小红书评论输入区-设计参考.md`（源 `xhs-comment-input.html`，公司电脑上现成的两个参考文件）把 Spark 帖子详情页的**评论区和输入框**复刻成真实小红书的样子，落地到小手机里并适配所有现有功能。纯 UI 层改造，不碰生成逻辑 / prompt / 数据。
+
+### Ann 拍板的三个决策（防返工记录）
+
+1. **楼中楼默认折叠**（原版是全展开，行为变化已确认）；回复楼中楼里的评论要**紧贴在被回复那条评论下方** + 显示「回复 @账号名」
+2. 「搅动评论区」入口用 Sully 方案：**弹层输入框为空时发送胶囊自动变「搅动」**，不新增按钮
+3. 弹层工具行**不放表情/图片死按钮**（参考文档 §6 红线），排布保持干净
+
+### 改了什么（全部在 `apps/SocialApp.tsx`）
+
+**评论列表（对齐参考 §2）**
+- 「共 N 条评论」改成 52px 吸顶小节头（17px/600 字重、`#1A1A1A`）
+- 单条评论按 xhs 规范重排：38px 头像（inset 描边阴影）/ 14.5px 昵称（角色 `#1A1A1A` 中量、路人 `#7A7A7A`）/ 16px 正文 / meta 行 **无竖线**只用间隙 / 右侧 17px 心形+赞数
+- 楼中楼：**统一缩进 48px**（删掉原 border-l 竖线挂靠样式）、子头像 26px；回复别人的显示「回复 @xx」标签
+- **树形 DFS 排序（新设计）**：子回复不再按数组顺序平铺，而是按「挂在谁下面」递归排序——回复楼中楼里某条评论的回复，直接出现在那条评论正下方
+- 默认折叠 + 「展开 N 条回复 ↔ 收起回复」按钮（前缀 22px 灰横线，xhs 同款）；展开 0.24s 淡入+上浮 4px（新 keyframes `sparkRepliesIn`，缓动统一 `cubic-bezier(.16,1,.3,1)`）；**收起 = 全折一条不留**
+- 回复/编辑/删除按钮常显保留（五修-2 功能），融入 meta 行 12px 灰样式
+- 「点击加载评论」空态改成 xhs 灰胶囊样式
+
+**输入区（对齐参考 §2.2 + §3）**
+- 原底部常驻输入条 → **吸底互动栏**（56px 白底 + 上边框）：38px 灰胶囊「说点什么…」（15px 铅笔图标）+ 点赞/收藏（23px 图标，原功能原位）
+- 点胶囊 → **输入弹层**从底部升起：遮罩 `rgba(0,0,0,.32)` 0.3s 淡入、弹层 0.34s `translateY(102%→0)`（18px 顶圆角、max-height 92%）；**180ms 延迟聚焦 `preventScroll`** 防列表滚跑；弹层打开时互动栏**被压暗而非隐藏**
+- 弹层内容：顶部回复目标胶囊（可取消）+ 收起箭头；76px 多行输入框（`#EDEDED` 描边、光标 `#FF2442`、15.5px）；底部工具行 = 左侧场景提示文案 + 右侧发送胶囊（有字 → 红 `#FF2442`「发送」；空 → `#FFC9D2`「搅动评论区」）；底部安全区 `var(--safe-bottom)`
+- 收起三路：点遮罩 / 收起箭头 / Esc（桌面）；textarea Enter 发送（Shift+Enter 换行）
+- 关帖时弹层、回复目标、输入框、折叠状态全部复位
+
+### 检查过了
+
+- `tsc --noEmit`：**SocialApp.tsx 零错误**（全仓 47 个错误均为 MemoryPalace/CompanionHome 等无关文件的历史遗留，与基线一致）
+- Spark 相关测试：socialGeneration / chatParser / chatPrompts / sparkCircles / socialFeedMerge **14 文件 94/94 全过**
+- `build`：通过（6337 modules，1m6s；pdfjs eval 警告与 Circular chunk 均为历史遗留）
+
+### 环境备注（本轮新增，公司电脑完整档案——家里猫儿接手前必读）
+
+**① git 引用消失事故（今早发生，已修复，但根子没除）**
+
+- 现象：`.git/refs` 下的**松散引用文件**（`refs/heads/feature/...`、`refs/remotes/origin/...`）写入后立刻消失——fetch 建的 origin 指针、合并时的分支指针、甚至 `git update-ref` 刚写的都在同一进程内就没；但 `.git/logs/`、`.git/objects/`、`packed-refs` 的写入全部正常
+- 后果表现：`git status` 忽而 "upstream is gone"、忽而 "branch does not have any commits yet"；`git log origin/xxx` 报 unknown revision
+- **修复套路**：引用写入后**立刻** `git pack-refs --all --prune`（打包进单文件就能活）；`update-ref` 嫌慢就直接文件直写 ref 文件再 pack。提交对象本身从未丢过，别慌
+- 家里猫儿如果见到 upstream is gone / unborn branch：先 `cat .git/packed-refs` 看指针在不在包里，在就啥事没有；不在就按上面套路补。凶手（疑似杀软/同步盘/Trae 的文件过滤）未查明
+- 本次快进合并已完成：公司本地 = 远端 = `f9ac44c2`（五修完成）。stash 里有一条 `CRLF-noise backup before ff-merge 2026-09-15`——是快进前 SocialApp.tsx/PhoneShell.tsx 的**纯换行符噪音**（内容零改动），确认无用可弃，问 Ann 一声即可
+
+**② 网络与代理**
+
+- GitHub 直连 TLS 握手失败，fetch/push 必须挂本机 Clash：`git -c http.proxy=http://127.0.0.1:7890 fetch origin`（push 同理）
+- Ann 手机验收挂局域网 http 预览：**http://10.48.18.221:5188**（公司机惯例端口；跑语音功能记得带 `DEV_OUTBOUND_PROXY=http://127.0.0.1:7890` 起 dev，纯 UI 验收可不带）
+- 家里那套 https 自签证书（`.dev-certs/`）是**家里电脑**的事，公司机用 http 即可，别搞混
+
+**③ WorkBuddy shell（这台机器的坑，工具链全走绝对路径）**
+
+- bash 环境残缺：每条命令都报 `dirname: command not found` / `cd: null directory`（无害噪音，忽略）；`ls/grep/head/tail/wc/sed/mkdir/env` 等 coreutils **全部缺失**，管道统计改用 `node -e` 处理字符串；PowerShell 工具输出被吞（exit 0 无 stdout），别用
+- node 工具链一律绝对路径直调（vitest 装好了，node_modules 完整）：
+  - 类型检查：`node node_modules/typescript/bin/tsc --noEmit`（全仓约 47 个错误是 MemoryPalace/CompanionHome 等文件的历史遗留，**判 own 改动的标准 = 自己改的文件有没有新错误**）
+  - 测试：`node node_modules/vitest/vitest.mjs run <文件关键词>`
+  - 构建：`node scripts/build-workers.mjs && node node_modules/vite/bin/vite.js build`
+- git 本体可用，但凡是**写引用**的操作（commit 本身目前正常，因为写到 packed-refs/logs 的都活着——若哪天 commit 后 log 不到，先 pack-refs 再看）
+
+**④ 接手检查清单（家里猫儿开工前 30 秒过一遍）**
+
+1. `git status` + `git log --oneline -2`：分支对不对、HEAD 在哪
+2. `cat .git/packed-refs` 里有没有当前分支：没有就按 ① 补
+3. 拉远端：挂 7890 代理 fetch；fetch 后同样查 packed-refs
+4. 本机测试：`node node_modules/vitest/vitest.mjs run sparkCircles`（30 秒冒烟）
+
+### 二轮反馈七连修（同日 11:40，Ann 手机验收后，未 commit）
+
+1. **build badge 关闭**（照原项目 README「右下角的 build badge 怎么关」节）：badge 是 Vite `define` 编译时常量 `__BUILD_BADGE_VISIBLE__`，dev/构建启动命令前挂 `VITE_HIDE_BUILD_BADGE=1` 即隐藏——**dev server 已带此变量重启**，以后家里/公司起 dev 或 build 想藏 badge 都照此挂
+2. **评论字体小一号**：昵称 14.5→13px、正文 16→14px（比帖子正文 15px 小一号）、meta 按钮 12→11px、心形 17→15px、展开按钮 13.5→12px
+3. **评论点赞补上**：`SocialComment` 加 `isLiked?: boolean`（types.ts）；`handleLikeComment` 乐观更新 ±1，随帖子落库，心形点亮红色
+4. **收藏挪到右上角**：原右上角「让角色知道」（ChatBubble 同步入口）按 Ann 要求移除，收藏（星标，点亮琥珀色）顶上；底部互动栏只留点赞。注意：`showSyncModal` 弹窗代码还在但**没了入口**，Ann 要恢复时说一声
+5. **新回复气泡**：每层楼记「已读回复数水位」（`seenRepliesRef`，开帖/关帖清零）；刷新/搅动后某楼回复数超水位且未展开 → 「展开 N 条回复」旁冒红色「N条新回复」胶囊；**展开即更新水位，气泡一次性消失**；展开状态下进来的新回复直接算已读
+6. **点回复直接弹输入框**（大问题修复）：改弹层架构后回复按钮只剩 setReplyTarget 没开弹层——现在回复按钮 = 设目标 + 立刻升起输入弹层
+7. **展开按钮左侧缩进** 48→38px（楼中楼子回复本体仍 48px 不变）
+
+验收：tsc SocialApp/types 零错误；dev 已重启在 http://10.48.18.221:5188（badge 已隐藏）。
+
+### v9 定稿施工（同日 12:58，Ann 说「做吧」后；基线已存档 commit `71eda741`）
+
+**教训先记**：Ann 报的 4/5/6 反馈初改版里猫儿（Sully）犯的错——把「收藏换同步」理解成收藏挪右上角（星里没装同步功能）；右上角分享/同步混为一谈；v6 计划还自作主张要给星加小字（被 Ann 揪住）。**Ann 定的模式规矩：默认永远计划模式，只排查改计划；明确说「做吧/执行」才切代码模式。原有功能一个都不能丢，只许换位置。**
+
+施工内容（全部在 SocialApp.tsx，OSContext.tsx 一处）：
+
+1. **基线存档**：Ann 指令「commit 当前工作区」→ `71eda741`（含两轮初改 + xhs 参考文件；此前一次误 commit 已 reset，改动无损失）
+2. **右上角只剩分享**：删初改加的收藏星按钮；Share 按钮清掉冗余内层 onClick
+3. **分享 = 作者纯净版**：`handleShare` 删 `trackSparkPost` 调用、toast 改回「分享成功」；分享弹窗删追踪说明文字；「断开这条帖子的动态同步」按钮从分享弹窗整体迁出
+4. **底部同步星**（原收藏星坑位，**外观不变、无小字**）：`Icons.Star` 点击 = 打开「让角色知道」弹窗（showSyncModal）；**点亮逻辑 = `loadTrackedSparkPosts()[postId]?.charIds?.length` 存在 → 琥珀色 #FFB800，未同步/断开 → 描边灰**。同步+追踪功能原样住星里（`syncPostToChar` 未动，@ 艾特路径也未动）
+5. **同步弹窗底部安家「断开这条帖子的动态同步」**：原按钮原样式原条件（帖被追踪过才显示）迁入；断开后星星同步灭
+6. **新回复气泡水位修复**：根因 = 水位从不落账，渲染时拿当前回复数跟自己比恒差 0。修法 = `handleOpenPost` 打开瞬间按 livePost.comments 算好每楼层回复数快照进 `seenRepliesRef`；渲染兜底 `?? replies.length` → `?? 0`（打开后新长出的楼层回复全算新）
+7. **toast 白条不消失修复**（OSContext `addToast`）：id 从 `Date.now()` 改 `${Date.now()}-${random}`——同毫秒多条 toast（私聊连发）撞 id 导致 React 重复 key 留鬼节点、setTimeout 删不干净
+
+验收：tsc 47 个全是历史遗留（MemoryPalaceApp 等），SocialApp/OSContext 零新错误；Spark 测试 14 文件 94/94 全过；dev（`VITE_HIDE_BUILD_BADGE=1`）HMR 已热更，http://10.48.18.221:5188
+
+### v9 二轮 UI 修复（同日 14:27，Ann 报 5 条 → 列表计划拍板 B/确认后「做吧」）
+
+**流程改进**：Ann 要求计划必须**列表化、别啰嗦**（上轮计划写成小作文被批）。
+
+1. **新回复气泡改 B 案**：红底胶囊（太显眼太丑）→ 展开按钮旁一枚 7px 小红点（`#FF2442`）
+2. **水位持久化**：`sparkCircles.ts` 加 `loadSparkReplyWatermarks` / `saveSparkReplyWatermark`（localStorage `spark_reply_watermarks`，postId→rootId→已读数）。`handleOpenPost` 不再清零重算：有记录楼层沿用旧水位，无记录楼层写当前数（打开前的不算新）；`toggleReplies`/展开态同步写内存+localStorage。点开看过 = 永久消失，退出重进不复发
+3. **搅动反馈**：弹层搅动按钮 `isReplyingToUser` 时变红 `#FF2442` + 文字「正在搅动……」；完成新评论淡入（renderBody 自带 animate-fade-in）+ 冒小红点。不加提示条（Ann：不用那么麻烦）
+4. **tag 单 #**：根因 = 模型在正文里自写老式 `#话题#`（tags 徽章本来就是单 #）。双保险：三个生成 prompt（推荐流绝对禁令/加载评论/搅动）加「正文禁止任何 # 话题标记」红线；渲染防线 = `parsePostTags` 剥 `/^#+/`、tag 徽章 strip、`displayContent()` 把正文/评论里成对 `#xx#` 洗成 `#xx`（只洗显示不动存库数据）
+5. **底部互动栏照参考图重排**：`[♡ 797] [☆ 8]` 水平排列（图标左数字右，24px 图标 + 13.5px 深灰数字，组间距 20px）；星 = 同步星**功能原样**（点击开「让角色知道」、追踪中点亮琥珀 `#fbbf24`——Icons.Star 内置色），只披收藏外观 + `decoCollectNum(postId)` 稳定伪随机装饰数字（hash % 100，同帖永远同一个数）。**Ann 强调：没有收藏功能！这只是收藏外观，重要级别是同步和追踪**
+
+验收：tsc 47 个全是历史遗留、SocialApp/sparkCircles 零新错误；Spark 测试 14 文件 94/94；HMR 已热更。
+
+### v9 三轮修复（同日 15:23，Ann 报 4 条 → 表格计划 → 15:23「修吧」）
+
+| # | 反馈 | 修法 | 状态 |
+|---|------|------|------|
+| 1 | 红点重进复活，要看过永久消失 | **真病灶 = 死代码**：`handleOpenPost` 水位填充里 `if (cur.replyToId)` —— while 循环结束时 cur 已挪到根、根无 replyToId，条件永假，水位从未写进 localStorage。改为 `if (c.replyToId)`（按原始评论判断）。注意 Ann 硬刷新证明过不是缓存问题，这次是逐行读出来的 | ✅ |
+| 2 | 数字 1k+/2w+ | `fmtCount`：≥10000→`Nw+`、≥1000→`Nk+`、整数截断；详情页底栏 + 列表卡片 + 搜索卡片共 3 处接入；数字 span 全部 `whitespace-nowrap` 防竖排 | ✅ |
+| 3 | 同步星数字 +1 | 追踪中 = 装饰基数 +1（断开回落）；基数 ≥1000（k+ 档）不体现加一 | ✅ |
+| 4 | 点搅动收起回复栏 | `handleSendComment` 搅动分支先 `closeComposer()` 再跑模拟；「正在搅动……」文案与评论区 spinner 保留 | ✅ |
+
+验收：tsc 47（全为无关历史遗留，本次文件 0 新错）｜Spark 94/94。教训入档：**「大概率是缓存」这种甩锅式诊断不可取，Ann 硬刷新后其他改动都在，就该回头逐行读代码**。
+
+### v9 两轮改动未 commit、未 push —— 等 Ann 手机验收 + 点头（铁律）

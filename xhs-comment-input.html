@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#ffffff">
+<title>小红书 · 评论输入框（默认态 / 点击态）</title>
+<style>
+/* ============================================================
+   0. TOKENS
+   ============================================================ */
+:root{
+  /* 页面 */
+  --bg:          #FFFFFF;
+  --bar-bg:      #FFFFFF;   /* 输入条底 */
+  --field-bg:    #F2F2F2;   /* 胶囊 / 输入框底 */
+  --field-bd:    #EDEDED;
+  --ph:          #B9B9B9;   /* 占位文字 */
+  --ink:         #1A1A1A;
+  --ink-2:       #575757;
+  --ink-3:       #9A9A9A;
+  --ink-4:       #C4C4C4;
+  --line:        #F0F0F0;
+  --tag-bg:      #F5F5F5;
+
+  /* 品牌 */
+  --red:         #FF2442;
+  --send-off:    #FFC9D2;   /* 发送按钮·禁用 */
+  --send-on:     #FF2442;   /* 发送按钮·可用 */
+
+  /* 键盘 */
+  --kb-bg:       #D1D5DB;
+  --kb-key:      #FFFFFF;
+  --kb-fn:       #ADB3BC;
+  --kb-blue:     #3478F6;
+  --kb-ink:      #1A1A1A;
+  --kw-bg:       #F2F3F5;   /* 键盘工具栏按钮底 */
+
+  --sans: -apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+  --ease: cubic-bezier(.16,1,.3,1);
+}
+
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  font-family:var(--sans);
+  color:var(--ink);
+  background:#E9EAEC;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+button{ font-family:inherit; border:0; background:none; padding:0; cursor:pointer; color:inherit; }
+input,textarea{ font-family:inherit; }
+
+/* ============================================================
+   1. 手机视口
+   ============================================================ */
+.phone{
+  position:relative;
+  width:100%;
+  max-width:430px;
+  height:100dvh;
+  max-height:932px;
+  background:var(--bg);
+  overflow:hidden;
+  display:flex; flex-direction:column;
+  isolation:isolate;
+}
+@media (min-width:520px) and (min-height:720px){
+  body{ background:#141416; }
+  .phone{
+    width:393px;
+    height:min(852px, 94dvh);
+    border-radius:36px;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 40px 80px -30px rgba(0,0,0,.7);
+  }
+}
+
+/* ============================================================
+   2. 评论面板
+   ============================================================ */
+.panel{
+  flex:1; min-height:0;
+  display:flex; flex-direction:column;
+  background:var(--bg);
+}
+
+/* ---- 2.1 标题栏 ---- */
+.panel__head{
+  flex:none;
+  height:52px;
+  display:flex; align-items:center; gap:8px;
+  padding:0 16px;
+  background:var(--bg);
+}
+.panel__title{
+  margin:0;
+  font-size:17px; font-weight:600; letter-spacing:-.01em;
+  color:var(--ink);
+}
+.panel__sort{
+  width:26px; height:26px;
+  display:grid; place-items:center;
+  color:var(--ink);
+}
+.panel__sort svg{ width:19px; height:19px; }
+
+/* ---- 2.2 ★ 评论输入条（默认态 · 复刻主体）---- */
+.inputbar{
+  flex:none;
+  display:flex; align-items:center; gap:8px;
+  padding:9px 14px;
+  background:var(--bar-bg);
+}
+.inputbar__avatar{
+  width:38px; height:38px; flex:none;
+  border-radius:50%;
+  display:grid; place-items:center; overflow:hidden;
+  background:linear-gradient(150deg,#FBF8F4 0%,#F3EDE5 60%,#EAE2D8 100%);
+  box-shadow:0 0 0 1px rgba(0,0,0,.05) inset;
+}
+.inputbar__avatar svg{ width:100%; height:100%; }
+.inputbar__field{
+  flex:1; min-width:0;
+  height:40px;
+  display:flex; align-items:center;
+  padding:0 18px;
+  border-radius:20px;
+  background:var(--field-bg);
+  text-align:left;
+  transition:background .18s var(--ease);
+}
+.inputbar__field:active{ background:#ECECEC; }
+.inputbar__ph{
+  font-size:15.5px; line-height:1; color:var(--ph);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.inputbar__act{
+  width:36px; height:36px; flex:none;
+  display:grid; place-items:center;
+  color:#333333;
+  transition:opacity .15s var(--ease), transform .15s var(--ease);
+}
+.inputbar__act:active{ opacity:.5; transform:scale(.9); }
+.inputbar__act svg{ width:26px; height:26px; }
+
+/* 弹层打开时，原输入条留在原位，仅被遮罩压暗（对齐截图 1） */
+
+/* ---- 2.3 评论列表 ---- */
+.panel__list{
+  flex:1; min-height:0;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+  padding:4px 0 16px;
+}
+.panel__list::-webkit-scrollbar{ display:none; }
+
+.cmt{ padding:14px 16px 0; }
+.cmt__row{ display:flex; gap:10px; }
+.cmt__av{
+  width:38px; height:38px; flex:none; border-radius:50%;
+  box-shadow:0 0 0 1px rgba(0,0,0,.04) inset;
+}
+.cmt__av--a{ background:linear-gradient(155deg,#9BA8EA 0%,#6E7FD6 45%,#3F4C96 100%); }
+.cmt__av--b{ background:linear-gradient(155deg,#E8E2DA 0%,#C9BEB2 55%,#9A8B7C 100%); }
+/* 实拍照片类头像：低饱和灰调近似 */
+.cmt__av--c{
+  background:
+    radial-gradient(circle at 46% 62%, #C9C3BB 0 26%, transparent 27%),
+    linear-gradient(165deg,#8E8C88 0%,#6E6C69 55%,#4C4A48 100%);
+}
+.cmt__av--d{ background:linear-gradient(155deg,#F0C4DE 0%,#C98FB6 50%,#8A5A80 100%); }
+.cmt__av--e{ background:linear-gradient(155deg,#8E9BB3 0%,#5C6883 55%,#333C52 100%); }
+/* 粉色毛绒玩偶 */
+.cmt__av--f{
+  background:
+    radial-gradient(circle at 32% 34%, #FCE6F0 0 16%, transparent 17%),
+    radial-gradient(circle at 68% 34%, #FCE6F0 0 16%, transparent 17%),
+    radial-gradient(circle at 50% 58%, #F3C3DA 0 30%, transparent 31%),
+    linear-gradient(160deg,#E7AECB 0%,#D58FB4 60%,#B96E95 100%);
+}
+/* 粉色兔 + 墨镜 */
+.cmt__av--g{
+  background:
+    linear-gradient(180deg,#FBD9E6 0 40%, #2F2F33 40% 56%, #FBD9E6 56% 100%);
+}
+/* 西瓜 */
+.cmt__av--h{
+  background:
+    radial-gradient(circle at 50% 52%, #E4554E 0 34%, #F4F2EA 35% 54%, #56A44A 55% 100%);
+}
+
+.cmt__main{ flex:1; min-width:0; }
+.cmt__name{
+  font-size:14.5px; line-height:1.3; color:#7A7A7A;
+  display:flex; align-items:center; gap:6px;
+}
+.cmt__badge{
+  font-size:10px; line-height:1;
+  padding:3px 5px; border-radius:4px;
+  color:var(--red);
+  box-shadow:0 0 0 1px currentColor inset;
+}
+.cmt__text{
+  margin-top:5px;
+  font-size:16px; line-height:1.5; color:var(--ink);
+  word-break:break-word;
+}
+.cmt__text b{ font-weight:600; }
+.cmt__meta{
+  margin-top:8px;
+  display:flex; align-items:center; gap:10px;
+  font-size:13.5px; color:#9A9A9A;
+}
+/* 原图时间 / 地区 / 回复之间不画竖线，只留间隙 */
+.cmt__meta .sp{ display:none; }
+.cmt__vote{
+  margin-left:auto;
+  display:flex; align-items:center; gap:16px;
+  color:#6E6E6E;
+}
+.cmt__vote span{ display:inline-flex; align-items:center; gap:4px; font-size:13.5px; }
+.cmt__vote svg{ width:17px; height:17px; }
+.cmt__emoji{ display:grid; place-items:center; color:#8A8A8A; }
+.cmt__emoji svg{ width:19px; height:19px; }
+
+.cmt__tag{
+  display:inline-block; margin-top:8px;
+  padding:3px 7px; border-radius:4px;
+  background:var(--tag-bg);
+  font-size:11px; line-height:1.2; color:var(--ink-3);
+}
+
+/* 子评论 · 楼中楼（整块缩进到主评论文字列） */
+.cmt__replies{ display:flex; flex-direction:column; }
+/* 关键：上面的 display:flex 会盖掉 [hidden] 自带的 display:none，
+   必须显式补回来——否则「收起回复」根本收不起来 */
+.cmt__replies[hidden]{ display:none; }
+.cmt__replies:not([hidden]){ animation:replies-in .24s var(--ease) both; }
+@keyframes replies-in{
+  from{ opacity:0; transform:translateY(-4px); }
+  to{ opacity:1; transform:none; }
+}
+/* 子评论：缩进到主评论文字列（主评论头像 38 + 间距 10） */
+.cmt__sub{ display:flex; gap:10px; margin:14px 0 0 48px; }
+.cmt__sub .cmt__av{ width:26px; height:26px; }
+.cmt__sub .cmt__text{ margin-top:3px; }
+.cmt__sub .cmt__meta{ margin-top:7px; }
+.cmt__sub .cmt__vote{ gap:14px; }
+.cmt__sub .cmt__vote svg{ width:16px; height:16px; }
+.cmt__sub .cmt__emoji svg{ width:18px; height:18px; }
+
+/* @ 提及：昵称加重 + 右上角小号 @ */
+.mn b{ font-weight:600; }
+.mn i{
+  font-style:normal; font-size:.66em;
+  vertical-align:.34em; margin-left:1px;
+  color:#8A8A8A;
+}
+
+.cmt__more{
+  display:flex; align-items:center; gap:10px;
+  margin:10px 0 0 48px;
+  font-size:13.5px; color:var(--ink-3);
+}
+.cmt__more::before{
+  content:""; width:22px; height:1px; background:#DCDCDC; flex:none;
+}
+
+/* ---- 2.4 底部笔记互动栏（截图 1 底部，仅作场景还原）---- */
+.notebar{
+  flex:none;
+  height:56px;
+  display:flex; align-items:center; gap:14px;
+  padding:0 14px 8px;
+  background:#FFFFFF;
+  border-top:1px solid rgba(0,0,0,.03);
+}
+.notebar__field{
+  flex:1; min-width:0;
+  height:38px;
+  display:flex; align-items:center; gap:7px;
+  padding:0 14px;
+  border-radius:19px;
+  background:var(--field-bg);
+  color:var(--ph);
+  font-size:14px;
+}
+.notebar__field svg{ width:15px; height:15px; flex:none; color:#B0B0B0; }
+.notebar__act{
+  display:flex; align-items:center; gap:4px;
+  color:#1A1A1A; font-size:12px;
+}
+.notebar__act svg{ width:23px; height:23px; }
+
+/* ============================================================
+   3. 遮罩 + 输入弹层
+   ============================================================ */
+.mask{
+  position:absolute; inset:0; z-index:20;
+  background:rgba(0,0,0,.32);
+  opacity:0; pointer-events:none;
+  transition:opacity .3s var(--ease);
+}
+.phone.typing .mask{ opacity:1; pointer-events:auto; }
+
+.sheet{
+  position:absolute; left:0; right:0; bottom:0; z-index:30;
+  background:#FFFFFF;
+  border-radius:18px 18px 0 0;
+  transform:translateY(102%);
+  transition:transform .34s var(--ease);
+  will-change:transform;
+  display:flex; flex-direction:column;
+  max-height:92%;
+}
+.phone.typing .sheet{ transform:translateY(0); }
+
+/* ---- 3.1 多行输入框 ---- */
+.sheet__editor{
+  flex:none;
+  margin:18px 16px 0;
+}
+.editor{
+  display:block;
+  width:100%;
+  height:76px;
+  padding:13px 14px;
+  border:1px solid var(--field-bd);
+  border-radius:12px;
+  background:#FFFFFF;
+  font-size:15.5px; line-height:1.45;
+  color:var(--ink);
+  resize:none; outline:0;
+  caret-color:var(--red);
+}
+.editor::placeholder{ color:var(--ph); }
+
+/* ---- 3.2 工具行 ---- */
+.sheet__tools{
+  flex:none;
+  height:54px;
+  display:flex; align-items:center;
+  padding:0 16px;
+}
+.tool{
+  width:52px; height:40px;
+  display:grid; place-items:center;
+  color:#232323;
+  transition:opacity .15s var(--ease), transform .15s var(--ease);
+}
+.tool:active{ opacity:.45; transform:scale(.9); }
+.tool svg{ width:26px; height:26px; }
+
+.btn-send{
+  margin-left:auto;
+  height:34px; min-width:62px; padding:0 18px;
+  border-radius:17px;
+  background:var(--send-off);
+  color:#fff;
+  font-size:14px; font-weight:500;
+  transition:background .2s var(--ease), transform .15s var(--ease);
+}
+.btn-send.is-ready{ background:var(--send-on); }
+.btn-send:active{ transform:scale(.95); }
+
+/* ---- 3.3 表情行 ---- */
+.sheet__stickers{
+  flex:none;
+  height:54px;
+  display:flex; align-items:center;
+  padding:0 12px;
+  gap:6px;
+  overflow-x:auto;
+  scrollbar-width:none;
+}
+.sheet__stickers::-webkit-scrollbar{ display:none; }
+.sticker{
+  width:46px; height:46px; flex:none;
+  display:grid; place-items:center;
+  font-size:30px; line-height:1;
+  border-radius:10px;
+  transition:background .14s var(--ease), transform .14s var(--ease);
+}
+.sticker:active{ background:#F0F0F0; transform:scale(.88); }
+
+/* ---- 3.4 键盘工具栏 ---- */
+.kbtools{
+  flex:none;
+  height:56px;
+  display:flex; align-items:center; gap:7px;
+  padding:0 9px;
+  background:#FFFFFF;
+  border-top:1px solid var(--line);
+}
+.kw{
+  width:38px; height:40px; flex:none;
+  display:grid; place-items:center;
+  border-radius:11px;
+  background:var(--kw-bg);
+  color:#4A4A4A;
+  transition:background .15s var(--ease), transform .15s var(--ease);
+}
+.kw:active{ background:#E4E6E9; transform:scale(.94); }
+.kw svg{ width:22px; height:22px; }
+
+.kw-voice{
+  flex:1; min-width:0;
+  height:40px;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  border-radius:20px;
+  background:#FFFFFF;
+  box-shadow:0 0 0 1px #E4E4E4 inset;
+  color:#4A4A4A;
+  font-size:14px;
+}
+.kw-voice svg{ width:19px; height:19px; }
+
+/* ---- 3.5 九宫格键盘 ---- */
+.keyboard{
+  flex:none;
+  background:var(--kb-bg);
+  padding:8px 5px 0;
+  user-select:none;
+}
+.kb__main{
+  display:grid;
+  grid-template-columns:42px 1fr 1fr 1fr 62px;
+  grid-template-rows:repeat(4,44px);
+  gap:6px 5px;
+}
+.kb__foot{
+  display:grid;
+  grid-template-columns:56px 1fr 1.6fr 1fr 62px;
+  gap:5px;
+  padding:6px 0 10px;
+}
+.k{
+  display:grid; place-items:center;
+  border-radius:7px;
+  background:var(--kb-key);
+  color:var(--kb-ink);
+  font-size:15px; font-weight:400;
+  box-shadow:0 1px 0 rgba(0,0,0,.16);
+  position:relative;
+  transition:background .1s;
+}
+.k:active{ background:#DDD; }
+.k span{ font-size:19px; letter-spacing:.5px; }
+.k i{
+  position:absolute; top:3px; right:6px;
+  font-style:normal; font-size:10.5px; color:#8A8A8A;
+}
+.k--fn{ background:var(--kb-fn); box-shadow:0 1px 0 rgba(0,0,0,.2); font-size:17px; }
+.k--fn:active{ background:#9AA0A9; }
+.k--fn svg{ width:21px; height:21px; }
+.k--fn.k--del{ font-size:13px; }
+.k--blue{
+  background:var(--kb-blue); color:#fff;
+  font-size:15px; font-weight:500;
+  box-shadow:0 1px 0 rgba(0,0,0,.22);
+}
+.k--blue:active{ background:#2A67DB; }
+.k--space{ font-size:13px; color:#8A8A8A; }
+.k--cn{ font-size:13px; display:flex; align-items:center; justify-content:center; gap:1px; }
+.k--cn em{ font-style:normal; font-size:15px; }
+.k--cn s{ text-decoration:none; font-size:10px; color:#8A8A8A; }
+
+/* 安全区 */
+.safe{ flex:none; height:env(safe-area-inset-bottom, 8px); background:var(--kb-bg); }
+@media (min-width:520px) and (min-height:720px){
+  .safe{ height:6px; }
+}
+</style>
+</head>
+<body>
+
+<div class="phone" id="phone">
+
+  <!-- ================= 评论面板 ================= -->
+  <div class="panel">
+
+    <!-- 标题栏 -->
+    <div class="panel__head">
+      <h1 class="panel__title">共47条评论</h1>
+      <button class="panel__sort" aria-label="排序">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+          <path d="M4 7h13M4 12h9M4 17h5"/>
+          <path d="M18.5 12.5v6M16 16l2.5 2.5L21 16"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- 评论列表 · 输入条就在内容流里，下滑滚出、上滑滚回（原图非吸顶） -->
+    <div class="panel__list">
+
+      <!-- ★ 评论输入条（默认态 · 复刻主体） -->
+      <div class="inputbar">
+        <div class="inputbar__avatar">
+          <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+            <ellipse cx="14.2" cy="11.6" rx="3.3" ry="8.6" transform="rotate(-13 14.2 11.6)" fill="#FFFDFA" stroke="#7E7E7E" stroke-width="1.7"/>
+            <ellipse cx="25.8" cy="11.6" rx="3.3" ry="8.6" transform="rotate(13 25.8 11.6)" fill="#FFFDFA" stroke="#7E7E7E" stroke-width="1.7"/>
+            <circle cx="20" cy="25.6" r="10.2" fill="#FFFDFA" stroke="#7E7E7E" stroke-width="1.7"/>
+            <circle cx="16.3" cy="24.4" r="1.45" fill="#7E7E7E"/>
+            <circle cx="23.7" cy="24.4" r="1.45" fill="#7E7E7E"/>
+            <path d="M17.7 29.2c1.2 1.2 3.4 1.2 4.6 0" stroke="#7E7E7E" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <button class="inputbar__field" id="barField" type="button">
+          <span class="inputbar__ph">让大家听到你的声音</span>
+        </button>
+        <button class="inputbar__act" aria-label="语音输入">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+            <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>
+          </svg>
+        </button>
+        <button class="inputbar__act" aria-label="图片">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2.6" y="4.2" width="18.8" height="15.6" rx="3"/>
+            <circle cx="8.4" cy="9.6" r="1.6"/>
+            <path d="m3.4 17.2 4.9-4.4 3.2 2.9 3.4-3.6 5.4 5"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 1 -->
+      <div class="cmt">
+        <div class="cmt__row">
+          <div class="cmt__av cmt__av--a"></div>
+          <div class="cmt__main">
+            <div class="cmt__name">LeeXeo</div>
+            <div class="cmt__text">美国点点🥰</div>
+            <div class="cmt__meta">
+              <span>昨天 22:39</span>
+              <span>上海</span>
+              <span>回复</span>
+              <div class="cmt__vote">
+                <span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>
+                  46
+                </span>
+                <button class="cmt__emoji" aria-label="回复表情">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg>
+                </button>
+              </div>
+            </div>
+            <span class="cmt__tag">首评</span>
+          </div>
+        </div>
+
+        <!-- 楼中楼：默认整组折叠，收起后一条回复都不露 -->
+        <div class="cmt__replies" hidden>
+
+          <!-- VA -->
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--b"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">VA</div>
+              <div class="cmt__text">我艹 <span class="mn"><b>美国点点</b><i>@</i></span> 可太狠了🥰</div>
+              <div class="cmt__meta">
+                <span>9小时前</span>
+                <span>广东</span>
+                <span>回复</span>
+                <div class="cmt__vote">
+                  <span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>
+                    5
+                  </span>
+                  <button class="cmt__emoji" aria-label="回复表情">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--c"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">星野と</div>
+              <div class="cmt__text">蒸馏这事早就不是秘密了</div>
+              <div class="cmt__meta">
+                <span>8小时前</span><span>北京</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>12</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--d"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">三月风</div>
+              <div class="cmt__text">谁好用就用谁，别上头</div>
+              <div class="cmt__meta">
+                <span>8小时前</span><span>江苏</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>7</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--e"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">冷杉</div>
+              <div class="cmt__text">说得好像别家没蒸过一样</div>
+              <div class="cmt__meta">
+                <span>7小时前</span><span>四川</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>5</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--f"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">小满</div>
+              <div class="cmt__text">反正最后看疗效</div>
+              <div class="cmt__meta">
+                <span>7小时前</span><span>浙江</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>4</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--a"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">老陈的鱼缸</div>
+              <div class="cmt__text">评论区比论文还严谨</div>
+              <div class="cmt__meta">
+                <span>6小时前</span><span>湖北</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>9</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--g"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">阿库娅</div>
+              <div class="cmt__text">这也能吵起来 哈哈</div>
+              <div class="cmt__meta">
+                <span>6小时前</span><span>福建</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>2</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--b"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">白噪音</div>
+              <div class="cmt__text">先看疗效再看配方</div>
+              <div class="cmt__meta">
+                <span>5小时前</span><span>山东</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>3</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--h"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">一只柯基</div>
+              <div class="cmt__text">我只关心好不好用</div>
+              <div class="cmt__meta">
+                <span>5小时前</span><span>广东</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>6</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <button class="cmt__more" type="button" data-toggle-replies aria-expanded="false">展开8条回复</button>
+      </div>
+
+      <!-- 2 -->
+      <div class="cmt">
+        <div class="cmt__row">
+          <div class="cmt__av cmt__av--c"></div>
+          <div class="cmt__main">
+            <div class="cmt__name">深海的小虾</div>
+            <div class="cmt__text">这不就是亦步亦趋吗，我真怀疑grok蒸馏了别家</div>
+            <div class="cmt__meta">
+              <span>1小时前</span>
+              <span>湖南</span>
+              <span>回复</span>
+              <div class="cmt__vote">
+                <span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>
+                  3
+                </span>
+                <button class="cmt__emoji" aria-label="回复表情">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 展开后的 3 条回复 -->
+        <div class="cmt__replies" hidden>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--f"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">真空球形鸡</div>
+              <div class="cmt__text">都蒸的，别整天纠结蒸不蒸了，用起来可以就完事了</div>
+              <div class="cmt__meta">
+                <span>36分钟前</span><span>上海</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>2</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--g"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">momo</div>
+              <div class="cmt__text"><span class="mn"><b>openai</b><i>@</i></span> 都和他撕破脸了还怀疑呢🥳</div>
+              <div class="cmt__meta">
+                <span>33分钟前</span><span>安徽</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>1</span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmt__sub">
+            <div class="cmt__av cmt__av--h"></div>
+            <div class="cmt__main">
+              <div class="cmt__name">abcdefg</div>
+              <div class="cmt__text"><span class="mn"><b>msk</b><i>@</i></span> 在法庭上承认了，不用怀疑了</div>
+              <div class="cmt__meta">
+                <span>31分钟前</span><span>四川</span><span>回复</span>
+                <div class="cmt__vote">
+                  <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg></span>
+                  <button class="cmt__emoji" aria-label="回复表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <button class="cmt__more" type="button" data-toggle-replies aria-expanded="false">展开3条回复</button>
+      </div>
+
+      <!-- 3 -->
+      <div class="cmt">
+        <div class="cmt__row">
+          <div class="cmt__av cmt__av--d"></div>
+          <div class="cmt__main">
+            <div class="cmt__name">mapou</div>
+            <div class="cmt__text">距离发布越远性能越高是吧</div>
+            <div class="cmt__meta">
+              <span>昨天 22:39</span>
+              <span>山东</span>
+              <span>回复</span>
+              <div class="cmt__vote">
+                <span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>
+                  35
+                </span>
+                <button class="cmt__emoji" aria-label="回复表情">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 14.2s1.3 1.8 3.6 1.8 3.6-1.8 3.6-1.8"/><circle cx="9.2" cy="9.8" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg>
+                </button>
+              </div>
+            </div>
+            <span class="cmt__tag">作者赞过</span>
+          </div>
+        </div>
+
+        <div class="cmt__sub">
+          <div class="cmt__av cmt__av--e"></div>
+          <div class="cmt__main">
+            <div class="cmt__name">Navi不想调参 <span class="cmt__badge">作者</span></div>
+            <div class="cmt__text">咸常一直都是利空 预期不断下降🥰</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 底部笔记互动栏（场景还原，非本次复刻对象） -->
+    <div class="notebar">
+      <button class="notebar__field" id="barField2" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="M13.5 6.5l4 4"/>
+        </svg>
+        <span>说点什么...</span>
+      </button>
+      <div class="notebar__act">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg>
+        <span>50</span>
+      </div>
+      <div class="notebar__act">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2.6 2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L12 17.62l-5.88 3.09 1.12-6.55L2.48 9.52l6.58-.96L12 2.6Z"/></svg>
+        <span>7</span>
+      </div>
+      <div class="notebar__act">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg>
+        <span>47</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ================= 遮罩 ================= -->
+  <div class="mask" id="mask"></div>
+
+  <!-- ================= ★ 输入弹层（点击态）================= -->
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="写评论">
+
+    <!-- 多行输入框 -->
+    <div class="sheet__editor">
+      <textarea class="editor" id="editor" placeholder="让大家听到你的声音" rows="2"></textarea>
+    </div>
+
+    <!-- 工具行 -->
+    <div class="sheet__tools">
+      <button class="tool" aria-label="语音">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+          <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>
+        </svg>
+      </button>
+      <button class="tool" aria-label="图片">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.6" y="4.2" width="18.8" height="15.6" rx="3"/>
+          <circle cx="8.4" cy="9.6" r="1.6"/>
+          <path d="m3.4 17.2 4.9-4.4 3.2 2.9 3.4-3.6 5.4 5"/>
+        </svg>
+      </button>
+      <button class="tool" aria-label="提到">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/>
+        </svg>
+      </button>
+      <button class="tool" aria-label="表情">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9.2"/>
+          <path d="M8.4 14.3s1.3 1.9 3.6 1.9 3.6-1.9 3.6-1.9"/>
+          <circle cx="9.2" cy="9.7" r="1.05" fill="currentColor" stroke="none"/>
+          <circle cx="14.8" cy="9.7" r="1.05" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <button class="tool" aria-label="更多">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9.2"/>
+          <path d="M12 7.6v8.8M7.6 12h8.8"/>
+        </svg>
+      </button>
+      <button class="btn-send" id="btnSend" type="button">发送</button>
+    </div>
+
+    <!-- 表情行（原图为小红书自有表情，此处以系统 emoji 近似） -->
+    <div class="sheet__stickers">
+      <button class="sticker" type="button">😂</button>
+      <button class="sticker" type="button">😭</button>
+      <button class="sticker" type="button">😡</button>
+      <button class="sticker" type="button">😍</button>
+      <button class="sticker" type="button">🙈</button>
+      <button class="sticker" type="button">🍑</button>
+      <button class="sticker" type="button">🍋</button>
+    </div>
+
+    <!-- 键盘工具栏 -->
+    <div class="kbtools">
+      <button class="kw" aria-label="更多应用">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <rect x="3" y="3" width="7.4" height="7.4" rx="2"/>
+          <rect x="13.6" y="3" width="7.4" height="7.4" rx="2"/>
+          <rect x="3" y="13.6" width="7.4" height="7.4" rx="2"/>
+          <rect x="13.6" y="13.6" width="7.4" height="7.4" rx="2"/>
+        </svg>
+      </button>
+      <button class="kw" aria-label="剪贴板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="6.4" cy="7" r="2.4"/><circle cx="6.4" cy="17" r="2.4"/>
+          <path d="M8.5 8.4 20 17.4M8.5 15.6 20 6.6"/>
+        </svg>
+      </button>
+      <button class="kw" aria-label="翻译">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 5.6h9M7.5 3.4v2.2M9.8 5.6c-.7 2.6-3.2 5.4-6.3 6.8"/>
+          <path d="M5.4 9.6c1.5 1.9 3.6 3.2 5.6 3.8"/>
+          <path d="m12.6 20.4 4.1-9.4 4.1 9.4M14.2 16.8h5"/>
+        </svg>
+      </button>
+      <button class="kw" aria-label="表情">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9.2"/>
+          <path d="M8.4 14.3s1.3 1.9 3.6 1.9 3.6-1.9 3.6-1.9"/>
+          <circle cx="9.2" cy="9.7" r="1.05" fill="currentColor" stroke="none"/>
+          <circle cx="14.8" cy="9.7" r="1.05" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <button class="kw" aria-label="快捷短语">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <path d="M13.4 2.4 5 13.6h5.9l-.8 8 8.4-11.2h-5.9l.8-8Z"/>
+        </svg>
+      </button>
+      <button class="kw-voice" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+          <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>
+        </svg>
+        <span>点击说话</span>
+      </button>
+      <button class="kw" id="btnCollapse" aria-label="收起">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m6 9.5 6 6 6-6"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- 九宫格键盘 -->
+    <div class="keyboard">
+      <div class="kb__main">
+        <button class="k k--fn" type="button">,</button>
+        <button class="k" type="button"><span>@#</span><i>1</i></button>
+        <button class="k" type="button"><span>ABC</span><i>2</i></button>
+        <button class="k" type="button"><span>DEF</span><i>3</i></button>
+        <button class="k k--fn" type="button" aria-label="删除">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.4 4.5h10.1a1.6 1.6 0 0 1 1.6 1.6v11.8a1.6 1.6 0 0 1-1.6 1.6H9.4L3 12l6.4-7.5Z"/>
+            <path d="m12.6 9.4 5 5.2M17.6 9.4l-5 5.2"/>
+          </svg>
+        </button>
+
+        <button class="k k--fn" type="button">。</button>
+        <button class="k" type="button"><span>GHI</span><i>4</i></button>
+        <button class="k" type="button"><span>JKL</span><i>5</i></button>
+        <button class="k" type="button"><span>MNO</span><i>6</i></button>
+        <button class="k k--fn k--del" type="button">重输</button>
+
+        <button class="k k--fn" type="button">?</button>
+        <button class="k" type="button"><span>PQRS</span><i>7</i></button>
+        <button class="k" type="button"><span>TUV</span><i>8</i></button>
+        <button class="k" type="button"><span>WXYZ</span><i>9</i></button>
+        <button class="k k--blue" type="button" id="kbSend" style="grid-area:3/5/5/6">发送</button>
+
+        <button class="k k--fn" type="button">!</button>
+        <button class="k k--space" type="button" style="grid-area:4/2/5/5" aria-label="空格"></button>
+      </div>
+
+      <div class="kb__foot">
+        <button class="k k--fn" type="button" style="font-size:14px">符号</button>
+        <button class="k k--fn" type="button" style="font-size:15px">123</button>
+        <button class="k k--fn" type="button" aria-label="语音">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="4.2" y="10" width="2" height="4" rx="1"/>
+            <rect x="8.1" y="7.4" width="2" height="9.2" rx="1"/>
+            <rect x="12" y="4.6" width="2" height="14.8" rx="1"/>
+            <rect x="15.9" y="7.4" width="2" height="9.2" rx="1"/>
+            <rect x="19.8" y="10" width="2" height="4" rx="1"/>
+          </svg>
+        </button>
+        <button class="k" type="button" style="font-size:17px">0</button>
+        <button class="k k--fn k--cn" type="button"><em>中</em><s>英</s></button>
+      </div>
+
+      <div class="safe"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var phone   = document.getElementById('phone');
+  var barField= document.getElementById('barField');
+  var mask    = document.getElementById('mask');
+  var editor  = document.getElementById('editor');
+  var btnSend = document.getElementById('btnSend');
+  var btnCollapse = document.getElementById('btnCollapse');
+
+  var barField2 = document.getElementById('barField2');
+
+  /* ---------- 打开 / 收起 ---------- */
+  function openSheet(){
+    phone.classList.add('typing');
+    setTimeout(function(){ editor.focus({ preventScroll:true }); }, 180);
+  }
+  function closeSheet(){
+    phone.classList.remove('typing');
+    editor.blur();
+  }
+
+  // 顶部评论输入条 与 底部「说点什么…」都可唤起输入法
+  barField.addEventListener('click', openSheet);
+  barField2.addEventListener('click', openSheet);
+  mask.addEventListener('click', closeSheet);
+  btnCollapse.addEventListener('click', closeSheet);
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape') closeSheet();
+  });
+
+  /* ---------- 楼中楼：展开 / 收起回复 ---------- */
+  document.querySelectorAll('[data-toggle-replies]').forEach(function(btn){
+    var host = btn.parentNode;                  // .cmt
+    var box  = host.querySelector('.cmt__replies');
+    if(!box) return;
+    var expandText   = btn.getAttribute('data-expand') || btn.textContent.trim();
+    var collapseText = '收起回复';
+    btn.setAttribute('data-expand', expandText);
+
+    // 展开 = 整组回复一起出来；收起 = 整组一起折掉，一条不留
+    btn.addEventListener('click', function(){
+      var isOpen = !box.hasAttribute('hidden');
+      if(isOpen){
+        box.setAttribute('hidden','');
+        btn.textContent = expandText;
+        btn.setAttribute('aria-expanded','false');
+      }else{
+        box.removeAttribute('hidden');
+        btn.textContent = collapseText;
+        btn.setAttribute('aria-expanded','true');
+      }
+    });
+  });
+
+  /* ---------- 发送按钮可用态 ---------- */
+  function sync(){
+    var has = editor.value.trim().length > 0;
+    btnSend.classList.toggle('is-ready', has);
+  }
+  editor.addEventListener('input', sync);
+  sync();
+
+  /* ---------- 表情插入 ---------- */
+  document.querySelectorAll('.sticker').forEach(function(s){
+    s.addEventListener('mousedown', function(e){ e.preventDefault(); });
+    s.addEventListener('click', function(){
+      editor.value += s.textContent;
+      sync();
+      if(document.activeElement !== editor) editor.focus({ preventScroll:true });
+    });
+  });
+
+  /* ---------- 发评论（演示） ---------- */
+  function submit(){
+    var t = editor.value.trim();
+    if(!t) return;
+    var list = document.querySelector('.panel__list');
+    var el = document.createElement('div');
+    el.className = 'cmt';
+    el.innerHTML =
+      '<div class="cmt__row">' +
+        '<div class="cmt__av cmt__av--e"></div>' +
+        '<div class="cmt__main">' +
+          '<div class="cmt__name">我</div>' +
+          '<div class="cmt__text"></div>' +
+          '<div class="cmt__meta"><span>刚刚</span><span>浙江</span><span>回复</span>' +
+            '<div class="cmt__vote"><span>0</span></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    el.querySelector('.cmt__text').textContent = t;
+    // 输入条现在住在列表里，新评论要插到它后面
+    var bar = list.querySelector('.inputbar');
+    if(bar && bar.nextSibling) list.insertBefore(el, bar.nextSibling);
+    else list.appendChild(el);
+    editor.value = '';
+    sync();
+    closeSheet();
+  }
+  btnSend.addEventListener('click', submit);
+  document.getElementById('kbSend').addEventListener('click', submit);
+
+})();
+</script>
+</body>
+</html>

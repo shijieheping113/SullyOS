@@ -6,7 +6,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
 import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
-import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost } from '../utils/sparkCircles';
+import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, loadSparkReplyWatermarks, saveSparkReplyWatermark } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
 import Modal from '../components/os/Modal';
@@ -206,6 +206,14 @@ const SocialApp: React.FC = () => {
     const [isReplyingToUser, setIsReplyingToUser] = useState(false);
     // 楼中楼：当前正在回复的目标评论（null = 直接评论帖子）
     const [replyTarget, setReplyTarget] = useState<SocialComment | null>(null);
+    // 七改-UI：底部评论输入弹层（xhs 复刻：点互动栏胶囊升起，遮罩/收起键/Esc 收回）
+    const [composerOpen, setComposerOpen] = useState(false);
+    const composerRef = useRef<HTMLTextAreaElement>(null);
+    // 七改-UI：楼中楼折叠状态（key = 根评论 id；默认全部折叠，Ann 拍板）
+    const [expandedReplyGroups, setExpandedReplyGroups] = useState<Record<string, boolean>>({});
+    // 七改-UI：每层楼的「已读回复数」水位（key = 根评论 id）。搅动/刷新后回复数超过水位
+    // 且未展开 → 「展开 N 条回复」旁冒一次性红气泡；展开即更新水位，气泡消失。
+    const seenRepliesRef = useRef<Record<string, number>>({});
 
     // Settings / Handle Management
     const [showSettings, setShowSettings] = useState(false);
@@ -624,6 +632,7 @@ const SocialApp: React.FC = () => {
 1. **禁止扮演用户**: 用户的网名是 "${socialProfile.name}"。绝对禁止生成 \`authorName\` 等于或近似 "${socialProfile.name}" 的帖子（无论是角色帖还是路人帖）。如果你想用类似的名字，请改成完全不同的网名。
 2. **路人不得冒用身份**: 路人的 \`authorName\` 必须是全新的网名，绝对不能与上方【角色身份表】中列出的任何【网名】重合。
 3. **禁止上帝视角**。
+4. **正文里禁止出现任何 # 话题标记**（包括 \`#xx#\` 和 \`#xx\` 写法）。话题只写在 \`tags\` 字段里，\`content\` 是纯正文。
 
 ### 输出格式 (JSON Array)
 [
@@ -760,6 +769,7 @@ ${post.content || '(楼主没写正文)'}
 ### 禁令
 - **绝对禁止** 生成 \`author\` 等于或近似 "${socialProfile.name}" (用户) 的评论。
 - 路人评论的 \`author\` 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合。
+- **评论正文里禁止出现任何 # 话题标记**（\`#xx#\` 和 \`#xx\` 都不行），评论就是纯说话。
 
 ### 输出格式 (JSON Array)
 [
@@ -825,10 +835,9 @@ ${post.content || '(楼主没写正文)'}
         if (!selectedPost) return;
         try {
             await DB.saveMessage({ charId: isGroup ? 'user' : targetId, groupId: isGroup ? targetId : undefined, role: 'user', type: 'social_card', content: '[分享帖子]', metadata: { post: selectedPost } });
-            // 帖子追踪：分享给私聊角色 = 注册追踪，之后帖子里的新评论会通知到角色上下文
-            if (!isGroup) trackSparkPost(selectedPost.id, targetId, selectedPost.comments?.length || 0);
+            // v9（Ann 拍板）：分享 = 作者纯净版，只发卡片，不注册追踪（追踪只住在底部同步星里）
             setShowShareModal(false);
-            addToast('分享成功，帖子有新动态会同步给 Ta', 'success');
+            addToast('分享成功', 'success');
             trackEvent('分享帖子到聊天');
         } catch (e) { addToast('分享失败', 'error'); }
     };
@@ -908,10 +917,28 @@ ${post.content || '(楼主没写正文)'}
         }
     };
 
-    // 解析发帖 tag 输入：中英文逗号/顿号/空格都算分隔符，去空去重
+    // 解析发帖 tag 输入：中英文逗号/顿号/空格都算分隔符，去空去重；开头所有 # 全剥（v9 二轮：防 ##）
     const parsePostTags = (raw: string): string[] => {
-        const tags = raw.split(/[,，、\s]+/).map(t => t.trim().replace(/^#/, '')).filter(Boolean);
+        const tags = raw.split(/[,，、\s]+/).map(t => t.trim().replace(/^#+/, '')).filter(Boolean);
         return [...new Set(tags)];
+    };
+
+    // v9 二轮（Ann 反馈 4）：小红书 tag = 单 #。模型爱在正文里写老式「#话题#」，只洗显示不改存库数据：
+    // 成对 #xx# → #xx（中间不带 #、限长 30）；单个 #xx 本来就正确，原样保留。
+    const displayContent = (raw: string): string => raw.replace(/#([^#\n]{1,30})#/g, '#$1');
+
+    // v9 二轮（Ann 参考图）：收藏位装饰数字——由帖子 id 稳定伪随机（同一帖永远同一个数，0-99），纯装饰不存库
+    const decoCollectNum = (id: string): number => {
+        let h = 0;
+        for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 100;
+        return h;
+    };
+
+    // v9 三修（Ann 拍板）：数字缩写——1000+ → 1k+，10000+ → 2w+，整数截断
+    const fmtCount = (n: number): string => {
+        if (n >= 10000) return `${Math.floor(n / 10000)}w+`;
+        if (n >= 1000) return `${Math.floor(n / 1000)}k+`;
+        return String(n);
     };
 
     // 五修-11：进入编辑模式——发布面板填充现有内容，保存时原地更新（id/评论/点赞/时间戳不变）
@@ -1077,6 +1104,17 @@ ${post.content || '(楼主没写正文)'}
         }));
         trackEvent('点赞一条帖子', { action: post.isLiked ? 'unlike' : 'like' });
     };
+
+    // 七改-UI：评论点赞（Ann 反馈 3）——乐观更新，isLiked 跟帖子一起落库，不回滚
+    const handleLikeComment = (post: SocialPost, comment: SocialComment) => {
+        updatePostInFeed(post.id, current => ({
+            ...current,
+            comments: (current.comments || []).map(c => c.id === comment.id
+                ? { ...c, isLiked: !c.isLiked, likes: c.isLiked ? Math.max(0, c.likes - 1) : c.likes + 1 }
+                : c),
+        }));
+        trackEvent('点赞一条评论');
+    };
     
     const handleSendComment = async () => { 
         if (!selectedPost) return;
@@ -1084,6 +1122,8 @@ ${post.content || '(楼主没写正文)'}
         //   输入框有字 → 只发评论（不再自动触发 AI 回复）；
         //   输入框为空时按同一个按钮 → 触发"评论区过一会儿的样子"模拟（不评论也能按）。
         if (!commentInput.trim()) {
+            // v9 三修（Ann）：点搅动 → 输入弹层立刻收起，直接看评论区出反馈
+            closeComposer();
             await refreshCommentSection();
             return;
         }
@@ -1219,6 +1259,7 @@ ${buildSparkCommentHistory(post)}${recentLine}
 - 语气像真实网友：口语化、有性格，可以短到几个字（但要有内容），也可以是几句话
 
 只能使用本次角色档案中的身份（角色用马甲网名）；路人是全新网名，不能与身份表重合；author 绝对不能是 "${socialProfile.name}"（用户本人）。
+评论正文里禁止出现任何 # 话题标记（\`#xx#\` 和 \`#xx\` 都不行），评论就是纯说话。
 
 ### 输出格式 (JSON Array)
 [
@@ -1293,6 +1334,29 @@ ${buildSparkCommentHistory(post)}${recentLine}
         const livePost = feedRef.current.find(item => item.id === post.id) || post;
         // 评论不自动生成（省 token）：打开详情只展示已有评论，空时由用户手动点「加载评论」
         setSelectedPost(livePost);
+        // v9 二轮（Ann 拍板 B 案）：已读水位 localStorage 持久化——点开看过永久消失，退出重进不复发。
+        // 打开时：已有记录的楼层沿用旧水位（打开期间新长出的回复才冒点）；无记录的楼层记当前数（打开前的不算新）。
+        seenRepliesRef.current = {};
+        {
+            const all = loadSparkReplyWatermarks();
+            const saved = all[livePost.id] || {};
+            const byId = new Map(livePost.comments.map(c => [c.id, c]));
+            const rootCounts: Record<string, number> = {};
+            for (const c of livePost.comments) {
+                let cur = c; const seen = new Set<string>();
+                while (cur.replyToId && !seen.has(cur.id)) { seen.add(cur.id); const p = byId.get(cur.replyToId); if (!p) break; cur = p; }
+                // v9 三修（Ann 复检命中）：守门条件必须用原始评论 c —— cur 已挪到根，根无 replyToId，旧写法永假＝死代码，水位从未落库
+                if (c.replyToId) rootCounts[cur.id] = (rootCounts[cur.id] || 0) + 1;
+            }
+            for (const [rootId, count] of Object.entries(rootCounts)) {
+                if (typeof saved[rootId] === 'number') {
+                    seenRepliesRef.current[rootId] = saved[rootId];
+                } else {
+                    seenRepliesRef.current[rootId] = count;
+                    saveSparkReplyWatermark(livePost.id, rootId, count);
+                }
+            }
+        }
     };
 
     const handleClosePost = () => {
@@ -1301,7 +1365,29 @@ ${buildSparkCommentHistory(post)}${recentLine}
         setLoadingComments(false);
         setSelectedPost(null);
         setReplyTarget(null);
+        setCommentInput('');
+        // 七改-UI：弹层与楼中楼折叠状态一并复位（下次打开是干净的默认态）
+        setComposerOpen(false);
+        setExpandedReplyGroups({});
+        seenRepliesRef.current = {};
     };
+
+    // 七改-UI：评论输入弹层的开合（xhs 手感：升起 0.34s，180ms 后聚焦防滚动跑偏）
+    const openComposer = () => {
+        setComposerOpen(true);
+        setTimeout(() => composerRef.current?.focus({ preventScroll: true }), 180);
+    };
+    const closeComposer = () => {
+        setComposerOpen(false);
+        composerRef.current?.blur();
+    };
+    // 桌面端 Esc 收起弹层
+    useEffect(() => {
+        if (!composerOpen) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeComposer(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [composerOpen]);
 
     const handleClearFeed = () => {
         refreshRequestRef.current?.abort();
@@ -1356,7 +1442,7 @@ ${buildSparkCommentHistory(post)}${recentLine}
                     </div>
                     <div className="flex items-center gap-1 text-slate-400 group-hover:text-slate-600 transition-colors">
                         <Icons.Heart filled={post.isLiked} className="w-4 h-4" onClick={(e) => handleLike(e, post)} />
-                        <span className="text-[10px] font-medium">{post.likes}</span>
+                        <span className="text-[10px] font-medium whitespace-nowrap">{fmtCount(post.likes)}</span>
                     </div>
                 </div>
             </div>
@@ -1371,9 +1457,11 @@ ${buildSparkCommentHistory(post)}${recentLine}
     const renderDetail = () => {
         if (!selectedPost) return null;
         return (
-            <div 
+            <div
                 className="absolute inset-0 z-[60] h-full w-full bg-white/90 backdrop-blur-xl flex flex-col"
             >
+                {/* 七改-UI：楼中楼展开动画（xhs 参考：0.24s 淡入 + 上浮 4px，缓动 cubic-bezier(.16,1,.3,1)） */}
+                <style>{`@keyframes sparkRepliesIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}.spark-replies-in{animation:sparkRepliesIn .24s cubic-bezier(.16,1,.3,1) both}`}</style>
                 {/* 
                    Animation Wrapper. 
                    We want the whole overlay content to slide up. 
@@ -1388,8 +1476,8 @@ ${buildSparkCommentHistory(post)}${recentLine}
                             <span className="text-sm font-bold text-slate-800">{selectedPost.authorName}</span>
                         </div>
                         <div className="flex items-center gap-1">
-                            <button onClick={() => { setShowSyncModal(true); trackEvent('打开同步 Spark 动态面板'); }} className="p-2 -m-2 active:opacity-60" title="让角色知道"><Icons.ChatBubble className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" /></button>
-                            <button onClick={() => { setShowShareModal(true); trackEvent('打开分享帖子面板'); }} className="p-2 -m-2 active:opacity-60"><Icons.Share onClick={() => setShowShareModal(true)} className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" /></button>
+                            {/* v9（Ann 拍板）：右上角只有分享；同步星住底部互动栏（原收藏星外观，功能换成同步+追踪） */}
+                            <button onClick={() => { setShowShareModal(true); trackEvent('打开分享帖子面板'); }} className="p-2 -m-2 active:opacity-60"><Icons.Share className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" /></button>
                         </div>
                     </div>
 
@@ -1413,120 +1501,231 @@ ${buildSparkCommentHistory(post)}${recentLine}
 
                         <div className="p-6 space-y-4">
                             <h1 className="text-2xl font-black text-slate-900 leading-snug tracking-tight">{selectedPost.title}</h1>
-                            <p className="text-[15px] text-slate-700 leading-relaxed whitespace-pre-wrap font-light">{selectedPost.content}</p>
-                            
+                            <p className="text-[15px] text-slate-700 leading-relaxed whitespace-pre-wrap font-light">{displayContent(selectedPost.content)}</p>
+
                             <div className="flex gap-2 flex-wrap pt-2">
-                                {selectedPost.tags.map(t => <span key={t} className="text-xs font-bold text-blue-600 bg-blue-50/50 backdrop-blur-sm border border-blue-100 px-2.5 py-1 rounded-full">#{t}</span>)}
+                                {selectedPost.tags.map(t => <span key={t} className="text-xs font-bold text-blue-600 bg-blue-50/50 backdrop-blur-sm border border-blue-100 px-2.5 py-1 rounded-full">#{t.replace(/^#+/, '')}</span>)}
                             </div>
                             <div className="text-xs text-slate-400 font-medium border-b border-slate-100/50 pb-6">{new Date(selectedPost.timestamp).toLocaleDateString()}</div>
                         </div>
 
-                        {/* Comments Section */}
-                        <div className="px-6 pb-6">
-                            <div className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
-                                <span>共 {selectedPost.comments.length} 条评论</span>
-                                {(loadingComments || isReplyingToUser) && <div className="w-3 h-3 border-2 border-slate-300 border-t-[#ff2442] rounded-full animate-spin"></div>}
+                        {/* Comments Section —— 七改-UI：xhs 复刻（吸顶小节头 / 无竖线 meta / 楼中楼默认折叠+48px 缩进） */}
+                        <div className="px-4 pb-6">
+                            <div className="sticky top-0 z-10 -mx-4 px-4 h-[52px] flex items-center gap-2 bg-white/95 backdrop-blur-sm">
+                                <span className="text-[17px] font-semibold tracking-[-0.01em] text-[#1A1A1A]">共 {selectedPost.comments.length} 条评论</span>
+                                {(loadingComments || isReplyingToUser) && <div className="w-3 h-3 border-2 border-slate-200 border-t-[#ff2442] rounded-full animate-spin"></div>}
                             </div>
-                            
-                            <div className="space-y-6">
-                                {selectedPost.comments.length === 0 && !loadingComments && (
-                                    <button onClick={() => generateComments(selectedPost)} className="w-full py-6 text-center text-xs text-slate-400 bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 active:bg-slate-100 transition-colors">
-                                        点击加载评论
-                                    </button>
-                                )}
-                                {(() => {
-                                    // 楼中楼渲染：子评论挂回根评论楼层（小红书式两级）
-                                    const comments = selectedPost.comments;
-                                    const byId = new Map(comments.map(c => [c.id, c]));
-                                    const findRoot = (c: SocialComment): SocialComment | null => {
-                                        let cur = c;
-                                        const seen = new Set<string>();
-                                        while (cur.replyToId && !seen.has(cur.id)) {
-                                            seen.add(cur.id);
-                                            const parent = byId.get(cur.replyToId);
-                                            if (!parent) return null; // 指向已不存在的评论 → 孤儿，平铺兜底
-                                            cur = parent;
+
+                            {selectedPost.comments.length === 0 && !loadingComments && (
+                                <button onClick={() => generateComments(selectedPost)} className="w-full py-6 text-center text-[13.5px] text-[#9A9A9A]">
+                                    <span className="inline-block px-5 py-1.5 rounded-full bg-[#F5F5F5] active:bg-[#ECECEC] transition-colors">点击加载评论</span>
+                                </button>
+                            )}
+                            {(() => {
+                                // 楼中楼渲染（七改-UI，xhs 复刻版）：
+                                //  - 根评论 38px 头像；子回复统一缩进 48px、26px 头像（参考文档唯一规则，无两套缩进）
+                                //  - 回复楼中楼里的评论：按「挂在谁下面」DFS 排序，紧贴被回复的那条下方 + 「回复 @xx」标签
+                                //  - 默认折叠；「展开 N 条回复 ↔ 收起回复」；展开 0.24s 淡入，收起全折一条不留
+                                const comments = selectedPost.comments;
+                                const byId = new Map(comments.map(c => [c.id, c]));
+                                const findRoot = (c: SocialComment): SocialComment | null => {
+                                    let cur = c;
+                                    const seen = new Set<string>();
+                                    while (cur.replyToId && !seen.has(cur.id)) {
+                                        seen.add(cur.id);
+                                        const parent = byId.get(cur.replyToId);
+                                        if (!parent) return null; // 指向已不存在的评论 → 孤儿，平铺兜底
+                                        cur = parent;
+                                    }
+                                    return cur.replyToId ? null : cur;
+                                };
+                                const roots = comments.filter(c => { const r = findRoot(c); return r === c || r === null; });
+                                // DFS：每条子回复直接排在它回复的那条评论后面（Ann：紧贴在被回复评论下面）
+                                const orderedRepliesOf = (root: SocialComment): SocialComment[] => {
+                                    const out: SocialComment[] = [];
+                                    const walk = (parentId: string) => {
+                                        for (const c of comments) {
+                                            if (c.replyToId === parentId) { out.push(c); walk(c.id); }
                                         }
-                                        return cur.replyToId ? null : cur;
                                     };
-                                    const roots = comments.filter(c => { const r = findRoot(c); return r === c || r === null; });
-                                    const childrenOf = (root: SocialComment) => comments.filter(c => c !== root && findRoot(c) === root);
-                                    const renderBody = (c: SocialComment, isChild: boolean, replyToName?: string) => (
-                                        <div key={c.id} className={`animate-fade-in group ${isChild ? 'flex gap-2' : 'flex gap-3'}`}>
-                                            <TokenImg value={c.authorAvatar} className={`${isChild ? 'w-6 h-6 mt-0.5' : 'w-9 h-9'} rounded-full object-cover shrink-0 border border-slate-100`} />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex justify-between items-start gap-2">
-                                                    <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                                                        <span className={`text-xs font-bold ${c.isCharacter ? 'text-slate-800' : 'text-slate-500'}`}>{c.authorName}</span>
-                                                        {replyToName && <span className="text-[10px] text-slate-300">回复 @{replyToName}</span>}
-                                                    </div>
-                                                    <div className="flex items-center gap-1 text-slate-400 cursor-pointer hover:text-[#ff2442] shrink-0">
-                                                        <Icons.Heart filled={false} className="w-3.5 h-3.5" />
-                                                        <span className="text-[10px]">{c.likes}</span>
-                                                    </div>
-                                                </div>
-                                                <p className="text-[13px] text-slate-700 mt-0.5 leading-normal font-light break-words">{c.content}</p>
-                                                {/* 五修-2：任何评论都可管理（删/改）——手机端无 hover，按钮常显但样式低调 */}
-                                                <div className="flex items-center gap-3 mt-0.5">
-                                                    <button onClick={() => setReplyTarget(c)} className="text-[10px] text-slate-300 hover:text-[#ff2442] transition-colors">回复</button>
-                                                    <button onClick={() => handleEditComment(selectedPost, c)} className="text-[10px] text-slate-200 hover:text-[#ff2442] transition-colors">编辑</button>
-                                                    <button onClick={() => handleDeleteComment(selectedPost, c)} className="text-[10px] text-slate-200 hover:text-[#ff2442] transition-colors">删除</button>
+                                    walk(root.id);
+                                    return out;
+                                };
+                                const renderBody = (c: SocialComment, isChild: boolean, replyToName?: string) => (
+                                    <div className="flex gap-[10px]">
+                                        <TokenImg value={c.authorAvatar} className={`${isChild ? 'w-[26px] h-[26px]' : 'w-[38px] h-[38px]'} rounded-full object-cover shrink-0 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]`} />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                                <span className={`text-[13px] leading-[1.3] ${c.isCharacter ? 'text-[#1A1A1A] font-medium' : 'text-[#7A7A7A]'}`}>{c.authorName}</span>
+                                                {replyToName && <span className="text-[11px] leading-[1.3] text-[#9A9A9A]">回复 <span className="font-medium">@{replyToName}</span></span>}
+                                            </div>
+                                            <p className="mt-[4px] text-[14px] leading-[1.5] text-[#1A1A1A] break-words">{displayContent(c.content)}</p>
+                                            {/* meta 行：无竖线，只用间隙分隔；右侧心形+赞数（15px，可点赞） */}
+                                            {/* 五修-2：任何评论都可管理（删/改）——手机端无 hover，按钮常显但低调 */}
+                                            <div className="mt-[6px] flex items-center gap-4">
+                                                <button onClick={() => { setReplyTarget(c); openComposer(); }} className="text-[11px] text-[#9A9A9A] active:opacity-60">回复</button>
+                                                <button onClick={() => handleEditComment(selectedPost, c)} className="text-[11px] text-[#C4C4C4] active:opacity-60">编辑</button>
+                                                <button onClick={() => handleDeleteComment(selectedPost, c)} className="text-[11px] text-[#C4C4C4] active:opacity-60">删除</button>
+                                                <div className="ml-auto flex items-center gap-[5px] text-[#C4C4C4]">
+                                                    <Icons.Heart
+                                                        filled={!!c.isLiked}
+                                                        onClick={() => handleLikeComment(selectedPost, c)}
+                                                        className="w-[15px] h-[15px]"
+                                                    />
+                                                    <span className="text-[10px]">{c.likes}</span>
                                                 </div>
                                             </div>
                                         </div>
-                                    );
-                                    return roots.map(root => (
-                                        <div key={root.id}>
+                                    </div>
+                                );
+                                return roots.map(root => {
+                                    const replies = orderedRepliesOf(root);
+                                    const expanded = !!expandedReplyGroups[root.id];
+                                    const toggleReplies = () => {
+                                        // v9 二轮：展开即写已读水位（内存 + localStorage 持久化）——小红点一次性，点开看过永久消失
+                                        if (!expanded) {
+                                            seenRepliesRef.current[root.id] = replies.length;
+                                            saveSparkReplyWatermark(selectedPost.id, root.id, replies.length);
+                                        }
+                                        setExpandedReplyGroups(prev => ({ ...prev, [root.id]: !prev[root.id] }));
+                                    };
+                                    // 展开状态下有新回复进来 → 直接视为已读（都在眼皮底下了）
+                                    if (expanded && seenRepliesRef.current[root.id] !== replies.length) {
+                                        seenRepliesRef.current[root.id] = replies.length;
+                                        saveSparkReplyWatermark(selectedPost.id, root.id, replies.length);
+                                    }
+                                    // 水位之上 = 刷新/搅动带来的新回复（未读过）；无记录 = 打开后新长出来的楼层，回复全是新的
+                                    const newReplies = replies.length - (seenRepliesRef.current[root.id] ?? 0);
+                                    return (
+                                        <div key={root.id} className="pt-[14px]">
                                             {renderBody(root, false)}
-                                            {childrenOf(root).length > 0 && (
-                                                <div className="mt-3 ml-11 space-y-3 pl-3 border-l-2 border-slate-100">
-                                                    {childrenOf(root).map(child => {
-                                                        // 直接回复根评论不显示标签；回复楼层里的其他人显示「回复 @xx」
-                                                        const direct = child.replyToId ? byId.get(child.replyToId) : undefined;
-                                                        return renderBody(child, true, direct && direct.id !== root.id ? direct.authorName : undefined);
-                                                    })}
+                                            {replies.length > 0 && !expanded && (
+                                                <div className="flex items-center gap-2 mt-[12px] ml-[38px]">
+                                                    <button onClick={toggleReplies} className="flex items-center gap-[10px] text-[12px] text-[#9A9A9A] active:opacity-60 transition-opacity">
+                                                        <span className="w-[22px] h-px bg-[#DCDCDC] shrink-0"></span>
+                                                        展开{replies.length}条回复
+                                                    </button>
+                                                    {/* v9 二轮（Ann 拍板 B 案）：低调小红点替代红底胶囊——有新回复才亮 */}
+                                                    {newReplies > 0 && (
+                                                        <span className="w-[7px] h-[7px] rounded-full bg-[#FF2442] animate-fade-in shrink-0" title={`${newReplies}条新回复`}></span>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {replies.length > 0 && expanded && (
+                                                <div>
+                                                    <div className="spark-replies-in">
+                                                        {replies.map(child => {
+                                                            // 直接回复根评论不显示标签；回复楼层里的其他人显示「回复 @xx」
+                                                            const direct = child.replyToId ? byId.get(child.replyToId) : undefined;
+                                                            return (
+                                                                <div key={child.id} className="mt-[14px] ml-[48px]">
+                                                                    {renderBody(child, true, direct && direct.id !== root.id ? direct.authorName : undefined)}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <button onClick={toggleReplies} className="flex items-center gap-[10px] mt-[12px] ml-[38px] text-[12px] text-[#9A9A9A] active:opacity-60 transition-opacity">
+                                                        <span className="w-[22px] h-px bg-[#DCDCDC] shrink-0"></span>
+                                                        收起回复
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>
-                                    ));
-                                })()}
-                                <div ref={commentsEndRef} />
+                                    );
+                                });
+                            })()}
+                            <div ref={commentsEndRef} />
+                        </div>
+                    </div>
+
+                    {/* Bottom Notebar —— 七改-UI：xhs 吸底互动栏（「说点什么…」胶囊 + 点赞/收藏），点胶囊升起输入弹层 */}
+                    <div className="absolute bottom-0 w-full z-30 bg-white border-t border-black/[0.03] pb-[var(--safe-bottom,0px)]">
+                        <div className="h-[56px] px-[14px] flex items-center gap-[14px]">
+                            <button
+                                onClick={openComposer}
+                                className="flex-1 h-[38px] rounded-full bg-[#F2F2F2] px-[14px] flex items-center gap-2 text-left active:bg-[#ECECEC] transition-colors"
+                            >
+                                <Icons.Pencil className="w-[15px] h-[15px] text-[#B9B9B9] shrink-0" />
+                                <span className="text-[14px] text-[#B9B9B9] truncate">说点什么…</span>
+                            </button>
+                            {/* v9 二轮（Ann 参考图）：图标左、数字右水平排列；星 = 同步星（功能原样：点击开「让角色知道」，追踪中点亮琥珀），披收藏外观 + 稳定随机装饰数字 */}
+                            <div className="flex items-center gap-[20px] shrink-0 text-[#3A3A3A]">
+                                <div className="flex items-center gap-[6px] shrink-0">
+                                    <Icons.Heart filled={selectedPost.isLiked} onClick={(e) => handleLike(e, selectedPost)} className="w-[24px] h-[24px]" />
+                                    <span className="text-[13.5px] font-medium whitespace-nowrap">{fmtCount(selectedPost.likes)}</span>
+                                </div>
+                                <button
+                                    onClick={() => { setShowSyncModal(true); trackEvent('打开同步 Spark 动态面板'); }}
+                                    className="flex items-center gap-[6px] shrink-0 active:opacity-60"
+                                    title="让角色知道（同步）"
+                                >
+                                    <Icons.Star filled={!!loadTrackedSparkPosts()[selectedPost.id]?.charIds?.length} className="w-[24px] h-[24px]" />
+                                    {/* v9 三修（Ann）：同步成功装饰数字 +1，断开回落；k+/w+ 档不体现加一 */}
+                                    <span className="text-[13.5px] font-medium whitespace-nowrap">{(() => { const base = decoCollectNum(selectedPost.id); const tracked = !!loadTrackedSparkPosts()[selectedPost.id]?.charIds?.length; return fmtCount(base >= 1000 ? base : (tracked ? base + 1 : base)); })()}</span>
+                                </button>
                             </div>
                         </div>
                     </div>
 
-                    {/* Bottom Input Bar - Absolute to sit on top of scroll area at bottom */}
-                    <div className="absolute bottom-0 w-full pb-[var(--safe-bottom,0px)] z-30 pointer-events-none">
-                         <div className="pointer-events-auto h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
-                            <div className="flex-1 bg-slate-100/50 rounded-full px-5 py-2.5 flex items-center gap-2 focus-within:bg-white focus-within:ring-1 focus-within:ring-slate-200 transition-all border border-transparent focus-within:border-slate-200">
-                                {replyTarget && (
-                                    <span className="shrink-0 flex items-center gap-1 bg-[#ff2442]/10 text-[#ff2442] text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                        回复 @{replyTarget.authorName}
-                                        <button onClick={() => setReplyTarget(null)} className="hover:text-slate-500">✕</button>
+                    {/* Composer Mask —— 遮罩：0.3s 淡入；弹层打开时输入条留在原位被压暗，不隐藏 */}
+                    <div
+                        onClick={closeComposer}
+                        className={`absolute inset-0 z-40 bg-black/[0.32] transition-opacity duration-300 ${composerOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                        style={{ transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)' }}
+                    ></div>
+
+                    {/* Composer Sheet —— 七改-UI：输入弹层（xhs 复刻：0.34s 升起 / 18px 顶圆角 / 红光标多行框 / 发送胶囊禁用#FFC9D2 可用#FF2442） */}
+                    <div
+                        className={`absolute left-0 right-0 bottom-0 z-50 bg-white rounded-t-[18px] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] transition-transform duration-[340ms] ${composerOpen ? 'translate-y-0' : 'translate-y-[102%]'}`}
+                        style={{ transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)', willChange: 'transform' }}
+                    >
+                        <div className="flex flex-col max-h-[92%]">
+                            {/* 顶部：回复目标胶囊（可取消）+ 收起箭头 */}
+                            <div className="h-[46px] px-4 flex items-center justify-between shrink-0">
+                                {replyTarget ? (
+                                    <span className="flex items-center gap-1.5 bg-[#ff2442]/10 text-[#ff2442] text-[11px] font-medium px-2.5 py-1 rounded-full max-w-[80%]">
+                                        <span className="truncate">回复 @{replyTarget.authorName}</span>
+                                        <button onClick={() => setReplyTarget(null)} className="shrink-0 active:opacity-60">✕</button>
                                     </span>
+                                ) : (
+                                    <span className="text-[12px] text-[#B9B9B9]">说点什么，让大家听到你的声音</span>
                                 )}
-                                <input
-                                    value={commentInput}
-                                    onChange={(e) => setCommentInput(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
-                                    disabled={loadingComments || isReplyingToUser}
-                                    placeholder={replyTarget ? `回复 @${replyTarget.authorName}...` : "说点什么..."}
-                                    className="bg-transparent text-sm w-full outline-none text-slate-800 placeholder:text-slate-400 disabled:opacity-50"
-                                />
-                                {commentInput.trim()
-                                    ? <button disabled={loadingComments || isReplyingToUser} onClick={handleSendComment} className="text-[#ff2442] font-bold text-sm animate-fade-in disabled:opacity-40">发送</button>
-                                    : <button disabled={loadingComments || isReplyingToUser} onClick={handleSendComment} title="模拟过一会儿后评论区的样子（可能没人冒泡）" className="text-slate-400 font-bold text-xs animate-fade-in disabled:opacity-40 active:text-[#ff2442] transition-colors">搅动评论区</button>}
+                                <button onClick={closeComposer} className="w-8 h-8 flex items-center justify-center text-[#9A9A9A] active:opacity-60" title="收起">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25 12 15.75 4.5 8.25" /></svg>
+                                </button>
                             </div>
-                            <div className="flex gap-5 text-slate-600 shrink-0 items-center">
-                                <div className="flex flex-col items-center gap-0.5">
-                                    <Icons.Heart filled={selectedPost.isLiked} onClick={(e) => handleLike(e, selectedPost)} className="w-6 h-6" />
-                                    <span className="text-[10px] font-medium">{selectedPost.likes}</span>
-                                </div>
-                                <div className="flex flex-col items-center gap-0.5">
-                                    <Icons.Star filled={selectedPost.isCollected} onClick={() => { updatePostInFeed(selectedPost.id, current => ({ ...current, isCollected: !current.isCollected })); trackEvent('收藏一条帖子', { action: selectedPost.isCollected ? 'uncollect' : 'collect' }); }} className="w-6 h-6" />
-                                    <span className="text-[10px] font-medium">{selectedPost.isCollected ? '已收藏' : '收藏'}</span>
-                                </div>
+                            {/* 多行输入框：76px / #EDEDED 描边 / 光标品牌红 */}
+                            <textarea
+                                ref={composerRef}
+                                value={commentInput}
+                                onChange={(e) => setCommentInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendComment(); } }}
+                                disabled={loadingComments || isReplyingToUser}
+                                placeholder={replyTarget ? `回复 @${replyTarget.authorName}…` : '说点什么…'}
+                                className="mx-4 mt-1 w-[calc(100%-32px)] h-[76px] p-[13px_14px] border border-[#EDEDED] rounded-[12px] text-[15.5px] leading-[1.45] text-[#1A1A1A] bg-white resize-none outline-none caret-[#FF2442] placeholder:text-[#B9B9B9] disabled:opacity-50"
+                            />
+                            {/* 工具行：左侧场景提示，右侧 发送/搅动 胶囊（空输入 = 搅动评论区，与原语义一致） */}
+                            <div className="min-h-[54px] px-4 py-2 flex items-center gap-2">
+                                <span className="text-[12px] text-[#C4C4C4] truncate">
+                                    {commentInput.trim() ? '' : '空着按右边的按钮 = 模拟过一会儿的评论区'}
+                                </span>
+                                {commentInput.trim() ? (
+                                    <button
+                                        disabled={loadingComments || isReplyingToUser}
+                                        onClick={handleSendComment}
+                                        className="ml-auto h-[34px] min-w-[62px] px-[18px] rounded-full bg-[#FF2442] text-white text-[14px] font-medium disabled:opacity-60 active:scale-95 transition-transform shrink-0"
+                                    >发送</button>
+                                ) : (
+                                    <button
+                                        disabled={loadingComments || isReplyingToUser}
+                                        onClick={handleSendComment}
+                                        title="模拟过一会儿后评论区的样子（可能没人冒泡）"
+                                        className={`ml-auto h-[34px] min-w-[62px] px-[14px] rounded-full text-[13px] font-medium active:scale-95 transition-all shrink-0 ${isReplyingToUser ? 'bg-[#FF2442] text-white' : 'bg-[#FFC9D2] text-white'}`}
+                                    >{isReplyingToUser ? '正在搅动……' : '搅动评论区'}</button>
+                                )}
                             </div>
+                            {/* 底部安全区 */}
+                            <div className="shrink-0" style={{ height: 'var(--safe-bottom, 0px)' }}></div>
                         </div>
                     </div>
                 </div>
@@ -1722,15 +1921,7 @@ ${buildSparkCommentHistory(post)}${recentLine}
                         </button>
                     ))}
                 </div>
-                <p className="text-[10px] text-slate-400 text-center px-2 pb-1">分享后帖子有新动态（评论/回复）会同步进 Ta 的聊天</p>
-                {selectedPost && (loadTrackedSparkPosts()[selectedPost.id]) && (
-                    <button
-                        onClick={() => { if (selectedPost) { untrackSparkPost(selectedPost.id); addToast('已断开这条帖子的动态同步', 'success'); } }}
-                        className="w-[calc(100%-32px)] mx-4 mb-3 py-2.5 bg-white border border-slate-200 text-slate-500 font-bold rounded-xl text-xs active:bg-slate-50"
-                    >
-                        断开这条帖子的动态同步
-                    </button>
-                )}
+                {/* v9：追踪说明与「断开动态同步」按钮已随追踪职责迁往底部同步星 / 同步弹窗，分享 = 作者纯净版 */}
             </Modal>
 
             <Modal isOpen={showSyncModal} title="让角色知道" onClose={() => setShowSyncModal(false)}>
@@ -1744,6 +1935,15 @@ ${buildSparkCommentHistory(post)}${recentLine}
                     ))}
                 </div>
                 <p className="text-[10px] text-slate-400 text-center px-2 pb-1">把这条动态放进角色的记忆，让 TA 知道自己发布过 / 评论过 / 谁回复了用户</p>
+                {/* v9：断开按钮从分享弹窗迁入（Ann 拍板：功能不丢只换位置）——帖被追踪过才显示 */}
+                {selectedPost && (loadTrackedSparkPosts()[selectedPost.id]) && (
+                    <button
+                        onClick={() => { if (selectedPost) { untrackSparkPost(selectedPost.id); addToast('已断开这条帖子的动态同步', 'success'); } }}
+                        className="w-[calc(100%-32px)] mx-4 mb-3 py-2.5 bg-white border border-slate-200 text-slate-500 font-bold rounded-xl text-xs active:bg-slate-50"
+                    >
+                        断开这条帖子的动态同步
+                    </button>
+                )}
             </Modal>
 
             {/* --- Create Post Modal (Full Screen Overlay) --- */}
@@ -2038,7 +2238,7 @@ ${buildSparkCommentHistory(post)}${recentLine}
                                                     <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{post.title}</h4>
                                                     <div className="flex justify-between items-center mt-2">
                                                         <div className="flex items-center gap-1"><TokenImg value={post.authorAvatar} className="w-3 h-3 rounded-full" /><span className="text-[9px] text-slate-400 truncate w-12">{post.authorName}</span></div>
-                                                        <div className="flex items-center gap-0.5 text-slate-400"><Icons.Heart filled={post.isLiked} className="w-3 h-3" /><span className="text-[9px]">{post.likes}</span></div>
+                                                        <div className="flex items-center gap-0.5 text-slate-400"><Icons.Heart filled={post.isLiked} className="w-3 h-3" /><span className="text-[9px] whitespace-nowrap">{fmtCount(post.likes)}</span></div>
                                                     </div>
                                                 </div>
                                             </div>

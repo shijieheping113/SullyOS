@@ -3729,6 +3729,8 @@ export interface SocialComment {
     authorAvatar?: string;
     content: string;
     likes: number;
+    /** 七改-UI：用户是否点过赞（乐观更新，随帖子一起落库） */
+    isLiked?: boolean;
     isCharacter?: boolean;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;

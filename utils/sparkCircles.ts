@@ -109,6 +109,33 @@ export function untrackSparkPost(postId: string): void {
     saveTrackedSparkPosts(tracked);
 }
 
+// --- 楼中楼「新回复」已读水位（v9 二轮，Ann 拍板 B 案）---
+// localStorage 持久化：postId → rootCommentId → 已读回复数。
+// 语义：点开看过 = 永久已读（退出重进不复发）；首次打开的楼层记当前数（打开前的不算新）。
+
+const SPARK_WATERMARK_KEY = 'spark_reply_watermarks';
+
+export function loadSparkReplyWatermarks(): Record<string, Record<string, number>> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SPARK_WATERMARK_KEY) || '{}');
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return parsed as Record<string, Record<string, number>>;
+    } catch {
+        return {};
+    }
+}
+
+export function saveSparkReplyWatermark(postId: string, rootId: string, count: number): void {
+    try {
+        const all = loadSparkReplyWatermarks();
+        const postEntry = all[postId] || {};
+        postEntry[rootId] = count;
+        all[postId] = postEntry;
+        localStorage.setItem(SPARK_WATERMARK_KEY, JSON.stringify(all));
+    } catch {}
+}
+
 /**
  * 按当前视图过滤帖子（圈子间互相隔离，只能切换着看）：
  * - SPARK_CIRCLE_ALL → 无圈子的旧帖 + 孤儿帖（circleId 指向已删除圈子，回收进「全部」）
