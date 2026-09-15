@@ -1140,7 +1140,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         });
         const sparkTitleLine = [...new Set(sparkTitles)].slice(-5).reverse().join('、《');
         const sparkFootprintLine = sparkTitleLine
-            ? `\n\n[你最近的 Spark 足迹] 最近你（和用户）在 Spark 互动过这些帖子（由新到旧）：《${sparkTitleLine}》——都是你真实看过/互动过的，聊到时自然对得上即可，不必主动复述。想去 Spark 公开评论时：随便评一条最近的帖子，用 [[ACTION:SPARK_COMMENT|你的评论内容]]；想指定某条帖子，用 [[ACTION:SPARK_COMMENT|帖子标题|你的评论内容]]；想回复帖子里某位网友的评论（挂进 Ta 的楼中楼），用 [[ACTION:SPARK_COMMENT|帖子标题|那位网友:Ta那条评论的原话片段|你的评论内容]]。去不去、怎么评、评哪条，都由你的人设决定。`
+            ? `\n\n[你现在的能力]\n① 根据当前的聊天走向和你的想法，继续聊下去，或者在 Spark 某个你现在想聊的帖子里的评论区公开发言。写法（三种，按需选）：\n   [[ACTION:SPARK_COMMENT|你的评论内容]] —— 评论你最近互动的那条帖子（顶层评论）\n   [[ACTION:SPARK_COMMENT|帖子标题|你的评论内容]] —— 指定评论某条帖子\n   [[ACTION:SPARK_COMMENT|帖子标题|那位网友:Ta那条评论的原话片段|你的评论内容]] —— 回复某条评论（挂进 Ta 的楼中楼）\n② 不去 Spark，直接继续聊天下去。\n当下想怎么做，就怎么做。`
             : '';
 
         let timeGapHint = "";
@@ -1285,17 +1285,17 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         // 五修-10：被艾特的卡片明确告诉角色"用户 @ 了你"
                         const mentioned = (m.metadata as any)?.mentioned === true;
                         const kindLine = mentioned
-                            ? '用户在帖子下 @ 了你——Ta 想让你看到这条笔记，可以像刷到熟人帖子那样自然回应（去评论区说话、或跟你私聊说都行）'
+                            ? '用户在帖子下 @ 了你'
                             : syncKind === 'published'
                             ? '你发布了这条笔记'
                             : syncKind === 'commented' ? '你在这个帖子下留过言' : '你刷到过这条帖子';
-                        content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}\n(这是你在 Spark 上的公开足迹，你自己当然记得；聊天里聊到相关话题时能自然对上，不必主动复述)`;
+                        content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}`;
                     } else if (syncKind === 'update') {
                         // 帖子追踪通知：分享/追踪过的帖子有新评论，同步进上下文让角色跟上最新互动
                         const newComments = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
                         const bySelf = (m.metadata as any)?.bySelf === true;
                         const newLines = newComments.slice(0, 10).map((c: any) => `${tagAuthor(c.authorName || '路人')}: ${c.content}`).join('\n') || '(无)';
-                        content = `${timeStr}[Spark 帖子有新动态]\n标题: ${post.title}${tagsLine}\n新增评论:\n${newLines}\n(这是「${post.title}」这条帖子的最新评论区动态${bySelf ? '，其中你自己发的那条评论已经成功发布' : ''}；聊到时自然对得上即可，不必主动复述)`;
+                        content = `${timeStr}[Spark 帖子有新动态]\n标题: ${post.title}${tagsLine}\n新增评论:\n${newLines}${bySelf ? '\n（其中你自己发的那条评论已经成功发布）' : ''}`;
                     } else {
                         let identityHint = '';
                         if (myHandles.length > 0) {
@@ -1307,13 +1307,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
                         else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
 
-                        // P6：SPARK_COMMENT 的催促尾巴只保留在最后一张卡上（写法说明统一见「Spark 足迹」总览）；
-                        // 旧卡只留"发表看法"，不再被重复催评。
-                        const isLatestSparkCard = index === sparkCardIdx;
-                        const commentHintLine = isLatestSparkCard
-                            ? '如果你想去 Spark 上公开评论这个帖子，写法见本条末尾「你最近的 Spark 足迹」的说明；去不去、怎么评，由你的人设决定，不强制。'
-                            : '';
-                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑。${commentHintLine})`;
+                        // P6：行为指引全部移除——旧卡=纯事实快照；能力说明只挂最新一张卡（sparkFootprintLine）。
+                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}`;
                     }
                     // P6：「最近 Spark 足迹」总览 + 三种评论写法，只挂在最后一张 Spark 卡上，
                     // 让模型对连续多卡互动有自然全貌认知（卡片正文本身不压缩）。

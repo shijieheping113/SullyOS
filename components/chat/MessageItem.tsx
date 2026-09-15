@@ -16,6 +16,8 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
+// 六改-3：Spark 帖子图共用组件——social_card 卡片里 sparkimg: 引用渲染真图（原来被当文本铺成一串图名）
+import { SparkPostImage, codepointToEmoji } from '../../apps/social/SparkPostImage';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
@@ -3081,16 +3083,14 @@ const MessageItem = React.memo(({
 
     if (m.type === 'social_card' && m.metadata?.post) {
         const post = m.metadata.post;
-        // If the saved image is a raw twemoji codepoint (eg "2728"), convert it to the actual emoji character;
-        // otherwise leave whatever the AI / user picked unchanged.
+        // 六改-3：帖子配图三路渲染——
+        //   1) `sparkimg:` 引用 → SparkPostImage 从 assets 表读真图（读不到降级 🖼️ 占位）；
+        //   2) 纯 twemoji 码点（eg "2728"）→ 转真 emoji 字符；
+        //   3) 其余字符串原样（AI 自己给的 emoji/文本）。
+        // 修复：原来 sparkimg: 引用不匹配码点正则，被当纯文本铺成一串图名。
         const rawImage: string | undefined = post.images?.[0];
-        let displayImage: string | undefined = rawImage;
-        if (typeof rawImage === 'string' && /^[0-9a-fA-F-]+$/.test(rawImage)) {
-            try {
-                const points = rawImage.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
-                if (points.length > 0) displayImage = String.fromCodePoint(...points);
-            } catch {}
-        }
+        const isSparkImgRef = typeof rawImage === 'string' && rawImage.startsWith('sparkimg:');
+        const displayImage: string | undefined = typeof rawImage === 'string' && !isSparkImgRef ? codepointToEmoji(rawImage) : rawImage;
         const syncKind = (m.metadata as any)?.syncKind;
         const newComments: any[] = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
         // 角色侧「我的 Spark 动态」卡片（用户点「同步到私聊」生成的 assistant 卡）：
@@ -3108,7 +3108,9 @@ const MessageItem = React.memo(({
                         <span className="text-[10px] text-slate-400">· {kindBadge}</span>
                     </div>
                     <div className="h-28 w-full flex items-center justify-center text-5xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
-                        {displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-10 h-10" />}
+                        {isSparkImgRef && rawImage ? (
+                            <SparkPostImage assetId={rawImage.slice('sparkimg:'.length)} imgClassName="absolute inset-0 w-full h-full object-cover" emojiClass="text-5xl" />
+                        ) : (displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-10 h-10" />)}
                         <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
                             <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
                         </div>
@@ -3163,7 +3165,9 @@ const MessageItem = React.memo(({
                 title="点开原帖"
             >
                 <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
-                    {displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-12 h-12" />}
+                    {isSparkImgRef && rawImage ? (
+                        <SparkPostImage assetId={rawImage.slice('sparkimg:'.length)} imgClassName="absolute inset-0 w-full h-full object-cover" emojiClass="text-6xl" />
+                    ) : (displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-12 h-12" />)}
                     <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
                         <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
                     </div>

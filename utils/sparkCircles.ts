@@ -61,8 +61,10 @@ export function saveActiveCircleId(id: string): void {
 export interface TrackedSparkPost {
     /** 追踪这条帖子的角色（分享对象/同步对象），新评论时给它们各追加一条通知 */
     charIds: string[];
-    /** 上次已同步进聊天的评论数：新评论数超过它才发通知，发完更新 */
+    /** 上次已同步进聊天的评论数（兼容字段，不参与判定；水位已改评论 id 名单制） */
     lastSyncedCommentCount: number;
+    /** 已通知评论 id 名单（2026-09-15 水位 id 化：删评论/一个号连发多条都不错位） */
+    seenCommentIds?: string[];
 }
 
 const SPARK_TRACKED_KEY = 'spark_tracked_posts';
@@ -76,7 +78,11 @@ export function loadTrackedSparkPosts(): Record<string, TrackedSparkPost> {
         for (const [postId, v] of Object.entries(parsed)) {
             const entry = v as Partial<TrackedSparkPost>;
             if (Array.isArray(entry?.charIds) && typeof entry?.lastSyncedCommentCount === 'number') {
-                out[postId] = { charIds: entry.charIds, lastSyncedCommentCount: entry.lastSyncedCommentCount };
+                out[postId] = {
+                    charIds: entry.charIds,
+                    lastSyncedCommentCount: entry.lastSyncedCommentCount,
+                    seenCommentIds: Array.isArray(entry?.seenCommentIds) ? entry.seenCommentIds : undefined,
+                };
             }
         }
         return out;
@@ -85,19 +91,30 @@ export function loadTrackedSparkPosts(): Record<string, TrackedSparkPost> {
     }
 }
 
+/** 拿追踪条目的"已通知评论 id 名单"。旧数据第一次访问时按旧水位条数初始化，等价旧行为，一次性迁移 */
+export function ensureSeenCommentIds(entry: TrackedSparkPost, comments: { id: string }[]): string[] {
+    if (Array.isArray(entry.seenCommentIds)) return entry.seenCommentIds;
+    const legacyCount = typeof entry.lastSyncedCommentCount === 'number'
+        ? entry.lastSyncedCommentCount
+        : (comments.length || 0);
+    entry.seenCommentIds = (comments || []).slice(0, Math.max(0, legacyCount)).map(c => c.id);
+    return entry.seenCommentIds;
+}
+
 export function saveTrackedSparkPosts(tracked: Record<string, TrackedSparkPost>): void {
     try { localStorage.setItem(SPARK_TRACKED_KEY, JSON.stringify(tracked)); } catch {}
 }
 
-/** 把帖子注册进某角色的追踪名单（分享/同步到私聊时调用），评论水位 = 当前评论数 */
-export function trackSparkPost(postId: string, charId: string, commentCount: number): void {
+/** 把帖子注册进某角色的追踪名单（分享/同步到私聊时调用），评论水位 = 已通知评论 id 名单 */
+export function trackSparkPost(postId: string, charId: string, commentIds: string[]): void {
     const tracked = loadTrackedSparkPosts();
     const entry = tracked[postId];
     if (entry) {
         if (!entry.charIds.includes(charId)) entry.charIds.push(charId);
-        entry.lastSyncedCommentCount = Math.max(entry.lastSyncedCommentCount, commentCount);
+        entry.seenCommentIds = [...new Set([...(entry.seenCommentIds || []), ...commentIds])];
+        entry.lastSyncedCommentCount = entry.seenCommentIds.length;
     } else {
-        tracked[postId] = { charIds: [charId], lastSyncedCommentCount: commentCount };
+        tracked[postId] = { charIds: [charId], seenCommentIds: [...commentIds], lastSyncedCommentCount: commentIds.length };
     }
     saveTrackedSparkPosts(tracked);
 }
@@ -107,6 +124,24 @@ export function untrackSparkPost(postId: string): void {
     const tracked = loadTrackedSparkPosts();
     delete tracked[postId];
     saveTrackedSparkPosts(tracked);
+}
+
+// --- Spark 私聊私戳开关（Ann 2026-09-15 拍板：per-character 硬闸）---
+// 名单语义：只记"被关掉"的角色（不在名单 = 允许私聊）。
+const SPARK_PRIVATE_CHAT_OFF_KEY = 'spark_private_chat_off';
+
+export function loadPrivateChatOff(): Record<string, true> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SPARK_PRIVATE_CHAT_OFF_KEY) || '{}');
+        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch { return {}; }
+}
+
+export function setPrivateChatOff(charId: string, off: boolean): void {
+    const all = loadPrivateChatOff();
+    if (off) all[charId] = true; else delete all[charId];
+    try { localStorage.setItem(SPARK_PRIVATE_CHAT_OFF_KEY, JSON.stringify(all)); } catch {}
 }
 
 // --- 楼中楼「新回复」已读水位（v9 二轮，Ann 拍板 B 案）---

@@ -333,7 +333,11 @@ export const ChatParser = {
                                             await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: updatedPost, syncKind: 'update', newComments: [comment] } });
                                         }
                                     }
-                                    entry.lastSyncedCommentCount = (livePost.comments?.length || 0) + 1;
+                                    const allIds = (livePost.comments || []).map(c => c.id);
+                                    entry.seenCommentIds = Array.isArray(entry.seenCommentIds)
+                                        ? [...new Set([...entry.seenCommentIds, comment.id])]
+                                        : [...allIds];
+                                    entry.lastSyncedCommentCount = allIds.length + 1; // 兼容字段，不参与判定
                                     saveTrackedSparkPosts(tracked);
                                 }
                             } catch {}

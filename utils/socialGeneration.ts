@@ -36,7 +36,7 @@ export function buildSparkGenerationContext(
 可用账号: ${JSON.stringify(getSparkHandles(char, handles).map(h => ({ authorName: h.handle, note: h.note })))}
 本档案中的“你/我”、设定、记忆和说话方式只属于 ${char.name}，不得套到其他角色身上。
 ${core}
-近期私聊片段（只用于该角色理解关系，不得在公开评论泄露）:
+近期私聊片段（【角色私人记忆】——只用于该角色理解关系；生成路人（charId 为 null）的评论时视同不存在，禁止输出其中任何细节）:
 ${recent.map(m => formatMessageForPrompt(m, char.name, user.name).slice(0, 800)).join('\n') || '(无近期片段，不编造共同经历)'}
 <<< 角色档案结束 charId=${JSON.stringify(char.id)} >>>`;
     }).join('\n\n');

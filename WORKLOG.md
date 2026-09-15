@@ -1,8 +1,89 @@
 # 工作日志（给猫儿和未来的自己看）
 
-> 📦 **接手看这里：[HANDOFF-spark-v6.md](./HANDOFF-spark-v6.md)**（2026-09-15 下午公司电脑 → 家里电脑交接：七改-UI 全貌 + v9 四轮修复要点 + 环境档案 + 六改待办指引）。
+## 2026-09-16 凌晨 · Spark 全部生成类 prompt 定稿落码 + 收尾提交（Ann 逐字定稿）
 
-> ⚠️ **开工前必读：[检讨-未等开工令擅自改码事故.md](./检讨-未等开工令擅自改码事故.md)** —— 2026-09-15 擅自开工连环返工事故全文 + 八条铁律（模式规矩/复述拦错/功能不丢/危险操作单独确认）。所有猫儿动手前先过一遍，别让 Ann 再教第二遍。
+Ann 连夜逐字改定的 5 处提示词全部照原文落码（本轮只动文本，零逻辑改动）：
+- `utils/chatPrompts.ts` sparkFootprintLine：能力说明改「①继续聊下去或公开发言（三种写法）②不去 Spark 直接聊」——能力+当下指向，无许可句。
+- `apps/SocialApp.tsx` **搅动**（evolveCommentSection）：按功能重写——搅动=评论区过一段时间的样子，**新动静主力是已有的人**（楼主/评论过的角色和网友/冒过泡的路人回到参与过的帖子），新刷进来的陌生网友偶尔才有、一条没有是常态；旧「内容红线」「禁止抄袭」两节并入新「禁令」（含禁止串记忆：「我对象」默认是 Ta 自己生活里的人）；私聊节改第三人称（角色发 privateChat，不是群像作者发）；recentLine 删许可尾巴只留事实。
+- `apps/SocialApp.tsx` **首次评论区**：群像作者视角、无评论条数指标、旧「楼中楼至少 1-2 条回复」指标删除（它是路人增殖元凶）、路人节=命名习惯+世界观身份（宠物/恶魔/捏捏/代码）+心情/需求维度+信息量有限+别硬认。
+- `apps/SocialApp.tsx` **刷新推荐流**：群像作者开头；角色帖 30% 保留且明确 isCharacter+charId 归属、内容跟人格记忆当前状态走；路人帖 70% 立人设（同路人节经验，动机=发帖生态：分享/吐槽/求助/晒物/记怪事/找搭子）；旧「社畜发疯/乐子人」生态套子、「禁止上帝视角」空壳删除。
+- 称谓全库统一：**user→用户、char→角色**（charId 保留为字段名）。
+- 识图附注（buildSparkFetchInit 的「可以聊图也可以不提」许可句）**未动**，Ann 未裁。
+
+自查：4 个「定稿」锚点在位、旧文本（社畜发疯/禁止上帝视角/内容红线/禁止抄袭/换一个路人重写/楼中楼指标）零残留；tsc 47 全历史、改动文件 0 新增。dev server 已重启（5173，https，本机+局域网 200）。
+
+**收尾（Ann 下令「提交一版 + push 远端」）**：本轮 7 个改动文件 + HANDOFF-spark-v7.md + apps/social/（SparkPostImage.tsx 六改新组件）一并提交进 `feature/company-spark-circle-mode` 并推 origin。`.dev-certs/` 与 `dev-https.tmp.mjs` 是 dev server https 启动依赖（部署在用，注释写明不入 git），未提交；`debug-block-feature-runtime.md` 是拉黑排查记录（OPEN、拉黑不碰铁律），未提交。**待办：Ann 手机跑 9 步测试流程，复检过再谈 commit 之后的下一步。**
+
+## 2026-09-15 深夜 · v7 计划 8 任务施工完成（已提交，待 Ann 手机复检）
+
+按 [HANDOFF-spark-v7.md](./HANDOFF-spark-v7.md) 顺序做完 T1-T8，改动文件（全部计划内）：
+- `apps/SocialApp.tsx`：T1 @ 拆灰（发帖/评论列表全角色可点、显示社交 id 名马甲优先、handleSendComment 全员真通知）；T2 水位 id 化（trackSparkPost 传 id 数组、updatePostInFeed 按名单过滤、删预推 hack 和直达通知段）；T3 syncPostSnapshotToChats 同步过滤 newComments；T5 私聊节/路人身份模板节/点名节重写 + 首次评论 prompt 同步；T6 解析层私聊硬闸 + 管理面板每角色「私聊开/关」按钮（forceIdentityTick 强刷）；T7 mentionIds 强制进名单 + mentionLine 意图注入；T8 面板开/取消清 @ 名单 + toggle off 正则删正文 @ 尾巴。
+- `utils/sparkCircles.ts`：seenCommentIds 字段 + ensureSeenCommentIds 迁移 + trackSparkPost 签名改 id 数组 + loadPrivateChatOff/setPrivateChatOff。
+- `utils/chatParser.ts`：聊天侧水位改 id 名单（旧数据整集迁移）。
+- `utils/chatPrompts.ts`：sparkFootprintLine 换 Ann 定稿能力说明；同步卡/update 卡/share 卡全部行为指引清零（旧卡纯事实快照）。
+- `utils/socialGeneration.ts`：私聊片段标注强化（路人视同不存在）。
+- `components/chat/MessageItem.tsx`：本轮未再动（六改-3 的 sparkimg 渲染保留）。
+
+**验收数字**：tsc 47（全历史遗留，改动文件 0 新增）；vitest 全量 5299/5304（挂的 5 个在 amsgStateSync/chatBackgroundBlobRef/companionHome，经查不引用本轮任何改动文件，历史遗留）；Spark 相关 23/23 全过；build 过（worker.bundle.js 重生成后已还原，worker 不在本轮范围）。
+
+**复检清单**：见 v7 文末「Ann 手机复检清单」8 条。已随 2026-09-16 凌晨提交入库（与提示词定稿同一版）。
+
+---
+
+> 📦 **接手看这里：[HANDOFF-spark-v7.md](./HANDOFF-spark-v7.md)**（2026-09-15 晚 · 12 条返工施工计划——Ann 四轮评审全部定稿，含成品提示词原文。**T1-T8 与 prompt 定稿已全部施工完毕并随 2026-09-16 提交**，接手先读它的「代码状态」一节）。
+> 📦 背景：[HANDOFF-spark-v6.md](./HANDOFF-spark-v6.md)（公司→家交接：七改-UI + v9 四轮 + 六改待办——六改已施工但复检未过，被 v7 计划部分推翻）。
+
+> ⚠️ **开工前必读：[检讨-未等开工令擅自改码事故.md](./检讨-未等开工令擅自改码事故.md)** —— 八条铁律。所有猫儿动手前先过一遍。
+
+## 2026-09-15 晚 · 12 条返工排查+计划定稿（未动代码）
+
+- Ann 复检六改「基本没修好」给 12 条返工清单 → 四轮计划评审定稿（期间毙掉：两段式并发生成/程序拦截重roll/脱敏摘要/许可句提示词/硬性频率限制——她的模型是 RP 模型不支持并发、按次计费）。
+- 定稿要点：@ 全员可点可真通知、显示社交 id 名；水位按评论 id 名单；newComments 随删评过滤；卡片注入=旧卡纯事实+最新卡 Ann 定稿能力说明；路人身份模板+禁止输出私聊记忆细节；私聊 per-char 开关硬闸；评论 @ 意图传演化；发帖 @ 开/取消清名单+toggle off 删正文尾巴。
+- **完整施工图：[HANDOFF-spark-v7.md](./HANDOFF-spark-v7.md)**（锚点定位+成品提示词原文，可直接交给 flash 执行）。
+
+## 2026-09-15 晚 · 12 条返工排查完成（Ann 复检「基本没修好」后的根因定位，未动代码）
+
+> 六改复检未通过，Ann 给 12 条返工清单。本轮只排查+出计划，等「做吧」。根因按行号（1fb0429d + 六改未提交工作区）：
+
+1. **@ 置灰全错（返工 1/2）**：`hasSocial = !!c.socialProfile?.handle`（SocialApp L1768/L2139）判的是**死字段**——全库没有任何地方写入 character.socialProfile，Ann 填的账号名其实存在 `characterHandles`（Spark 管理马甲，localStorage `spark_char_handles`）。所以所有角色（含填了账号名的）全显示「未开通」；评论 @ 真通知的 gate（L1172）也全员 continue。修法：Ann 新拍板=默认角色名就是社交号、不限制 @；删置灰逻辑，人人可 @ 且真通知。
+2. **路人泄露私聊（3）**：socialGeneration.ts L39-40 把每个角色近 800 字私聊**原文**无差别塞进生成上下文，路人在同一 prompt 里生成，文字禁令拦不住。选项 A：两段式生成（角色带私聊、路人完全不带，token×2）；选项 B：片段换脱敏一行关系摘要（省 token，细腻度降）。
+3. **删评论卡不更新（4）**：update 卡渲染 `metadata.newComments`（MessageItem L3144），六改-4a 只重写了 `metadata.post.comments`，**没动 newComments** → 被删评论永远留在「新动态」卡里。修法：快照同步时 newComments 按现存评论 id 过滤。
+4. **私聊从节点 A 重演（5）+ 上下文生硬（12）**：chatPrompts.ts L1288（@卡邀请）、L1316（分享卡「请发表看法」）**每张卡都带邀请语且永不过期**，每次 ⚡ 触发模型把未回应的卡全当新任务重演一遍。P6 只摘了催评尾巴，邀请语没摘干净。修法：邀请语只挂最新一张 Spark 卡，旧卡降级「历史留痕」；加总纲「接着聊天最后一句走，Spark 卡是背景」。12 是 5+6 的伴生，不单独动。
+5. **水位（6）**：`lastSyncedCommentCount` 按评论**条数**比较+位置切片（L539-540、chatParser L336），删过评论就错位：要么漏通知要么切错内容。修法：水位改**已见评论 id 集合**，老数据按条数迁移；handleSendComment 预推水位 hack（L1136-1143）随之删除。
+6. **无视用户指令（7）/ 路人乱（8）/ 私戳（9）/ @B 接话（10）**：prompt 缺「被点名角色不能装没看见」；evolve 没有路人数量上限与「延续现有讨论线」指令；privateChat 无 per-char 开关；评论 @B 只落通知卡，evolve 的 recentLine 不带「@B 想让 B 跟 A 交流」意图、B 也未必进本轮名单。修法分别：prompt 补硬线；路人 0-1 个常态+优先接旧线；管理面板 per-char 开关+「每轮至多 1 角色私聊、禁连轮私戳」；evolve 把被 @ 角色强制入名单+prompt 写明交流意图。
+7. **发帖 @ 不删（11）**：取消（L2052）/重开面板（L2379）不清 `newPostMentions`，@ 一次永久挂名单；取消选中也不删正文里插入的 @handle 文本。修法：开/取消时清名单；toggle off 同步删正文尾巴；发布快照语义不变。
+
+---
+
+## 2026-09-15 晚 · 家里电脑 · 六改清单施工完成（v5 六问题全修，待 Ann 手机复检）
+
+> 流程合规：计划表（含 4b 意图问询、@ 语义复述）→ Ann 批准 → 施工。以下全部**未 commit**，等 Ann 复检点头。
+> 改动文件：`apps/SocialApp.tsx`、`components/chat/MessageItem.tsx`、新增 `apps/social/SparkPostImage.tsx`（SparkPostImage/codepointToEmoji 从 SocialApp 原样抽出共用）。
+
+| # | 问题 | 修法落地 |
+|---|------|---------|
+| 1 | 选图后 emoji 贴纸还能选 | 发布面板贴纸区在 `newPostImages.length > 0` 时隐藏，显示「已选图片，emoji 背景停用（清空图片后可重新选择）」；清空恢复 |
+| 2 | @ 显示真名 | @ 列表/插入不再回退真名：无 `socialProfile.handle` 的角色置灰显示「未开通社交账号」，点了 toast 提醒补档案 |
+| 2b | @ 全场景语义（Ann 拍板） | ①评论弹层顶部加 @ 开关 + 角色选择条（同套置灰规则）；②真通知只认「用户亲手点选」：发帖 @ 走原路（syncPostToChar mentioned=true），**评论 @ 新增**——发送后对有档案的被 @ 角色落「用户 @ 了你」卡（含帖子全文+该评论）；③无档案角色/AI 文本里的 @ = 纯外观不通知；收起弹层/发送后 mention 状态复位 |
+| 3 | 带图帖进聊天卡片变 `sparkimg:...` 一串 | MessageItem social_card 三路渲染：`sparkimg:` 引用 → SparkPostImage 读 assets 真图（`absolute inset-0 object-cover` 铺卡头，读不到降级 🖼️ 占位）；纯码点 → codepointToEmoji 转 emoji；其余原样。两种卡（公开足迹卡/笔记分享卡）都接了 |
+| 6 | 私聊只能一条 | 演化输出升级 `"privateChat": [...]` 数组 = 连发多条，逐条落库（首条前空行、末条后空行、中间不垫，贴真人刷屏）；prompt 明示可连发；**旧格式 `toPrivateChat: true` 兼容解析保留** |
+| 5 | 路人认知不隔离 + 抄袭 | 演化 prompt 加两节硬线：「认知边界（防路人开天眼）」——路人只知道帖子+评论区公开内容，禁提用户/角色真实身份、主聊天、私聊；「禁止抄袭已有评论」——禁复述改写，每条要有新信息/新角度。先 prompt 观察，还抄再上程序去重 |
+| 4a | 删评论卡片还留着旧评论 | `syncPostSnapshotToChats` 名单扩为：追踪该帖的角色 ∪ 发过言的角色（authorCharId + 老 handle 反查兜底） |
+| 4b | 用户评论自己帖子角色看不到 | 根因升级：水位是双写状态（聊天侧评论经 chatParser 也推进），SocialApp 工作区评论数可能落后 → `count > 水位` 恒不成立、通用通知被吞。修法：用户评论走专用直达链路——先预推水位 1 格防通用链路重发，再对追踪角色落「帖子有新动态」卡（newComments=[该评论]），水位取 max 自愈。语义按 Ann 拍板：知会内容，不强制回应 |
+
+验收：tsc 47 全为历史遗留（改动文件 0 新错）｜Spark 14 文件 94/94 全过｜vite build 通过（42.27s）。build 顺带重生成的 `worker/amsg/worker.bundle.js` 已还原（本轮不涉及 worker）。
+
+### 待 Ann 手机复检清单（https://192.168.0.103:5173 或 Vite 当次打印地址，硬刷新）
+
+1. 发帖选图 → 贴纸区消失/小字提示；清空图 → 贴纸回来
+2. @ 列表：没开档案的角色置灰「未开通社交账号」点不出真名；开了的照旧真 @
+3. 评论弹层点 @ → 选角色 → 发送：被 @ 的有档案角色私聊收到「用户 @ 了你」卡
+4. 带图帖分享/同步进聊天 → 卡片显示真图（不再是 sparkimg: 一串）
+5. 搅动 → 角色私聊可能连发多条；老帖子的 toPrivateChat 旧格式不炸
+6. 搅动后的路人评论不提帖子外的事、不复读已有评论
+7. 同步过的帖子：删评论 → 聊天卡片跟着更新（包括只评论过没追踪的角色）；自己评论自己帖 → 角色收到「帖子有新动态」
+
+---
 
 ## 2026-09-14 · 公司电脑 · Spark 圈子模式（平行世界）
 

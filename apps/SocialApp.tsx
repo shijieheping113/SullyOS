@@ -4,9 +4,12 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+// 六改-3：codepointToEmoji / SparkPostImage 抽到 ./social/SparkPostImage.tsx，
+// 与聊天侧 social_card 卡片共用（原来聊天侧把 sparkimg: 引用当文本铺出来的 bug 就在这修）。
+import { codepointToEmoji, SparkPostImage } from './social/SparkPostImage';
 import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
 import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
-import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, loadSparkReplyWatermarks, saveSparkReplyWatermark } from '../utils/sparkCircles';
+import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, ensureSeenCommentIds, loadPrivateChatOff, setPrivateChatOff, loadSparkReplyWatermarks, saveSparkReplyWatermark } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
 import Modal from '../components/os/Modal';
@@ -33,21 +36,6 @@ const apiErrorMessage = async (response: Response): Promise<string> => {
     } catch { /* ignore unreadable error bodies */ }
     const compact = String(detail || '').replace(/\s+/g, ' ').trim().slice(0, 180);
     return `HTTP ${response.status}${compact ? `: ${compact}` : ''}`;
-};
-
-// Convert a twemoji codepoint string (eg "1f388", "1f3d6-fe0f") to the actual emoji character.
-// Falls back to the input if conversion fails, or to ✨ if input itself looks broken.
-const codepointToEmoji = (code: string): string => {
-    if (!code) return '✨';
-    // If it already contains non-hex (likely already a real emoji char), return as-is.
-    if (!/^[0-9a-fA-F-]+$/.test(code)) return code;
-    try {
-        const points = code.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
-        if (points.length === 0) return '✨';
-        return String.fromCodePoint(...points);
-    } catch {
-        return '✨';
-    }
 };
 
 const STICKER_OPTIONS = [
@@ -153,26 +141,7 @@ const Icons = {
     )
 };
 
-// 五修-5：Spark 用户帖图片——按 assetId 从 assets 表取压缩图渲染。
-// 引用取不到（换设备导入备份后缓存不存在）→ 显示占位 emoji，文字和评论不受影响。
-const SparkPostImage: React.FC<{ assetId: string; imgClassName?: string; emojiClass: string }> = ({ assetId, imgClassName, emojiClass }) => {
-    const [src, setSrc] = useState<string | null>(null);
-    const [loaded, setLoaded] = useState(false);
-    useEffect(() => {
-        let alive = true;
-        setLoaded(false);
-        DB.getAsset(assetId).then(data => {
-            if (alive) { setSrc(data); setLoaded(true); }
-        }).catch(() => { if (alive) setLoaded(true); });
-        return () => { alive = false; };
-    }, [assetId]);
-    if (src) return <img src={src} className={imgClassName} alt="" />;
-    if (loaded) {
-        // 缓存里没有这张图（备份互通后图片不跟随备份）：低调占位，不打扰阅读
-        return <div className={`${emojiClass} opacity-30`}>🖼️</div>;
-    }
-    return null;
-};
+// 五修-5：Spark 用户帖图片组件已抽到 ./social/SparkPostImage.tsx（六改-3，聊天卡片共用）
 
 // --- Main App ---
 
@@ -206,6 +175,10 @@ const SocialApp: React.FC = () => {
     const [isReplyingToUser, setIsReplyingToUser] = useState(false);
     // 楼中楼：当前正在回复的目标评论（null = 直接评论帖子）
     const [replyTarget, setReplyTarget] = useState<SocialComment | null>(null);
+    // 六改-2b：评论里 @ 的角色（用户亲手点选才记；有社交档案的发送后会收到真通知，无档案的置灰不可选）
+    const [commentMentions, setCommentMentions] = useState<string[]>([]);
+    // 六改-2b：评论弹层里的 @ 角色选择条开关
+    const [composerMentionOpen, setComposerMentionOpen] = useState(false);
     // 七改-UI：底部评论输入弹层（xhs 复刻：点互动栏胶囊升起，遮罩/收起键/Esc 收回）
     const [composerOpen, setComposerOpen] = useState(false);
     const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -219,6 +192,7 @@ const SocialApp: React.FC = () => {
     const [showSettings, setShowSettings] = useState(false);
     const [characterHandles, setCharacterHandles] = useState<Record<string, SubAccount[]>>({});
     const [identityGroupId, setIdentityGroupId] = useState(GROUP_FILTER_ALL); // 身份管理弹窗的角色分组筛选
+    const [, forceIdentityTick] = useState(0); // 私聊开关等 localStorage 直改后强制重渲染（同值 setState 会被 React 跳过）
 
     // Circles (平行世界圈子：用户自建，零预设)
     const [circles, setCircles] = useState<SparkCircle[]>(() => loadSparkCircles());
@@ -265,7 +239,7 @@ const SocialApp: React.FC = () => {
     const replyRequestRef = useRef<{ postId: string; controller: AbortController } | null>(null);
     // 五修-1：用户最近一次评论的挂靠信息（供"搅动评论区"时让模型知道用户刚说了什么；
     // 搅动过一次后就清掉——再搅动就是普通时间流逝）
-    const lastUserCommentRef = useRef<{ postId: string; userCommentId: string; repliedToCommentId?: string; content: string } | null>(null);
+    const lastUserCommentRef = useRef<{ postId: string; userCommentId: string; repliedToCommentId?: string; content: string; mentionedCharIds?: string[] } | null>(null);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -557,19 +531,23 @@ const SocialApp: React.FC = () => {
         setFeed(result.feed);
         setSelectedPost(current => (current?.id === postId ? result.post! : current));
         DB.saveSocialPost(result.post).catch(console.error);
-        // 帖子追踪：帖子被分享/同步追踪过且评论数超过水位 → 给追踪角色追加「新动态」通知消息。
+        // 帖子追踪：已通知名单里没有的评论 id → 给追踪角色追加「新动态」通知（id 名单制，删评论/连发多条评论都不错位）。
         // 通知是 user 侧 social_card（syncKind: 'update'）：UI 渲染成卡片，上下文里角色看得到新评论内容。
         try {
             const tracked = loadTrackedSparkPosts();
             const entry = tracked[postId];
-            const commentCount = result.post.comments?.length || 0;
-            if (entry && commentCount > entry.lastSyncedCommentCount) {
-                const newComments = (result.post.comments || []).slice(entry.lastSyncedCommentCount);
-                Promise.all(entry.charIds.map(charId =>
-                    DB.saveMessage({ charId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: result.post, syncKind: 'update', newComments } }),
-                )).catch(console.error);
-                entry.lastSyncedCommentCount = commentCount;
-                saveTrackedSparkPosts(tracked);
+            if (entry) {
+                const all = result.post.comments || [];
+                const seen = ensureSeenCommentIds(entry, all);
+                const newComments = all.filter(c => !seen.includes(c.id));
+                if (newComments.length) {
+                    Promise.all(entry.charIds.map(charId =>
+                        DB.saveMessage({ charId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: result.post, syncKind: 'update', newComments } }),
+                    )).catch(console.error);
+                    entry.seenCommentIds = [...seen, ...newComments.map(c => c.id)];
+                    entry.lastSyncedCommentCount = all.length; // 兼容字段，不参与判定
+                    saveTrackedSparkPosts(tracked);
+                }
             }
         } catch {}
         return result.post;
@@ -616,31 +594,51 @@ const SocialApp: React.FC = () => {
             const context = await buildGenerationContext(selectedChars, activeCircle);
             if (controller.signal.aborted) return;
 
+            // 定稿（2026-09-16 凌晨）：群像作者视角，比例条数保留，路人立人设适配发帖生态
             const prompt = `### 任务: 模拟社交APP "Spark" 的推荐流
-你需要生成 6-8 条新的社交媒体帖子。
+你是社交APP "Spark" 的推荐流的群像作者：你需要生成 6-8 条新的社交媒体帖子。
+这里是虚拟社区，帖子切实写有内容的东西，不要空泛地当个标题党，不要说套话。
+不要机械复读同一个梗；保持每位发帖者区别明显，让他们像常来的活人，
+不要都像播报员。
 
-### 🎭 内容构成 (混合模式)
+### 内容构成 (混合模式)
 1. **角色发帖 (30%)**:
    - 选中的角色: ${selectedChars.map(c => c.name).join(', ')}
-   - **关键规则**: 每个角色有多个马甲(账号)。请根据内容需要，选择最合适的账号身份发帖。
-   - 例如：如果是吐槽，可能用小号；如果是发美照，用大号。请务必使用 **Configured Handle (网名)**。
-   - **内容方向**: 公开发言，生活日常、吐槽、或者暗戳戳的记录。
+   - 每条角色帖都要确定归属：isCharacter 填 true、charId 填该角色的 ID，帖子内容根据
+     Ta 的人格、记忆和当前状态来写——Ta 最近经历过什么、在在意什么，就会发什么。
+   - 再按内容给 Ta 选合适的马甲账号（吐槽用小号、发美照用大号），authorName 填马甲网名。
+   - 内容方向：公开发言，生活日常、吐槽、暗戳戳的记录都行。
 
-2. **路人/网友发帖 (70%)**: 
-   - 模拟真实互联网的野生生态：刚下班的社畜在发疯、备考学生在焦虑摸鱼、话痨大妈唠家常、阴阳怪气网友在抬杠、潜水多年的路人甲突然冒泡、不知道从哪冲进来的乐子人。有人认真长文输出，有人就一句话，有人阴阳，有人真诚。${activeCircle ? `
-   - **本社区属于「${activeCircle.name}」世界**：路人也是该世界的居民，网名、话题、知识都必须符合该世界观（见系统设定），禁止出现不属于该世界的事物。` : ''}
+2. **路人发帖 (70%)**:
+   生成每条路人帖前，先给这个发帖的路人立一个具体人设：
+   - 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
+     并且符合当前的世界限制规则。
+   - 身份从设定世界的网民生态里随机取：学生、小孩、上班族、外国人、店主、自由职业者、
+     退休老人、深夜冲浪的年轻人……甚至宠物、恶魔、捏捏、代码——只要符合当前世界观。
+   - 带不同的年龄、职业、说话习惯、此刻发帖场景（地铁上、睡前、摸鱼中）、
+     心情（开心、疑惑、难过、愤世嫉俗、无聊）、需求（正义感、想被治愈、想便宜收东西、
+     想请教、想分享）。禁止死板照抄例子。
+   - 发帖的动机和立场各自不同：有人分享日常、有人吐槽发泄、有人求助提问、有人晒物炫耀、
+     有人记录遇到的怪事、有人找人搭子——站在不同位置发帖，别每条都一个腔调、一个题材。
+   - 帖子长短不一：有人认真长文输出，有人就一句话。${activeCircle ? `
+   - **本社区属于「${activeCircle.name}」世界**：路人也是该世界的居民，网名、话题、
+     知识都必须符合该世界观（见系统设定），禁止出现不属于该世界的事物。` : ''}
 
-### 🚫 绝对禁令
-1. **禁止扮演用户**: 用户的网名是 "${socialProfile.name}"。绝对禁止生成 \`authorName\` 等于或近似 "${socialProfile.name}" 的帖子（无论是角色帖还是路人帖）。如果你想用类似的名字，请改成完全不同的网名。
-2. **路人不得冒用身份**: 路人的 \`authorName\` 必须是全新的网名，绝对不能与上方【角色身份表】中列出的任何【网名】重合。
-3. **禁止上帝视角**。
-4. **正文里禁止出现任何 # 话题标记**（包括 \`#xx#\` 和 \`#xx\` 写法）。话题只写在 \`tags\` 字段里，\`content\` 是纯正文。
+### 禁令
+- 绝对禁止生成 authorName 等于或近似 "${socialProfile.name}"（用户）的帖子。
+- 路人帖的 authorName 必须是全新的网名，绝对不能与上方【角色身份表】中列出的任何马甲网名重合。
+- 禁止串记忆：用户和角色的私聊内容、私下关系、彼此称呼、私人物品、私密回忆、私下约定，
+  路人一律不知道，路人帖里不能出现、不能暗示；角色发帖只用 Ta 自己的记忆和经历，
+  不能引用、暗示其他角色的私聊和私密信息。
+- 正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），话题只写在 tags 字段里，
+  content 是纯正文。
+- 自检：任何一条帖子出现了上面禁止的内容，就地重写这条帖子。
 
 ### 输出格式 (JSON Array)
 [
   {
     "isCharacter": true/false,
-    "charId": "如果是角色填ID, 否则null", 
+    "charId": "如果是角色填ID, 否则null",
     "authorName": "必须填身份表中定义的【网名】",
     "title": "简短吸睛的标题",
     "content": "正文内容...",
@@ -752,6 +750,7 @@ const SocialApp: React.FC = () => {
                 }
             }
 
+            // 定稿（2026-09-16 凌晨）：Ann 逐字定稿——群像作者视角，首开评论区
             const prompt = `### 任务: 模拟社交APP评论区
 **帖子来源**: "Spark" 社区${postCircle ? `（所属世界:「${postCircle.name}」）` : ''}
 **楼主**: "${post.authorName}" (${authorType})
@@ -761,21 +760,45 @@ const SocialApp: React.FC = () => {
 ${post.content || '(楼主没写正文)'}
 """
 
-请基于上面的【标题 + 正文】生成 4-6 条评论，评论要切实回应正文里提到的内容，不要只对着标题空泛地说。混合使用 **选定角色** 和 **随机路人**。
-角色评论时，请选择一个符合语境的马甲身份。${postCircle ? '路人也是「' + postCircle.name + '」世界的居民，言行必须符合该世界观。' : ''}
+你是这条帖子评论区的群像作者：下面的评论和走向都由你根据这条帖子当场写出来，
+混合使用 **选定角色** 和 **随机路人**，自由参与。
+这里是虚拟社区，大家围着这条帖子说话——接话、追问、反驳、围观、解释误会都行，
+接着已有讨论往下走。评论要切实回复有内容的东西，不只对着标题空泛地说，不要说套话。
+不要机械复读同一个梗；保持每位发言者前后语气连贯、区别明显，让他们像常来的活人，
+不要都像播报员。
+选定角色如果评论，要根据当前状态和关系进度评论。
 
-### 楼中楼（评论区常见形态）
-- 4-6 条评论中，**至少 1-2 条**要回复前面的某条评论（作者之间互相接话、抬杠、玩梗），用 "replyTo" 填被回复评论的作者名。
-- 不回复别人的评论就不填 "replyTo"。
+### 路人（charId 为 null）：刷到这条帖子的陌生网友
+生成每条路人评论前，先给这个路人立一个具体人设：
+- 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
+  并且符合当前的世界限制规则。
+- 身份从设定世界的网民生态里随机取：学生、小孩、上班族、外国人、店主、自由职业者、
+  退休老人、深夜冲浪的年轻人……甚至宠物、恶魔、捏捏、代码——只要符合当前世界观。
+- 带不同的年龄、职业、说话习惯、此刻刷帖场景（地铁上、睡前、摸鱼中）、
+  心情（开心、疑惑、难过、愤世嫉俗、无聊）、需求（正义感、想被治愈、想便宜收东西、
+  想请教、想分享）。禁止死板照抄例子。
+- 立场和动机各自不同：有人赞同楼主想声援、有人反对想说服、有人觉得这事不至于、
+  有人替另一方说话、有人想问清楚情况、有人有过类似经历要分享——站在不同位置看这事。
+- 路人的信息量必须有限，能知道的只有：这条帖子的标题、正文、配图、tag、评论区
+  已公开的内容、帖子上的昵称，以及他自己的人生经验。
+- 路人和用户、和任何角色都是初次刷到的关系，别硬认。
 
 ### 禁令
-- **绝对禁止** 生成 \`author\` 等于或近似 "${socialProfile.name}" (用户) 的评论。
-- 路人评论的 \`author\` 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合。
-- **评论正文里禁止出现任何 # 话题标记**（\`#xx#\` 和 \`#xx\` 都不行），评论就是纯说话。
+- 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
+- 路人评论的 author 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合。
+- 禁止串记忆：用户和角色的私聊内容、私下关系、彼此称呼、私人物品、私密回忆、私下约定，
+  路人一律不知道，不能出现、不能暗示、不能换说法转述；任何角色不得引用、暗示其他角色的
+  私聊和私密信息。别的评论里提到的"我对象/我家那位"，默认是 Ta 自己生活里的人，和帖子里的
+  其他任何人没有对应关系。
+- 禁止复读：不重复已有评论说过的话，不机械复读同一个梗。
+- 禁止无意义对话：每条评论都言之有物——对帖子或讨论有实际回应，不拿纯表情、纯语气词、
+  纯打招呼凑数。
+- 评论正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），评论就是纯说话。
+- 自检：任何一条评论出现了上面禁止的内容，就地重写这条评论。
 
 ### 输出格式 (JSON Array)
 [
-  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "被回复的评论作者名，普通评论填null" }
+  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "被回复的评论作者名，不回复填null" }
 ]`;
             // 五修-5：帖子带用户图时走识图构造（visionApi 优先 / 全局模型直发）
             const init = await buildSparkFetchInit(context, prompt, post, { temperature: 0.8, purpose: '生成帖子评论', signal: controller.signal });
@@ -860,7 +883,7 @@ ${post.content || '(楼主没写正文)'}
             : syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
         try {
             await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: `[Spark 动态·${kindLabel}]`, metadata: { post, syncKind, mentioned: viaMention } });
-            trackSparkPost(post.id, charId, post.comments?.length || 0);
+            trackSparkPost(post.id, charId, (post.comments || []).map(c => c.id));
             return true;
         } catch (e) { return false; }
     };
@@ -1032,7 +1055,22 @@ ${post.content || '(楼主没写正文)'}
     const syncPostSnapshotToChats = async (postId: string) => {
         const post = feedRef.current.find(p => p.id === postId);
         if (!post) return;
-        const charIds = loadTrackedSparkPosts()[postId]?.charIds || [];
+        // 六改-4a：同步名单 = 追踪该帖的角色 ∪ 在该帖发过言的角色（含楼中楼）。
+        // 五修-2 原来只认追踪名单——只评论过、没被分享/同步/@登记的角色收不到快照改写，
+        // 卡片里的旧评论一直留着（Ann 报的「删了评论聊天里还在」的根因）。
+        const trackedIds = loadTrackedSparkPosts()[postId]?.charIds || [];
+        const speakerIds = new Set<string>();
+        for (const c of (post.comments || [])) {
+            if (c.authorCharId) {
+                speakerIds.add(c.authorCharId);
+                continue;
+            }
+            // 老数据兜底：评论没存 authorCharId 时按马甲 handle 反查角色（与 syncPostToChar 同源逻辑）
+            for (const [charId, subs] of Object.entries(characterHandles)) {
+                if ((subs || []).some(h => h.handle === c.authorName)) speakerIds.add(charId);
+            }
+        }
+        const charIds = [...new Set([...trackedIds, ...speakerIds])];
         for (const charId of charIds) {
             try {
                 const msgs = await DB.getMessagesByCharId(charId, true);
@@ -1041,6 +1079,9 @@ ${post.content || '(楼主没写正文)'}
                     await DB.updateMessageMetadata(card.id, (prev: any) => ({
                         ...prev,
                         post: { ...(prev?.post || {}), comments: post.comments },
+                        newComments: Array.isArray(prev?.newComments)
+                            ? prev.newComments.filter((nc: any) => (post.comments || []).some(c => c.id === nc.id))
+                            : prev?.newComments,
                     }));
                 }
             } catch {}
@@ -1141,14 +1182,25 @@ ${post.content || '(楼主没写正文)'}
                 authorType: 'user' as const,
                 replyToId: replyTarget?.id, // 楼中楼：挂在被回复的评论下
         };
+        // 水位 id 化后，用户评论自然命中 updatePostInFeed 的通用通知路径（新评论 id 不在名单里），直达链路和预推 hack 移除
         const updatedPost = updatePostInFeed(selectedPost.id, current => ({
             ...current,
             comments: mergeSocialComments(current.comments || [], [userComment]),
         }));
         // P3 保留：记录这次评论的挂靠信息，供之后手动"搅动"时让 AI 知道用户刚说了什么、在回复谁
-        lastUserCommentRef.current = { postId: updatedPost?.id || selectedPost.id, userCommentId: userComment.id, repliedToCommentId: replyTarget?.id, content: commentInput };
+        lastUserCommentRef.current = { postId: updatedPost?.id || selectedPost.id, userCommentId: userComment.id, repliedToCommentId: replyTarget?.id, content: commentInput, mentionedCharIds: [...commentMentions] };
         setCommentInput('');
         setReplyTarget(null);
+        // 评论里用户亲手 @ 的角色 → 全员真通知（卡片进私聊，Ann 2026-09-15 定稿：默认角色名就是社交号，不设档案门槛）
+        if (commentMentions.length && updatedPost) {
+            let okCount = 0;
+            for (const cid of commentMentions) {
+                if (await syncPostToChar(updatedPost, cid, true)) okCount++;
+            }
+            if (okCount) addToast(`已提醒 ${okCount} 个角色：你在评论里 @ 了 Ta`, 'success');
+        }
+        setCommentMentions([]);
+        setComposerMentionOpen(false);
     };
 
     // 五修-1：搅动评论区——模拟"过一段时间后这个帖子的评论区变成了什么样"。
@@ -1223,15 +1275,37 @@ ${post.content || '(楼主没写正文)'}
             const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
             const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
-            const context = await buildGenerationContext(selectedChars, postCircle);
+            // 返工⑩：用户刚 @ 的角色强制进入本轮名单（去重并入）
+            const mentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
+                ? lastUserCommentRef.current.mentionedCharIds : [];
+            const forcedChars = mentionIds
+                .map(id => characters.find(c => c.id === id))
+                .filter((c): c is NonNullable<typeof c> => !!c && !selectedChars.some(s => s.id === c.id));
+            const finalChars = [...selectedChars, ...forcedChars];
+            const context = await buildGenerationContext(finalChars, postCircle);
 
             // 用户最近有没有在这帖下留言（含楼中楼）——有则作为背景信息告诉模型，由它决定接不接话
             const recent = lastUserCommentRef.current?.postId === post.id ? lastUserCommentRef.current : null;
+            // 定稿（2026-09-16 凌晨）：只陈述事实——用户发了什么、是不是楼中楼；怎么接交给角色当下，不带许可句
             const recentLine = recent
-                ? `\n**用户「${socialProfile.name}」最近在评论区发的评论**: \"${recent.content}\"${recent.repliedToCommentId ? `（是在楼中楼里回复别人的）` : ''}\n要不要回应这句话、由谁回应，看内容和你的人设，不强制。`
+                ? `\n**用户「${socialProfile.name}」最近在评论区发的评论**: \"${recent.content}\"${recent.repliedToCommentId ? `（是在楼中楼里回复别人的）` : ''}`
                 : '';
+            let mentionLine = '';
+            if (mentionIds.length) {
+                const replyToName = (() => {
+                    const rid = lastUserCommentRef.current?.repliedToCommentId;
+                    const target = rid ? (post.comments || []).find(c => c.id === rid) : undefined;
+                    return target?.authorName;
+                })();
+                const mentionedNames = mentionIds
+                    .map(id => characters.find(c => c.id === id))
+                    .filter(Boolean)
+                    .map(c => (characterHandles[c!.id] || [])[0]?.handle || c!.name);
+                mentionLine = `\n**用户在这条评论里 @ 了 ${mentionedNames.join('、')}**${replyToName ? `——Ta 在回复 ${replyToName}，想看被 @ 的人和 ${replyToName} 就这个话题交流` : '——Ta 想看被 @ 的人来接这条线'}`;
+            }
             const lastComment = lastUserCommentRef.current?.postId === post.id;
 
+            // 定稿（2026-09-16 凌晨）：搅动=评论区过一段时间的样子——主力是已有的人，新路人偶尔才有
             const prompt = `### 任务: 模拟这个帖子评论区"过一段时间"之后的样子
 **帖子楼主**: ${post.authorName}
 **帖子标题**: "${post.title}"
@@ -1239,33 +1313,60 @@ ${post.content || '(楼主没写正文)'}
 """
 ${post.content || '(楼主没写正文)'}
 """
-**当前评论区**:
-${buildSparkCommentHistory(post)}${recentLine}
+**当前评论区**（每一行都是已经发生过的事实——谁说过什么都在里面）:
+${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
 
-想象从现在起过了十几分钟到几个小时，真实的小红书评论区自然会发生的互动：路人接话抬杠玩梗、楼主下场补充、路过的人冒泡、有人追问细节、有人只丢一个字……也可能这段时间没人说话。
+你是这条帖子评论区的群像作者：想象从现在起过了十几分钟到几个小时，评论区里新发生的动静
+都由你写出来。这个评论区已经有主人了——新动静的主力是**已经在这里的人**：楼主（非用户
+发帖情况，不能扮演用户）可能下场补充，评论过的角色和网友接着原来的话头继续聊，之前冒过泡
+的路人再冒一句——他们是回到自己参与过的帖子，不是初次刷到。也可能都散了，重点是看当前
+用户和角色最新评论引导的趋向。
+**从外面新刷进来的陌生网友是少数**：常常一条都没有，偶尔一两个；真的有，按下面的规矩立人设。
+也可能这段时间没人说话——一条新动静都没有（返回空数组）就空着。
+动静的形态：接话、追问、反驳、围观、解释误会、楼主下场补充都行，接着已有讨论往下走；
+评论要切实回复有内容的东西，不要说套话；保持每个人前后语气连贯，别都像播报员。
+选定角色（用马甲网名发言）出不出场、发几条，根据 Ta 的人格、记忆、之前参与帖子内容和当前状态。
 
-**完全交给内容和你的人设自然决定：**
-- 谁来冒泡、冒几条，都不固定；**一条都没有（返回空数组）也完全正常**——不是每条帖子都一直热闹
-- 如果用户刚发过评论：角色路过时**可以**接这句话（回复它），也可以只跟别人聊、当没看见——真实的人不会秒回每条评论
-- 路人之间也能互相接话，不必都围着用户转
+### 私聊
+角色有可以私聊用户的能力，可以用 "privateChat": ["内容1", "内容2"] 把想对用户一个人说的话直接发进
+角色和用户的私聊——只有用户看得到，评论区不显示。
+它承载的是只想让用户一个人听到的话：悄悄话、贴脸的话、想避开评论区认真聊几句的。
+要不要私聊、什么时候私聊、说几条，跟在评论区发言一样——按角色当下的想法判断。
 
-### 公开还是私聊（两个不同的社交场景）
-评论区是**公开场合**，所有人都能看见；私聊只有你和用户两个人。
-- 你（角色）有话只想跟用户一个人说——不想让评论区其他人看见的悄悄话、贴脸的话、或者想认真聊几句的——就在那条输出里加 **"toPrivateChat": true**：这句话会变成你在私聊里发给用户的消息，**不会**出现在评论区
-- 公开场合适合说的话就正常发评论区；两种场景按角色性格自然选，不强制
-- 路人（charId 为 null）没有私聊能力，永远正常发评论区
+### 新刷进来的陌生网友（charId 为 null）：偶尔才有，一条没有是常态
+给这个新人立一个具体人设再开口：
+- 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
+  并且符合当前的世界限制规则。
+- 身份从设定世界的网民生态里随机取：学生、小孩、上班族、外国人、店主、自由职业者、
+  退休老人、深夜冲浪的年轻人……甚至宠物、恶魔、捏捏、代码——只要符合当前世界观。
+- 带不同的年龄、职业、说话习惯、此刻刷帖场景（地铁上、睡前、摸鱼中）、
+  心情（开心、疑惑、难过、愤世嫉俗、无聊）、需求（正义感、想被治愈、想便宜收东西、
+  想请教、想分享）。禁止死板照抄例子。
+- 立场和动机各自不同——站在不同位置看这事。
+- 信息量有限：能知道的只有这条帖子的标题、正文、配图、tag、评论区已公开的内容、
+  帖子上的昵称，和 Ta 自己的人生经验。
+- 和用户、和任何角色都是初次刷到的关系，别硬认。
 
-### 内容红线（防 AI 八股）
-- **禁止空洞灌水**：「哈哈哈哈」「太xx了吧」「说得好」「+1」「确实」这类没有信息量的评论一条都不要
-- 每条评论都要有具体的内容：观点、细节、经历、追问、玩梗（梗要跟帖子内容对得上），像真人在聊天
-- 语气像真实网友：口语化、有性格，可以短到几个字（但要有内容），也可以是几句话
+### 用户点名的角色
+用户评论里直接 @ 到的角色、或用户在楼中楼里回复的那个角色：这条评论 Ta 看到了。Ta 怎么回应由人设决定，但不会像没看见一样。
 
-只能使用本次角色档案中的身份（角色用马甲网名）；路人是全新网名，不能与身份表重合；author 绝对不能是 "${socialProfile.name}"（用户本人）。
-评论正文里禁止出现任何 # 话题标记（\`#xx#\` 和 \`#xx\` 都不行），评论就是纯说话。
+### 禁令
+- 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
+- 新路人的 author 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合，
+  也不能冒用评论区里已经出现过的路人网名。
+- 禁止串记忆：用户和角色的私聊内容、私下关系、彼此称呼、私人物品、私密回忆、私下约定，
+  路人一律不知道，不能出现、不能暗示、不能换说法转述；任何角色不得引用、暗示其他角色的
+  私聊和私密信息。别的评论里提到的"我对象/我家那位"，默认是 Ta 自己生活里的人，和帖子里的
+  其他任何人没有对应关系。
+- 禁止复读：不重复已有评论说过的话，不机械复读同一个梗；接话可以，换皮复读不行。
+- 禁止无意义对话：每条评论都言之有物——对帖子或讨论有实际回应；「哈哈哈哈」「太xx了吧」
+  「+1」「确实」这类没有信息量的评论一条都不要，不拿纯表情、纯语气词、纯打招呼凑数。
+- 评论正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），评论就是纯说话。
+- 自检：任何一条评论出现了上面禁止的内容，就地重写这条评论。
 
 ### 输出格式 (JSON Array)
 [
-  { "author": "网名 (Handle) 或路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "要回复的已有评论的作者名，顶层新评论填 null", "toPrivateChat": true 或省略（角色想私聊用户时才加） } 
+  { "author": "网名 (Handle) 或路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "要回复的已有评论的作者名，顶层新评论填 null", "privateChat": ["想说的第一条", "第二条", ...] 或省略 }
 ]`;
             const init = await buildSparkFetchInit(context, prompt, post, { temperature: 0.9, purpose: lastComment ? '搅动评论区(含用户新评论)' : '搅动评论区', signal: controller.signal });
             const response = await fetch(init.url, init as RequestInit);
@@ -1277,15 +1378,24 @@ ${buildSparkCommentHistory(post)}${recentLine}
 
             const existing = post.comments || [];
             const newComments: SocialComment[] = [];
-            const privateMessages: { charId: string; content: string }[] = [];
+            const privateMessages: { charId: string; lines: string[] }[] = [];
             json.forEach((c: any) => {
                 if (typeof c.content !== 'string' || !c.content.trim()) return;
-                const author = resolveSparkAuthor(c, selectedChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
+                const author = resolveSparkAuthor(c, finalChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
                 if (!author) return;
                 const matchedChar = author.character;
-                // 五修-7：角色选择私聊 → 不进评论区，落成主聊天里角色发给用户的普通消息
+                // 六改-6：私聊升级——"privateChat": [...] 数组 = 角色连发多条（像真人刷屏），逐条落库
+                if (Array.isArray(c.privateChat)) {
+                    if (matchedChar) {
+                        if (loadPrivateChatOff()[matchedChar.id]) return; // 开关关闭：私聊直接丢弃，不转公开评论
+                        const lines = c.privateChat.map((x: any) => String(x ?? '').trim()).filter(Boolean);
+                        if (lines.length) privateMessages.push({ charId: matchedChar.id, lines });
+                    }
+                    return; // 路人没有私聊能力，漏到这里的直接丢弃
+                }
+                // 兼容旧格式：toPrivateChat: true = 单条私聊（老帖子上下文还在用这个写法）
                 if (c.toPrivateChat === true) {
-                    if (matchedChar) privateMessages.push({ charId: matchedChar.id, content: c.content.trim() });
+                    if (matchedChar && !loadPrivateChatOff()[matchedChar.id]) privateMessages.push({ charId: matchedChar.id, lines: [c.content.trim()] }); // 开关关闭：私聊直接丢弃
                     return; // 路人没有私聊能力，漏到这里的直接丢弃
                 }
                 let avatar = matchedChar
@@ -1307,12 +1417,16 @@ ${buildSparkCommentHistory(post)}${recentLine}
                     replyToId: target?.id,
                 } as SocialComment);
             });
-            // 五修-7：私聊消息落主聊天（角色的普通 assistant 消息，前后各空行读着自然）
+            // 五修-7 + 六改-6：私聊消息落主聊天（角色的普通 assistant 消息，逐条存、贴连发感——
+            // 首条带前空行、末条带后空行，中间条不垫空行，读起来像真人一条接一条刷屏）
             for (const pm of privateMessages) {
                 try {
                     const charName = characters.find(c => c.id === pm.charId)?.name || '角色';
-                    await DB.saveMessage({ charId: pm.charId, role: 'assistant', type: 'text', content: `\n${pm.content.trim()}\n` });
-                    addToast(`${charName} 私聊了你一句（没发在评论区）`, 'info');
+                    for (let i = 0; i < pm.lines.length; i++) {
+                        const wrapped = `${i === 0 ? '\n' : ''}${pm.lines[i]}${i === pm.lines.length - 1 ? '\n' : ''}`;
+                        await DB.saveMessage({ charId: pm.charId, role: 'assistant', type: 'text', content: wrapped });
+                    }
+                    addToast(pm.lines.length > 1 ? `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）` : `${charName} 私聊了你一句（没发在评论区）`, 'info');
                     trackEvent('Spark 搅动产生私聊消息');
                 } catch {}
             }
@@ -1386,6 +1500,9 @@ ${buildSparkCommentHistory(post)}${recentLine}
     const closeComposer = () => {
         setComposerOpen(false);
         composerRef.current?.blur();
+        // 六改-2b：收起弹层复位 @ 选择（没发出去的 mention 不保留）
+        setComposerMentionOpen(false);
+        setCommentMentions([]);
     };
     // 桌面端 Esc 收起弹层
     useEffect(() => {
@@ -1686,19 +1803,57 @@ ${buildSparkCommentHistory(post)}${recentLine}
                         style={{ transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)', willChange: 'transform' }}
                     >
                         <div className="flex flex-col max-h-[92%]">
-                            {/* 顶部：回复目标胶囊（可取消）+ 收起箭头 */}
+                            {/* 顶部：回复目标胶囊（可取消）+ @ 角色开关 + 收起箭头 */}
                             <div className="h-[46px] px-4 flex items-center justify-between shrink-0">
-                                {replyTarget ? (
-                                    <span className="flex items-center gap-1.5 bg-[#ff2442]/10 text-[#ff2442] text-[11px] font-medium px-2.5 py-1 rounded-full max-w-[80%]">
-                                        <span className="truncate">回复 @{replyTarget.authorName}</span>
-                                        <button onClick={() => setReplyTarget(null)} className="shrink-0 active:opacity-60">✕</button>
-                                    </span>
-                                ) : (
-                                    <span className="text-[12px] text-[#B9B9B9]">说点什么，让大家听到你的声音</span>
-                                )}
-                                <button onClick={closeComposer} className="w-8 h-8 flex items-center justify-center text-[#9A9A9A] active:opacity-60" title="收起">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25 12 15.75 4.5 8.25" /></svg>
-                                </button>
+                                <div className="flex items-center gap-2 min-w-0">
+                                    {replyTarget ? (
+                                        <span className="flex items-center gap-1.5 bg-[#ff2442]/10 text-[#ff2442] text-[11px] font-medium px-2.5 py-1 rounded-full max-w-[60%]">
+                                            <span className="truncate">回复 @{replyTarget.authorName}</span>
+                                            <button onClick={() => setReplyTarget(null)} className="shrink-0 active:opacity-60">✕</button>
+                                        </span>
+                                    ) : (
+                                        <span className="text-[12px] text-[#B9B9B9]">说点什么，让大家听到你的声音</span>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                    {/* 六改-2b：评论里也能 @ 角色——全角色可点可真通知；显示用社交 id 名（Ann 2026-09-15 定稿） */}
+                                    <button
+                                        onClick={() => setComposerMentionOpen(prev => !prev)}
+                                        title="艾特角色"
+                                        className={`w-8 h-8 flex items-center justify-center rounded-full text-[15px] font-bold active:opacity-60 ${composerMentionOpen || commentMentions.length ? 'text-[#ff2442]' : 'text-[#9A9A9A]'}`}
+                                    >@</button>
+                                    <button onClick={closeComposer} className="w-8 h-8 flex items-center justify-center text-[#9A9A9A] active:opacity-60" title="收起">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25 12 15.75 4.5 8.25" /></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            {/* 六改-2b：@ 角色选择条（开 ~0.24s 淡入；语义同发布面板——只认用户点选，AI 文本里的 @ 是外观） */}
+                            <div className={`overflow-hidden transition-all duration-[240ms] ${composerMentionOpen ? 'max-h-[120px] opacity-100' : 'max-h-0 opacity-0'}`} style={{ transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)' }}>
+                                <div className="px-4 pb-2 flex gap-2 overflow-x-auto no-scrollbar">
+                                    {characters.map(c => {
+                                        const mainHandle = (characterHandles[c.id] || [])[0]?.handle || c.name;
+                                        const mentioned = commentMentions.includes(c.id);
+                                        return (
+                                            <button
+                                                key={c.id}
+                                                onClick={() => {
+                                                    if (mentioned) {
+                                                        setCommentMentions(prev => prev.filter(id => id !== c.id));
+                                                        // 返工⑪：同发帖——点掉选中同时删评论正文尾部的 @尾巴
+                                                        const tail = new RegExp(`@${mainHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
+                                                        setCommentInput(prev => prev.replace(tail, ''));
+                                                    } else {
+                                                        setCommentMentions(prev => [...prev, c.id]);
+                                                        setCommentInput(prev => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}@${mainHandle} `);
+                                                    }
+                                                }}
+                                                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${mentioned ? 'bg-[#ff2442] text-white border-[#ff2442]' : 'bg-white text-slate-500 border-slate-200'}`}
+                                            >
+                                                @{mainHandle}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
                             {/* 多行输入框：76px / #EDEDED 描边 / 光标品牌红 */}
                             <textarea
@@ -1846,6 +2001,14 @@ ${buildSparkCommentHistory(post)}${recentLine}
                                 <div className="flex items-center gap-2">
                                     <TokenImg value={c.avatar} className="w-6 h-6 rounded-full object-cover" />
                                     <span className="text-sm font-bold text-slate-700">{c.name}</span>
+                                    {/* Spark 私聊开关（Ann 2026-09-15：per-character 硬闸；localStorage 不驱动 React，点击后 setIdentityGroupId 强刷重渲染） */}
+                                    <button
+                                        onClick={() => { setPrivateChatOff(c.id, !loadPrivateChatOff()[c.id]); forceIdentityTick(t => t + 1); addToast(loadPrivateChatOff()[c.id] ? `${c.name} 的 Spark 私聊已关` : `${c.name} 的 Spark 私聊已开`, 'info'); }}
+                                        className="text-[10px] px-2 py-1 rounded-full border active:scale-95 transition-transform"
+                                        style={loadPrivateChatOff()[c.id]
+                                            ? { background: '#f1f5f9', color: '#94a3b8', borderColor: '#e2e8f0' }
+                                            : { background: '#ff2442', color: '#fff', borderColor: '#ff2442' }}
+                                    >{loadPrivateChatOff()[c.id] ? '私聊关' : '私聊开'}</button>
                                     <button onClick={() => addSubAccount(c.id)} className="ml-auto text-[10px] bg-[#ff2442] text-white px-2 py-1 rounded-full shadow-sm active:scale-95 transition-transform">+ 添加马甲</button>
                                 </div>
                                 
@@ -1958,7 +2121,7 @@ ${buildSparkCommentHistory(post)}${recentLine}
                     {/* Create Header —— 自理安全区：外层扛 safe-top + 背景，内层保持 h-14 内容栏（同主栏，避开 border-box 吃 padding） */}
                     <div className="sticky top-0 z-20 bg-white border-b border-slate-50" style={{ paddingTop: 'var(--safe-top)' }}>
                         <div className="h-14 flex items-center justify-between px-4">
-                            <button onClick={() => { setIsCreateOpen(false); setEditingPostId(null); }} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
+                            <button onClick={() => { setNewPostMentions([]); setEditingPostId(null); setIsCreateOpen(false); }} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
                             <span className="text-sm font-bold text-slate-800">{editingPostId ? '编辑笔记' : '发布笔记'}</span>
                             <button
                                 onClick={handleCreatePost}
@@ -2017,28 +2180,34 @@ ${buildSparkCommentHistory(post)}${recentLine}
                             <input type="file" ref={newPostImageInputRef} className="hidden" accept="image/*" multiple onChange={e => { handleNewPostImages(e.target.files); e.target.value = ''; }} />
                         </div>
                         
-                        {/* Sticker Selector - Flowing after text */}
+                        {/* Sticker Selector - Flowing after text（六改-1：选了真实图片时互斥隐藏，emoji 是背景、图与背景不叠加） */}
                         <div className="mt-4 pt-4 border-t border-slate-50">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">添加心情贴纸 (Sticker)</p>
-                            <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-                                {STICKER_OPTIONS.map(sticker => (
-                                    <button
-                                        key={sticker.code}
-                                        onClick={() => setNewPostEmoji(sticker.code)}
-                                        className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all shrink-0 ${newPostEmoji === sticker.code ? 'border-[#ff2442] bg-red-50' : 'border-slate-100'}`}
-                                    >
-                                        <img src={twemojiUrl(sticker.code)} alt={sticker.label} className="w-7 h-7" />
-                                    </button>
-                                ))}
-                            </div>
+                            {newPostImages.length > 0 ? (
+                                <p className="text-[10px] text-slate-400">已选图片，emoji 背景停用（清空图片后可重新选择）</p>
+                            ) : (
+                                <>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">添加心情贴纸 (Sticker)</p>
+                                    <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+                                        {STICKER_OPTIONS.map(sticker => (
+                                            <button
+                                                key={sticker.code}
+                                                onClick={() => setNewPostEmoji(sticker.code)}
+                                                className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all shrink-0 ${newPostEmoji === sticker.code ? 'border-[#ff2442] bg-red-50' : 'border-slate-100'}`}
+                                            >
+                                                <img src={twemojiUrl(sticker.code)} alt={sticker.label} className="w-7 h-7" />
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
                         </div>
 
-                        {/* 五修-10：@ 角色——点选后自动在正文尾部插入 @网名，发布时同步给被艾特的角色 */}
+                        {/* @ 全角色可点可真通知；显示用社交 id 名——Ann 2026-09-15 定稿 */}
                         <div className="mt-4 pt-4 border-t border-slate-50">
                             <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">@ 角色（Ta 会收到这条笔记的通知）</p>
                             <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
                                 {characters.map(c => {
-                                    const mainHandle = (characterHandles[c.id] || [])[0]?.handle || c.socialProfile?.handle || c.name;
+                                    const mainHandle = (characterHandles[c.id] || [])[0]?.handle || c.name;
                                     const mentioned = newPostMentions.includes(c.id);
                                     return (
                                         <button
@@ -2046,6 +2215,9 @@ ${buildSparkCommentHistory(post)}${recentLine}
                                             onClick={() => {
                                                 if (mentioned) {
                                                     setNewPostMentions(prev => prev.filter(id => id !== c.id));
+                                                    // 返工⑪：点掉选中的同时删掉正文尾部对应的 @尾巴（匹配不到就安全降级不删）
+                                                    const tail = new RegExp(`@${mainHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
+                                                    setNewPostContent(prev => prev.replace(tail, ''));
                                                 } else {
                                                     setNewPostMentions(prev => [...prev, c.id]);
                                                     setNewPostContent(prev => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}@${mainHandle} `);
@@ -2273,7 +2445,7 @@ ${buildSparkCommentHistory(post)}${recentLine}
                     <button onClick={() => { setActiveTab('home'); trackEvent('切换 Spark 主标签', { tab: 'home' }); }} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'home' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <House size={24} weight={activeTab === 'home' ? 'fill' : 'regular'} />
                     </button>
-                    <button onClick={() => { setIsCreateOpen(true); trackEvent('打开发布笔记面板'); }} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
+                    <button onClick={() => { setNewPostMentions([]); setIsCreateOpen(true); trackEvent('打开发布笔记面板'); }} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
                     <button onClick={() => { setActiveTab('me'); trackEvent('切换 Spark 主标签', { tab: 'me' }); }} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'me' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <User size={24} />
                     </button>
