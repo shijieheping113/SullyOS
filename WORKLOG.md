@@ -391,7 +391,7 @@ Ann 出题：照 `小红书评论输入区-设计参考.md`（源 `xhs-comment-i
 3. 拉远端：挂 7890 代理 fetch；fetch 后同样查 packed-refs
 4. 本机测试：`node node_modules/vitest/vitest.mjs run sparkCircles`（30 秒冒烟）
 
-### 二轮反馈七连修（同日 11:40，Ann 手机验收后，未 commit）
+### 二轮反馈七连修（同日 11:40，Ann 手机验收后七条连修；已随 `1e44a99b` 入库并推送）
 
 1. **build badge 关闭**（照原项目 README「右下角的 build badge 怎么关」节）：badge 是 Vite `define` 编译时常量 `__BUILD_BADGE_VISIBLE__`，dev/构建启动命令前挂 `VITE_HIDE_BUILD_BADGE=1` 即隐藏——**dev server 已带此变量重启**，以后家里/公司起 dev 或 build 想藏 badge 都照此挂
 2. **评论字体小一号**：昵称 14.5→13px、正文 16→14px（比帖子正文 15px 小一号）、meta 按钮 12→11px、心形 17→15px、展开按钮 13.5→12px
@@ -436,7 +436,7 @@ Ann 出题：照 `小红书评论输入区-设计参考.md`（源 `xhs-comment-i
 - **commit `1e44a99b`**（Ann 指令：commit 当时版本）——commit 后分支引用又被吞（老毛病），按套路直写 ref 文件 + `pack-refs` 救回，HEAD 已验证。
 - **病灶**：私聊卡片跳帖走 `spark_jump_post_id` 轮询入口（L404 effect）直接 `setSelectedPost(target)`，绕过 `handleOpenPost` 的水位初始化 → 内存水位空 → 全部回复算没看过 → 冒红点。
 - **修法**：水位初始化抽成 `initReplyWatermarks(post)`，`handleOpenPost` 与私聊跳转入口两处都调用（以后新增打开入口必须走它）。
-- 验收：tsc 0 新错｜Spark 94/94。**改动未 commit，等 Ann 手机复检 + 点头。**
+- 验收：tsc 0 新错｜Spark 94/94。已随 `200cdbe5` 入库并推送。
 
 ### v9 三轮修复（同日 15:23，Ann 报 4 条 → 表格计划 → 15:23「修吧」）
 
@@ -449,4 +449,13 @@ Ann 出题：照 `小红书评论输入区-设计参考.md`（源 `xhs-comment-i
 
 验收：tsc 47（全为无关历史遗留，本次文件 0 新错）｜Spark 94/94。教训入档：**「大概率是缓存」这种甩锅式诊断不可取，Ann 硬刷新后其他改动都在，就该回头逐行读代码**。
 
-### v9 两轮改动未 commit、未 push —— 等 Ann 手机验收 + 点头（铁律）
+### 收尾：交接文档 + 全部推送（同日 16:42–16:50，Ann 指令「整理交接、日志看齐、推送」）
+
+- **`HANDOFF-spark-v6.md`** 写好（公司 → 家里交接：七改-UI 全貌、v9 四轮修复要点、环境档案、六改待办指引），WORKLOG 顶部挂了接引。
+- **两个 commit 全部推上远端**：
+  - `1e44a99b` = 七改-UI + v9 三轮修复 + 检讨书 + xhs 参考文件
+  - `200cdbe5` = v9 四修（私聊跳帖水位）+ 本交接文档
+- **引用又被吞两次的实录**：① `1e44a99b` commit 后松散 ref 消失（git log 回退显示旧提交）；② `200cdbe5` 更邪门——commit 后 pack-refs 过、log 正常，但**几秒后 push 时 packed-refs 里的新行也没了**，导致第一次 push 只推到 `1e44a99b`。修复：直写 ref 文件 → pack-refs → 用 `node -e` 逐字节验证 packed-refs 内容 → 再 push。
+- TLS 握手失败一次（代理抖动），原命令重试即成功；fetch/push 都走一次性参数 `git -c http.proxy=http://127.0.0.1:7890`。
+- **远端完整性已用 GitHub API 复核**：`feature/company-spark-circle-mode` 顶端 = `200cdbe5`，两个 commit 齐全，作者/时间无误。
+- 16:50 复核补记：WORKLOG 各段「未 commit / 等点头」的过时状态已全部改为最终状态（本段），随下一次提交入库。
