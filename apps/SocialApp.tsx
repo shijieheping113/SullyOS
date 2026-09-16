@@ -175,6 +175,8 @@ const SocialApp: React.FC = () => {
     const [isReplyingToUser, setIsReplyingToUser] = useState(false);
     // 楼中楼：当前正在回复的目标评论（null = 直接评论帖子）
     const [replyTarget, setReplyTarget] = useState<SocialComment | null>(null);
+    // 八改（Ann 复检反馈3）：评论原位编辑态（null = 非编辑；id+draft 供原位编辑框读写）
+    const [editingComment, setEditingComment] = useState<{ id: string; draft: string } | null>(null);
     // 六改-2b：评论里 @ 的角色（用户亲手点选才记；有社交档案的发送后会收到真通知，无档案的置灰不可选）
     const [commentMentions, setCommentMentions] = useState<string[]>([]);
     // 六改-2b：评论弹层里的 @ 角色选择条开关
@@ -541,6 +543,7 @@ const SocialApp: React.FC = () => {
                 const seen = ensureSeenCommentIds(entry, all);
                 const newComments = all.filter(c => !seen.includes(c.id));
                 if (newComments.length) {
+                    console.debug('[Spark][追踪通知]', postId, { seenCount: seen.length, newIds: newComments.map(c => c.id) });
                     Promise.all(entry.charIds.map(charId =>
                         DB.saveMessage({ charId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: result.post, syncKind: 'update', newComments } }),
                     )).catch(console.error);
@@ -672,7 +675,8 @@ const SocialApp: React.FC = () => {
                 const isCharacterPost = !!matchedChar;
                 if (!isCharacterPost) {
                     const seeds = ['micah', 'avataaars', 'bottts', 'notionists'];
-                    avatar = `https://api.dicebear.com/7.x/${seeds[Math.floor(Math.random() * seeds.length)]}/svg?seed=${item.authorName + Math.random()}`;
+                    const styleIdx = [...item.authorName].reduce((s, ch) => s + ch.codePointAt(0)!, 0) % 4;
+                    avatar = `https://api.dicebear.com/7.x/${seeds[styleIdx]}/svg?seed=${encodeURIComponent(item.authorName)}`;
                 }
                 // Normalize emoji content. AI usually returns real emoji chars; fall back to a ✨ char (not codepoint) for safety.
                 const rawEmojis = Array.isArray(item.emojis) && item.emojis.length > 0 ? item.emojis : ['✨'];
@@ -782,6 +786,7 @@ ${post.content || '(楼主没写正文)'}
 - 路人的信息量必须有限，能知道的只有：这条帖子的标题、正文、配图、tag、评论区
   已公开的内容、帖子上的昵称，以及他自己的人生经验。
 - 路人和用户、和任何角色都是初次刷到的关系，别硬认。
+- 路人的评论不一定跟用户与角色相关，由他的视角自然决定：大多数评论就是对着帖子本身说话——就事论事、玩梗、吐槽、科普，跟任何角色和用户都没有关系，不需要挖掘或呼应账号背后的人物与关系
 
 ### 禁令
 - 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
@@ -1071,10 +1076,17 @@ ${post.content || '(楼主没写正文)'}
             }
         }
         const charIds = [...new Set([...trackedIds, ...speakerIds])];
+        // 七改-B（Ann 拍板）：内容全空（正文空 + 评论删光）→ 对应聊天里的整张同步卡真删，
+        // 不再更新成空快照；否则走原有 updateMessageMetadata 逻辑。
+        const emptied = !(post.content || '').trim() && (post.comments || []).length === 0;
         for (const charId of charIds) {
             try {
                 const msgs = await DB.getMessagesByCharId(charId, true);
                 const cards = msgs.filter(m => m.type === 'social_card' && (m.metadata as any)?.post?.id === postId);
+                if (emptied) {
+                    for (const card of cards) await DB.deleteMessage(card.id);
+                    continue;
+                }
                 for (const card of cards) {
                     await DB.updateMessageMetadata(card.id, (prev: any) => ({
                         ...prev,
@@ -1125,18 +1137,23 @@ ${post.content || '(楼主没写正文)'}
     };
 
     // 五修-2：编辑任意帖子下的任意评论（修正错误回复），改完同步快照
-    const handleEditComment = async (post: SocialPost, comment: SocialComment) => {
-        const next = window.prompt('修改这条回复：', comment.content);
-        if (next === null) return;
-        const trimmed = next.trim();
-        if (!trimmed || trimmed === comment.content) return;
+    // 八改（Ann 复检反馈3）：window.prompt → 原位编辑框（手机原生弹框输入不便）
+    const saveEditingComment = async (post: SocialPost) => {
+        if (!editingComment) return;
+        const original = (post.comments || []).find(c => c.id === editingComment.id);
+        const trimmed = editingComment.draft.trim();
+        if (!trimmed || !original || trimmed === original.content) {
+            setEditingComment(null);
+            return;
+        }
         updatePostInFeed(post.id, current => ({
             ...current,
-            comments: (current.comments || []).map(c => c.id === comment.id ? { ...c, content: trimmed } : c),
+            comments: (current.comments || []).map(c => c.id === editingComment.id ? { ...c, content: trimmed } : c),
         }));
         addToast('回复已修改', 'success');
         trackEvent('编辑 Spark 评论');
         await syncPostSnapshotToChats(post.id);
+        setEditingComment(null);
     };
     const handleLike = (e: any, post: SocialPost) => {
         e.stopPropagation();
@@ -1346,6 +1363,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
 - 信息量有限：能知道的只有这条帖子的标题、正文、配图、tag、评论区已公开的内容、
   帖子上的昵称，和 Ta 自己的人生经验。
 - 和用户、和任何角色都是初次刷到的关系，别硬认。
+- 路人的评论不一定跟用户与角色相关，由他的视角自然决定：大多数评论就是对着帖子本身说话——就事论事、玩梗、吐槽、科普，跟任何角色和用户都没有关系，不需要挖掘或呼应账号背后的人物与关系
 
 ### 用户点名的角色
 用户评论里直接 @ 到的角色、或用户在楼中楼里回复的那个角色：这条评论 Ta 看到了。Ta 怎么回应由人设决定，但不会像没看见一样。
@@ -1358,7 +1376,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
   路人一律不知道，不能出现、不能暗示、不能换说法转述；任何角色不得引用、暗示其他角色的
   私聊和私密信息。别的评论里提到的"我对象/我家那位"，默认是 Ta 自己生活里的人，和帖子里的
   其他任何人没有对应关系。
-- 禁止复读：不重复已有评论说过的话，不机械复读同一个梗；接话可以，换皮复读不行。
+- 禁止复读：如果是贴子里已经有的路人继续发评论，要带着新东西开口——接着自己上一次的话往下走（接话、补充、改口、被说服、抬杠升级、回复别人都可以），不许原地重复或换皮重复自己已经说过的观点；也不机械复读同一个梗。
 - 禁止无意义对话：每条评论都言之有物——对帖子或讨论有实际回应；「哈哈哈哈」「太xx了吧」
   「+1」「确实」这类没有信息量的评论一条都不要，不拿纯表情、纯语气词、纯打招呼凑数。
 - 评论正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），评论就是纯说话。
@@ -1400,7 +1418,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                 }
                 let avatar = matchedChar
                     ? matchedChar.avatar
-                    : `https://api.dicebear.com/7.x/${['micah', 'avataaars', 'bottts', 'notionists'][Math.floor(Math.random() * 4)]}/svg?seed=${encodeURIComponent(author.name + Math.random())}`;
+                    : `https://api.dicebear.com/7.x/${['micah', 'avataaars', 'bottts', 'notionists'][[...author.name].reduce((s, ch) => s + ch.codePointAt(0)!, 0) % 4]}/svg?seed=${encodeURIComponent(author.name)}`;
                 // replyTo：按作者名在现有评论里找目标（取该作者最近一条）——找得到就挂楼中楼，找不到顶层
                 const target = typeof c.replyTo === 'string' && c.replyTo.trim()
                     ? [...existing, ...newComments].reverse().find(x => x.authorName === c.replyTo.trim())
@@ -1419,6 +1437,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
             });
             // 五修-7 + 六改-6：私聊消息落主聊天（角色的普通 assistant 消息，逐条存、贴连发感——
             // 首条带前空行、末条带后空行，中间条不垫空行，读起来像真人一条接一条刷屏）
+            const publicCharIds = new Set(newComments.map(c => c.authorCharId).filter(Boolean) as string[]);
             for (const pm of privateMessages) {
                 try {
                     const charName = characters.find(c => c.id === pm.charId)?.name || '角色';
@@ -1426,18 +1445,22 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                         const wrapped = `${i === 0 ? '\n' : ''}${pm.lines[i]}${i === pm.lines.length - 1 ? '\n' : ''}`;
                         await DB.saveMessage({ charId: pm.charId, role: 'assistant', type: 'text', content: wrapped });
                     }
-                    addToast(pm.lines.length > 1 ? `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）` : `${charName} 私聊了你一句（没发在评论区）`, 'info');
+                    const alsoPublic = publicCharIds.has(pm.charId);
+                    addToast(pm.lines.length > 1
+                        ? (alsoPublic ? `${charName} 私聊连发了 ${pm.lines.length} 条，也在评论区发了言` : `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）`)
+                        : (alsoPublic ? `${charName} 私聊了你一句，也在评论区发了言` : `${charName} 私聊了你一句（没发在评论区）`), 'info');
                     trackEvent('Spark 搅动产生私聊消息');
                 } catch {}
             }
-            if (!newComments.length && !privateMessages.length) {
+            const merged = updatePostInFeed(post.id, current => ({
+                ...current,
+                comments: mergeSocialComments(current.comments || [], newComments),
+            }));
+            const added = (merged?.comments?.length ?? existing.length) - existing.length;
+            if (added > 0) {
+                addToast(`评论区有 ${added} 条新动静`, 'info');
+            } else if (!privateMessages.length) {
                 addToast('这段时间评论区没什么动静', 'info');
-            } else if (newComments.length) {
-                updatePostInFeed(post.id, current => ({
-                    ...current,
-                    comments: mergeSocialComments(current.comments || [], newComments),
-                }));
-                addToast(`评论区有 ${newComments.length} 条新动静`, 'info');
             }
             // 搅动过后清掉"用户刚评论"的记忆——再搅动就是普通的时间流逝
             if (lastUserCommentRef.current?.postId === post.id) lastUserCommentRef.current = null;
@@ -1485,6 +1508,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
         setLoadingComments(false);
         setSelectedPost(null);
         setReplyTarget(null);
+        setEditingComment(null); // 八改：切帖/关帖防悬空编辑态
         setCommentInput('');
         // 七改-UI：弹层与楼中楼折叠状态一并复位（下次打开是干净的默认态）
         setComposerOpen(false);
@@ -1503,6 +1527,8 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
         // 六改-2b：收起弹层复位 @ 选择（没发出去的 mention 不保留）
         setComposerMentionOpen(false);
         setCommentMentions([]);
+        // 八改：弹层收起复位原位编辑态（防悬空编辑）
+        setEditingComment(null);
     };
     // 桌面端 Esc 收起弹层
     useEffect(() => {
@@ -1682,12 +1708,34 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                                 <span className={`text-[13px] leading-[1.3] ${c.isCharacter ? 'text-[#1A1A1A] font-medium' : 'text-[#7A7A7A]'}`}>{c.authorName}</span>
                                                 {replyToName && <span className="text-[11px] leading-[1.3] text-[#9A9A9A]">回复 <span className="font-medium">@{replyToName}</span></span>}
                                             </div>
-                                            <p className="mt-[4px] text-[14px] leading-[1.5] text-[#1A1A1A] break-words">{displayContent(c.content)}</p>
+                                            {editingComment?.id === c.id ? (
+                                                // 八改（Ann 复检反馈3）：原位编辑态——textarea 贴评论弹层输入框基调
+                                                <div className="mt-[4px]">
+                                                    <textarea
+                                                        value={editingComment.draft}
+                                                        onChange={(e) => setEditingComment(prev => prev && prev.id === c.id ? { ...prev, draft: e.target.value } : prev)}
+                                                        className="border border-[#EDEDED] rounded-[12px] text-[15px] p-2 caret-[#FF2442] bg-white w-full resize-none outline-none"
+                                                        rows={Math.min(6, Math.max(2, editingComment.draft.split('\n').length))}
+                                                    />
+                                                    <div className="mt-[6px] flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => saveEditingComment(selectedPost)}
+                                                            className="px-3 py-[3px] rounded-full bg-[#FF2442] text-white text-[11px] active:opacity-70"
+                                                        >保存</button>
+                                                        <button
+                                                            onClick={() => setEditingComment(null)}
+                                                            className="px-3 py-[3px] rounded-full border border-[#E5E5E5] text-[#7A7A7A] text-[11px] active:opacity-60"
+                                                        >取消</button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <p className="mt-[4px] text-[14px] leading-[1.5] text-[#1A1A1A] break-words">{displayContent(c.content)}</p>
+                                            )}
                                             {/* meta 行：无竖线，只用间隙分隔；右侧心形+赞数（15px，可点赞） */}
                                             {/* 五修-2：任何评论都可管理（删/改）——手机端无 hover，按钮常显但低调 */}
                                             <div className="mt-[6px] flex items-center gap-4">
                                                 <button onClick={() => { setReplyTarget(c); openComposer(); }} className="text-[11px] text-[#9A9A9A] active:opacity-60">回复</button>
-                                                <button onClick={() => handleEditComment(selectedPost, c)} className="text-[11px] text-[#C4C4C4] active:opacity-60">编辑</button>
+                                                <button onClick={() => setEditingComment({ id: c.id, draft: c.content })} className="text-[11px] text-[#C4C4C4] active:opacity-60">编辑</button>
                                                 <button onClick={() => handleDeleteComment(selectedPost, c)} className="text-[11px] text-[#C4C4C4] active:opacity-60">删除</button>
                                                 <div className="ml-auto flex items-center gap-[5px] text-[#C4C4C4]">
                                                     <Icons.Heart
@@ -1800,7 +1848,8 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                     {/* Composer Sheet —— 七改-UI：输入弹层（xhs 复刻：0.34s 升起 / 18px 顶圆角 / 红光标多行框 / 发送胶囊禁用#FFC9D2 可用#FF2442） */}
                     <div
                         className={`absolute left-0 right-0 bottom-0 z-50 bg-white rounded-t-[18px] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] transition-transform duration-[340ms] ${composerOpen ? 'translate-y-0' : 'translate-y-[102%]'}`}
-                        style={{ transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)', willChange: 'transform' }}
+                        style={{ transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)' }}
+                        onTransitionEnd={(e) => { if (e.propertyName === 'transform') (e.currentTarget as HTMLElement).style.willChange = 'auto'; }}
                     >
                         <div className="flex flex-col max-h-[92%]">
                             {/* 顶部：回复目标胶囊（可取消）+ @ 角色开关 + 收起箭头 */}

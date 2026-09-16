@@ -1,5 +1,17 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-16 中午 · v8 复检 9 任务施工完成（未提交，等 Ann 点头）
+
+按 [HANDOFF-spark-v8.md](./HANDOFF-spark-v8.md) 顺序做完任务 1-9（任务 10 长按真删、任务 11 谷歌 400 均零改动）。改动文件（全部计划内，共 2 个）：
+- `apps/SocialApp.tsx`：任务 1 两个评论 prompt（首次 + 搅动）路人节各追加 Ann 定稿的「就帖论帖」声明行（逐字，共 2 处）；任务 2 搅动「禁止复读」条整行替换为定稿版（「贴子」照抄）；任务 3 Composer 弹层去 style 内 willChange + 加 onTransitionEnd 动画结束拍平合成层（vivo 输入空白修法，待手机实测）；任务 4 私聊 toast 四态（publicCharIds 名单判「也在评论区发了言」/「没发在评论区」）；任务 5 路人头像固定（刷新流 L675 + 搅动 L1406 两处：seed 去随机只用名字 + encodeURIComponent + 样式按名字字码和取模 %4）；任务 6 新动静 toast 改按合并差值 added + updatePostInFeed 追踪通知路径加 `console.debug('[Spark][追踪通知]', ...)` 观察日志；任务 7 syncPostSnapshotToChats 判空 emptied=true 时 `DB.deleteMessage` 整张真删同步卡（Ann 拍板 B）；任务 8 评论编辑去 window.prompt → 原位编辑框（editingComment state + renderBody 内 textarea + 保存/取消胶囊 + closeComposer/handleClosePost 复位）。
+- `apps/social/SparkPostImage.tsx`：任务 9 codepointToEmoji 直通分支——含 ASCII 字母/数字的垃圾串（如 "OPCOR"）→ 兜底 ✨，真 emoji 照旧直通。
+
+验收三件套：tsc 47（= 基线，改动文件 0 新增）；vitest Spark/Social 4 文件 23 用例全过（全量 9 个失败均为 companionHome/memoryPalace 等历史遗留，非 Spark）；build（build:workers + vite build）通过，worker.bundle.js md5 与施工前一致（e26b3516…）未变无需还原。
+
+施工事故记录（自省）：任务 5 两处 Edit 并行写同一文件发生覆盖回写（L1406 改动被吞），串行重改后修复——**同一文件多个编辑必须串行**，已自查全部改动点无其他遗漏。
+
+**状态：停在 commit 前，等 Ann 亲口点头。复检清单见 HANDOFF-spark-v8.md 文末 10 条。**
+
 ## 2026-09-16 凌晨 · Spark 全部生成类 prompt 定稿落码 + 收尾提交（Ann 逐字定稿）
 
 Ann 连夜逐字改定的 5 处提示词全部照原文落码（本轮只动文本，零逻辑改动）：

@@ -10,7 +10,10 @@ import { DB } from '../../utils/db';
 export const codepointToEmoji = (code: string): string => {
     if (!code) return '✨';
     // If it already contains non-hex (likely already a real emoji char), return as-is.
-    if (!/^[0-9a-fA-F-]+$/.test(code)) return code;
+    if (!/^[0-9a-fA-F-]+$/.test(code)) {
+        // 真 emoji 字符直通；混着 ASCII 字母/数字的垃圾串（如 "OPCOR"）→ 兜底 ✨
+        return /[0-9A-Za-z]/.test(code) ? '✨' : code;
+    }
     try {
         const points = code.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
         if (points.length === 0) return '✨';
