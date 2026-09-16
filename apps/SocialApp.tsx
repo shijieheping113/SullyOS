@@ -19,6 +19,8 @@ import { House, User, Package, Warning, Pencil, Trash } from '@phosphor-icons/re
 import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from '../utils/socialFeedMerge';
 import { trackEvent } from '../utils/analytics';
 import TokenImg from '../components/os/TokenImg';
+// v8c-1（Ann 2026-09-16）：Spark 角色头像统一走 resolver —— 自定义 > 主聊天头像 > 生成时快照 > 名字 hash
+import { resolveSparkCharAvatar, setSparkCharAvatar, syncSparkLiveAvatars } from '../utils/sparkAvatar';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -164,6 +166,9 @@ const SocialApp: React.FC = () => {
     const [newPostTags, setNewPostTags] = useState('');
     // 五修-10：发帖 @ 的角色（charId 列表；发布时自动同步给这些角色并告知被艾特）
     const [newPostMentions, setNewPostMentions] = useState<string[]>([]);
+    // v8c-2（Ann 2026-09-16）：发帖「圈子」（只附加该圈世界观原文，不限角色范围）+「不给谁看」（勾掉的角色不进生成池）
+    const [newPostWorldCircleId, setNewPostWorldCircleId] = useState<string>('');
+    const [newPostExcludedCharIds, setNewPostExcludedCharIds] = useState<string[]>([]);
     // 五修-5：发帖图片（dataURL；发布时压缩后存 assets 表，帖子 images 存 sparkimg: 引用）
     const [newPostImages, setNewPostImages] = useState<string[]>([]);
     const newPostImageInputRef = useRef<HTMLInputElement>(null);
@@ -177,6 +182,10 @@ const SocialApp: React.FC = () => {
     const [replyTarget, setReplyTarget] = useState<SocialComment | null>(null);
     // 八改（Ann 复检反馈3）：评论原位编辑态（null = 非编辑；id+draft 供原位编辑框读写）
     const [editingComment, setEditingComment] = useState<{ id: string; draft: string } | null>(null);
+    // 九改-3（Ann 复检反馈3）：删除评论确认弹层（小红书风格）。null = 关。
+    // deleteNotify = 弹层里选中的方式：false 悄悄删除（原「取消」分支）/ true 删除并让角色知道（原「确定」分支）。
+    const [deleteConfirm, setDeleteConfirm] = useState<{ post: SocialPost; comment: SocialComment } | null>(null);
+    const [deleteNotify, setDeleteNotify] = useState(false);
     // 六改-2b：评论里 @ 的角色（用户亲手点选才记；有社交档案的发送后会收到真通知，无档案的置灰不可选）
     const [commentMentions, setCommentMentions] = useState<string[]>([]);
     // 六改-2b：评论弹层里的 @ 角色选择条开关
@@ -195,6 +204,14 @@ const SocialApp: React.FC = () => {
     const [characterHandles, setCharacterHandles] = useState<Record<string, SubAccount[]>>({});
     const [identityGroupId, setIdentityGroupId] = useState(GROUP_FILTER_ALL); // 身份管理弹窗的角色分组筛选
     const [, forceIdentityTick] = useState(0); // 私聊开关等 localStorage 直改后强制重渲染（同值 setState 会被 React 跳过）
+    // v8c-1：每次渲染把当前主聊天头像喂给共用解析器（纯写模块缓存、幂等），
+    // 这样聊天里的 Spark 卡片也跟主聊天头像走，不再只认生成时的快照。
+    syncSparkLiveAvatars(characters);
+
+    // v8c-1：Spark 角色头像设置面板（state）；linkDraft 非 null = 「填图片链接」已展开
+    const [sparkAvatarEditChar, setSparkAvatarEditChar] = useState<{ id: string; name: string } | null>(null);
+    const [sparkAvatarLinkDraft, setSparkAvatarLinkDraft] = useState<string | null>(null);
+    const sparkCharAvatarInputRef = useRef<HTMLInputElement>(null);
 
     // Circles (平行世界圈子：用户自建，零预设)
     const [circles, setCircles] = useState<SparkCircle[]>(() => loadSparkCircles());
@@ -437,6 +454,9 @@ const SocialApp: React.FC = () => {
     };
 
     const deleteCircle = (circleId: string) => {
+        // 九改-b（Ann 下午复检 3）：手滑删世界 → 删前确认（与删评论同款 confirm 风格）
+        const name = circles.find(c => c.id === circleId)?.name || '';
+        if (!window.confirm(`删除圈子「${name}」？帖子会保留在「全部」`)) return;
         setCircles(prev => prev.filter(c => c.id !== circleId));
         if (activeCircleId === circleId) switchCircle(SPARK_CIRCLE_ALL);
         trackEvent('删除 Spark 圈子');
@@ -507,6 +527,48 @@ const SocialApp: React.FC = () => {
                 addToast(err.message, 'error');
             }
         }
+    };
+
+    // v8c-1（Ann 2026-09-16）：Spark 角色头像自定义——只在 Spark 里生效，不动主聊天头像；
+    // 「恢复默认」= 清掉自定义，回落主聊天头像。localStorage 直改不驱动 React，改完 forceIdentityTick 强刷。
+    const handleSparkCharAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        const target = sparkAvatarEditChar;
+        e.target.value = '';
+        if (!file || !target) return;
+        try {
+            const blob = await processImageToBlob(file);
+            const ref = await putImageBlob(blob);
+            setSparkCharAvatar(target.id, ref);
+            forceIdentityTick(t => t + 1);
+            addToast(`${target.name} 的 Spark 头像已更新`, 'success');
+            setSparkAvatarEditChar(null);
+            setSparkAvatarLinkDraft(null);
+        } catch (err: any) {
+            addToast(err?.message || '图片处理失败', 'error');
+        }
+    };
+
+    const saveSparkCharAvatarLink = () => {
+        const target = sparkAvatarEditChar;
+        if (!target) return;
+        const url = (sparkAvatarLinkDraft || '').trim();
+        if (!url) { addToast('链接不能为空', 'error'); return; }
+        setSparkCharAvatar(target.id, url);
+        forceIdentityTick(t => t + 1);
+        addToast(`${target.name} 的 Spark 头像已更新`, 'success');
+        setSparkAvatarEditChar(null);
+        setSparkAvatarLinkDraft(null);
+    };
+
+    const resetSparkCharAvatar = () => {
+        const target = sparkAvatarEditChar;
+        if (!target) return;
+        setSparkCharAvatar(target.id, null);
+        forceIdentityTick(t => t + 1);
+        addToast(`${target.name} 的 Spark 头像已恢复默认`, 'info');
+        setSparkAvatarEditChar(null);
+        setSparkAvatarLinkDraft(null);
     };
 
     const saveUserProfileChanges = async () => {
@@ -730,9 +792,15 @@ const SocialApp: React.FC = () => {
         post = livePost;
         setLoadingComments(true);
         try {
-            // 圈子帖：候选池与世界观按帖子的 circleId 解析；旧帖（无圈子）保持原行为
-            const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
-            const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
+            // v8c-2（Ann 2026-09-16）：世界观按 post.worldCircleId 解析（与成员范围解耦）；
+            // 用户帖的角色范围 = 全角色 −「不给谁看」；AI 帖照旧按 feed 圈子限定成员；旧帖保持原行为
+            const postCircle = post.worldCircleId
+                ? circles.find(c => c.id === post.worldCircleId)
+                : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined);
+            const excludedIds = new Set(post.excludedCharIds || []);
+            const candidatePool = post.authorType === 'user'
+                ? characters.filter(c => !excludedIds.has(c.id))
+                : (post.circleId ? characters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : characters);
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
             const context = await buildGenerationContext(selectedChars, postCircle);
             if (controller.signal.aborted) return;
@@ -981,6 +1049,9 @@ ${post.content || '(楼主没写正文)'}
         const first = (post.images || [])[0] || '';
         setNewPostEmoji(/^\d+$/.test(first) ? first : '2728');
         setNewPostMentions([]); // 编辑不改 @ 状态（原帖 mentions 保留不动）
+        // v8c-2：回填「圈子」「不给谁看」，可改，改完对下一次生成生效
+        setNewPostWorldCircleId(post.worldCircleId || '');
+        setNewPostExcludedCharIds([...(post.excludedCharIds || [])]);
         setIsCreateOpen(true);
     };
 
@@ -1000,9 +1071,15 @@ ${post.content || '(楼主没写正文)'}
                 title: newPostTitle || '无标题',
                 content: newPostContent,
                 images: imageRefs || current.images,
+                // 九改-b（识图缓存）：本次换了图 → 作废旧描述，下次生成评论重新识一次
+                imageCaption: imageRefs ? undefined : current.imageCaption,
                 tags: parsePostTags(newPostTags),
+                // v8c-2：圈子/不给谁看可改，改完对下一次生成生效
+                worldCircleId: newPostWorldCircleId || undefined,
+                excludedCharIds: newPostExcludedCharIds.length ? [...newPostExcludedCharIds] : undefined,
             }));
             setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
+            setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]);
             setEditingPostId(null);
             setIsCreateOpen(false);
             addToast('笔记已更新', 'success');
@@ -1016,7 +1093,8 @@ ${post.content || '(楼主没写正文)'}
             content: newPostContent,
             // 五修-5：有图存图（sparkimg: 引用），无图保持 emoji 贴纸（贴纸码点转真 emoji 字符）
             images: imageRefs || [codepointToEmoji(newPostEmoji)],
-            likes: 0,
+            // 九改-b（Ann 下午复检 9）：用户发帖点赞走随机——与刷新推荐流生成帖同一公式同一范围
+            likes: Math.floor(Math.random() * 100),
             isCollected: false,
             isLiked: false,
             comments: [],
@@ -1029,9 +1107,13 @@ ${post.content || '(楼主没写正文)'}
             authorType: 'user',
             // 在哪个圈子发的就归哪个圈子（「全部」视图发的 = 无圈子帖，处处可见）
             circleId: activeCircleId !== SPARK_CIRCLE_ALL ? activeCircleId : undefined,
+            // v8c-2：世界观来源圈子（选了才附加，和上面的 feed 分组解耦）+「不给谁看」名单
+            worldCircleId: newPostWorldCircleId || undefined,
+            excludedCharIds: newPostExcludedCharIds.length ? [...newPostExcludedCharIds] : undefined,
         };
         prependPostsToFeed([post]);
         setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
+        setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]);
         setIsCreateOpen(false); // Close Modal
         setActiveTab('home'); 
         addToast('发布成功', 'success');
@@ -1076,24 +1158,50 @@ ${post.content || '(楼主没写正文)'}
             }
         }
         const charIds = [...new Set([...trackedIds, ...speakerIds])];
-        // 七改-B（Ann 拍板）：内容全空（正文空 + 评论删光）→ 对应聊天里的整张同步卡真删，
-        // 不再更新成空快照；否则走原有 updateMessageMetadata 逻辑。
-        const emptied = !(post.content || '').trim() && (post.comments || []).length === 0;
+        // 九改-b（Ann 纠正口径）：删卡按「每张卡自己的快照」算，不看帖子全局空不空——
+        //   · 动态更新卡（syncKind: 'update'）：它通知的那批 newComments 在帖子里全没了 → 这张卡真删；
+        //     还有活着的 → 刷新快照（newComments 同步过滤）；
+        //   · 首卡/角色侧同步卡：帖子正文空 且 评论删光 → 真删；否则保留、评论刷成最新（原有 update 逻辑）。
+        const postEmptied = !(post.content || '').trim() && (post.comments || []).length === 0;
+        // 九改-b（实测定位）：追踪通知卡渲染读的是 metadata.newComments（MessageItem 动态卡直接铺 c.content），
+        // 只按 id 过滤、不换内容 → 评论改过之后卡上还是旧文字。这里统一把元素换成帖子里的最新对象：
+        // 已删的自然过滤掉，还在的用最新内容（这也是「评论修改后聊天里还是旧评论」的根因）。
+        const latestById = new Map((post.comments || []).map(c => [c.id, c]));
+        const refreshNewComments = (list: any): any[] | undefined =>
+            Array.isArray(list)
+                ? list.map((nc: any) => latestById.get(nc?.id)).filter((c: any) => !!c)
+                : list;
         for (const charId of charIds) {
             try {
                 const msgs = await DB.getMessagesByCharId(charId, true);
                 const cards = msgs.filter(m => m.type === 'social_card' && (m.metadata as any)?.post?.id === postId);
-                if (emptied) {
-                    for (const card of cards) await DB.deleteMessage(card.id);
-                    continue;
-                }
+                console.debug('[Spark][快照同步]', postId, charId, cards.length);
                 for (const card of cards) {
+                    const meta: any = card.metadata || {};
+                    const notified: any[] = Array.isArray(meta.newComments) ? meta.newComments : [];
+                    // 动态更新卡：判它自己通知过的那批评论还剩几个活着（活着的一并换成最新内容）
+                    if (meta.syncKind === 'update' && notified.length) {
+                        const alive = refreshNewComments(notified)!;
+                        if (!alive.length) {
+                            await DB.deleteMessage(card.id);
+                            continue;
+                        }
+                        await DB.updateMessageMetadata(card.id, (prev: any) => ({
+                            ...prev,
+                            post: { ...(prev?.post || {}), comments: post.comments },
+                            newComments: alive,
+                        }));
+                        continue;
+                    }
+                    // 首卡/角色侧同步卡：只有正文空 + 评论删光才删
+                    if (postEmptied) {
+                        await DB.deleteMessage(card.id);
+                        continue;
+                    }
                     await DB.updateMessageMetadata(card.id, (prev: any) => ({
                         ...prev,
                         post: { ...(prev?.post || {}), comments: post.comments },
-                        newComments: Array.isArray(prev?.newComments)
-                            ? prev.newComments.filter((nc: any) => (post.comments || []).some(c => c.id === nc.id))
-                            : prev?.newComments,
+                        newComments: refreshNewComments(prev?.newComments),
                     }));
                 }
             } catch {}
@@ -1102,9 +1210,11 @@ ${post.content || '(楼主没写正文)'}
 
     // 五修-2：删除任意帖子下的任意评论（Ann：防错误回复污染记忆）。楼中楼子回复连带删除。
     // 可选让角色知道（RP 玩法：用户动了权限）→ 主聊天落一条系统记录。
-    const handleDeleteComment = async (post: SocialPost, comment: SocialComment) => {
-        if (!window.confirm('删除这条回复？')) return;
-        const notify = window.confirm('让角色知道你删了这条回复吗？\n\n确定 = 在主聊天留下记录（角色知道你动了权限）\n取消 = 悄悄删除');
+    // 九改-3（Ann 复检反馈3）：原来开头两行 window.confirm 换成小红书风格确认弹层（见 deleteConfirm 渲染），
+    // 本函数改为接收弹层结果的纯流程函数——只有 confirmed 才动数据，取消路径一行都不碰。
+    const handleDeleteComment = async (post: SocialPost, comment: SocialComment, opts: { confirmed: boolean; notify: boolean }) => {
+        if (!opts.confirmed) return;
+        const notify = opts.notify;
         // 递归收集：被删评论 + 所有挂在它（直接或间接）楼下的回复
         const doomed = new Set<string>([comment.id]);
         let grew = true;
@@ -1129,7 +1239,7 @@ ${post.content || '(楼主没写正文)'}
             const snippet = (comment.content || '').slice(0, 40);
             for (const charId of charIds) {
                 try {
-                    await DB.saveMessage({ charId, role: 'system', type: 'text', content: `[系统: 用户行使管理权限，删除了《${post.title}》下 ${comment.authorName} 的一条回复（"${snippet}${(comment.content || '').length > 40 ? '…' : ''}"）。评论区里不会再有它。]` });
+                    await DB.saveMessage({ charId, role: 'system', type: 'text', content: `[系统: ${userProfile.name} 行使管理权限，删除了《${post.title}》下 ${comment.authorName} 的一条回复（"${snippet}${(comment.content || '').length > 40 ? '…' : ''}"）。评论区里不会再有它。不要执着地把被删掉的内容再写一遍。]` });
                 } catch {}
             }
         }
@@ -1240,6 +1350,38 @@ ${post.content || '(楼主没写正文)'}
         }
     };
 
+    // 九改-b（Ann 下午复检 6 · 拍板第二种）：帖子的图只识一次——发一条独立识图请求拿客观描述，
+    // 描述缓存进 post.imageCaption；之后生成评论只附描述文本，不再整图重复送（图帖每搅动一次烧一次识图 token）。
+    // 模型选择同下面 buildSparkFetchInit 的规矩：独立识图 API 优先，没设置就用 Spark 全局模型。
+    // 单次请求禁重试：失败即失败，调用方直接降级回「原样附图」老路。
+    const describeSparkImage = async (imageUrl: string, signal?: AbortSignal): Promise<string> => {
+        let api = sparkApi;
+        const vision = apiConfig.visionApi;
+        if (vision?.enabled && vision.baseUrl && vision.apiKey && vision.model) {
+            api = { baseUrl: vision.baseUrl, apiKey: vision.apiKey, model: vision.model } as typeof sparkApi;
+        }
+        const res = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey}` },
+            body: JSON.stringify({
+                model: api.model,
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: '用一两句话客观描述这张图的内容' },
+                        { type: 'image_url', image_url: { url: imageUrl } },
+                    ],
+                }],
+                temperature: 0.3,
+            }),
+            signal,
+            __sullyMeta: { appId: 'social', appName: 'Spark', purpose: '识图缓存' },
+        } as RequestInit);
+        if (!res.ok) throw new Error(await apiErrorMessage(res));
+        const data = await safeResponseJson(res);
+        return String(extractContent(data) || '').trim();
+    };
+
     // 五修-5：识图请求构造——帖子带用户上传图时，把图读出来附进请求。
     // 模型选择（Ann 定稿）：设置了「独立识图 API」→ 用它；没设置 → 直接用 Spark 全局模型发图（多模态模型直接吃）。
     const buildSparkFetchInit = async (
@@ -1252,22 +1394,38 @@ ${post.content || '(楼主没写正文)'}
         let userContent: any = prompt;
         if (post) {
             const imageRefs = (post.images || []).filter((v): v is string => typeof v === 'string' && v.startsWith('sparkimg:'));
-            const imageDataUrls: string[] = [];
-            for (const ref of imageRefs) {
-                try {
-                    const data = await DB.getAsset(ref.slice('sparkimg:'.length));
-                    if (data) imageDataUrls.push(data);
-                } catch {}
-            }
-            if (imageDataUrls.length) {
-                const vision = apiConfig.visionApi;
-                if (vision?.enabled && vision.baseUrl && vision.apiKey && vision.model) {
-                    api = { baseUrl: vision.baseUrl, apiKey: vision.apiKey, model: vision.model } as typeof sparkApi;
+            // 九改-b：原附注句一字不动保留——已识图时跟描述文本一起附
+            const attachNote = '（附注：这条帖子带了用户上传的图片，已附在消息里。评论可以自然地聊到图里的内容，也可以不提。）';
+            if (imageRefs.length && post.imageCaption) {
+                // 识过了：不再附图，只把缓存的描述文本附在 prompt 后面
+                userContent = `${prompt}\n\n${attachNote}\n[图片内容：${post.imageCaption}]`;
+            } else if (imageRefs.length) {
+                const imageDataUrls: string[] = [];
+                for (const ref of imageRefs) {
+                    try {
+                        const data = await DB.getAsset(ref.slice('sparkimg:'.length));
+                        if (data) imageDataUrls.push(data);
+                    } catch {}
                 }
-                userContent = [
-                    { type: 'text', text: `${prompt}\n\n（附注：这条帖子带了用户上传的图片，已附在消息里。评论可以自然地聊到图里的内容，也可以不提。）` },
-                    ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url } })),
-                ];
+                if (imageDataUrls.length) {
+                    // 首次：先独立识一次图，描述落进帖子缓存（走 updatePostInFeed 落库）
+                    let caption = '';
+                    try { caption = await describeSparkImage(imageDataUrls[0], opts.signal); } catch { caption = ''; }
+                    if (caption) {
+                        updatePostInFeed(post.id, current => ({ ...current, imageCaption: caption }));
+                        userContent = `${prompt}\n\n${attachNote}\n[图片内容：${caption}]`;
+                    } else {
+                        // 识图失败/空描述 → 不阻塞，降级回老路：原样把图附进去
+                        const vision = apiConfig.visionApi;
+                        if (vision?.enabled && vision.baseUrl && vision.apiKey && vision.model) {
+                            api = { baseUrl: vision.baseUrl, apiKey: vision.apiKey, model: vision.model } as typeof sparkApi;
+                        }
+                        userContent = [
+                            { type: 'text', text: `${prompt}\n\n${attachNote}` },
+                            ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url } })),
+                        ];
+                    }
+                }
             }
         }
         return {
@@ -1289,8 +1447,14 @@ ${post.content || '(楼主没写正文)'}
     // 让模型自由决定谁冒泡、回几条、挂在哪——用户的最近评论只是评论区的一部分信息，不是强制任务。
     const evolveCommentSection = async (post: SocialPost, controller: AbortController) => {
         try {
-            const postCircle = post.circleId ? circles.find(c => c.id === post.circleId) : undefined;
-            const candidatePool = postCircle ? characters.filter(c => postCircle.memberCharIds.includes(c.id)) : characters;
+            // v8c-2（Ann 2026-09-16）：同首评——世界观按 worldCircleId；用户帖范围 = 全角色 −「不给谁看」
+            const postCircle = post.worldCircleId
+                ? circles.find(c => c.id === post.worldCircleId)
+                : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined);
+            const excludedIds = new Set(post.excludedCharIds || []);
+            const candidatePool = post.authorType === 'user'
+                ? characters.filter(c => !excludedIds.has(c.id))
+                : (post.circleId ? characters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : characters);
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
             // 返工⑩：用户刚 @ 的角色强制进入本轮名单（去重并入）
             const mentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
@@ -1322,6 +1486,20 @@ ${post.content || '(楼主没写正文)'}
             }
             const lastComment = lastUserCommentRef.current?.postId === post.id;
 
+            // v8c-4（Ann 2026-09-16）：私聊能力只跟着「同步」走——@ 同步和右下角按钮同步都会写进
+            // loadTrackedSparkPosts()[post.id].charIds；与本轮在场角色求交集，交集为空 = 连提示词都不给
+            // （没同步 = 模型根本不知道有这个能力）。私聊节正文一句未改，只决定整节出现与否。
+            const syncedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
+            const privateChatSection = finalChars.some(c => syncedIds.includes(c.id)) ? `### 私聊
+角色有可以私聊用户的能力，可以用 "privateChat": ["内容1", "内容2"] 把想对用户一个人说的话直接发进
+角色和用户的私聊——只有用户看得到，评论区不显示。
+它承载的是只想让用户一个人听到的话：悄悄话、贴脸的话、想避开评论区认真聊几句的。
+要不要私聊、什么时候私聊、说几条，跟在评论区发言一样——按角色当下的想法判断。
+私聊的节奏跟着用户走：如果Ta 只是在帖子活动、有还没拿主意的事，不要急着替 Ta 做决定或把事情推进下去。
+发私聊前先翻最近的私聊记录：你已经发过的内容，不要再重复发。
+
+` : '';
+
             // 定稿（2026-09-16 凌晨）：搅动=评论区过一段时间的样子——主力是已有的人，新路人偶尔才有
             const prompt = `### 任务: 模拟这个帖子评论区"过一段时间"之后的样子
 **帖子楼主**: ${post.authorName}
@@ -1344,13 +1522,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
 评论要切实回复有内容的东西，不要说套话；保持每个人前后语气连贯，别都像播报员。
 选定角色（用马甲网名发言）出不出场、发几条，根据 Ta 的人格、记忆、之前参与帖子内容和当前状态。
 
-### 私聊
-角色有可以私聊用户的能力，可以用 "privateChat": ["内容1", "内容2"] 把想对用户一个人说的话直接发进
-角色和用户的私聊——只有用户看得到，评论区不显示。
-它承载的是只想让用户一个人听到的话：悄悄话、贴脸的话、想避开评论区认真聊几句的。
-要不要私聊、什么时候私聊、说几条，跟在评论区发言一样——按角色当下的想法判断。
-
-### 新刷进来的陌生网友（charId 为 null）：偶尔才有，一条没有是常态
+${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶尔才有，一条没有是常态
 给这个新人立一个具体人设再开口：
 - 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
   并且符合当前的世界限制规则。
@@ -1405,6 +1577,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                 // 六改-6：私聊升级——"privateChat": [...] 数组 = 角色连发多条（像真人刷屏），逐条落库
                 if (Array.isArray(c.privateChat)) {
                     if (matchedChar) {
+                        if (!syncedIds.includes(matchedChar.id)) return; // v8c-4 硬闸：没同步过这条帖子 = 没有私聊资格，直接丢弃（不落库、不转公开评论）
                         if (loadPrivateChatOff()[matchedChar.id]) return; // 开关关闭：私聊直接丢弃，不转公开评论
                         const lines = c.privateChat.map((x: any) => String(x ?? '').trim()).filter(Boolean);
                         if (lines.length) privateMessages.push({ charId: matchedChar.id, lines });
@@ -1413,7 +1586,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                 }
                 // 兼容旧格式：toPrivateChat: true = 单条私聊（老帖子上下文还在用这个写法）
                 if (c.toPrivateChat === true) {
-                    if (matchedChar && !loadPrivateChatOff()[matchedChar.id]) privateMessages.push({ charId: matchedChar.id, lines: [c.content.trim()] }); // 开关关闭：私聊直接丢弃
+                    if (matchedChar && syncedIds.includes(matchedChar.id) && !loadPrivateChatOff()[matchedChar.id]) privateMessages.push({ charId: matchedChar.id, lines: [c.content.trim()] }); // v8c-4 硬闸：没同步 = 没私聊资格；开关关闭：私聊直接丢弃
                     return; // 路人没有私聊能力，漏到这里的直接丢弃
                 }
                 let avatar = matchedChar
@@ -1586,7 +1759,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
             <div className="p-3">
                 <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2 min-w-0">
-                        <TokenImg value={post.authorAvatar} className="w-5 h-5 rounded-full object-cover shrink-0 ring-1 ring-white/50" />
+                        <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-5 h-5 rounded-full object-cover shrink-0 ring-1 ring-white/50" />
                         <span className="text-[11px] text-slate-700 truncate font-medium">{post.authorName}</span>
                     </div>
                     <div className="flex items-center gap-1 text-slate-400 group-hover:text-slate-600 transition-colors">
@@ -1621,7 +1794,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                     <div className="flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl border-b border-white/20 shrink-0 relative z-20" style={{ paddingTop: 'max(12px, var(--safe-top))', paddingBottom: '12px' }}>
                         <button onClick={handleClosePost} className="p-2 -m-2 active:opacity-60"><Icons.Back /></button>
                         <div className="flex items-center gap-2">
-                            <TokenImg value={selectedPost.authorAvatar} className="w-8 h-8 rounded-full object-cover border border-white/50" />
+                            <TokenImg value={resolveSparkCharAvatar(selectedPost.authorCharId, selectedPost.authorAvatar, selectedPost.authorName)} className="w-8 h-8 rounded-full object-cover border border-white/50" />
                             <span className="text-sm font-bold text-slate-800">{selectedPost.authorName}</span>
                         </div>
                         <div className="flex items-center gap-1">
@@ -1702,7 +1875,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                 };
                                 const renderBody = (c: SocialComment, isChild: boolean, replyToName?: string) => (
                                     <div className="flex gap-[10px]">
-                                        <TokenImg value={c.authorAvatar} className={`${isChild ? 'w-[26px] h-[26px]' : 'w-[38px] h-[38px]'} rounded-full object-cover shrink-0 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]`} />
+                                        <TokenImg value={resolveSparkCharAvatar(c.authorCharId, c.authorAvatar, c.authorName)} className={`${isChild ? 'w-[26px] h-[26px]' : 'w-[38px] h-[38px]'} rounded-full object-cover shrink-0 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]`} />
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap min-w-0">
                                                 <span className={`text-[13px] leading-[1.3] ${c.isCharacter ? 'text-[#1A1A1A] font-medium' : 'text-[#7A7A7A]'}`}>{c.authorName}</span>
@@ -1736,7 +1909,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                             <div className="mt-[6px] flex items-center gap-4">
                                                 <button onClick={() => { setReplyTarget(c); openComposer(); }} className="text-[11px] text-[#9A9A9A] active:opacity-60">回复</button>
                                                 <button onClick={() => setEditingComment({ id: c.id, draft: c.content })} className="text-[11px] text-[#C4C4C4] active:opacity-60">编辑</button>
-                                                <button onClick={() => handleDeleteComment(selectedPost, c)} className="text-[11px] text-[#C4C4C4] active:opacity-60">删除</button>
+                                                <button onClick={() => { setDeleteConfirm({ post: selectedPost, comment: c }); setDeleteNotify(false); }} className="text-[11px] text-[#C4C4C4] active:opacity-60">删除</button>
                                                 <div className="ml-auto flex items-center gap-[5px] text-[#C4C4C4]">
                                                     <Icons.Heart
                                                         filled={!!c.isLiked}
@@ -1834,6 +2007,47 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                     {/* v9 三修（Ann）：同步成功装饰数字 +1，断开回落；k+/w+ 档不体现加一 */}
                                     <span className="text-[13.5px] font-medium whitespace-nowrap">{(() => { const base = decoCollectNum(selectedPost.id); const tracked = !!loadTrackedSparkPosts()[selectedPost.id]?.charIds?.length; return fmtCount(base >= 1000 ? base : (tracked ? base + 1 : base)); })()}</span>
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 九改-3（Ann 复检反馈3）：删除评论确认弹层（小红书风格：白底圆角卡 / 居中标题 / 底部两键 / 遮罩半透明黑 / 0.2s 缩放淡入）。
+                        一张卡问完两个问题——「悄悄删除」= 原取消分支，「删除并让角色知道」= 原确定分支。点「删除」才真删，「取消」不动任何数据。 */}
+                    <div
+                        onClick={() => setDeleteConfirm(null)}
+                        className={`absolute inset-0 z-[70] flex items-center justify-center px-9 transition-opacity duration-200 ${deleteConfirm ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                    >
+                        <div className="absolute inset-0 bg-black/45"></div>
+                        <div
+                            onClick={e => e.stopPropagation()}
+                            className={`relative w-full max-w-[292px] bg-white rounded-[14px] overflow-hidden shadow-[0_10px_44px_rgba(0,0,0,0.22)] transition-transform duration-200 ${deleteConfirm ? 'scale-100' : 'scale-95'}`}
+                        >
+                            <div className="px-5 pt-[22px] text-center">
+                                <h3 className="text-[15px] font-bold text-[#1A1A1A]">删除这条回复？</h3>
+                            </div>
+                            <div className="px-5 pt-3 pb-4 space-y-2">
+                                <button
+                                    onClick={() => setDeleteNotify(false)}
+                                    className={`w-full py-[10px] rounded-full text-[13px] border transition-colors ${!deleteNotify ? 'border-[#ff2442] text-[#ff2442] bg-[#ff2442]/[0.06] font-bold' : 'border-slate-200 text-[#9A9A9A]'}`}
+                                >悄悄删除</button>
+                                <button
+                                    onClick={() => setDeleteNotify(true)}
+                                    className={`w-full py-[10px] rounded-full text-[13px] border transition-colors ${deleteNotify ? 'border-[#ff2442] text-[#ff2442] bg-[#ff2442]/[0.06] font-bold' : 'border-slate-200 text-[#9A9A9A]'}`}
+                                >删除并让角色知道</button>
+                                {deleteNotify && (
+                                    <p className="pt-1 text-center text-[11px] leading-[1.6] text-[#B9B9B9]">会在你们的聊天里留下一条系统消息，Ta 会知道你动用了管理权限。</p>
+                                )}
+                            </div>
+                            <div className="flex border-t border-[#F0F0F0]">
+                                <button
+                                    onClick={() => setDeleteConfirm(null)}
+                                    className="flex-1 py-[13px] text-[14px] text-[#6B6B6B] active:bg-[#FAFAFA]"
+                                >取消</button>
+                                <div className="w-px bg-[#F0F0F0]"></div>
+                                <button
+                                    onClick={() => { const dc = deleteConfirm; setDeleteConfirm(null); if (dc) void handleDeleteComment(dc.post, dc.comment, { confirmed: true, notify: deleteNotify }); }}
+                                    className="flex-1 py-[13px] text-[14px] font-bold text-[#ff2442] active:bg-[#FFF5F7]"
+                                >删除</button>
                             </div>
                         </div>
                     </div>
@@ -1987,7 +2201,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                                 const selected = editingCircle.memberCharIds.includes(c.id);
                                                 return (
                                                     <button key={c.id} onClick={() => toggleCircleMember(c.id)} className={`flex flex-col items-center gap-1 p-1 rounded-xl transition-all ${selected ? 'bg-red-50 ring-1 ring-[#ff2442]' : ''}`}>
-                                                        <TokenImg value={c.avatar} className={`w-10 h-10 rounded-full object-cover border-2 transition-colors ${selected ? 'border-[#ff2442]' : 'border-slate-100'}`} />
+                                                        <TokenImg value={resolveSparkCharAvatar(c.id, c.avatar, c.name)} className={`w-10 h-10 rounded-full object-cover border-2 transition-colors ${selected ? 'border-[#ff2442]' : 'border-slate-100'}`} />
                                                         <span className={`text-[9px] truncate w-full text-center ${selected ? 'text-[#ff2442] font-bold' : 'text-slate-500'}`}>{c.name}</span>
                                                     </button>
                                                 );
@@ -2048,7 +2262,10 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                         {filterCharactersByGroup(characters, characterGroups, identityGroupId).map(c => (
                             <div key={c.id} className="space-y-3 pb-4 border-b border-slate-50">
                                 <div className="flex items-center gap-2">
-                                    <TokenImg value={c.avatar} className="w-6 h-6 rounded-full object-cover" />
+                                    {/* v8c-1（Ann 2026-09-16）：点头像本身 → 设置这个角色的 Spark 头像 */}
+                                    <button onClick={() => { setSparkAvatarEditChar({ id: c.id, name: c.name }); setSparkAvatarLinkDraft(null); }} className="shrink-0 active:scale-90 transition-transform" title={`${c.name}的 Spark 头像`}>
+                                        <TokenImg value={resolveSparkCharAvatar(c.id, c.avatar, c.name)} className="w-6 h-6 rounded-full object-cover" />
+                                    </button>
                                     <span className="text-sm font-bold text-slate-700">{c.name}</span>
                                     {/* Spark 私聊开关（Ann 2026-09-15：per-character 硬闸；localStorage 不驱动 React，点击后 setIdentityGroupId 强刷重渲染） */}
                                     <button
@@ -2128,13 +2345,67 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                 </div>
             </Modal>
 
+            {/* v8c-1（Ann 2026-09-16）：Spark 角色头像设置面板 —— 文案定稿：标题「{角色名}的 Spark 头像」，
+                选项「上传图片」/「填图片链接」/「恢复默认」，底部「取消」。 */}
+            <Modal
+                isOpen={!!sparkAvatarEditChar}
+                title={sparkAvatarEditChar ? `${sparkAvatarEditChar.name}的 Spark 头像` : ''}
+                onClose={() => { setSparkAvatarEditChar(null); setSparkAvatarLinkDraft(null); }}
+                footer={
+                    <button
+                        onClick={() => { setSparkAvatarEditChar(null); setSparkAvatarLinkDraft(null); }}
+                        className="w-full py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                    >
+                        取消
+                    </button>
+                }
+            >
+                <div className="space-y-2">
+                    <button
+                        onClick={() => sparkCharAvatarInputRef.current?.click()}
+                        className="w-full py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl text-sm active:bg-slate-50"
+                    >
+                        上传图片
+                    </button>
+                    <button
+                        onClick={() => setSparkAvatarLinkDraft(prev => (prev === null ? '' : null))}
+                        className="w-full py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-2xl text-sm active:bg-slate-50"
+                    >
+                        填图片链接
+                    </button>
+                    {sparkAvatarLinkDraft !== null && (
+                        <div className="flex gap-2">
+                            <input
+                                value={sparkAvatarLinkDraft}
+                                onChange={e => setSparkAvatarLinkDraft(e.target.value)}
+                                placeholder="粘贴图片链接"
+                                className="flex-1 min-w-0 text-xs text-slate-600 bg-white rounded-xl px-2 py-2 outline-none border border-slate-200 focus:border-[#ff2442]"
+                            />
+                            <button
+                                onClick={saveSparkCharAvatarLink}
+                                className="px-3 py-2 bg-[#ff2442] text-white font-bold rounded-xl text-xs shadow-sm shadow-red-200 active:scale-95 transition-transform"
+                            >
+                                保存
+                            </button>
+                        </div>
+                    )}
+                    <button
+                        onClick={resetSparkCharAvatar}
+                        className="w-full py-3 bg-white border border-slate-200 text-slate-500 font-bold rounded-2xl text-sm active:bg-slate-50"
+                    >
+                        恢复默认
+                    </button>
+                    <input type="file" ref={sparkCharAvatarInputRef} className="hidden" accept="image/*" onChange={handleSparkCharAvatarUpload} />
+                </div>
+            </Modal>
+
             <Modal isOpen={showShareModal} title="分享帖子" onClose={() => setShowShareModal(false)}>
                 {/* 分组筛选（没建分组时不渲染） */}
                 <CharacterGroupFilterBar characters={characters} groups={characterGroups} value={shareGroupId} onChange={setShareGroupId} className="mb-1 px-2" />
                 <div className="grid grid-cols-4 gap-4 p-2">
                     {filterCharactersByGroup(characters, characterGroups, shareGroupId).map(c => (
                         <button key={c.id} onClick={() => handleShare(c.id, false)} className="flex flex-col items-center gap-2 group">
-                            <TokenImg value={c.avatar} className="w-12 h-12 rounded-full object-cover border border-slate-100 group-active:scale-90 transition-transform" />
+                            <TokenImg value={resolveSparkCharAvatar(c.id, c.avatar, c.name)} className="w-12 h-12 rounded-full object-cover border border-slate-100 group-active:scale-90 transition-transform" />
                             <span className="text-[10px] text-slate-600 truncate w-full text-center">{c.name}</span>
                         </button>
                     ))}
@@ -2147,7 +2418,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                 <div className="grid grid-cols-4 gap-4 p-2">
                     {filterCharactersByGroup(characters, characterGroups, syncGroupId).map(c => (
                         <button key={c.id} onClick={() => handleSyncToChar(c.id)} className="flex flex-col items-center gap-2 group">
-                            <TokenImg value={c.avatar} className="w-12 h-12 rounded-full object-cover border border-slate-100 group-active:scale-90 transition-transform" />
+                            <TokenImg value={resolveSparkCharAvatar(c.id, c.avatar, c.name)} className="w-12 h-12 rounded-full object-cover border border-slate-100 group-active:scale-90 transition-transform" />
                             <span className="text-[10px] text-slate-600 truncate w-full text-center">{c.name}</span>
                         </button>
                     ))}
@@ -2170,7 +2441,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                     {/* Create Header —— 自理安全区：外层扛 safe-top + 背景，内层保持 h-14 内容栏（同主栏，避开 border-box 吃 padding） */}
                     <div className="sticky top-0 z-20 bg-white border-b border-slate-50" style={{ paddingTop: 'var(--safe-top)' }}>
                         <div className="h-14 flex items-center justify-between px-4">
-                            <button onClick={() => { setNewPostMentions([]); setEditingPostId(null); setIsCreateOpen(false); }} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
+                            <button onClick={() => { setNewPostMentions([]); setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setEditingPostId(null); setIsCreateOpen(false); }} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
                             <span className="text-sm font-bold text-slate-800">{editingPostId ? '编辑笔记' : '发布笔记'}</span>
                             <button
                                 onClick={handleCreatePost}
@@ -2249,6 +2520,50 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                     </div>
                                 </>
                             )}
+                        </div>
+
+                        {/* v8c-2（Ann 2026-09-16）：圈子 —— 选了只附加该圈的世界观原文，角色范围不因此受限 */}
+                        <div className="mt-4 pt-4 border-t border-slate-50">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">圈子（只附加该圈的世界观，不限角色范围）</p>
+                            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                                <button
+                                    onClick={() => setNewPostWorldCircleId('')}
+                                    className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${newPostWorldCircleId === '' ? 'bg-[#ff2442] text-white border-[#ff2442]' : 'bg-white text-slate-500 border-slate-200'}`}
+                                >
+                                    不附加
+                                </button>
+                                {circles.filter(c => (c.worldPrompt || '').trim()).map(c => (
+                                    <button
+                                        key={c.id}
+                                        onClick={() => setNewPostWorldCircleId(prev => (prev === c.id ? '' : c.id))}
+                                        className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${newPostWorldCircleId === c.id ? 'bg-[#ff2442] text-white border-[#ff2442]' : 'bg-white text-slate-500 border-slate-200'}`}
+                                    >
+                                        {c.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* v8c-2：不给谁看 —— 勾掉的角色不进生成池、不发人设和记忆 */}
+                        <div className="mt-4 pt-4 border-t border-slate-50">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">不给谁看（勾掉的角色看不到这条笔记）</p>
+                            {newPostExcludedCharIds.length > 0 && (
+                                <p className="text-[10px] text-slate-400 mb-2">已勾掉：{newPostExcludedCharIds.map(id => characters.find(c => c.id === id)?.name).filter(Boolean).join('、')}</p>
+                            )}
+                            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                                {characters.map(c => {
+                                    const excluded = newPostExcludedCharIds.includes(c.id);
+                                    return (
+                                        <button
+                                            key={c.id}
+                                            onClick={() => setNewPostExcludedCharIds(prev => (excluded ? prev.filter(id => id !== c.id) : [...prev, c.id]))}
+                                            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${excluded ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200'}`}
+                                        >
+                                            {c.name}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
 
                         {/* @ 全角色可点可真通知；显示用社交 id 名——Ann 2026-09-15 定稿 */}
@@ -2464,7 +2779,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                                                 <div className="p-3">
                                                     <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{post.title}</h4>
                                                     <div className="flex justify-between items-center mt-2">
-                                                        <div className="flex items-center gap-1"><TokenImg value={post.authorAvatar} className="w-3 h-3 rounded-full" /><span className="text-[9px] text-slate-400 truncate w-12">{post.authorName}</span></div>
+                                                        <div className="flex items-center gap-1"><TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-3 h-3 rounded-full" /><span className="text-[9px] text-slate-400 truncate w-12">{post.authorName}</span></div>
                                                         <div className="flex items-center gap-0.5 text-slate-400"><Icons.Heart filled={post.isLiked} className="w-3 h-3" /><span className="text-[9px] whitespace-nowrap">{fmtCount(post.likes)}</span></div>
                                                     </div>
                                                 </div>
@@ -2494,7 +2809,7 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
                     <button onClick={() => { setActiveTab('home'); trackEvent('切换 Spark 主标签', { tab: 'home' }); }} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'home' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <House size={24} weight={activeTab === 'home' ? 'fill' : 'regular'} />
                     </button>
-                    <button onClick={() => { setNewPostMentions([]); setIsCreateOpen(true); trackEvent('打开发布笔记面板'); }} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
+                    <button onClick={() => { setNewPostMentions([]); setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setIsCreateOpen(true); trackEvent('打开发布笔记面板'); }} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
                     <button onClick={() => { setActiveTab('me'); trackEvent('切换 Spark 主标签', { tab: 'me' }); }} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'me' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <User size={24} />
                     </button>

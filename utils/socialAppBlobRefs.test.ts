@@ -33,7 +33,9 @@ describe('Spark 主页背景与头像存 blobref 令牌', () => {
         expect(SOCIAL_APP).not.toMatch(/<img\s+src=\{userBgImage\}/);
         // 头像及其在帖子里的副本本来就走 TokenImg，一并钉住
         expect(SOCIAL_APP).toContain('<TokenImg value={socialProfile.avatar}');
-        expect(SOCIAL_APP).toContain('<TokenImg value={post.authorAvatar}');
+        // v8c-1（Ann 2026-09-16）：帖子头像统一走 resolver（自定义 > 主聊天头像 > 生成时快照 > 名字 hash），
+        // 但渲染必须仍是 TokenImg（认 blobref 令牌），且生成时快照 authorAvatar 仍作为回落参数传入。
+        expect(SOCIAL_APP).toMatch(/<TokenImg value=\{resolveSparkCharAvatar\(post\.authorCharId, post\.authorAvatar/);
     });
 
     it('spark_* 所在的 assets 表在孤儿 GC 的引用面清单里（否则转出的图会被当垃圾删）', () => {

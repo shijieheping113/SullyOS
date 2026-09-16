@@ -3758,6 +3758,12 @@ export interface SocialPost {
     circleId?: string;
     /** 五修-10：用户发帖 @ 的角色 charId 列表（发帖时自动同步给这些角色并告知被艾特）。旧数据无此字段 */
     mentions?: string[];
+    /** 九改-b：帖子配图的识图描述缓存——首次生成评论时识一次，之后只把描述附进 prompt，不再重复烧识图 token。编辑换图时清空 */
+    imageCaption?: string;
+    /** v8c-2（Ann 2026-09-16）：世界观来源圈子；undefined = 不附加世界观（与 feed 分组的 circleId 解耦） */
+    worldCircleId?: string;
+    /** v8c-2（Ann 2026-09-16）：「不给谁看」名单——这些角色不进生成池，不发人设和记忆。旧帖无此字段 */
+    excludedCharIds?: string[];
 }
 
 export interface SubAccount {

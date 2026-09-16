@@ -1,5 +1,126 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-17 凌晨 · 设计大对齐收口 + v8d 修复施工单终稿（未动代码）
+
+- 背景：v8c 施工把同步/@ 功能修没（@不回评、同步不进评论、私聊全灭），Ann 情绪爆发。规划猫与 Ann 逐轮校准设计（详见外层 WORKLOG 与 .workbuddy memory 2026-09-17），全部规则钉死后写成本修复单。
+- **施工单：[HANDOFF-spark-v8d.md](./HANDOFF-spark-v8d.md)（终稿，同名旧废稿已整份重写覆盖，无残留矛盾内容）**。六个任务：①拆随机抽 2（selectSparkParticipants 不再截断）②候选池并入 tracked（B 案：同步/@ 不受「不给谁看」拦）③首评改造（出场节奏定稿 + ## 用户点名的角色 + 私聊节照搬 + privateChat 字段/落库硬闸）④搅动改造（删「返回空数组」句 + 社交面具句 + 点名节 ## 强调 + 私聊节条件改 tracked 非空）⑤编辑保存补 @ 同步链（startEditPost 回填 + 保存分支逐个 syncPostToChar）⑥修管理面板闪屏。
+- 提示词定稿全部逐字锁进施工单第六节；「路人们们→路人们」经 Ann 授权修正；点名节按 Ann 要求用 ## 强调语法。
+- **反歧义改写（01:30+，Ann 提出后全文执行）**：所有「名单 = A −B ＋C」式符号句改为三步流程（起点→过滤→补回）+ 两条防错规则（补回者即使被过滤也留在名单、档案照常装进请求；去重=一人只一份档案绝不装两份）；「非空/交集/照发」全部改大白话。写施工单给 AI 施工者，禁用集合运算符号——AI 可能看不懂加减号或把「+」执行成重复装载。
+- 关键实锤（本次排查新增）：搅动「也可能这段时间没人说话（返回空数组）」（L1520）为 e7bdee3f 进码后 git 历史零次删除——Ann 的定稿删除从未被执行，施工漏改，本单补删。
+- git 一个字没动；flash 施工后停在 commit 前报数字，规划猫拿施工单第三、五节逐格验收再报 Ann。
+
+## 2026-09-16 深夜 · v8c 六条施工单全部落码 + 三验收过（未提交，等 Ann 点头）
+
+> 施工单：[HANDOFF-spark-v8c.md](./HANDOFF-spark-v8c.md)（第三版口径）。叠在 v8b 未提交改动之上做的，行号全程用文字锚点定位。
+> **git 一个字没动**，等 Ann 亲口点头才提交。
+
+### 六条落码清单
+
+- **v8c-0 badge 永久关**：`vite.config.ts` L49 `let showBuildBadge = !isReleaseBranch;` → `false`（留注释说明开关可临时打开）。L50/L51 两行开关原样不动。只改这 1 行。
+- **v8c-3 删评论换小红书风格弹窗**：`SocialApp.tsx`
+  - 新增 state `deleteConfirm`（{post, comment}）与 `deleteNotify`（false=悄悄删/true=让角色知道）。
+  - `handleDeleteComment` 开头两行 `window.confirm` 删除，改为收 `{confirmed, notify}`；**删除本体逻辑一行未动**。
+  - 详情页删除按钮改为打开弹窗；新增底栏上方浮层（白底圆角 + 遮罩 + 胶囊单选「悄悄删除 / 删除并让角色知道」+ 取消/删除，点遮罩即取消）。
+- **v8c-1 Spark 角色头像自定义 + 跟随主聊天**：
+  - 新建 `utils/sparkAvatar.ts`：`spark_char_avatars` localStorage + `resolveSparkCharAvatar(charId, snapshotAvatar, liveChar, name)`（优先级：自定义 > 主聊天头像 > 快照 > 名字 hash dicebear）+ `syncSparkLiveAvatars`。
+  - `SocialApp.tsx` 9 处渲染点（帖子流小卡/详情头/评论行/楼中楼/管理面板角色行 ×2/角色多选）统一走 resolver；管理面板角色行头像可点。
+  - `components/chat/MessageItem.tsx` 3 处（Spark 卡片帖头/评论/小卡）同样接 resolver。
+  - 新增头像设置 Modal：标题「{角色名}的 Spark 头像」、上传图片 / 填图片链接 / 恢复默认 / 取消（文案逐字按施工单）。
+  - 生成侧快照与路人逻辑一行未动。
+- **v8c-4 幽灵私聊：私聊能力跟着同步走**：
+  - 搅动 prompt 的「### 私聊」整节原文**一字未改**抽成 `privateChatSection` 变量（已用 `git show HEAD:apps/SocialApp.tsx` 原文比对法核过：现文件命中原文且位置未挪）。
+  - 渲染条件：同步名单 ∩ 实际参与角色 = 空 → 整节不进 prompt；非空 → 按交集渲染。
+  - 解析端两处硬闸：`Array.isArray(c.privateChat)` 分支与 `c.toPrivateChat === true` 旧格式分支，都加 `!syncedIds.includes(matchedChar.id) → 丢弃`；全局 `loadPrivateChatOff` 照旧。
+- **v8c-2 发帖生成上下文（圈子世界观 + 不给谁看）**：
+  - `types.ts` `SocialPost` 加 `worldCircleId?: string`、`excludedCharIds?: string[]`。
+  - `SocialApp.tsx` 新增 state `newPostWorldCircleId` / `newPostExcludedCharIds`；`startEditPost` 回填；两处写入（新建 + 二次编辑）。
+  - 发帖面板新增两行 UI：「圈子（只附加该圈的世界观，不限角色范围）」选择器、「不给谁看（勾掉的角色看不到这条笔记）」多选；取消/开面板按钮同步重置。
+  - 两处生成路径接入：用户帖候选池 = 全角色 − excluded（`new Set(post.excludedCharIds || [])`）；世界观按 `post.worldCircleId` 解析（原 `postCircle` 按 circleId 的旧解析已全部换掉，无残留）。
+  - **世界观节保持纯净**：`utils/socialGeneration.ts` 的 worldSection 未被改动，未拼任何角色名/charId。
+- **v8c-5 排查结论**：病根 = 任务 2 + 任务 4，修完闭环，无需单独写码。
+
+### 附带一处（非施工单，必改）
+
+- `utils/socialAppBlobRefs.test.ts`：源码锚测试按字面钉 `<TokenImg value={post.authorAvatar}`，头像改走 resolver 后字面失配。**意图（帖子头像必须走 TokenImg、不能裸 img）未破坏**，只把锚更新为新写法（含 `resolveSparkCharAvatar(post.authorCharId`）。单跑该文件已绿。
+
+### 三验收
+
+- **tsc**：47 个错误 = 开工前基线，**本轮碰过的文件 0 新增** ✓（vite.config.ts 那 4 个老错在 L103/113/123/140，与新改的 L49 无关）。
+- **vitest**：最终 `Test Files 3 failed | 440 passed (443)`、`Tests 5 failed | 5299 passed (5304)`。
+  - 与施工前基线（v8b：`9 failed / 5295 passed`）对比：**失败数从 9 降到 5，无一新增**，剩余 5 个全是同一批历史遗留（聊天背景 blobref ×3 / 陪伴主页 ×1 / amsg 打脏接线 ×1），与 Spark 无关。
+  - 施工中曾出现 `6 failed / 12 failed tests`，多出的那个是 `socialAppBlobRefs.test.ts` 头像字面锚（见上节），已更新锚修好；`memoryPalace/rangeMessagePage`、`storageOptimize` 两项本轮转绿 = 属偶发（flaky），非确定性失败。
+  - Spark 相关 4 文件 23 用例全过；`✓ utils/socialAppBlobRefs.test.ts (3 tests)` 已绿。
+- **build**：`WORKERS_EXIT=0` / `VITE_EXIT=0` / `✓ built in 33.38s` / 0 error 行 ✓；dist 22 项。
+  - `worker/instant-push/worker.bundle.js` md5 `e26b3516683676937df9850d87ac7f01` = 与历史记录一致。
+  - `worker/amsg/worker.bundle.js` md5 `d68bcf761aa2c4abea63a4acb2cf2d2b`，git diff 仅 2 行，**纯构建噪音**（pnpm 依赖路径注释短 hash → 完整版本号），零功能差异。
+
+### 本轮事故记录（环境教训，重要）
+
+- **build 被内存憋死两次**，都卡在同一位置（`✓ 6339 modules transformed` 之后，日志 15~20 分钟零输出，进程内存 2.4GB 纹丝不动 = 僵死不是慢）。
+- **根因：并行任务太多**。这台机器总内存 15.86 GB，同时跑 tsc + vitest + build 时可用内存掉到 0.65~1.44 GB，打包最后一步被憋死。
+- **解法已验证**：只杀掉僵死的 build 进程（保留预览），可用内存回到 3.78 GB，单独重跑 **33 秒过**。
+- **规矩**：这台机器上 **tsc / vitest / build 不许并行跑**，一个一个来；同时后台 node 进程别超过必要数量。
+- 另：`wmic` 被安全策略拉黑不可用，查进程命令行要用 PowerShell `Get-CimInstance Win32_Process`（PowerShell 工具直出有时不回显，可写文件再读）。
+
+## 2026-09-16 晚三版 · Ann 再纠正 2/4/5，v8c 施工单改第三版（未动代码）
+
+> Ann 三点指示：①世界观节绝不许带角色词条 ②查私聊能力提示词是不是被改错位置了 ③bug 是非同步新帖场景，别拿同步场景的通道硬套，别陷思考循环。
+
+- **任务 2 补硬规矩**：世界观节只装「圈子名 + worldPrompt 原文」，绝不拼成员名单/角色名/账号名/charId（当前 worldSection 已是纯的，flash 不得加）。
+- **任务 4 git 考古（Ann 要的检查，实锤）**：
+  - chat 侧同步卡的能力说明（chatPrompts.ts L1142 sparkFootprintLine，P6 起只挂最后一张卡）**只授评论能力，全文件无 privateChat 字样**（`git log -S 'privateChat' -- utils/chatPrompts.ts` 零命中）。
+  - 私聊授予从五修 `f9ac44c2` 起就长在搅动 prompt（「### 公开还是私聊」toPrivateChat，发全场只排除路人）；v7 `184cc081` 改写成「### 私聊」privateChat 数组 + 全局开关，同样无同步校验。
+  - 结论：**不是挪错位置，是这能力从第一天就没跟同步走**。Ann 的原则（能力跟同步进上下文）是对的。
+  - 修法定为两层：①prompt 端归位——私聊节按同步名单渲染，交集为空则整个节不进 prompt（没同步 = 连提示词都看不到，Ann 原话落地）；②解析端硬闸 tracked 判定，两个分支（privateChat 数组 / toPrivateChat 旧格式）同款。
+- **任务 5 收窄**：Ann 裁定病根就是任务 2+4，修完闭环（非同步新帖里不相干角色根本不进上下文）。帖子本体真删已验证无需改动。notify 去引文、便签（lastUserCommentRef）清理降为**可选加固**，做不做等她点头，不进主施工范围。
+
+## 2026-09-16 晚二版 · v8c 施工单按 Ann 纠正改版（任务 2/4/5，未动代码）
+
+> Ann 复核 v8c 后纠正三条：2 太复杂、4 口径不对、5 诊断有误。规划猫重新排查改写施工单（同文件头部有修订标记，**以二版为准**）。
+
+- **任务 2 简化**：四选一可见范围作废。新方案只有两项——①选圈子世界观（只放世界观，不限定角色范围）②反选角色（被反选的不发人设和记忆）。最终 prompt = 选中世界观 + 未反选角色的记忆人设。数据结构相应简化为 `SocialPost.worldCircleId` + `excludedCharIds` 两个字段；用户帖候选池 = 全角色 − 反选（circleId 只管 feed 分组）。
+- **任务 4 口径纠正**：私聊资格**只认** @ 同步和右下角按钮同步两种来路（一对一关联同步 = 私聊能力），走现成的 `loadTrackedSparkPosts` 名单做解析端硬闸，没同步的直接丢弃；全局 loadPrivateChatOff 照旧。原「楼主∪评论过∪被@∪被同步」的宽口径作废。
+- **任务 5 重查**：Ann 澄清事发时帖子没同步进任何私聊——原「notify 广播主犯」推理不成立（tracked 为空时广播根本不会发）。新口径「删了 = 哪里都没有」，逐通道排查结论：帖子本体真删（✅）；残留通道三条——①notify 带 40 字引文（若 tracked 非空时确实会漏原文）②`lastUserCommentRef` 删评不清空、已删评论还会喂下一轮搅动的 recentLine ③九改-b 之前删的存量旧卡从未刷新。修法：去引文（重新定稿）+ 清 lastUserCommentRef（含 recentLine 防御）+ 启动时一次性迁移清洗旧卡。
+
+## 2026-09-16 晚 · Ann 复检新报 6 条排查完成 + v8c 施工单落库（未动代码）
+
+> 规划猫（家里）排查，flash 施工。施工单：[HANDOFF-spark-v8c.md](./HANDOFF-spark-v8c.md)。**本轮零代码改动**。
+
+Ann 晚间复检报 6 条，根因全部实锤：
+
+- **0 badge**：vite.config L49 `let showBuildBadge = !isReleaseBranch` 改 `false` 一行永久关。
+- **1 头像**：管理面板 TokenImg 是活的；真凶是帖/评头像为生成时快照（post.authorAvatar / comment.authorAvatar），换主聊天头像不跟随。方案：`spark_char_avatars` localStorage 自定义头像 + 全渲染点 resolver（自定义 > 主聊天头像 > 快照 > dicebear）。
+- **2 可见范围**：`selectSparkParticipants`（socialGeneration L81-84）**无条件随机补 2 角色**进身份表，`buildSparkGenerationContext` 给全员全量人设+记忆+私聊——用户帖默认全角色可见，无任何范围控制。方案：SocialPost 加 visibility 字段（世界观来源 + 角色范围 + 黑名单），首评/搅动候选池按之裁剪。**UI 交互待 Ann 拍板**。
+- **3 删评弹窗**：L1138/1139 两连 window.confirm → 小红书风格居中弹窗一张卡问完（删除方式单选）。**文案待定稿**。
+- **4 幽灵私聊**：与 2 同根——随机补进来的角色带全套记忆"认识"了帖子，私聊节无知情门槛 → 模型让它 privateChat。方案：解析端硬闸（知情者 = 楼主∪评论过∪被@∪被同步，其余私聊直接丢弃）+ prompt 配合句（**待定稿**）。
+- **5 已删评论进上下文**：feed 干净；**主犯 = 删评 notify 系统消息带 40 字引文且发给 tracked 全员**（B 从系统消息里看到 A 说过什么，下一轮接话）；从犯 = 九改-b 之前删的旧卡从未刷新（存量）。方案：notify 去引文（**该句是 Ann 定稿过的，改前必须她重新定稿**）+ 接收者收窄（A 只发本人 / B 全员无引文，待拍板）+ 管理面板加「修复历史快照」一次性清洗按钮（待拍板）。
+
+施工顺序建议：0 → 3 → 5 → 1 → 2 → 4（4 依赖 2 的数据结构）。
+
+## 2026-09-16 晚 · v8b 九条增补单施工完成（未提交，等 Ann 点头）
+
+开工先逐条复核 [HANDOFF-spark-v8.md](./HANDOFF-spark-v8.md) 的 11 条（上午半成品 `1802d75b`），确认**全部已落码、无遗漏**；再做 [HANDOFF-spark-v8b.md](./HANDOFF-spark-v8b.md) 的 9 条增补单，两处「Ann 逐字定稿」句**一字未动、位置未挪**。
+
+改动文件（全部计划内，共 2 个）：
+
+- `apps/SocialApp.tsx`
+  - **v8b-1 评论改动后聊天里还是旧评论（带日志实测定位）**：实锤——`syncPostSnapshotToChats` 原逻辑只对 `metadata.newComments` 按 id 过滤、不换内容，而卡片渲染读的正是 `newComments`（MessageItem 动态卡直接铺 `c.content`），所以评论改过之后卡上永远还是旧文字。修法：加 `latestById` 映射 + `refreshNewComments()`，把 newComments 元素统一换成帖子里的最新对象（已删的自然过滤掉、还在的用新内容）；另加 `console.debug('[Spark][快照同步]', postId, charId, cards.length)` 观察日志。复现用例 `scripts/__tmp_v8b1_repro.test.ts`（fake-indexeddb 数据层，3/3 跑通）用完即删。
+  - **v8b-2 删卡按每张卡自己的快照算**：废掉全局 `emptied` 一刀切。动态更新卡（`syncKind:'update'`）看它自己通知过的那批 newComments 是否全灭——全灭则真删、有活着的刷新；首卡/角色侧同步卡仍按「正文空 + 评论删光」才真删。
+  - **v8b-3 圈子删除防误删**：`deleteCircle` 开头加 `window.confirm`（带圈名）。
+  - **v8b-4/5 删回复通知文案**：系统通知开头「用户」→ `${userProfile.name}`（**全库仅此一处**），句末追加定稿句「不要执着地把被删掉的内容再写一遍。」。
+  - **v8b-6 识图只识一次并缓存**：新增 `describeSparkImage()`；首次识图把描述写进 `post.imageCaption`（经 updatePostInFeed 落库），之后生成评论只附「[图片内容：…]」文本、不再重复送图（省 token）；编辑换图时清空缓存（L1007）；识图失败/空描述降级回老路（照旧附图 + visionApi）。
+  - **v8b-7/8 私聊两段定稿句**（逐字、位置不动）：搅动 prompt 私聊节内插入「私聊的节奏跟着用户走…」「发私聊前先翻最近的私聊记录…」。
+  - **v8b-9 用户发帖点赞对齐推荐流**：新建分支 `likes: 0` → `Math.floor(Math.random() * 100)`；二次编辑分支不动。
+- `types.ts`：`SocialPost` 增 `imageCaption?: string`。
+
+三验收：tsc 47（= 基线，改动文件 **0 新增**）；vitest 9 failed / 5295 passed（9 个失败同源于 companionHome / memoryPalace / chatBackgroundBlobRef / storageOptimize 历史遗留，Spark 相关 4 文件 23 用例**全过**）；build `WORKERS_EXIT=0` / `VITE_EXIT=0` / `✓ built in 31.30s`。
+
+**施工事故记录（自省）**：首次 build 卡死 20 分钟。根因——tsc + vitest + build 三个大任务挤在一起跑，把可用内存压到 1.44GB，vite 打包尾部僵住。判定「卡死 vs 慢」的三件套：① 日志 idle 时长 ② node 进程 PID 是否还在 ③ 该进程 WorkingSet 是否变化（17 分钟只差 400K = 死，不是慢）。处置：Ann 点头后杀掉僵死进程（PID 30132，释放 2.44GB）+ 停掉本地预览 5199；单独重跑 build，**31 秒通过**。教训：**验收要串行跑，别三个大任务挤一起。**
+
+`worker/amsg/worker.bundle.js` 被 build 重生成、与仓库版差 2 行——查清为 pnpm 依赖路径注释写法差异（短 hash → 完整版本号），包本身未变、零功能差异；`instant-push` 指纹 `e26b3516683676937df9850d87ac7f01` 与施工前一致。是否随提交入库由 Ann 定。
+
+**状态：停在 commit 前，等 Ann 亲口点头。**
+
 ## 2026-09-16 中午 · v8 复检 9 任务施工完成（未提交，等 Ann 点头）
 
 按 [HANDOFF-spark-v8.md](./HANDOFF-spark-v8.md) 顺序做完任务 1-9（任务 10 长按真删、任务 11 谷歌 400 均零改动）。改动文件（全部计划内，共 2 个）：

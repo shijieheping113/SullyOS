@@ -16,6 +16,8 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
+// v8c-1（Ann 2026-09-16）：Spark 卡片头像也走共用解析器（自定义 > 主聊天头像 > 快照 > 名字 hash）
+import { resolveSparkCharAvatar } from '../../utils/sparkAvatar';
 // 六改-3：Spark 帖子图共用组件——social_card 卡片里 sparkimg: 引用渲染真图（原来被当文本铺成一串图名）
 import { SparkPostImage, codepointToEmoji } from '../../apps/social/SparkPostImage';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
@@ -3117,7 +3119,7 @@ const MessageItem = React.memo(({
                     </div>
                     <div className="p-3">
                         <div className="flex items-center gap-2 mb-2">
-                            <TokenImg value={post.authorAvatar} className="w-4 h-4 rounded-full" />
+                            <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-4 h-4 rounded-full" />
                             <span className="text-[10px] text-slate-500">{post.authorName}</span>
                         </div>
                         <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{post.content}</p>
@@ -3143,7 +3145,7 @@ const MessageItem = React.memo(({
                     <div className="px-3 pb-3 space-y-2">
                         {newComments.slice(0, 3).map((c, i) => (
                             <div key={i} className="flex items-start gap-2">
-                                <TokenImg value={c.authorAvatar} className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5" />
+                                <TokenImg value={resolveSparkCharAvatar(c.authorCharId, c.authorAvatar, c.authorName)} className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5" />
                                 <div className="min-w-0">
                                     <div className="text-[10px] text-slate-500 font-bold truncate">{c.authorName}</div>
                                     <p className="text-[11px] text-slate-600 line-clamp-2 leading-snug">{c.content}</p>
@@ -3174,7 +3176,7 @@ const MessageItem = React.memo(({
                 </div>
                 <div className="p-3">
                     <div className="flex items-center gap-2 mb-2">
-                        <TokenImg value={post.authorAvatar} className="w-4 h-4 rounded-full" />
+                        <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-4 h-4 rounded-full" />
                         <span className="text-[10px] text-slate-500">{post.authorName}</span>
                     </div>
                     <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{post.content}</p>

@@ -46,7 +46,7 @@ function readCommit(): string {
 const gitInfo = { branch: readBranch(), commit: readCommit() };
 const buildTime = formatBuildTimeUtc8();
 const isReleaseBranch = RELEASE_BRANCHES.has(gitInfo.branch);
-let showBuildBadge = !isReleaseBranch;
+let showBuildBadge = false; // Ann 2026-09-16：永久关闭右下角测试版本号（想看时挂 VITE_SHOW_BUILD_BADGE=1）
 if (process.env.VITE_HIDE_BUILD_BADGE === '1') showBuildBadge = false;
 if (process.env.VITE_SHOW_BUILD_BADGE === '1') showBuildBadge = true;
 
