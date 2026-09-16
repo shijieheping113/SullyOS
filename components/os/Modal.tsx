@@ -7,13 +7,22 @@ interface ModalProps {
     onClose: () => void;
     children: React.ReactNode;
     footer?: React.ReactNode;
+    /**
+     * v8d 任务 6（Ann 2026-09-17）：关掉外层遮罩的「透明度渐变」。
+     * 默认 false = 全 App 原有行为（animate-fade-in），一行不变。
+     * 说明：动画 fadeIn 的第一帧 opacity=0（见 index.html keyframes.fadeIn），
+     * 所以浮层弹出的第一帧整体是透明的、连 bg-black/40 遮罩也透明，底下内容会透上来「闪一下」。
+     * 目前只有 Spark 的「身份管理」和「角色头像」两个浮层需要开这个开关（Ann 指定范围）。
+     * 卡片自身的 animate-slide-up 不受影响，手感不变。
+     */
+    noOverlayFade?: boolean;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer, noOverlayFade }) => {
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-fade-in">
+        <div className={`fixed inset-0 z-[100] flex items-center justify-center p-6${noOverlayFade ? '' : ' animate-fade-in'}`}>
             <div className="absolute inset-0 bg-black/40" onClick={onClose} />
             <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up">
                 <div className="px-6 pt-6 pb-2">

@@ -36,7 +36,11 @@ describe('Spark persona and conversation context', () => {
             { authorName: 'SullyDev', authorCharId: 'b-id', authorType: 'character', content: '你指的是周六那次吗？' },
             { authorName: social.name, authorType: 'user', content: '对，就是那次' },
         ] } as SocialPost;
-        expect(selectSparkParticipants(post, [c, b, a], handles).map(ch => ch.id)).toEqual(['a-id', 'b-id']);
+        const picked = selectSparkParticipants(post, [c, b, a], handles).map(ch => ch.id);
+        // 楼主与楼中楼作者排在最前（这一段是这条用例的本意，不变）
+        expect(picked.slice(0, 2)).toEqual(['a-id', 'b-id']);
+        // v8d 任务 1：名单不再截断，候选池其余角色按序并入（出场与否交给 AI 判断）
+        expect(picked).toEqual(['a-id', 'b-id', 'c-id']);
         const history = buildSparkCommentHistory(post);
         expect(history).toContain('周六那次');
         expect(history).toContain('对，就是那次');

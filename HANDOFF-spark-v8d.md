@@ -78,13 +78,23 @@
 - 5b. 编辑保存分支（L1062-1086）：`updatePostInFeed` 里加 `mentions: [...newPostMentions]`；落定后对**新增**的 @（在 newPostMentions、不在原 post.mentions）逐个 `await syncPostToChar(最新 post 对象, cid, true)`——写法照抄发帖分支 L1121-1124。原有 @ 不重复同步、不撤销。
 - 5c. 其余保存行为一行不动。
 
-### 任务 6 修闪屏
-现象：Spark → 管理 → 点角色头像（或账号管理入口）打开浮层的瞬间，界面闪一帧主页再弹回原浮层；点帖子、进主页都正常，只有管理页这两处入口会。
-排查方向（浮层/状态层，不涉数据）：浮层打开时的 setState 是否短暂重置了顶层视图状态（如事件冒泡触发返回、浮层条件渲染导致整页重挂载、或共享 state 竞争）。只许在 Spark 管理相关组件内定位修复；修完闪帧消失、浮层功能不变。
+### 任务 6 修闪屏 —— **已停办（2026-09-17 凌晨 02:17 Ann 拍板止损），改动全部撤回原样**
 
-## 五、完工验收（全过才算完）
+结论：淡入动画假设已被真机证伪（去掉淡入后仍闪且更明显）。逻辑层三条线此前已查干净，剩余方向（手机浏览器绘制层）深夜无法定位。**此条挂账「未修」，不阻塞前五个任务的验收**，白天再另议。
 
-1. 三验收：tsc 47 基线（改动文件 0 新增）、`pnpm vitest run`（Spark 相关全过）、`pnpm build` 过；worker.bundle.js 无关不重生。
+flash 现在做三件事：
+1. `git restore components/os/Modal.tsx` —— 该文件的全部改动都是任务 6 的，整体还原安全。
+2. `apps/SocialApp.tsx` 手工撤三处（只许动这三处，别的一个字不碰）：约 L2281-2283 的任务 6 注释与「身份管理」Modal 上的 `noOverlayFade`、约 L2466-2472 头像面板注释与 `noOverlayFade`。撤完与存档点 `9140bda2` 的行为完全一致。
+3. WORKLOG 记一笔「任务 6 挂账未修，改动已撤回」。
+
+撤完跑第五节低负荷验收，停在 commit 前报数字。**不许再试任何新的修法。**
+
+## 五、完工验收（全过才算完；低负荷模式——2026-09-17 凌晨机器被并发全量体检压垮过， vitest 不许再跑全量）
+
+1. 三验收：
+   - tsc 全量跑（轻，随便跑）：47 基线、改动文件 0 新增；
+   - vitest **只跑点名 4 个文件**：`pnpm.cmd vitest run utils/sparkCircles.test.ts utils/socialFeedMerge.test.ts utils/socialAppBlobRefs.test.ts utils/socialGeneration.test.ts`——全部通过即算过；若个别项报「超时/另XX正在进行」，单独重跑该文件一次，全绿即按负荷假警报处理，不许改生产代码；
+   - `pnpm build` 最重，放最后单独跑，跑之前确认没有别的重活占内存；worker.bundle.js 无关不重生。
 2. Ann 场景复测清单：
    - 同步 B 后任意次搅动 → 私聊提示词出现，B 的 privateChat 能落库；
    - 发帖或评论 @ A → A 这一轮评论必须出现；

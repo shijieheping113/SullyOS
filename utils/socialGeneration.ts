@@ -78,13 +78,13 @@ export function selectSparkParticipants(post: SocialPost, candidates: CharacterP
     };
     addAuthor(post);
     [...(post.comments || [])].reverse().forEach(addAuthor);
+    // v8d 任务 1（Ann 2026-09-17）：拆掉「随机只补 2 人」与「截断 4 人」——
+    // 楼主与楼中楼作者仍优先收进，其后全部候选按序并入，名单不再截断。
+    // 谁真的出场交给 AI 按「角色的出场节奏」判断，不再靠这里随机抽人。
     for (const char of candidates) {
-        if (selected.length >= 2) break;
         if (!selected.some(c => c.id === char.id)) selected.push(char);
     }
-    // 上限 4（原 3）：楼中楼作者 + 楼主 + 随机 2 —— 模型多选一个圈内角色回复时
-    // 不至于因为不在身份表里被整条丢弃（配合 resolveSparkAuthor 的池内放行）
-    return selected.slice(0, 4);
+    return selected;
 }
 
 export type SparkAuthor = { name: string; character?: CharacterProfile };

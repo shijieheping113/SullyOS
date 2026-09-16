@@ -797,10 +797,29 @@ const SocialApp: React.FC = () => {
             const postCircle = post.worldCircleId
                 ? circles.find(c => c.id === post.worldCircleId)
                 : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined);
+            // v8d 任务 2（Ann 2026-09-17，B 案）：候选池三步构造，两处同款 ——
+            // ①起点：用户帖 = 全部角色；圈子帖 = 该圈成员
+            // ②过滤：用户帖去掉勾了「不给谁看」的角色（圈子帖没有这一步）
+            // ③补回：追踪名单（被同步过 / 被 @ 过）的角色不在池里就加回来——同步这个动作本身
+            //   等于把记忆和上下文发给 Ta，所以同步/@ 过的角色不受「不给谁看」拦截；
+            //   已经在池里的跳过（去重：一个角色只进一次，人设与记忆整个请求里只装一份）
             const excludedIds = new Set(post.excludedCharIds || []);
-            const candidatePool = post.authorType === 'user'
-                ? characters.filter(c => !excludedIds.has(c.id))
+            const basePool = post.authorType === 'user'
+                ? characters
                 : (post.circleId ? characters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : characters);
+            const candidatePool = (() => {
+                const pool = post.authorType === 'user' ? basePool.filter(c => !excludedIds.has(c.id)) : basePool;
+                const trackedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
+                if (!trackedIds.length) return pool;
+                const seen = new Set(pool.map(c => c.id));
+                const merged = [...pool];
+                for (const id of trackedIds) {
+                    if (seen.has(id)) continue;
+                    const c = characters.find(ch => ch.id === id);
+                    if (c) { merged.push(c); seen.add(id); }
+                }
+                return merged;
+            })();
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
             const context = await buildGenerationContext(selectedChars, postCircle);
             if (controller.signal.aborted) return;
@@ -822,6 +841,27 @@ const SocialApp: React.FC = () => {
                 }
             }
 
+            // v8d 任务 3b/3c（Ann 2026-09-17）：首评补 @ 点名节与私聊能力。
+            // 点名节：帖子上有 @ 才渲染（文案=六-B 逐字）。
+            // 私聊节：追踪名单里至少有一个人（被同步过 / 被 @ 过）就出现，用不用由 AI 看上下文决定；
+            // 正文与搅动逐字一致（六-D），一字未改。
+            const syncedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
+            const mentionSection = (post.mentions && post.mentions.length)
+                ? `## 用户点名的角色
+用户发布这条笔记时 @ 到的角色：**这条笔记 Ta 收到了。Ta 怎么回应由人设决定，但这一轮必须出现，不会像没看见一样。**
+
+`
+                : '';
+            const privateChatSection = syncedIds.length > 0 ? `### 私聊
+角色有可以私聊用户的能力，可以用 "privateChat": ["内容1", "内容2"] 把想对用户一个人说的话直接发进
+角色和用户的私聊——只有用户看得到，评论区不显示。
+它承载的是只想让用户一个人听到的话：悄悄话、贴脸的话、想避开评论区认真聊几句的。
+要不要私聊、什么时候私聊、说几条，跟在评论区发言一样——按角色当下的想法判断。
+私聊的节奏跟着用户走：如果Ta 只是在帖子活动、有还没拿主意的事，不要急着替 Ta 做决定或把事情推进下去。
+发私聊前先翻最近的私聊记录：你已经发过的内容，不要再重复发。
+
+` : '';
+
             // 定稿（2026-09-16 凌晨）：Ann 逐字定稿——群像作者视角，首开评论区
             const prompt = `### 任务: 模拟社交APP评论区
 **帖子来源**: "Spark" 社区${postCircle ? `（所属世界:「${postCircle.name}」）` : ''}
@@ -833,14 +873,16 @@ ${post.content || '(楼主没写正文)'}
 """
 
 你是这条帖子评论区的群像作者：下面的评论和走向都由你根据这条帖子当场写出来，
-混合使用 **选定角色** 和 **随机路人**，自由参与。
+### 角色的出场节奏
+跟帖子内容越相关的角色，越可能开口——Ta 的人格、记忆、最近在意的事跟这条帖子越贴，越可能评论，像真人刷到自己在意的话题忍不住说话。相反，对该话题讨厌，避而不谈，没有兴趣或者普普通通的，跟帖子没什么关系的角色，更多是划过去没说话，真人不会逢帖必评。尤其是对网友的倾诉欲是搁着一层社交面具的。（社交面具：指的是角色想要在圈子里保持的形象，并非100%的现实原生性格，而是互联网的侧面的性格，与角色的人设，性格，心态和需求有关。）
+一次的新评论保持自然的量（不超过 6 条），不要让角色和路人们一哄而上全部开口，评论应该缓缓展开讨论。
 这里是虚拟社区，大家围着这条帖子说话——接话、追问、反驳、围观、解释误会都行，
 接着已有讨论往下走。评论要切实回复有内容的东西，不只对着标题空泛地说，不要说套话。
 不要机械复读同一个梗；保持每位发言者前后语气连贯、区别明显，让他们像常来的活人，
 不要都像播报员。
 选定角色如果评论，要根据当前状态和关系进度评论。
 
-### 路人（charId 为 null）：刷到这条帖子的陌生网友
+${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到这条帖子的陌生网友
 生成每条路人评论前，先给这个路人立一个具体人设：
 - 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
   并且符合当前的世界限制规则。
@@ -871,7 +913,7 @@ ${post.content || '(楼主没写正文)'}
 
 ### 输出格式 (JSON Array)
 [
-  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "被回复的评论作者名，不回复填null" }
+  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "被回复的评论作者名，不回复填null", "privateChat": ["想说的第一条", "第二条", ...] 或省略 }
 ]`;
             // 五修-5：帖子带用户图时走识图构造（visionApi 优先 / 全局模型直发）
             const init = await buildSparkFetchInit(context, prompt, post, { temperature: 0.8, purpose: '生成帖子评论', signal: controller.signal });
@@ -881,6 +923,9 @@ ${post.content || '(楼主没写正文)'}
             if (controller.signal.aborted) return;
             const json = safeParseJSON(extractContent(data));
             if (Array.isArray(json)) {
+                // v8d 任务 3e（Ann 2026-09-17）：首评也能发私聊——落库与硬闸写法跟搅动完全一致，
+                // 只有追踪名单里的角色能落库，且全局私聊开关没关。
+                const privateMessages: { charId: string; lines: string[] }[] = [];
                 const comments: SocialComment[] = json
                     .flatMap((c: any) => {
                         const author = resolveSparkAuthor(c, selectedChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
@@ -889,6 +934,21 @@ ${post.content || '(楼主没写正文)'}
                         let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
                         const char = author.character;
                         if (char) avatar = char.avatar;
+                        // 六改-6 同款：privateChat 数组 = 角色连发多条私聊，逐条落库，不进公开评论区
+                        if (Array.isArray(c.privateChat)) {
+                            if (char) {
+                                if (!syncedIds.includes(char.id)) return []; // v8c-4 硬闸：没同步过这条帖子 = 没有私聊资格，直接丢弃
+                                if (loadPrivateChatOff()[char.id]) return []; // 开关关闭：私聊直接丢弃，不转公开评论
+                                const lines = c.privateChat.map((x: any) => String(x ?? '').trim()).filter(Boolean);
+                                if (lines.length) privateMessages.push({ charId: char.id, lines });
+                            }
+                            return []; // 路人没有私聊能力，漏到这里的直接丢弃
+                        }
+                        // 兼容旧格式：toPrivateChat: true = 单条私聊
+                        if (c.toPrivateChat === true) {
+                            if (char && syncedIds.includes(char.id) && !loadPrivateChatOff()[char.id]) privateMessages.push({ charId: char.id, lines: [c.content.trim()] });
+                            return []; // 路人没有私聊能力，漏到这里的直接丢弃
+                        }
                         return [{
                             id: `cmt-${Math.random()}`,
                             authorName: authorName,
@@ -910,11 +970,30 @@ ${post.content || '(楼主没写正文)'}
                         const target = arr.find(x => x !== c && eq(x.authorName, _replyToName));
                         return { ...rest, replyToId: target?.id };
                     });
-                if (!comments.length) throw new Error('模型返回的评论身份不匹配，未添加评论');
-                updatePostInFeed(post.id, current => ({
-                    ...current,
-                    comments: mergeSocialComments(current.comments || [], comments),
-                }));
+                // v8d 任务 3e：私聊落主聊天（同搅动写法——首条带前空行、末条带后空行，读起来像真人一条接一条刷屏）
+                const publicCharIds = new Set(comments.map(c => c.authorCharId).filter(Boolean) as string[]);
+                for (const pm of privateMessages) {
+                    try {
+                        const charName = characters.find(c => c.id === pm.charId)?.name || '角色';
+                        for (let i = 0; i < pm.lines.length; i++) {
+                            const wrapped = `${i === 0 ? '\n' : ''}${pm.lines[i]}${i === pm.lines.length - 1 ? '\n' : ''}`;
+                            await DB.saveMessage({ charId: pm.charId, role: 'assistant', type: 'text', content: wrapped });
+                        }
+                        const alsoPublic = publicCharIds.has(pm.charId);
+                        addToast(pm.lines.length > 1
+                            ? (alsoPublic ? `${charName} 私聊连发了 ${pm.lines.length} 条，也在评论区发了言` : `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）`)
+                            : (alsoPublic ? `${charName} 私聊了你一句，也在评论区发了言` : `${charName} 私聊了你一句（没发在评论区）`), 'info');
+                        trackEvent('Spark 首评产生私聊消息');
+                    } catch {}
+                }
+                // 只有私聊、没有公开评论时不算"身份不匹配"；两边都空才报错
+                if (!comments.length && !privateMessages.length) throw new Error('模型返回的评论身份不匹配，未添加评论');
+                if (comments.length) {
+                    updatePostInFeed(post.id, current => ({
+                        ...current,
+                        comments: mergeSocialComments(current.comments || [], comments),
+                    }));
+                }
             }
         } catch (e: any) {
             if (e?.name !== 'AbortError') addToast(`评论加载失败: ${e?.message || e}`, 'error');
@@ -1048,7 +1127,8 @@ ${post.content || '(楼主没写正文)'}
         // 现有图是 emoji 贴纸码点则回填；是图片引用（五修-5 之后）则保留展示、编辑面板不动贴纸
         const first = (post.images || [])[0] || '';
         setNewPostEmoji(/^\d+$/.test(first) ? first : '2728');
-        setNewPostMentions([]); // 编辑不改 @ 状态（原帖 mentions 保留不动）
+        // v8d 任务 5a（Ann 2026-09-17）：回填已有的 @ —— 编辑面板能看到原帖 @ 的角色，选择器可增可减
+        setNewPostMentions([...(post.mentions || [])]);
         // v8c-2：回填「圈子」「不给谁看」，可改，改完对下一次生成生效
         setNewPostWorldCircleId(post.worldCircleId || '');
         setNewPostExcludedCharIds([...(post.excludedCharIds || [])]);
@@ -1066,6 +1146,8 @@ ${post.content || '(楼主没写正文)'}
                 const oldImages = feedRef.current.find(p => p.id === editingPostId)?.images;
                 await cleanupPostImageAssets(oldImages);
             }
+            // v8d 任务 5b（Ann 2026-09-17）：先记下原帖 @ 名单，落定后只对「新增的 @」补同步链
+            const beforeMentions = feedRef.current.find(p => p.id === editingPostId)?.mentions || [];
             updatePostInFeed(editingPostId, current => ({
                 ...current,
                 title: newPostTitle || '无标题',
@@ -1077,12 +1159,27 @@ ${post.content || '(楼主没写正文)'}
                 // v8c-2：圈子/不给谁看可改，改完对下一次生成生效
                 worldCircleId: newPostWorldCircleId || undefined,
                 excludedCharIds: newPostExcludedCharIds.length ? [...newPostExcludedCharIds] : undefined,
+                // v8d 任务 5b：@ 名单入库（原帖已有的保留、新勾的加上）
+                mentions: [...newPostMentions],
             }));
             setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
-            setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]);
+            setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setNewPostMentions([]);
             setEditingPostId(null);
             setIsCreateOpen(false);
             addToast('笔记已更新', 'success');
+            // v8d 任务 5b：新增的 @ 走发帖分支同款同步链（记进追踪名单 + 帖子卡发进 Ta 的私聊）；
+            // 原有 @ 不重复同步、不撤销。
+            const addedMentions = newPostMentions.filter(id => !beforeMentions.includes(id));
+            if (addedMentions.length) {
+                const latest = feedRef.current.find(p => p.id === editingPostId);
+                if (latest) {
+                    let okCount = 0;
+                    for (const cid of addedMentions) {
+                        if (await syncPostToChar(latest, cid, true)) okCount++;
+                    }
+                    if (okCount) addToast(`已提醒 ${okCount} 个角色：你在帖子里 @ 了 Ta`, 'success');
+                }
+            }
             return;
         }
         const post: SocialPost = {
@@ -1451,10 +1548,28 @@ ${post.content || '(楼主没写正文)'}
             const postCircle = post.worldCircleId
                 ? circles.find(c => c.id === post.worldCircleId)
                 : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined);
+            // v8d 任务 2（Ann 2026-09-17，B 案）：同首评——候选池三步构造
+            // ①起点：用户帖 = 全部角色；圈子帖 = 该圈成员
+            // ②过滤：用户帖去掉勾了「不给谁看」的角色（圈子帖没有这一步）
+            // ③补回：追踪名单（被同步过 / 被 @ 过）的角色不在池里就加回来，不受「不给谁看」拦截；
+            //   已在池里的跳过（去重：一个角色只进一次，人设与记忆只装一份）
             const excludedIds = new Set(post.excludedCharIds || []);
-            const candidatePool = post.authorType === 'user'
-                ? characters.filter(c => !excludedIds.has(c.id))
+            const basePool = post.authorType === 'user'
+                ? characters
                 : (post.circleId ? characters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : characters);
+            const candidatePool = (() => {
+                const pool = post.authorType === 'user' ? basePool.filter(c => !excludedIds.has(c.id)) : basePool;
+                const trackedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
+                if (!trackedIds.length) return pool;
+                const seen = new Set(pool.map(c => c.id));
+                const merged = [...pool];
+                for (const id of trackedIds) {
+                    if (seen.has(id)) continue;
+                    const c = characters.find(ch => ch.id === id);
+                    if (c) { merged.push(c); seen.add(id); }
+                }
+                return merged;
+            })();
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
             // 返工⑩：用户刚 @ 的角色强制进入本轮名单（去重并入）
             const mentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
@@ -1486,11 +1601,12 @@ ${post.content || '(楼主没写正文)'}
             }
             const lastComment = lastUserCommentRef.current?.postId === post.id;
 
-            // v8c-4（Ann 2026-09-16）：私聊能力只跟着「同步」走——@ 同步和右下角按钮同步都会写进
-            // loadTrackedSparkPosts()[post.id].charIds；与本轮在场角色求交集，交集为空 = 连提示词都不给
-            // （没同步 = 模型根本不知道有这个能力）。私聊节正文一句未改，只决定整节出现与否。
+            // v8d 任务 4e（Ann 2026-09-17 定稿口径）：私聊能力只跟着「同步」走——@ 同步和右下角按钮同步
+            // 都会把角色写进 loadTrackedSparkPosts()[post.id].charIds；**只要追踪名单里至少有一个人，
+            // 私聊节就出现**，用不用交给 AI 看上下文和帖子决定。旧写法要求「同步过的角色恰好在本轮名单里」，
+            // 被同步的角色没被抽进本轮 → 整段私聊提示词消失 → 私聊全灭。私聊节正文一字未动。
             const syncedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
-            const privateChatSection = finalChars.some(c => syncedIds.includes(c.id)) ? `### 私聊
+            const privateChatSection = syncedIds.length > 0 ? `### 私聊
 角色有可以私聊用户的能力，可以用 "privateChat": ["内容1", "内容2"] 把想对用户一个人说的话直接发进
 角色和用户的私聊——只有用户看得到，评论区不显示。
 它承载的是只想让用户一个人听到的话：悄悄话、贴脸的话、想避开评论区认真聊几句的。
@@ -1517,10 +1633,10 @@ ${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
 的路人再冒一句——他们是回到自己参与过的帖子，不是初次刷到。也可能都散了，重点是看当前
 用户和角色最新评论引导的趋向。
 **从外面新刷进来的陌生网友是少数**：常常一条都没有，偶尔一两个；真的有，按下面的规矩立人设。
-也可能这段时间没人说话——一条新动静都没有（返回空数组）就空着。
 动静的形态：接话、追问、反驳、围观、解释误会、楼主下场补充都行，接着已有讨论往下走；
 评论要切实回复有内容的东西，不要说套话；保持每个人前后语气连贯，别都像播报员。
 选定角色（用马甲网名发言）出不出场、发几条，根据 Ta 的人格、记忆、之前参与帖子内容和当前状态。
+尤其是对网友的倾诉欲是搁着一层社交面具的。（社交面具：指的是角色想要在圈子里保持的形象，并非100%的现实原生性格，而是互联网的侧面的性格，与角色的人设，性格，心态和需求有关。）
 
 ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶尔才有，一条没有是常态
 给这个新人立一个具体人设再开口：
@@ -1537,8 +1653,8 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
 - 和用户、和任何角色都是初次刷到的关系，别硬认。
 - 路人的评论不一定跟用户与角色相关，由他的视角自然决定：大多数评论就是对着帖子本身说话——就事论事、玩梗、吐槽、科普，跟任何角色和用户都没有关系，不需要挖掘或呼应账号背后的人物与关系
 
-### 用户点名的角色
-用户评论里直接 @ 到的角色、或用户在楼中楼里回复的那个角色：这条评论 Ta 看到了。Ta 怎么回应由人设决定，但不会像没看见一样。
+## 用户点名的角色
+用户发布这条笔记时 @ 到的角色、用户评论里直接 @ 到的角色、或用户在楼中楼里回复的那个角色：**Ta 看到了。Ta 怎么回应由人设决定，但这一轮必须出现，不会像没看见一样。**
 
 ### 禁令
 - 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
@@ -2162,7 +2278,9 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
         <div className="h-full w-full bg-gradient-to-br from-rose-50 via-slate-50 to-teal-50 flex flex-col font-sans relative text-slate-900 overflow-hidden">
             
             {/* --- Modals (Settings, Share) --- */}
-            <Modal isOpen={showSettings} title="身份管理" onClose={() => setShowSettings(false)}>
+            {/* v8d 任务 6（Ann 2026-09-17）：身份管理浮层开 noOverlayFade——去掉外层透明度渐变，
+                避开 fadeIn 首帧 opacity=0 透出底下主页的「闪一帧」；只作用于这一个浮层。 */}
+            <Modal isOpen={showSettings} title="身份管理" onClose={() => setShowSettings(false)} noOverlayFade>
                 <div className="space-y-6">
                     <div className="max-h-[50vh] overflow-y-auto no-scrollbar space-y-6 px-1">
                         {/* --- 圈子管理（平行世界） --- */}
@@ -2351,6 +2469,7 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
                 isOpen={!!sparkAvatarEditChar}
                 title={sparkAvatarEditChar ? `${sparkAvatarEditChar.name}的 Spark 头像` : ''}
                 onClose={() => { setSparkAvatarEditChar(null); setSparkAvatarLinkDraft(null); }}
+                noOverlayFade
                 footer={
                     <button
                         onClick={() => { setSparkAvatarEditChar(null); setSparkAvatarLinkDraft(null); }}
