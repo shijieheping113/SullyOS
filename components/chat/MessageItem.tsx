@@ -3098,7 +3098,8 @@ const MessageItem = React.memo(({
         // 角色侧「我的 Spark 动态」卡片（用户点「同步到私聊」生成的 assistant 卡）：
         // 顶部角标写明「谁的动态 · 在 Spark 干了什么」，与普通分享卡区分开
         if (m.role === 'assistant' && syncKind && syncKind !== 'update') {
-            const kindBadge = syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
+            const mentioned = !!(m.metadata as any)?.mentioned;
+            const kindBadge = mentioned ? '用户 @ 了你' : syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
             return commonLayout(
                 <div
                     className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-rose-100 cursor-pointer active:opacity-90 transition-opacity"
@@ -3122,7 +3123,20 @@ const MessageItem = React.memo(({
                             <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-4 h-4 rounded-full" />
                             <span className="text-[10px] text-slate-500">{post.authorName}</span>
                         </div>
-                        <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{post.content}</p>
+                        {Array.isArray(post.comments) && post.comments.length > 0 && (
+                            <div className="mt-2 space-y-2">
+                                {post.comments.slice(0, 3).map((c: any, i: number) => (
+                                    <div key={c?.id || i} className="flex items-start gap-2">
+                                        <TokenImg value={resolveSparkCharAvatar(c.authorCharId, c.authorAvatar, c.authorName)} className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5" />
+                                        <div className="min-w-0">
+                                            <div className="text-[10px] text-slate-500 font-bold truncate">{c.authorName}</div>
+                                            <p className="text-[11px] text-slate-600 line-clamp-2 leading-snug">{c.content}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                {post.comments.length > 3 && <div className="text-[10px] text-slate-400">… 还有 {post.comments.length - 3} 条评论</div>}
+                            </div>
+                        )}
                         <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-slate-400">
                             <span className="text-red-400">Spark</span> • 公开足迹
                         </div>

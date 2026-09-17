@@ -3764,6 +3764,8 @@ export interface SocialPost {
     worldCircleId?: string;
     /** v8c-2（Ann 2026-09-16）：「不给谁看」名单——这些角色不进生成池，不发人设和记忆。旧帖无此字段 */
     excludedCharIds?: string[];
+    /** 发帖 @ 的强制回复是否已经用掉过一轮。旧帖无此字段 = 还没用过 */
+    mentionForceUsed?: boolean;
 }
 
 export interface SubAccount {

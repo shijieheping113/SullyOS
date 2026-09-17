@@ -9,7 +9,7 @@ import { DB } from '../utils/db';
 import { codepointToEmoji, SparkPostImage } from './social/SparkPostImage';
 import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
 import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
-import { canSparkPrivateChat, mergeSparkMentionIds, splitSparkCommentItem } from '../utils/sparkCommentParse';
+import { canSparkPrivateChat, findSparkReplyTarget, mergeSparkMentionIds, splitSparkCommentItem, unusedPostMentionIds } from '../utils/sparkCommentParse';
 import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, ensureSeenCommentIds, loadPrivateChatOff, setPrivateChatOff, loadSparkReplyWatermarks, saveSparkReplyWatermark } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
@@ -21,7 +21,7 @@ import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from 
 import { trackEvent } from '../utils/analytics';
 import TokenImg from '../components/os/TokenImg';
 // v8c-1（Ann 2026-09-16）：Spark 角色头像统一走 resolver —— 自定义 > 主聊天头像 > 生成时快照 > 名字 hash
-import { resolveSparkCharAvatar, setSparkCharAvatar, syncSparkLiveAvatars } from '../utils/sparkAvatar';
+import { resolveSparkCharAvatar, setSparkCharAvatar, sparkStrangerAvatar, syncSparkLiveAvatars } from '../utils/sparkAvatar';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -847,7 +847,8 @@ const SocialApp: React.FC = () => {
             // 私聊节：追踪名单里至少有一个人（被同步过 / 被 @ 过）就出现，用不用由 AI 看上下文决定；
             // 正文与搅动逐字一致（六-D），一字未改。
             const syncedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
-            const mentionSection = (post.mentions && post.mentions.length)
+            const unusedPostMentions = unusedPostMentionIds(post);
+            const mentionSection = unusedPostMentions.length
                 ? `## 用户点名的角色
 用户发布这条笔记时 @ 到的角色：**这条笔记 Ta 收到了。Ta 怎么回应由人设决定，但这一轮必须出现，不会像没看见一样。**
 
@@ -940,8 +941,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                         }
                         if (!split.publicContent) return [];
                         const authorName = author.name;
-                        let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
-                        if (char) avatar = char.avatar;
+                        const avatar = char ? char.avatar : sparkStrangerAvatar(authorName);
                         return [{
                             id: `cmt-${Math.random()}`,
                             authorName: authorName,
@@ -990,6 +990,9 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                         comments: mergeSocialComments(current.comments || [], comments),
                     }));
                 }
+                if (unusedPostMentions.length) {
+                    updatePostInFeed(post.id, current => ({ ...current, mentionForceUsed: true }));
+                }
             }
         } catch (e: any) {
             if (e?.name !== 'AbortError') addToast(`评论加载失败: ${e?.message || e}`, 'error');
@@ -1020,7 +1023,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
     // 同时注册帖子追踪：之后这帖的新评论会以通知消息形式进角色上下文。
     // 五修-10：同步的核心实现（分享/「让角色知道」/@ 艾特 三条路共用）。
     // viaMention = 用户发帖时 @ 了该角色 → 卡片内容直接说明被艾特。
-    const syncPostToChar = async (post: SocialPost, charId: string, viaMention = false): Promise<boolean> => {
+    const syncPostToChar = async (post: SocialPost, charId: string, viaMention = false, opts?: { skipTrack?: boolean }): Promise<boolean> => {
         const char = characters.find(c => c.id === charId);
         const handles = (characterHandles[charId] || []).map(h => h.handle);
         const isAuthor = post.authorCharId === charId || handles.includes(post.authorName);
@@ -1030,13 +1033,23 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
             ? '用户 @ 了你'
             : syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
         try {
-            await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: `[Spark 动态·${kindLabel}]`, metadata: { post, syncKind, mentioned: viaMention } });
-            trackSparkPost(post.id, charId, (post.comments || []).map(c => c.id));
+            await DB.saveMessage({
+                charId, role: 'assistant', type: 'social_card', content: `[Spark 动态·${kindLabel}]`,
+                metadata: { post, syncKind, mentioned: viaMention },
+            });
+            if (!opts?.skipTrack) trackSparkPost(post.id, charId, (post.comments || []).map(c => c.id));
             return true;
         } catch (e) {
             console.warn('[Spark] 同步失败', { postId: post.id, charId, viaMention, e });
             return false;
         }
+    };
+
+    const sendSparkCommentUpdateCard = async (post: SocialPost, charId: string, newComments: SocialComment[]): Promise<void> => {
+        await DB.saveMessage({
+            charId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]',
+            metadata: { post, syncKind: 'update', newComments },
+        });
     };
 
     const handleSyncToChar = async (charId: string) => {
@@ -1147,6 +1160,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
             }
             // v8d 任务 5b（Ann 2026-09-17）：先记下原帖 @ 名单，落定后只对「新增的 @」补同步链
             const beforeMentions = feedRef.current.find(p => p.id === editingPostId)?.mentions || [];
+            const addedMentions = newPostMentions.filter(id => !beforeMentions.includes(id));
             updatePostInFeed(editingPostId, current => ({
                 ...current,
                 title: newPostTitle || '无标题',
@@ -1160,6 +1174,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 excludedCharIds: newPostExcludedCharIds.length ? [...newPostExcludedCharIds] : undefined,
                 // v8d 任务 5b：@ 名单入库（原帖已有的保留、新勾的加上）
                 mentions: [...newPostMentions],
+                mentionForceUsed: addedMentions.length ? false : current.mentionForceUsed,
             }));
             setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
             setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setNewPostMentions([]);
@@ -1168,7 +1183,6 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
             addToast('笔记已更新', 'success');
             // v8d 任务 5b：新增的 @ 走发帖分支同款同步链（记进追踪名单 + 帖子卡发进 Ta 的私聊）；
             // 原有 @ 不重复同步、不撤销。
-            const addedMentions = newPostMentions.filter(id => !beforeMentions.includes(id));
             if (addedMentions.length) {
                 const latest = feedRef.current.find(p => p.id === editingPostId);
                 if (latest) {
@@ -1419,8 +1433,22 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
         // 评论里用户亲手 @ 的角色 → 全员真通知（卡片进私聊，Ann 2026-09-15 定稿：默认角色名就是社交号，不设档案门槛）
         if (commentMentions.length && updatedPost) {
             let okCount = 0;
+            // 以发这句 @ 之前的名单为准：未同步 = 帖子卡 + @ 卡，最后才入名单；已同步 = 只用追踪那一张动态卡
+            const alreadyTracked = new Set(loadTrackedSparkPosts()[updatedPost.id]?.charIds || []);
             for (const cid of commentMentions) {
-                if (await syncPostToChar(updatedPost, cid, true)) okCount++;
+                try {
+                    if (alreadyTracked.has(cid)) {
+                        okCount++;
+                        continue;
+                    }
+                    if (await syncPostToChar(updatedPost, cid, true, { skipTrack: true })) {
+                        await sendSparkCommentUpdateCard(updatedPost, cid, [userComment]);
+                        trackSparkPost(updatedPost.id, cid, (updatedPost.comments || []).map(c => c.id));
+                        okCount++;
+                    }
+                } catch (e) {
+                    console.warn('[Spark] 评论 @ 同步失败', { postId: updatedPost.id, charId: cid, e });
+                }
             }
             if (okCount) addToast(`已提醒 ${okCount} 个角色：你在评论里 @ 了 Ta`, 'success');
             else addToast('@ 提醒发送失败，请到帖子页手动同步', 'error');
@@ -1573,16 +1601,11 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 return merged;
             })();
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
-            // 发帖 @ + 评论 @ + 楼中楼被回复的角色：强制进本轮名单（去重并入）
+            // 强制只挂本轮 @：评论 @ 用这一搅；发帖 @ 若还没用过也算这一轮。楼中楼不强制。
             const commentMentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
                 ? lastUserCommentRef.current.mentionedCharIds : [];
-            const replyCharId = (() => {
-                if (lastUserCommentRef.current?.postId !== post.id) return [] as string[];
-                const rid = lastUserCommentRef.current.repliedToCommentId;
-                const target = rid ? (post.comments || []).find(x => x.id === rid) : undefined;
-                return target?.authorCharId ? [target.authorCharId] : [];
-            })();
-            const mentionIds = mergeSparkMentionIds(post.mentions, commentMentionIds, replyCharId);
+            const unusedPostMentions = unusedPostMentionIds(post);
+            const mentionIds = mergeSparkMentionIds(commentMentionIds, unusedPostMentions);
             const forcedChars = mentionIds
                 .map(id => characters.find(c => c.id === id))
                 .filter((c): c is NonNullable<typeof c> => !!c && !selectedChars.some(s => s.id === c.id));
@@ -1609,6 +1632,17 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 mentionLine = `\n**用户在这条评论里 @ 了 ${mentionedNames.join('、')}**${replyToName ? `——Ta 在回复 ${replyToName}，想看被 @ 的人和 ${replyToName} 就这个话题交流` : '——Ta 想看被 @ 的人来接这条线'}`;
             }
             const lastComment = lastUserCommentRef.current?.postId === post.id;
+            const namedSection = commentMentionIds.length
+                ? `## 用户点名的角色
+用户在这条评论里 @ 到的角色：**这条评论 Ta 看到了。Ta 怎么回应由人设决定，但必须回这条评论，不会像没看见一样。**
+
+`
+                : unusedPostMentions.length
+                ? `## 用户点名的角色
+用户发布这条笔记时 @ 到的角色：**这条笔记 Ta 收到了。Ta 怎么回应由人设决定，但这一轮必须出现，不会像没看见一样。**
+
+`
+                : '';
 
             // v8d 任务 4e（Ann 2026-09-17 定稿口径）：私聊能力只跟着「同步」走——@ 同步和右下角按钮同步
             // 都会把角色写进 loadTrackedSparkPosts()[post.id].charIds；**只要追踪名单里至少有一个人，
@@ -1662,10 +1696,7 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
 - 和用户、和任何角色都是初次刷到的关系，别硬认。
 - 路人的评论不一定跟用户与角色相关，由他的视角自然决定：大多数评论就是对着帖子本身说话——就事论事、玩梗、吐槽、科普，跟任何角色和用户都没有关系，不需要挖掘或呼应账号背后的人物与关系
 
-## 用户点名的角色
-用户发布这条笔记时 @ 到的角色、用户评论里直接 @ 到的角色、或用户在楼中楼里回复的那个角色：**Ta 看到了。Ta 怎么回应由人设决定，但这一轮必须出现，不会像没看见一样。**
-
-### 禁令
+${namedSection}### 禁令
 - 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
 - 新路人的 author 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合，
   也不能冒用评论区里已经出现过的路人网名。
@@ -1705,13 +1736,16 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
                     privateMessages.push({ charId: matchedChar!.id, lines: split.privateLines });
                 }
                 if (!split.publicContent) return;
-                let avatar = matchedChar
-                    ? matchedChar.avatar
-                    : `https://api.dicebear.com/7.x/${['micah', 'avataaars', 'bottts', 'notionists'][[...author.name].reduce((s, ch) => s + ch.codePointAt(0)!, 0) % 4]}/svg?seed=${encodeURIComponent(author.name)}`;
-                // replyTo：按作者名在现有评论里找目标（取该作者最近一条）——找得到就挂楼中楼，找不到顶层
-                const target = typeof c.replyTo === 'string' && c.replyTo.trim()
-                    ? [...existing, ...newComments].reverse().find(x => x.authorName === c.replyTo.trim())
+                const avatar = matchedChar ? matchedChar.avatar : sparkStrangerAvatar(author.name);
+                const forceCommentId = (matchedChar && commentMentionIds.includes(matchedChar.id))
+                    ? lastUserCommentRef.current?.userCommentId
                     : undefined;
+                const target = findSparkReplyTarget(c.replyTo, [...existing, ...newComments], {
+                    matchedCharId: matchedChar?.id,
+                    speakerName: author.name,
+                    userNames: [socialProfile.name, userProfile.name],
+                    forceCommentId,
+                });
                 newComments.push({
                     id: `cmt-evo-${Date.now()}-${Math.random()}`,
                     authorName: author.name,
@@ -1757,6 +1791,9 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
                 addToast('模型回了内容，但没能写进评论区', 'error');
             } else {
                 addToast('这段时间评论区没什么动静', 'info');
+            }
+            if (unusedPostMentions.length) {
+                updatePostInFeed(post.id, current => ({ ...current, mentionForceUsed: true }));
             }
             // 搅动过后清掉"用户刚评论"的记忆——再搅动就是普通的时间流逝
             if (lastUserCommentRef.current?.postId === post.id) lastUserCommentRef.current = null;
@@ -2285,9 +2322,7 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
         <div className="h-full w-full bg-gradient-to-br from-rose-50 via-slate-50 to-teal-50 flex flex-col font-sans relative text-slate-900 overflow-hidden">
             
             {/* --- Modals (Settings, Share) --- */}
-            {/* v8d 任务 6（Ann 2026-09-17）：身份管理浮层开 noOverlayFade——去掉外层透明度渐变，
-                避开 fadeIn 首帧 opacity=0 透出底下主页的「闪一帧」；只作用于这一个浮层。 */}
-            <Modal isOpen={showSettings} title="身份管理" onClose={() => setShowSettings(false)} noOverlayFade>
+            <Modal isOpen={showSettings} title="身份管理" onClose={() => setShowSettings(false)}>
                 <div className="space-y-6">
                     <div className="max-h-[50vh] overflow-y-auto no-scrollbar space-y-6 px-1">
                         {/* --- 圈子管理（平行世界） --- */}
@@ -2476,7 +2511,6 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
                 isOpen={!!sparkAvatarEditChar}
                 title={sparkAvatarEditChar ? `${sparkAvatarEditChar.name}的 Spark 头像` : ''}
                 onClose={() => { setSparkAvatarEditChar(null); setSparkAvatarLinkDraft(null); }}
-                noOverlayFade
                 footer={
                     <button
                         onClick={() => { setSparkAvatarEditChar(null); setSparkAvatarLinkDraft(null); }}
