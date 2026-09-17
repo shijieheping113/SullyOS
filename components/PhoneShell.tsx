@@ -270,6 +270,43 @@ const getImportPhaseLabel = (phase?: string) => {
 
 
 
+// 全屏门（安卓 Chrome 全屏体验的收尾）：冷启动那一下已请求过全屏；用户中途退出
+//（安卓返回键等）后再点一下即恢复。遮罩只在「已过开机 且 当前未全屏 且 未跳过」时出现；
+// 点击同步 requestFullscreen（全屏 API 只认用户手势，不能放 setTimeout/await 后面）；
+// 请求被拒（iOS/部分内置浏览器）可点右下角「跳过」收起，绝不锁死操作。已在全屏时不渲染、不挡操作。
+const FullscreenGate: React.FC = () => {
+  const [blocked, setBlocked] = useState(false);
+  const skippedRef = useRef(false);
+  useEffect(() => {
+    const sync = () => {
+      if (document.fullscreenElement) setBlocked(false);
+      else setBlocked(!skippedRef.current);
+    };
+    document.addEventListener('fullscreenchange', sync);
+    sync();
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  if (!blocked) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[9600] flex flex-col items-center justify-center select-none cursor-pointer"
+      style={{ background: 'rgba(5,6,15,0.55)', backdropFilter: 'blur(2px)' }}
+      onClick={() => { void document.documentElement.requestFullscreen?.()?.catch(() => {}); }}
+      aria-label="轻触进入全屏"
+    >
+      <div className="text-white/85 text-sm tracking-[0.3em]" style={{ textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>
+        轻触进入全屏
+      </div>
+      <button
+        onClick={(e) => { e.stopPropagation(); skippedRef.current = true; setBlocked(false); }}
+        className="absolute bottom-8 right-6 text-[11px] text-white/40 underline underline-offset-4"
+      >
+        跳过
+      </button>
+    </div>
+  );
+};
+
 const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
   <div className="fixed inset-0 z-[9999] flex items-center justify-center p-5 animate-fade-in">
     <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
@@ -907,6 +944,7 @@ const PhoneShell: React.FC = () => {
       >
         {/* 锁屏柔和淡入：与开机「世界入场」退场衔接；body 背景本就是壁纸，故是无缝融入而非硬切。 */}
         <style>{`@keyframes lockReveal{from{opacity:0}to{opacity:1}}`}</style>
+        <FullscreenGate />
         {acnhSkin ? (
             <div className="absolute inset-0 transition-all duration-700 group-hover:opacity-0"
                  style={{ background: 'linear-gradient(180deg, rgba(188,231,245,0.25) 0%, rgba(255,247,176,0.15) 45%, rgba(124,186,76,0.28) 100%)' }} />
@@ -1028,6 +1066,7 @@ const PhoneShell: React.FC = () => {
   return (
     <div className="relative w-full h-full overflow-hidden bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-200 text-slate-900 font-sans select-none overscroll-none">
        {/* Optimized Background Layer */}
+       <FullscreenGate />
        {/* 壁纸底层：进 App 时只柔和虚化/压暗作背景，不再做缩放「过场」——
           进 App 的过渡感统一交给 App 容器的淡入（见下方 animate-fade-in 包裹层）。 */}
        <div

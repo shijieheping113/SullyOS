@@ -60,7 +60,10 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       if (dataReady && now - startRef.current >= HOLD) {
-        setPhase('exit');
+        // 原本这里会自动 setPhase('exit') 进桌面——但全屏请求必须搭用户点击的手势栈，
+        // 自动退场（尤其刷新后的极短版+数据秒就绪）会在用户点击前抢跑，requestFullscreen
+        // 从未被调用 =「第一次能全屏、刷新后不行」的根因。现在改为：数据就绪只打点，
+        // 进桌面必须点一下（skip），完整版/极短版一视同仁。
         // 只报区间不报精确毫秒。注意这里的时长带 HOLD 下限（完整版 2000ms / 极短版 520ms），
         // 真正有信息量的是 3-8s / 8s+ 这条尾巴 —— 数据加载慢才会落到那儿。
         const waited = now - startRef.current;
@@ -83,14 +86,44 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
     return () => clearTimeout(t);
   }, [phase, EXIT, onDone]);
 
+  // Boot 场景现在必须点击才进桌面（全屏手势需要），停留时间不可预期——用户此时按
+  // 返回键/边缘滑动（想「退出重开」）会直接触发浏览器历史返回，退到打开本页之前
+  // 的那条记录 =「网页整个被关掉了」。这里挂一条 Boot 专属历史守卫：Boot 期间返回
+  // 被消费（popstate → 重新压回守卫记录），页面留在 Boot 场景，点一下照常进桌面。
+  const bootGuardReleasedRef = useRef(false);
+  useEffect(() => {
+    // 刷新重载后，上一轮留下的 boot 守卫记录可能还在栈顶——直接复用，避免层层堆叠。
+    const alreadyArmed = !!(window.history.state && (window.history.state as any).sullyosBootGuard);
+    if (!alreadyArmed) {
+      try { window.history.pushState({ sullyosBootGuard: true }, '', window.location.href); } catch { return; }
+    }
+    const onPop = () => {
+      if (bootGuardReleasedRef.current) return; // skip 已放行：这次 popstate 是主动 back 的回声，不重新压守卫
+      try { window.history.pushState({ sullyosBootGuard: true }, '', window.location.href); } catch { /* ignore */ }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   // 轻触跳过：进入平滑退场（非硬切）。
   const skip = () => {
     if (phase !== 'exit') {
+      // 放行 Boot 返回守卫并退掉守卫记录，把返回键交还给浏览器（back 是同页
+      // popstate，无 URL 变化，不会打断紧接着的全屏请求）。
+      bootGuardReleasedRef.current = true;
+      try { window.history.back(); } catch { /* ignore */ }
       setPhase('exit');
       trackEvent('跳过开机动画', {
         数据是否已就绪: dataReady ? '是' : '否',
         开场版本: cinematic ? '完整版' : '极短版',
       });
+      // 尽力而为的整页全屏（安卓 Chrome）：必须与这次点击同处一个同步手势栈，
+      // 一旦落进 setTimeout/await 手势就断了，手机上会静默失败。目标用
+      // documentElement（整页），不选某个子节点。iOS/部分内置浏览器可能拒绝——
+      // 全链可选 + .catch 吞失败，拒了不崩、不挡进桌面。
+      if (!document.fullscreenElement) {
+        void document.documentElement.requestFullscreen?.()?.catch(() => {});
+      }
     }
   };
 
@@ -239,10 +272,10 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
         </div>
       </div>
 
-      {/* 轻触跳过提示（仅完整版、过 1.8s 后；极淡，不打扰） */}
-      {cinematic && !exiting && (
+      {/* 轻触进入提示：进桌面必须点一下（全屏手势），两个版本都要提示；极淡，不打扰 */}
+      {!exiting && (
         <div className="absolute bottom-10 left-0 right-0 text-center text-[10px] tracking-[0.3em] text-white/40"
-             style={{ animation: 'bootHintIn 800ms ease-out 1800ms both' }}>
+             style={{ animation: `bootHintIn 800ms ease-out ${cinematic ? 1800 : 300}ms both` }}>
           轻触进入
         </div>
       )}
