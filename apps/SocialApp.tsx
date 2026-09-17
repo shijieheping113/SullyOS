@@ -6,7 +6,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 // 六改-3：codepointToEmoji / SparkPostImage 抽到 ./social/SparkPostImage.tsx，
 // 与聊天侧 social_card 卡片共用（原来聊天侧把 sparkimg: 引用当文本铺出来的 bug 就在这修）。
-import { codepointToEmoji, SparkPostImage } from './social/SparkPostImage';
+import { codepointToEmoji, pickSparkFeedEmoji, SparkPostImage } from './social/SparkPostImage';
 import { AppID, CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
 import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, sparkCommentCandidatePool, SparkCircleWorld } from '../utils/socialGeneration';
 import { canSparkPrivateChat, findSparkReplyTarget, mergeSparkMentionIds, splitSparkCommentItem, unusedPostMentionIds } from '../utils/sparkCommentParse';
@@ -209,13 +209,13 @@ const SocialApp: React.FC = () => {
     const seenRepliesRef = useRef<Record<string, number>>({});
 
     // spark-follow 功能 1（Ann 2026-09-17 施工单）：私聊弹窗条 —— 帖子详情顶上的微信式消息条。
-    // 私聊写进聊天成功后入队；每句原文一条，约 4.5 秒自动换下一条；点条跳进该角色私聊；关帖/开帖清空。
+    // 私聊写进聊天成功后入队；每句原文一条，每条 2 秒自动换下一条；点条跳进该角色私聊；关帖/开帖清空。
     // 纯演示条：不落库、不出详情页、没有声音和振动。
     const [followupQueue, setFollowupQueue] = useState<{ charId: string; name: string; avatar: string; firstLine: string }[]>([]);
     const [currentFollowup, setCurrentFollowup] = useState<{ charId: string; name: string; avatar: string; firstLine: string } | null>(null);
     const followupTimerRef = useRef<number | null>(null);
     // 队列推进拆成两段：当前为空才取下一条（队列变化不会打断正在显示的条）。
-    // 每条真实私聊原文停约 4.5 秒，按写入顺序一条一条过。
+    // 每条真实私聊原文停 2 秒，按写入顺序一条一条过。
     useEffect(() => {
         if (currentFollowup) return;
         if (followupQueue.length === 0) return;
@@ -228,7 +228,7 @@ const SocialApp: React.FC = () => {
         const t = window.setTimeout(() => {
             followupTimerRef.current = null;
             setCurrentFollowup(null);
-        }, 4500);
+        }, 1800);
         followupTimerRef.current = t;
         return () => { window.clearTimeout(t); };
     }, [currentFollowup]);
@@ -732,6 +732,7 @@ const SocialApp: React.FC = () => {
   不能引用、暗示其他角色的私聊和私密信息。
 - 正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），话题只写在 tags 字段里，
   content 是纯正文。
+- 封面 emojis 只填一个真的表情符号，必须贴合该帖主题或心情（吃饭用🍜、加班用💻、下雨用🌧️、emo 用💔，按内容自己选）。任意表情都可以，禁止每条都用🎈或✨凑数，禁止把说明文字写进这个字段。
 - 自检：任何一条帖子出现了上面禁止的内容，就地重写这条帖子。
 
 ### 输出格式 (JSON Array)
@@ -742,7 +743,7 @@ const SocialApp: React.FC = () => {
     "authorName": "必须填身份表中定义的【网名】",
     "title": "简短吸睛的标题",
     "content": "正文内容...",
-    "emojis": ["🎈", "✨"],
+    "emojis": ["🍜"],
     "tags": ["按这条帖子的内容和发帖人视角自然打的 tag，数量不限（一条可以只有 1 个也可以打 5-6 个），像真实社交平台那样，中英文、长短、风格随意，贴合帖子主题就好。下面的示例仅供参考，禁止照抄：美食探店、深夜emo、职场吐槽、武侠日常、猫猫日记、健身打卡、旅行碎片"],
     "likes": 随机数 (0 - 10000)
   },
@@ -775,9 +776,8 @@ const SocialApp: React.FC = () => {
                     const styleIdx = [...item.authorName].reduce((s, ch) => s + ch.codePointAt(0)!, 0) % 4;
                     avatar = `https://api.dicebear.com/7.x/${seeds[styleIdx]}/svg?seed=${encodeURIComponent(item.authorName)}`;
                 }
-                // Normalize emoji content. AI usually returns real emoji chars; fall back to a ✨ char (not codepoint) for safety.
-                const rawEmojis = Array.isArray(item.emojis) && item.emojis.length > 0 ? item.emojis : ['✨'];
-                const images = rawEmojis.map((e: any) => codepointToEmoji(String(e ?? '✨')));
+                // 封面贴纸：模型自选任意 emoji，不锁发帖面板那 10 个；解析不出才 ✨
+                const images = [pickSparkFeedEmoji(item.emojis)];
                 return [{
                     id: `post-${Date.now()}-${Math.random()}`,
                     authorName: item.authorName || 'Unknown',

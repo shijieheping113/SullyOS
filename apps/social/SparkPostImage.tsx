@@ -49,6 +49,21 @@ export function normalizeSparkSticker(raw: string): string {
     return (SPARK_STICKER_CHARS as readonly string[]).includes(asEmoji) ? asEmoji : '✨';
 }
 
+/** 发现页推荐流封面：模型自选任意 emoji，不锁发帖面板那 10 个；空/垃圾串/说明文字 → ✨ */
+export function pickSparkFeedEmoji(raw: unknown): string {
+    const tokens = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+    for (const t of tokens) {
+        const s = String(t ?? '').trim();
+        if (!s) continue;
+        // 模型把说明句子抄进字段：太长就不是封面（真 emoji / ZWJ 组合一般很短）
+        if (Array.from(s).length > 12) continue;
+        const asEmoji = codepointToEmoji(s);
+        if (asEmoji && asEmoji !== '✨') return asEmoji;
+        if (s === '✨' || s.toLowerCase() === '2728') return '✨';
+    }
+    return '✨';
+}
+
 // 五修-5：Spark 用户帖图片——按 assetId 从 assets 表取压缩图渲染。
 // 引用取不到（换设备导入备份后缓存不存在）→ 显示占位 emoji，文字和评论不受影响。
 export const SparkPostImage: React.FC<{ assetId: string; imgClassName?: string; emojiClass: string }> = ({ assetId, imgClassName, emojiClass }) => {

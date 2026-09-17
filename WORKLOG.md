@@ -1,5 +1,20 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-17 猫儿：弹窗每条 1.8 秒 + 推荐流封面自选 emoji（未 commit）
+
+- 分支 `experiment/spark-follow`。Ann 点名改：私聊条 `setTimeout` 4500 → **1800**（22:17 先落 2000，22:26 Ann 再点名 1.8 秒，终值 **1800**）。
+- 刷新推荐流：提示词让模型自选任意封面 emoji（禁令 + JSON 示例 `🍜`）；解析走 `pickSparkFeedEmoji`，不再锁发帖面板那 10 个。用户发帖面板、关注 SPARK_POST 封面没动。
+- 说明书：`docs/spark-experiment-follow.md`。施工单顶部注明 2 秒 / 自选覆盖旧数字。
+- 22:17 三验收补完（22:08 首跑 build 被打断截断在收尾，重跑通过）：tsc 47=基线、两文件 0 新增；vitest 指定 4 文件全绿 41 条；build exit=0，✓ 6340 modules，31.81s。
+- 22:26 Ann 点名 2 秒 → **1.8 秒**：SocialApp.tsx L231 `setTimeout` 1800；说明书 `docs/spark-experiment-follow.md` 5 处数字同步改齐（第 1/2/3/4/7 节）。其余不动。
+- 没点头不 commit、不合回正分支。
+
+## 2026-09-17 猫儿：21:37 存档并推送（Ann 亲口点头）
+
+- `26c97b93` feat: Spark 关注页/发动态/私聊弹窗条 + tag四段兜底、贴纸封面、弹窗逐句4.5s、搅动点名回复对象（11 文件 +730/-105）。
+- 已推 `origin/experiment/spark-follow`（远端新分支，shijieheping113/SullyOS）。
+- 未入档（按规矩留本地）：`.dev-certs/`、`dev-https.tmp.mjs`、HANDOFF-spark-follow*.md、开工单/事故时间线/排查报告/检讨、vitest-results.json、vite 时间戳临时文件。
+
 ## 2026-09-17 猫儿：20:57 预览退旧换新（吃进 cc04f65f）
 
 - 分支多了两笔存档：`a425b55b`（收件员评论+私聊同落）、`cc04f65f`（评论@必回/卡片按名单/挂楼/同步卡折正文）。
