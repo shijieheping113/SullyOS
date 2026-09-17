@@ -1,5 +1,55 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-17 猫儿：20:57 预览退旧换新（吃进 cc04f65f）
+
+- 分支多了两笔存档：`a425b55b`（收件员评论+私聊同落）、`cc04f65f`（评论@必回/卡片按名单/挂楼/同步卡折正文）。
+- 按 Ann 指示退掉旧 dev server（PID 17936），dev-https.tmp.mjs 重起，仍绑 **https://192.168.0.103:5173**（新进程）。
+- 验收：首页 200；SocialApp 探针四个标记全 YES（`sparkStrangerAvatar`、`mentionForceUsed`=新两笔；`spark-followup-in`、`关注动态已更新`=早上关注页/弹条）。
+- 地址没变所以手机存档无恙；提醒强制刷新拿新前端。未 commit（工作区仍有少量 M 文件跟着分支走）。
+
+## 2026-09-17 规划猫：关注发帖 tag/贴纸封面 + 弹窗逐句 + 搅动点名回复对象
+
+- SPARK_POST 四段：标题|正文|#tag|封面emoji；没 tag 兜底「日常」；封面走 Spark 贴纸 + 渐变底。
+- 私聊条：每句原文一条，停 4.5 秒。
+- 搅动 recentLine：写出本轮回复的是哪个人。
+- 指定测试 41 绿。未 commit。
+
+## 2026-09-17 猫儿：家里 https 预览已开给 Ann 测 spark-follow
+
+- 5173 上有个此前留下的 dev server（node PID 17936），实测它盯的就是当前工作区：探到今天的 `spark-followup-in` / `关注动态已更新` 新代码；`https://192.168.0.103:5173/` 局域网 200。
+- 猫儿另起的重复实例 5174（node PID 7140）已按 Ann 点头退掉（TaskStop 后端口释放）；5173（PID 17936）复核仍在，局域网 200。
+- 未 commit。
+
+## 2026-09-17 规划猫：核实 experiment/spark-follow 施工
+
+- 分支对。改动文件对得上施工单。备份没动。指定 vitest 4 文件 41 测全绿。
+- 不必整单返工。未做真机手测。小处：关着发帖每条聊天仍塞严禁句（施工单先用）；编关注动态顶栏还写「编辑笔记」。
+- 未 commit。
+
+## 2026-09-17 规划猫：施工单补全给 flash 开工
+
+总文件清单、三页、落库字段、MessageItem、验收命令写入 `HANDOFF-spark-follow.md`。
+
+## 2026-09-17 规划猫：提示词写入施工单 + 实验分支
+
+`HANDOFF-spark-follow.md` 附录 A–D。从 Spark 正分支开 `experiment/spark-follow`。零功能代码。
+
+## 2026-09-17 规划猫：关注首评/搅动/卡片留痕原稿
+
+发动态先用。二三四完整原文进 prompts 文件。施工单未动。
+
+## 2026-09-17 规划猫：发动态提示词按语音/HTML 重写
+
+错位改掉。原稿在 `HANDOFF-spark-follow-prompts.md` 第一节。施工单未动。
+
+## 2026-09-17 规划猫：关注/发帖提示词草稿（等 Ann 改）
+
+`HANDOFF-spark-follow-prompts.md`。施工单未改。零功能代码。
+
+## 2026-09-17 规划猫：私聊弹窗 + 关注 施工单（零代码）
+
+Ann 拍板架构后落 `HANDOFF-spark-follow.md` 给 flash。两件事拆开。没动功能代码、没 commit。提示词等 Ann 定稿。备份零改动。
+
 ## 2026-09-17 Spark 救急收口（feature/company-spark-circle-mode · 本笔 commit）
 
 上一笔已存 `a425b55b`：收件员评论和私聊可同时落下（Ann 真机 @ 测试账户已通）。本笔叠在那张上面，只动 Spark。

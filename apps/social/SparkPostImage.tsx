@@ -23,6 +23,32 @@ export const codepointToEmoji = (code: string): string => {
     }
 };
 
+/** 关注发帖封面贴纸：跟 Spark 发帖面板同一套，AI 从这里面选一个 */
+export const SPARK_STICKER_CHARS = ['✨', '🎈', '🎨', '📷', '🎵', '🎮', '🍔', '🏖️', '💤', '💡'] as const;
+
+const SPARK_POST_BGS = [
+    'linear-gradient(135deg, #FF9A9E 0%, #FECFEF 99%, #FECFEF 100%)',
+    'linear-gradient(120deg, #89f7fe 0%, #66a6ff 100%)',
+    'linear-gradient(to top, #fff1eb 0%, #ace0f9 100%)',
+    'linear-gradient(to top, #30cfd0 0%, #330867 100%)',
+    'linear-gradient(to top, #f43b47 0%, #453a94 100%)',
+    'linear-gradient(120deg, #d4fc79 0%, #96e6a1 100%)',
+    'linear-gradient(135deg, #f6d365 0%, #fda085 100%)',
+    'linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%)',
+];
+
+export function pickSparkPostBg(): string {
+    return SPARK_POST_BGS[Math.floor(Math.random() * SPARK_POST_BGS.length)];
+}
+
+/** 把模型写的封面收成贴纸字符；不在名单里就 ✨ */
+export function normalizeSparkSticker(raw: string): string {
+    const token = (raw || '').trim();
+    if (!token) return '✨';
+    const asEmoji = codepointToEmoji(token);
+    return (SPARK_STICKER_CHARS as readonly string[]).includes(asEmoji) ? asEmoji : '✨';
+}
+
 // 五修-5：Spark 用户帖图片——按 assetId 从 assets 表取压缩图渲染。
 // 引用取不到（换设备导入备份后缓存不存在）→ 显示占位 emoji，文字和评论不受影响。
 export const SparkPostImage: React.FC<{ assetId: string; imgClassName?: string; emojiClass: string }> = ({ assetId, imgClassName, emojiClass }) => {

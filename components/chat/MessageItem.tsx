@@ -3099,7 +3099,9 @@ const MessageItem = React.memo(({
         // 顶部角标写明「谁的动态 · 在 Spark 干了什么」，与普通分享卡区分开
         if (m.role === 'assistant' && syncKind && syncKind !== 'update') {
             const mentioned = !!(m.metadata as any)?.mentioned;
-            const kindBadge = mentioned ? '用户 @ 了你' : syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
+            // spark-follow 2-I：moments 帖角标换「关注动态」口吻（发布→发布了关注动态 / 刷到→看见了关注动态）；其余卡原样
+            const isMomentsPost = post.origin === 'moments';
+            const kindBadge = mentioned ? '用户 @ 了你' : syncKind === 'published' ? (isMomentsPost ? '发布了关注动态' : '发布了笔记') : syncKind === 'commented' ? '在帖子下留了言' : (isMomentsPost ? '看见了关注动态' : '刷到了帖子');
             return commonLayout(
                 <div
                     className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-rose-100 cursor-pointer active:opacity-90 transition-opacity"
@@ -3153,7 +3155,7 @@ const MessageItem = React.memo(({
                     title="点开原帖"
                 >
                     <div className="px-3 pt-3 pb-2 flex items-center gap-1.5">
-                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">帖子有新动态</span>
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">{post.origin === 'moments' ? '关注有新动静' : '帖子有新动态'}</span>
                         <span className="text-[10px] text-slate-400 truncate">{post.title}</span>
                     </div>
                     <div className="px-3 pb-3 space-y-2">

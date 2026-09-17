@@ -144,6 +144,25 @@ export function setPrivateChatOff(charId: string, off: boolean): void {
     try { localStorage.setItem(SPARK_PRIVATE_CHAT_OFF_KEY, JSON.stringify(all)); } catch {}
 }
 
+// --- Spark 关注发帖开关（spark-follow 2-B，Ann 2026-09-17：per-character，默认关）---
+// 名单语义与私聊开关**相反**：私聊开关是名单里 = 关；发帖开关是名单里 = 开，不在名单 = 关。
+// 默认所有角色都是关。备份不会搬走这个 key（localStorage 直存，不为它改备份）。
+const SPARK_MOMENTS_POST_ON_KEY = 'spark_moments_post_on';
+
+export function loadMomentsPostOn(): Record<string, true> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SPARK_MOMENTS_POST_ON_KEY) || '{}');
+        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch { return {}; }
+}
+
+export function setMomentsPostOn(charId: string, on: boolean): void {
+    const all = loadMomentsPostOn();
+    if (on) all[charId] = true; else delete all[charId];
+    try { localStorage.setItem(SPARK_MOMENTS_POST_ON_KEY, JSON.stringify(all)); } catch {}
+}
+
 // --- 楼中楼「新回复」已读水位（v9 二轮，Ann 拍板 B 案）---
 // localStorage 持久化：postId → rootCommentId → 已读回复数。
 // 语义：点开看过 = 永久已读（退出重进不复发）；首次打开的楼层记当前数（打开前的不算新）。

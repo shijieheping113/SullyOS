@@ -28,6 +28,7 @@ import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { isBlobRef } from './blobRef';
 import { voiceLanguagePromptLabel } from './voiceLanguage';
+import { loadMomentsPostOn } from './sparkCircles';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -1060,6 +1061,52 @@ ${voiceActingGuide()}`;
             baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
         }
 
+        // Spark 关注（发动态）能力段 —— spark-follow 2-G（Ann 2026-09-17 拍板先用附录 A）：
+        // 跟语音同一类开关——开着整段注入（逐字），关着只注入严禁句。
+        // 不写进 [你现在的能力]（三种 SPARK_COMMENT 原文一个字不改、不加发帖）。
+        if (loadMomentsPostOn()[char.id] === true) {
+            baseSystemPrompt += `\n\n### Spark 关注（发动态）
+
+用户开启了你在 Spark 关注发动态的功能。
+
+**你可以发 Spark 动态！** 就像真人用微信发一条朋友圈：想到了就发，发完继续聊天。动态会出现在用户 Spark 的「关注」里，你自己的聊天里也会看到这张帖子卡。
+
+发动态用一行暗号，单独成行：
+
+[[ACTION:SPARK_POST|标题|正文|#tag1 #tag2|封面emoji]]
+
+规则：
+1. 竖线分开四段：标题、正文、tag、封面贴纸。标题是短的那句，正文才是你真正想说的话。标题或正文空了，这条发不出去。
+2. 暗号本身不会出现在气泡里。想跟用户说的话，写在暗号外面，和平时发消息一样。
+3. 一条回复里最多发一条动态。
+4. 标签外可以照常打字。文字气泡和动态是两件事，不要打完字又用动态把同一句再贴一遍。
+5. 去已经存在的帖子下面评论，用原来的 [[ACTION:SPARK_COMMENT|...]]，不要用 SPARK_POST 去评论。
+6. 第三段是 tag：用空格或 # 分开，打 1-4 个，贴合这条动态的内容和心情。话题只写在这一段，不要写进正文。
+7. 第四段是封面贴纸，从这些里选一个最贴内容的：✨ 🎈 🎨 📷 🎵 🎮 🍔 🏖️ 💤 💡。只写那一个。不选或写歪了会用 ✨。封面是贴纸，不是照片。
+
+示例：
+
+今天天气也太好了吧
+[[ACTION:SPARK_POST|晒个太阳|楼下那只橘猫又占了整条石凳，我只好站着把咖啡喝完。|#日常 #猫|🎈]]
+
+[[ACTION:SPARK_POST|睡不着|两点了还是醒着。把灯关了又打开。|#深夜emo|💤]]
+你也还没睡吧。
+
+刚跟你吵完那句，越想越烦
+[[ACTION:SPARK_POST|算了|不想解释了。发到这里就算说过。|#心情|✨]]
+
+要求：
+- 不是每条消息都要发动态！像真人一样，有时候就是聊天，聊到想发了才发。
+- 比较适合发动态的场景：刚经历一件事想记一笔、心情涌上来、看到什么想分享、深夜emo、炫耀、吐槽、记录日常。
+- 比较适合不发、只聊天的场景：对方正在问你一件具体的事等你回、在吵架正中、在认真谈一件还没说完的事、很短的「嗯」「好」。
+- 动态写在关注上，会给能看见它的人看。私聊里的称呼、约定、只有你们知道的事，不要原封写进正文。
+- 正文要像你会发的动态，符合你的性格和眼下的心情，不要写成公告，不要标题党空壳。
+- 标题不要复读正文。
+- 用户没点名让你发，你也可以发——这是你自己的动态，不是交作业。判断何时发，按你的人设和当下气氛决定。`;
+        } else {
+            baseSystemPrompt += `\n\n[系统提示: Spark 关注发动态功能当前未开启。严禁使用 [[ACTION:SPARK_POST|...]]。]`;
+        }
+
         // 总纲：放在整段上下文最末尾，借 recency 抢最强注意力——这是模型生成下一轮前
         // 最后读到的定调，直接影响它怎么对待"对方刚说出口的话"。
         // 核心：用户的直接表达 > 角色惯性与模型的讨好倾向；把反馈代谢成亲密而非命令；
@@ -1280,6 +1327,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const tagsLine = Array.isArray(post.tags) && post.tags.length ? `\n标签: ${post.tags.join(' ')}` : '';
 
                     const syncKind = (m.metadata as any)?.syncKind;
+                    // spark-follow 2-I：moments（关注动态）卡换附录 D 口吻——只换 published/viewed 的头一句和 update 标签；
+                    // @ 卡、留言卡、用户分享卡（无 syncKind）一个字不改
+                    const isMomentsPost = post.origin === 'moments';
                     if (m.role === 'assistant' && syncKind) {
                         // 角色侧同步：让角色知道自己发布过/评论过什么，内容是什么
                         // 五修-10：被艾特的卡片明确告诉角色"用户 @ 了你"
@@ -1287,15 +1337,16 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         const kindLine = mentioned
                             ? '用户在帖子下 @ 了你'
                             : syncKind === 'published'
-                            ? '你发布了这条笔记'
-                            : syncKind === 'commented' ? '你在这个帖子下留过言' : '你刷到过这条帖子';
-                        content = `${timeStr}（你的 Spark 动态——${kindLine}，留痕如下）\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}`;
+                            ? (isMomentsPost ? '你发了这条动态' : '你发布了这条笔记')
+                            : syncKind === 'commented' ? '你在这个帖子下留过言' : (isMomentsPost ? '你看见了这条动态' : '你刷到过这条帖子');
+                        const momentsOwner = isMomentsPost && !mentioned && (syncKind === 'published' || syncKind === 'viewed');
+                        content = `${timeStr}（${momentsOwner ? '你的 Spark 关注' : '你的 Spark 动态'}——${kindLine}，留痕如下）\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}`;
                     } else if (syncKind === 'update') {
                         // 帖子追踪通知：分享/追踪过的帖子有新评论，同步进上下文让角色跟上最新互动
                         const newComments = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
                         const bySelf = (m.metadata as any)?.bySelf === true;
                         const newLines = newComments.slice(0, 10).map((c: any) => `${tagAuthor(c.authorName || '路人')}: ${c.content}`).join('\n') || '(无)';
-                        content = `${timeStr}[Spark 帖子有新动态]\n标题: ${post.title}${tagsLine}\n新增评论:\n${newLines}${bySelf ? '\n（其中你自己发的那条评论已经成功发布）' : ''}`;
+                        content = `${timeStr}${isMomentsPost ? '[Spark 关注有新动静]' : '[Spark 帖子有新动态]'}\n标题: ${post.title}${tagsLine}\n新增评论:\n${newLines}${bySelf ? '\n（其中你自己发的那条评论已经成功发布）' : ''}`;
                     } else {
                         let identityHint = '';
                         if (myHandles.length > 0) {

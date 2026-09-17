@@ -1,8 +1,9 @@
 
 import { DB } from './db';
-import { loadTrackedSparkPosts, saveTrackedSparkPosts } from './sparkCircles';
+import { loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, loadMomentsPostOn } from './sparkCircles';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { CharacterProfile, CharPlaylistSong, SocialComment, SocialPost } from '../types';
+import { normalizeSparkSticker, pickSparkPostBg } from '../apps/social/SparkPostImage';
 import { sanitizeForBubble } from './sanitize';
 import { extractTransferCommands } from './transferFormat';
 import { executeLifeDirectives } from './lifeRecords';
@@ -326,11 +327,13 @@ export const ChatParser = {
                                 const entry = tracked[postId];
                                 if (entry) {
                                     const updatedPost = { ...livePost, comments: [...(livePost.comments || []), comment] };
+                                    // spark-follow 2-I：moments 帖的追踪通知卡写「关注有新动静」；别的帖原样。别的字段不动
+                                    const updateCardContent = livePost.origin === 'moments' ? '[Spark 关注有新动静]' : '[Spark 帖子动态更新]';
                                     for (const trackedCharId of entry.charIds) {
                                         if (trackedCharId === charId) {
-                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: updatedPost, syncKind: 'update', newComments: [comment], bySelf: true } });
+                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: updateCardContent, metadata: { post: updatedPost, syncKind: 'update', newComments: [comment], bySelf: true } });
                                         } else {
-                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: updatedPost, syncKind: 'update', newComments: [comment] } });
+                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: updateCardContent, metadata: { post: updatedPost, syncKind: 'update', newComments: [comment] } });
                                         }
                                     }
                                     const allIds = (livePost.comments || []).map(c => c.id);
@@ -371,6 +374,65 @@ export const ChatParser = {
                 }
             }
         }
+
+        // SPARK_POST — spark-follow 2-G（Ann 2026-09-17）：角色在私聊里主动发「关注动态」（朋友圈）。
+        // 语法：[[ACTION:SPARK_POST|标题|正文]]。一条回复只处理第一个（match 一次，与 SPARK_COMMENT 同款）；
+        // 开关关着 / 缺正文 → 静默剥掉暗号不当发帖（少打扰）；多出来的 | 段丢掉不崩。
+        // 发帖 = 落 socialPosts（origin: 'moments'）+ 作者聊天发布卡（与 SPARK_COMMENT 通知卡同一条路）+ 注册追踪。
+        const sparkPostMatch = content.match(/\[\[ACTION:SPARK_POST\|([^\]]+)\]\]/);
+        if (sparkPostMatch && loadMomentsPostOn()[charId] === true) {
+            const segments = sparkPostMatch[1].split('|').map(s => s.trim());
+            const postTitle = segments[0] || '';
+            const postContent = segments[1] || '';
+            const tags = (segments[2] || '').split(/[#,，、\s]+/).map(t => t.trim()).filter(Boolean);
+            const cover = normalizeSparkSticker(segments[3] || '');
+            if (postContent) {
+                try {
+                    // 角色 Spark 马甲与头像：与 SPARK_COMMENT 同源（配置 spark_char_handles > 社交档案 > 角色名）
+                    let handleName = charName;
+                    let avatar: string | undefined;
+                    try {
+                        const chars = await DB.getAllCharacters();
+                        const char = chars.find(c => c.id === charId);
+                        if (char) {
+                            avatar = char.avatar;
+                            const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
+                            const configured = raw ? (JSON.parse(raw) || {})[charId] : [];
+                            handleName = (Array.isArray(configured) && configured[0]?.handle?.trim())
+                                || char.socialProfile?.handle || char.name;
+                        }
+                    } catch {}
+                    const momentsPost: SocialPost = {
+                        id: `moments-${charId}-${Date.now()}`,
+                        authorName: handleName,
+                        authorAvatar: avatar || '',
+                        title: postTitle || '无标题',
+                        content: postContent,
+                        images: [cover],
+                        likes: Math.floor(Math.random() * 100),
+                        isCollected: false,
+                        isLiked: false,
+                        comments: [],
+                        timestamp: Date.now(),
+                        tags: tags.length ? tags : ['日常'],
+                        bgStyle: pickSparkPostBg(),
+                        authorType: 'character',
+                        authorCharId: charId,
+                        origin: 'moments',
+                        visibleCharIds: [],
+                    };
+                    await DB.saveSocialPost(momentsPost);
+                    await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: '[Spark 动态·发布了关注动态]', metadata: { post: momentsPost, syncKind: 'published' } });
+                    trackSparkPost(momentsPost.id, charId, []);
+                    addToast('已发到 Spark 关注', 'success');
+                } catch (error) {
+                    console.warn('[SparkPost] 发布关注动态失败:', error);
+                    addToast('Spark 关注发帖失败', 'error');
+                }
+            }
+        }
+        // 暗号永远不进气泡：发过了 / 开关关着 / 缺正文 / 写歪了 → 一律静默剥掉
+        content = content.replace(/\[\[ACTION:SPARK_POST[^\]]*\]\]/g, '').trim();
 
         // TRANSFER_ACCEPT / TRANSFER_RETURN — char 收下 / 退回 user 最近一笔待处理的转账。
         // 找最近一条 user 发出、还没被收/退、且不是回执卡本身的转账，标记状态并补一张回执小卡。

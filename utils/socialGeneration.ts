@@ -122,3 +122,49 @@ export function buildSparkCommentHistory(post: SocialPost): string {
         content: c.content.slice(0, 1200),
     })).join('\n') || '(暂无评论)';
 }
+
+/**
+ * spark-follow 2-E（Ann 2026-09-17）：帖子评论/搅动的候选池，首评与搅动两处共用。
+ *
+ * 关注帖（post.origin === 'moments'）：
+ *   名单 = 作者本人（authorCharId 对得上）+ visibleCharIds 里还存在的角色；
+ *   去重、作者排最前；作者删号对不上就跳过。不看 excludedCharIds（方向相反），
+ *   不把 trackedCharIds 里不可见的人加回来，不在这里造路人。
+ * 其余帖子（用户帖 / 圈子帖 / 旧帖）＝原「三步构造」原样搬入，行为一字不改：
+ *   ①起点：用户帖 = 全部角色；圈子帖 = 该圈成员；
+ *   ②过滤：用户帖去掉「不给谁看」的角色（圈子帖没有这一步）；
+ *   ③补回：追踪名单（被同步过 / 被 @ 过）的角色不在池里就加回来，不受「不给谁看」拦截。
+ */
+export function sparkCommentCandidatePool(
+    post: SocialPost,
+    allCharacters: CharacterProfile[],
+    circles: { id: string; memberCharIds: string[] }[],
+    trackedCharIds: string[],
+): CharacterProfile[] {
+    if (post.origin === 'moments') {
+        const pool: CharacterProfile[] = [];
+        const seen = new Set<string>();
+        const author = post.authorCharId ? allCharacters.find(c => c.id === post.authorCharId) : undefined;
+        if (author) { pool.push(author); seen.add(author.id); }
+        for (const id of post.visibleCharIds || []) {
+            if (seen.has(id)) continue;
+            const c = allCharacters.find(ch => ch.id === id);
+            if (c) { pool.push(c); seen.add(id); }
+        }
+        return pool;
+    }
+    const excludedIds = new Set(post.excludedCharIds || []);
+    const basePool = post.authorType === 'user'
+        ? allCharacters
+        : (post.circleId ? allCharacters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : allCharacters);
+    const pool = post.authorType === 'user' ? basePool.filter(c => !excludedIds.has(c.id)) : basePool;
+    if (!trackedCharIds.length) return pool;
+    const seen = new Set(pool.map(c => c.id));
+    const merged = [...pool];
+    for (const id of trackedCharIds) {
+        if (seen.has(id)) continue;
+        const c = allCharacters.find(ch => ch.id === id);
+        if (c) { merged.push(c); seen.add(id); }
+    }
+    return merged;
+}

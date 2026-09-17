@@ -3766,6 +3766,12 @@ export interface SocialPost {
     excludedCharIds?: string[];
     /** 发帖 @ 的强制回复是否已经用掉过一轮。旧帖无此字段 = 还没用过 */
     mentionForceUsed?: boolean;
+    /** spark-follow 2-A（Ann 2026-09-17）：关注帖来源标记——只有角色从私聊发的关注帖带 'moments'；
+     *  发现刷新出来的角色帖不许带。旧帖无此字段 = 普通帖 */
+    origin?: 'moments';
+    /** spark-follow 2-A：关注帖可见名单——勾了的角色才进这条帖评论/搅动的候选池。
+     *  缺省或 [] = 谁都看不见（作者本人除外）。与「不给谁看」excludedCharIds 方向相反，互不相干 */
+    visibleCharIds?: string[];
 }
 
 export interface SubAccount {

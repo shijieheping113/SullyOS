@@ -7,10 +7,10 @@ import { DB } from '../utils/db';
 // 六改-3：codepointToEmoji / SparkPostImage 抽到 ./social/SparkPostImage.tsx，
 // 与聊天侧 social_card 卡片共用（原来聊天侧把 sparkimg: 引用当文本铺出来的 bug 就在这修）。
 import { codepointToEmoji, SparkPostImage } from './social/SparkPostImage';
-import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
-import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
+import { AppID, CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
+import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, sparkCommentCandidatePool, SparkCircleWorld } from '../utils/socialGeneration';
 import { canSparkPrivateChat, findSparkReplyTarget, mergeSparkMentionIds, splitSparkCommentItem, unusedPostMentionIds } from '../utils/sparkCommentParse';
-import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, ensureSeenCommentIds, loadPrivateChatOff, setPrivateChatOff, loadSparkReplyWatermarks, saveSparkReplyWatermark } from '../utils/sparkCircles';
+import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, ensureSeenCommentIds, loadPrivateChatOff, setPrivateChatOff, loadSparkReplyWatermarks, saveSparkReplyWatermark, loadMomentsPostOn, setMomentsPostOn } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
 import Modal from '../components/os/Modal';
@@ -53,6 +53,10 @@ const STICKER_OPTIONS = [
     { code: '1f4a4', label: 'sleep' },
     { code: '1f4a1', label: 'idea' },
 ];
+const STICKER_CHAR_TO_CODE: Record<string, string> = {
+    '✨': '2728', '🎈': '1f388', '🎨': '1f3a8', '📷': '1f4f7', '🎵': '1f3b5',
+    '🎮': '1f3ae', '🍔': '1f354', '🏖️': '1f3d6-fe0f', '💤': '1f4a4', '💡': '1f4a1',
+};
 
 // --- Constants & Styles ---
 const BRAND_COLOR = '#ff2442'; // Premium Red
@@ -149,10 +153,12 @@ const Icons = {
 // --- Main App ---
 
 const SocialApp: React.FC = () => {
-    const { closeApp, characters, updateCharacter, apiConfig, apiPresets, addToast, userProfile, groups, characterGroups } = useOS();
+    // spark-follow 任务 1-C：补 openApp / setActiveCharacterId —— 点私聊条跳进对应角色聊天用
+    const { closeApp, openApp, setActiveCharacterId, characters, updateCharacter, apiConfig, apiPresets, addToast, userProfile, groups, characterGroups } = useOS();
     const [feed, setFeed] = useState<SocialPost[]>([]);
     // Modes: 'home' (Feed) | 'me' (Profile) | 'create' (Modal Overlay)
-    const [activeTab, setActiveTab] = useState<'home' | 'me'>('home');
+    // spark-follow 2-C：三页 —— home=发现 | follow=关注（朋友圈） | me=用户主页（原「我的」整页迁到右下角人形）
+    const [activeTab, setActiveTab] = useState<'home' | 'follow' | 'me'>('home');
     const [isCreateOpen, setIsCreateOpen] = useState(false); 
     
     const [selectedPost, setSelectedPost] = useState<SocialPost | null>(null);
@@ -170,6 +176,8 @@ const SocialApp: React.FC = () => {
     // v8c-2（Ann 2026-09-16）：发帖「圈子」（只附加该圈世界观原文，不限角色范围）+「不给谁看」（勾掉的角色不进生成池）
     const [newPostWorldCircleId, setNewPostWorldCircleId] = useState<string>('');
     const [newPostExcludedCharIds, setNewPostExcludedCharIds] = useState<string[]>([]);
+    // spark-follow 2-F：关注帖编辑专用「谁可以看见」名单（只给 moments 帖用，不与 newPostExcludedCharIds 混）
+    const [newPostVisibleCharIds, setNewPostVisibleCharIds] = useState<string[]>([]);
     // 五修-5：发帖图片（dataURL；发布时压缩后存 assets 表，帖子 images 存 sparkimg: 引用）
     const [newPostImages, setNewPostImages] = useState<string[]>([]);
     const newPostImageInputRef = useRef<HTMLInputElement>(null);
@@ -199,6 +207,31 @@ const SocialApp: React.FC = () => {
     // 七改-UI：每层楼的「已读回复数」水位（key = 根评论 id）。搅动/刷新后回复数超过水位
     // 且未展开 → 「展开 N 条回复」旁冒一次性红气泡；展开即更新水位，气泡消失。
     const seenRepliesRef = useRef<Record<string, number>>({});
+
+    // spark-follow 功能 1（Ann 2026-09-17 施工单）：私聊弹窗条 —— 帖子详情顶上的微信式消息条。
+    // 私聊写进聊天成功后入队；每句原文一条，约 4.5 秒自动换下一条；点条跳进该角色私聊；关帖/开帖清空。
+    // 纯演示条：不落库、不出详情页、没有声音和振动。
+    const [followupQueue, setFollowupQueue] = useState<{ charId: string; name: string; avatar: string; firstLine: string }[]>([]);
+    const [currentFollowup, setCurrentFollowup] = useState<{ charId: string; name: string; avatar: string; firstLine: string } | null>(null);
+    const followupTimerRef = useRef<number | null>(null);
+    // 队列推进拆成两段：当前为空才取下一条（队列变化不会打断正在显示的条）。
+    // 每条真实私聊原文停约 4.5 秒，按写入顺序一条一条过。
+    useEffect(() => {
+        if (currentFollowup) return;
+        if (followupQueue.length === 0) return;
+        const [head, ...rest] = followupQueue;
+        setFollowupQueue(rest);
+        setCurrentFollowup(head);
+    }, [currentFollowup, followupQueue]);
+    useEffect(() => {
+        if (!currentFollowup) return;
+        const t = window.setTimeout(() => {
+            followupTimerRef.current = null;
+            setCurrentFollowup(null);
+        }, 4500);
+        followupTimerRef.current = t;
+        return () => { window.clearTimeout(t); };
+    }, [currentFollowup]);
 
     // Settings / Handle Management
     const [showSettings, setShowSettings] = useState(false);
@@ -608,7 +641,8 @@ const SocialApp: React.FC = () => {
                 if (newComments.length) {
                     console.debug('[Spark][追踪通知]', postId, { seenCount: seen.length, newIds: newComments.map(c => c.id) });
                     Promise.all(entry.charIds.map(charId =>
-                        DB.saveMessage({ charId, role: 'user', type: 'social_card', content: '[Spark 帖子动态更新]', metadata: { post: result.post, syncKind: 'update', newComments } }),
+                        // spark-follow 2-I：moments 帖的追踪通知卡写「关注有新动静」；别的帖原样（外层已守卫 result.post 非空，回调内用 ?. 保类型安全）
+                        DB.saveMessage({ charId, role: 'user', type: 'social_card', content: result.post?.origin === 'moments' ? '[Spark 关注有新动静]' : '[Spark 帖子动态更新]', metadata: { post: result.post, syncKind: 'update', newComments } }),
                     )).catch(console.error);
                     entry.seenCommentIds = [...seen, ...newComments.map(c => c.id)];
                     entry.lastSyncedCommentCount = all.length; // 兼容字段，不参与判定
@@ -795,32 +829,15 @@ const SocialApp: React.FC = () => {
         try {
             // v8c-2（Ann 2026-09-16）：世界观按 post.worldCircleId 解析（与成员范围解耦）；
             // 用户帖的角色范围 = 全角色 −「不给谁看」；AI 帖照旧按 feed 圈子限定成员；旧帖保持原行为
-            const postCircle = post.worldCircleId
-                ? circles.find(c => c.id === post.worldCircleId)
-                : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined);
-            // v8d 任务 2（Ann 2026-09-17，B 案）：候选池三步构造，两处同款 ——
-            // ①起点：用户帖 = 全部角色；圈子帖 = 该圈成员
-            // ②过滤：用户帖去掉勾了「不给谁看」的角色（圈子帖没有这一步）
-            // ③补回：追踪名单（被同步过 / 被 @ 过）的角色不在池里就加回来——同步这个动作本身
-            //   等于把记忆和上下文发给 Ta，所以同步/@ 过的角色不受「不给谁看」拦截；
-            //   已经在池里的跳过（去重：一个角色只进一次，人设与记忆整个请求里只装一份）
-            const excludedIds = new Set(post.excludedCharIds || []);
-            const basePool = post.authorType === 'user'
-                ? characters
-                : (post.circleId ? characters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : characters);
-            const candidatePool = (() => {
-                const pool = post.authorType === 'user' ? basePool.filter(c => !excludedIds.has(c.id)) : basePool;
-                const trackedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
-                if (!trackedIds.length) return pool;
-                const seen = new Set(pool.map(c => c.id));
-                const merged = [...pool];
-                for (const id of trackedIds) {
-                    if (seen.has(id)) continue;
-                    const c = characters.find(ch => ch.id === id);
-                    if (c) { merged.push(c); seen.add(id); }
-                }
-                return merged;
-            })();
+            // spark-follow 2-E：关注帖不带圈子世界观（worldCircleId 被脏数据写上也忽略）；其余帖子按原逻辑解析圈子
+            const postCircle = post.origin === 'moments'
+                ? undefined
+                : (post.worldCircleId
+                    ? circles.find(c => c.id === post.worldCircleId)
+                    : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined));
+            // spark-follow 2-E（Ann 2026-09-17）：候选池统一走 sparkCommentCandidatePool——
+            // 关注帖 = 作者 + visibleCharIds；用户帖/圈子帖 = 原「三步构造」原样搬进 utils，行为一字不改
+            const candidatePool = sparkCommentCandidatePool(post, characters, circles, loadTrackedSparkPosts()[post.id]?.charIds || []);
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
             const context = await buildGenerationContext(selectedChars, postCircle);
             if (controller.signal.aborted) return;
@@ -865,7 +882,64 @@ const SocialApp: React.FC = () => {
 ` : '';
 
             // 定稿（2026-09-16 凌晨）：Ann 逐字定稿——群像作者视角，首开评论区
-            const prompt = `### 任务: 模拟社交APP评论区
+            // spark-follow 2-E：关注帖（origin === 'moments'）整段换附录 B（逐字照抄；私聊节按追踪名单开关插入；
+            // 关注没有发帖 @、首评时也没有用户评论，点名节不插）。其余帖子现有字符串一个字不改。
+            const prompt = post.origin === 'moments'
+                ? `### 任务: 模拟这条关注动态的评论区
+**帖子来源**: Spark 关注
+**楼主**: "${post.authorName}" (${authorType})
+**帖子标题**: "${post.title}"
+**帖子正文**:
+"""
+${post.content || '(楼主没写正文)'}
+"""
+
+你是这条关注动态评论区的群像作者：下面的评论和走向都由你根据这条动态当场写出来。
+这不是公开推荐流里人人刷到的帖，这是楼主发在 Spark 关注上的一条动态——像朋友圈。看得见它的人（已经在你的角色名单里）才可能开口；名单里没有的角色，当他们没看见。
+
+### 角色的出场节奏
+看得见这条动态的角色，跟内容越相关越可能开口——Ta 的人格、记忆、最近在意的事跟这条动态越贴，越可能评论。相反，对该话题讨厌，避而不谈，没有兴趣或者普普通通的，更多是看见了划过去没说话。真人不会每条动态都评。楼主自己也可能再补一句，也可能发完就不再说话。尤其是对别人动态的倾诉欲是搁着一层社交面具的。（社交面具：指的是角色想要在关注里保持的形象，并非100%的现实原生性格，而是给别人看的侧面，与角色的人设，性格，心态和需求有关。）
+一次的新评论保持自然的量（不超过 6 条），不要让角色和路人们一哄而上全部开口，评论应该缓缓展开讨论。
+这里大家围着这条动态说话——接话、追问、反驳、围观、解释误会都行，
+接着已有讨论往下走。评论要切实回复有内容的东西，不只对着标题空泛地说，不要说套话。
+不要机械复读同一个梗；保持每位发言者前后语气连贯、区别明显，让他们像常来的活人，
+不要都像播报员。
+选定角色如果评论，要根据当前状态和关系进度评论。
+
+${privateChatSection}### 路人（charId 为 null）：刷到这条动态的陌生网友
+生成每条路人评论前，先给这个路人立一个具体人设：
+- 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
+  并且符合当前的世界限制规则。
+- 身份从设定世界的网民生态里随机取：学生、小孩、上班族、外国人、店主、自由职业者、
+  退休老人、深夜冲浪的年轻人……甚至宠物、恶魔、捏捏、代码——只要符合当前世界观。
+- 带不同的年龄、职业、说话习惯、此刻刷帖场景（地铁上、睡前、摸鱼中）、
+  心情（开心、疑惑、难过、愤世嫉俗、无聊）、需求（正义感、想被治愈、想便宜收东西、
+  想请教、想分享）。禁止死板照抄例子。
+- 立场和动机各自不同：有人赞同楼主想声援、有人反对想说服、有人觉得这事不至于、
+  有人替另一方说话、有人想问清楚情况、有人有过类似经历要分享——站在不同位置看这事。
+- 路人的信息量必须有限，能知道的只有：这条帖子的标题、正文、配图、tag、评论区
+  已公开的内容、帖子上的昵称，以及他自己的人生经验。
+- 路人和用户、和任何角色都是初次刷到的关系，别硬认。
+- 路人的评论不一定跟用户与角色相关，由他的视角自然决定：大多数评论就是对着帖子本身说话——就事论事、玩梗、吐槽、科普，跟任何角色和用户都没有关系，不需要挖掘或呼应账号背后的人物与关系
+
+### 禁令
+- 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
+- 路人评论的 author 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合。
+- 禁止串记忆：用户和角色的私聊内容、私下关系、彼此称呼、私人物品、私密回忆、私下约定，
+  路人一律不知道，不能出现、不能暗示、不能换说法转述；任何角色不得引用、暗示其他角色的
+  私聊和私密信息。别的评论里提到的"我对象/我家那位"，默认是 Ta 自己生活里的人，和帖子里的
+  其他任何人没有对应关系。
+- 禁止复读：不重复已有评论说过的话，不机械复读同一个梗。
+- 禁止无意义对话：每条评论都言之有物——对帖子或讨论有实际回应，不拿纯表情、纯语气词、
+  纯打招呼凑数。
+- 评论正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），评论就是纯说话。
+- 自检：任何一条评论出现了上面禁止的内容，就地重写这条评论。
+
+### 输出格式 (JSON Array)
+[
+  { "author": "网名 (Handle) 或 路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "被回复的评论作者名，不回复填null", "privateChat": ["想说的第一条", "第二条", ...] 或省略 }
+]`
+                : `### 任务: 模拟社交APP评论区
 **帖子来源**: "Spark" 社区${postCircle ? `（所属世界:「${postCircle.name}」）` : ''}
 **楼主**: "${post.authorName}" (${authorType})
 **帖子标题**: "${post.title}"
@@ -964,24 +1038,27 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                         return { ...rest, replyToId: target?.id };
                     });
                 // v8d 任务 3e：私聊落主聊天（同搅动写法——首条带前空行、末条带后空行，读起来像真人一条接一条刷屏）
-                const publicCharIds = new Set(comments.map(c => c.authorCharId).filter(Boolean) as string[]);
+                // spark-follow 功能 1（1-A）：写库对象/顺序/失败处理原样不动；成功后不再弹 toast，
+                // 改成收集 followupBatch，整个循环结束后一次接进弹窗队列（详情页顶上的微信条替代成功 toast）。
+                const followupBatch: { charId: string; name: string; avatar: string; firstLine: string }[] = [];
                 for (const pm of privateMessages) {
                     try {
-                        const charName = characters.find(c => c.id === pm.charId)?.name || '角色';
+                        const char = characters.find(c => c.id === pm.charId);
+                        const avatar = resolveSparkCharAvatar(pm.charId, char?.avatar, char?.name || '');
+                        const name = char?.name || '角色';
                         for (let i = 0; i < pm.lines.length; i++) {
                             const wrapped = `${i === 0 ? '\n' : ''}${pm.lines[i]}${i === pm.lines.length - 1 ? '\n' : ''}`;
                             await DB.saveMessage({ charId: pm.charId, role: 'assistant', type: 'text', content: wrapped });
+                            const line = (pm.lines[i] || '').trim();
+                            if (line) followupBatch.push({ charId: pm.charId, name, avatar, firstLine: line });
                         }
-                        const alsoPublic = publicCharIds.has(pm.charId);
-                        addToast(pm.lines.length > 1
-                            ? (alsoPublic ? `${charName} 私聊连发了 ${pm.lines.length} 条，也在评论区发了言` : `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）`)
-                            : (alsoPublic ? `${charName} 私聊了你一句，也在评论区发了言` : `${charName} 私聊了你一句（没发在评论区）`), 'info');
                         trackEvent('Spark 首评产生私聊消息');
                     } catch (e) {
                         console.warn('[Spark] 首评私聊落库失败', { charId: pm.charId, e });
                         addToast('私聊没能写进聊天', 'error');
                     }
                 }
+                if (followupBatch.length) setFollowupQueue(queue => [...queue, ...followupBatch]);
                 // 只有私聊、没有公开评论时不算"身份不匹配"；两边都空才报错
                 if (!comments.length && !privateMessages.length) throw new Error('模型返回的评论身份不匹配，未添加评论');
                 if (comments.length) {
@@ -1029,9 +1106,13 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
         const isAuthor = post.authorCharId === charId || handles.includes(post.authorName);
         const myComment = (post.comments || []).find(c => c.authorCharId === charId || handles.includes(c.authorName));
         const syncKind: 'published' | 'commented' | 'viewed' = isAuthor ? 'published' : myComment ? 'commented' : 'viewed';
+        // spark-follow 2-I：moments 帖换口吻——published → 发布了关注动态、viewed → 看见了关注动态；其余 Spark 卡一个字不改
         const kindLabel = viaMention
             ? '用户 @ 了你'
-            : syncKind === 'published' ? '发布了笔记' : syncKind === 'commented' ? '在帖子下留了言' : '刷到了帖子';
+            : syncKind === 'published'
+            ? (post.origin === 'moments' ? '发布了关注动态' : '发布了笔记')
+            : syncKind === 'commented' ? '在帖子下留了言'
+            : (post.origin === 'moments' ? '看见了关注动态' : '刷到了帖子');
         try {
             await DB.saveMessage({
                 charId, role: 'assistant', type: 'social_card', content: `[Spark 动态·${kindLabel}]`,
@@ -1138,12 +1219,21 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
         setNewPostTags((post.tags || []).join(', '));
         // 现有图是 emoji 贴纸码点则回填；是图片引用（五修-5 之后）则保留展示、编辑面板不动贴纸
         const first = (post.images || [])[0] || '';
-        setNewPostEmoji(/^\d+$/.test(first) ? first : '2728');
-        // v8d 任务 5a（Ann 2026-09-17）：回填已有的 @ —— 编辑面板能看到原帖 @ 的角色，选择器可增可减
-        setNewPostMentions([...(post.mentions || [])]);
-        // v8c-2：回填「圈子」「不给谁看」，可改，改完对下一次生成生效
-        setNewPostWorldCircleId(post.worldCircleId || '');
-        setNewPostExcludedCharIds([...(post.excludedCharIds || [])]);
+        setNewPostEmoji(STICKER_CHAR_TO_CODE[first] || (/^[0-9a-fA-F-]+$/.test(first) ? first : '2728'));
+        if (post.origin === 'moments') {
+            // spark-follow 2-F：关注帖编辑只回填标题/正文/图 + 可见名单；圈子/不给谁看/@ 清成空（关注帖没有这些）
+            setNewPostVisibleCharIds([...(post.visibleCharIds || [])]);
+            setNewPostMentions([]);
+            setNewPostWorldCircleId('');
+            setNewPostExcludedCharIds([]);
+        } else {
+            // v8d 任务 5a（Ann 2026-09-17）：回填已有的 @ —— 编辑面板能看到原帖 @ 的角色，选择器可增可减
+            setNewPostMentions([...(post.mentions || [])]);
+            // v8c-2：回填「圈子」「不给谁看」，可改，改完对下一次生成生效
+            setNewPostWorldCircleId(post.worldCircleId || '');
+            setNewPostExcludedCharIds([...(post.excludedCharIds || [])]);
+            setNewPostVisibleCharIds([]);
+        }
         setIsCreateOpen(true);
     };
 
@@ -1152,6 +1242,28 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
         // 五修-5：图片优先——选了图就存图（sparkimg: 引用），没选图保持 emoji 贴纸
         const imageRefs = newPostImages.length ? await persistNewPostImages(newPostImages) : null;
         if (editingPostId) {
+            // spark-follow 2-F：关注帖编辑 —— 只更新标题/正文/图/visibleCharIds；保留 origin/作者/authorCharId；
+            // 不写 excludedCharIds / mentions / worldCircleId / circleId。勾可见不对对方 syncPostToChar，取消可见不撤已发出去的卡。
+            if (feedRef.current.find(p => p.id === editingPostId)?.origin === 'moments') {
+                updatePostInFeed(editingPostId, current => ({
+                    ...current,
+                    title: newPostTitle || '无标题',
+                    content: newPostContent,
+                    images: imageRefs || [codepointToEmoji(newPostEmoji)],
+                    // 九改-b（识图缓存）：本次换了图 → 作废旧描述（关注帖没图时 imageRefs 为 null，不影响）
+                    imageCaption: imageRefs ? undefined : current.imageCaption,
+                    visibleCharIds: [...newPostVisibleCharIds],
+                }));
+                setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
+                setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setNewPostMentions([]);
+                setNewPostVisibleCharIds([]);
+                setEditingPostId(null);
+                setIsCreateOpen(false);
+                addToast('关注动态已更新', 'success');
+                // 已发出去的作者卡同步新正文快照
+                await syncPostSnapshotToChats(editingPostId);
+                return;
+            }
             // 二次编辑：原地更新，不改 id/评论/点赞/时间戳。
             // 图片策略：本次加了新图 → 替换并清理旧图 assets；没加图 → 保留原 images 不动
             if (imageRefs) {
@@ -1178,6 +1290,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
             }));
             setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
             setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setNewPostMentions([]);
+            setNewPostVisibleCharIds([]);
             setEditingPostId(null);
             setIsCreateOpen(false);
             addToast('笔记已更新', 'success');
@@ -1225,6 +1338,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
         prependPostsToFeed([post]);
         setNewPostContent(''); setNewPostTitle(''); setNewPostTags(''); setNewPostImages([]);
         setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]);
+        setNewPostVisibleCharIds([]);
         setIsCreateOpen(false); // Close Modal
         setActiveTab('home'); 
         addToast('发布成功', 'success');
@@ -1574,32 +1688,14 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
     // 让模型自由决定谁冒泡、回几条、挂在哪——用户的最近评论只是评论区的一部分信息，不是强制任务。
     const evolveCommentSection = async (post: SocialPost, controller: AbortController) => {
         try {
-            // v8c-2（Ann 2026-09-16）：同首评——世界观按 worldCircleId；用户帖范围 = 全角色 −「不给谁看」
-            const postCircle = post.worldCircleId
-                ? circles.find(c => c.id === post.worldCircleId)
-                : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined);
-            // v8d 任务 2（Ann 2026-09-17，B 案）：同首评——候选池三步构造
-            // ①起点：用户帖 = 全部角色；圈子帖 = 该圈成员
-            // ②过滤：用户帖去掉勾了「不给谁看」的角色（圈子帖没有这一步）
-            // ③补回：追踪名单（被同步过 / 被 @ 过）的角色不在池里就加回来，不受「不给谁看」拦截；
-            //   已在池里的跳过（去重：一个角色只进一次，人设与记忆只装一份）
-            const excludedIds = new Set(post.excludedCharIds || []);
-            const basePool = post.authorType === 'user'
-                ? characters
-                : (post.circleId ? characters.filter(c => (circles.find(cc => cc.id === post.circleId)?.memberCharIds || []).includes(c.id)) : characters);
-            const candidatePool = (() => {
-                const pool = post.authorType === 'user' ? basePool.filter(c => !excludedIds.has(c.id)) : basePool;
-                const trackedIds = loadTrackedSparkPosts()[post.id]?.charIds || [];
-                if (!trackedIds.length) return pool;
-                const seen = new Set(pool.map(c => c.id));
-                const merged = [...pool];
-                for (const id of trackedIds) {
-                    if (seen.has(id)) continue;
-                    const c = characters.find(ch => ch.id === id);
-                    if (c) { merged.push(c); seen.add(id); }
-                }
-                return merged;
-            })();
+            // spark-follow 2-E：同首评——关注帖不带圈子世界观（脏数据忽略）；其余帖子按原逻辑解析圈子
+            const postCircle = post.origin === 'moments'
+                ? undefined
+                : (post.worldCircleId
+                    ? circles.find(c => c.id === post.worldCircleId)
+                    : (post.authorType !== 'user' && post.circleId ? circles.find(c => c.id === post.circleId) : undefined));
+            // spark-follow 2-E：同首评——候选池统一走 sparkCommentCandidatePool（关注帖=作者+可见；其余=原三步构造）
+            const candidatePool = sparkCommentCandidatePool(post, characters, circles, loadTrackedSparkPosts()[post.id]?.charIds || []);
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
             // 强制只挂本轮 @：评论 @ 用这一搅；发帖 @ 若还没用过也算这一轮。楼中楼不强制。
             const commentMentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
@@ -1615,8 +1711,14 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
             // 用户最近有没有在这帖下留言（含楼中楼）——有则作为背景信息告诉模型，由它决定接不接话
             const recent = lastUserCommentRef.current?.postId === post.id ? lastUserCommentRef.current : null;
             // 定稿（2026-09-16 凌晨）：只陈述事实——用户发了什么、是不是楼中楼；怎么接交给角色当下，不带许可句
+            // spark-follow 返工：楼中楼要写出本轮回复的是哪条、哪个人，避免 B 把给 A 的话当成对自己说的
+            const recentReplyTarget = recent?.repliedToCommentId
+                ? (post.comments || []).find(c => c.id === recent.repliedToCommentId)
+                : undefined;
             const recentLine = recent
-                ? `\n**用户「${socialProfile.name}」最近在评论区发的评论**: \"${recent.content}\"${recent.repliedToCommentId ? `（是在楼中楼里回复别人的）` : ''}`
+                ? `\n**用户「${socialProfile.name}」最近在评论区发的评论**: \"${recent.content}\"${recentReplyTarget
+                    ? `（本轮是在回复「${recentReplyTarget.authorName}」的那条评论，不是在对评论区所有人说话）`
+                    : '（本轮是直接评论这条帖子，不是在回复某个人）'}`
                 : '';
             let mentionLine = '';
             if (commentMentionIds.length) {
@@ -1660,7 +1762,65 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
 ` : '';
 
             // 定稿（2026-09-16 凌晨）：搅动=评论区过一段时间的样子——主力是已有的人，新路人偶尔才有
-            const prompt = `### 任务: 模拟这个帖子评论区"过一段时间"之后的样子
+            // spark-follow 2-E：关注帖整段换附录 C（逐字照抄；私聊节按追踪名单开关插入；点名节只认评论 @，
+            // 关注没有发帖 @；${recentLine}${mentionLine} 与现有搅动同一套事实句）。其余帖子现有字符串一个字不改。
+            const prompt = post.origin === 'moments'
+                ? `### 任务: 模拟这条关注动态评论区"过一段时间"之后的样子
+**帖子楼主**: ${post.authorName}
+**帖子标题**: "${post.title}"
+**帖子正文**:
+"""
+${post.content || '(楼主没写正文)'}
+"""
+**当前评论区**（每一行都是已经发生过的事实——谁说过什么都在里面）:
+${buildSparkCommentHistory(post)}${recentLine}${mentionLine}
+
+你是这条关注动态评论区的群像作者：想象从现在起过了十几分钟到几个小时，评论区里新发生的动静
+都由你写出来。这不是公开推荐流，这是楼主发在 Spark 关注上的一条动态。看得见它的人已经在角色名单里。
+这个评论区已经有主人了——新动静的主力是**已经在这里的人**：楼主（非用户
+发帖情况，不能扮演用户）可能下场补充，评论过的角色和网友接着原来的话头继续聊，之前冒过泡
+的路人再冒一句——他们是回到自己参与过的动态，不是初次看见。也可能都散了，重点是看当前
+用户和角色最新评论引导的趋向。
+**从外面新刷进来的陌生网友是少数**：常常一条都没有，偶尔一两个；真的有，按下面的规矩立人设。
+动静的形态：接话、追问、反驳、围观、解释误会、楼主下场补充都行，接着已有讨论往下走；
+评论要切实回复有内容的东西，不要说套话；保持每个人前后语气连贯，别都像播报员。
+选定角色（用马甲网名发言）出不出场、发几条，根据 Ta 的人格、记忆、之前参与这条动态的内容和当前状态。
+尤其是对别人动态的倾诉欲是搁着一层社交面具的。（社交面具：指的是角色想要在关注里保持的形象，并非100%的现实原生性格，而是给别人看的侧面，与角色的人设，性格，心态和需求有关。）
+
+${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶尔才有，一条没有是常态
+给这个新人立一个具体人设再开口：
+- 网名符合现实社交媒体的常见命名习惯（大小写混排、下划线、数字缀、叠词、缩写都行），
+  并且符合当前的世界限制规则。
+- 身份从设定世界的网民生态里随机取：学生、小孩、上班族、外国人、店主、自由职业者、
+  退休老人、深夜冲浪的年轻人……甚至宠物、恶魔、捏捏、代码——只要符合当前世界观。
+- 带不同的年龄、职业、说话习惯、此刻刷帖场景（地铁上、睡前、摸鱼中）、
+  心情（开心、疑惑、难过、愤世嫉俗、无聊）、需求（正义感、想被治愈、想便宜收东西、
+  想请教、想分享）。禁止死板照抄例子。
+- 立场和动机各自不同——站在不同位置看这事。
+- 信息量有限：能知道的只有这条帖子的标题、正文、配图、tag、评论区已公开的内容、
+  帖子上的昵称，和 Ta 自己的人生经验。
+- 和用户、和任何角色都是初次刷到的关系，别硬认。
+- 路人的评论不一定跟用户与角色相关，由他的视角自然决定：大多数评论就是对着帖子本身说话——就事论事、玩梗、吐槽、科普，跟任何角色和用户都没有关系，不需要挖掘或呼应账号背后的人物与关系
+
+${namedSection}### 禁令
+- 绝对禁止生成 author 等于或近似 "${socialProfile.name}"（用户）的评论。
+- 新路人的 author 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合，
+  也不能冒用评论区里已经出现过的路人网名。
+- 禁止串记忆：用户和角色的私聊内容、私下关系、彼此称呼、私人物品、私密回忆、私下约定，
+  路人一律不知道，不能出现、不能暗示、不能换说法转述；任何角色不得引用、暗示其他角色的
+  私聊和私密信息。别的评论里提到的"我对象/我家那位"，默认是 Ta 自己生活里的人，和帖子里的
+  其他任何人没有对应关系。
+- 禁止复读：如果是贴子里已经有的路人继续发评论，要带着新东西开口——接着自己上一次的话往下走（接话、补充、改口、被说服、抬杠升级、回复别人都可以），不许原地重复或换皮重复自己已经说过的观点；也不机械复读同一个梗。
+- 禁止无意义对话：每条评论都言之有物——对帖子或讨论有实际回应；「哈哈哈哈」「太xx了吧」
+  「+1」「确实」这类没有信息量的评论一条都不要，不拿纯表情、纯语气词、纯打招呼凑数。
+- 评论正文里禁止出现任何 # 话题标记（#xx# 和 #xx 都不行），评论就是纯说话。
+- 自检：任何一条评论出现了上面禁止的内容，就地重写这条评论。
+
+### 输出格式 (JSON Array)
+[
+  { "author": "网名 (Handle) 或路人昵称", "charId": "角色ID或null", "content": "评论内容...", "replyTo": "要回复的已有评论的作者名，顶层新评论填 null", "privateChat": ["想说的第一条", "第二条", ...] 或省略 }
+]`
+                : `### 任务: 模拟这个帖子评论区"过一段时间"之后的样子
 **帖子楼主**: ${post.authorName}
 **帖子标题**: "${post.title}"
 **帖子正文**:
@@ -1760,24 +1920,27 @@ ${namedSection}### 禁令
             });
             // 五修-7 + 六改-6：私聊消息落主聊天（角色的普通 assistant 消息，逐条存、贴连发感——
             // 首条带前空行、末条带后空行，中间条不垫空行，读起来像真人一条接一条刷屏）
-            const publicCharIds = new Set(newComments.map(c => c.authorCharId).filter(Boolean) as string[]);
+            // spark-follow 功能 1（1-A）：写库对象/顺序/失败处理原样不动；成功 toast 删掉，
+            // 改成收集 followupBatch，循环结束后一次接进弹窗队列（微信条替代）。
+            const followupBatch: { charId: string; name: string; avatar: string; firstLine: string }[] = [];
             for (const pm of privateMessages) {
                 try {
-                    const charName = characters.find(c => c.id === pm.charId)?.name || '角色';
+                    const char = characters.find(c => c.id === pm.charId);
+                    const avatar = resolveSparkCharAvatar(pm.charId, char?.avatar, char?.name || '');
+                    const name = char?.name || '角色';
                     for (let i = 0; i < pm.lines.length; i++) {
                         const wrapped = `${i === 0 ? '\n' : ''}${pm.lines[i]}${i === pm.lines.length - 1 ? '\n' : ''}`;
                         await DB.saveMessage({ charId: pm.charId, role: 'assistant', type: 'text', content: wrapped });
+                        const line = (pm.lines[i] || '').trim();
+                        if (line) followupBatch.push({ charId: pm.charId, name, avatar, firstLine: line });
                     }
-                    const alsoPublic = publicCharIds.has(pm.charId);
-                    addToast(pm.lines.length > 1
-                        ? (alsoPublic ? `${charName} 私聊连发了 ${pm.lines.length} 条，也在评论区发了言` : `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）`)
-                        : (alsoPublic ? `${charName} 私聊了你一句，也在评论区发了言` : `${charName} 私聊了你一句（没发在评论区）`), 'info');
                     trackEvent('Spark 搅动产生私聊消息');
                 } catch (e) {
                     console.warn('[Spark] 搅动私聊落库失败', { charId: pm.charId, e });
                     addToast('私聊没能写进聊天', 'error');
                 }
             }
+            if (followupBatch.length) setFollowupQueue(queue => [...queue, ...followupBatch]);
             const merged = updatePostInFeed(post.id, current => ({
                 ...current,
                 comments: mergeSocialComments(current.comments || [], newComments),
@@ -1826,6 +1989,15 @@ ${namedSection}### 禁令
         }
     };
 
+    // spark-follow 任务 1-C：点条 → 清定时器、清空队列（后面的不再演）、清当前条，跳进该角色私聊
+    const handleFollowupClick = (item: { charId: string; name: string; avatar: string; firstLine: string }) => {
+        if (followupTimerRef.current != null) { window.clearTimeout(followupTimerRef.current); followupTimerRef.current = null; }
+        setFollowupQueue([]);
+        setCurrentFollowup(null);
+        setActiveCharacterId(item.charId);
+        openApp(AppID.Chat);
+    };
+
     const handleOpenPost = (post: SocialPost) => {
         const livePost = feedRef.current.find(item => item.id === post.id) || post;
         // 评论不自动生成（省 token）：打开详情只展示已有评论，空时由用户手动点「加载评论」
@@ -1833,6 +2005,10 @@ ${namedSection}### 禁令
         // v9 二轮（Ann 拍板 B 案）：已读水位 localStorage 持久化——点开看过永久消失，退出重进不复发。
         // 打开时：已有记录的楼层沿用旧水位（打开期间新长出的回复才冒点）；无记录的楼层记当前数（打开前的不算新）。
         initReplyWatermarks(livePost);
+        // spark-follow 功能 1：打开帖子不补弹——顺手清掉残留的条（没有新写入就没有条）
+        if (followupTimerRef.current != null) { window.clearTimeout(followupTimerRef.current); followupTimerRef.current = null; }
+        setFollowupQueue([]);
+        setCurrentFollowup(null);
     };
 
     const handleClosePost = () => {
@@ -1847,6 +2023,10 @@ ${namedSection}### 禁令
         setComposerOpen(false);
         setExpandedReplyGroups({});
         seenRepliesRef.current = {};
+        // spark-follow 功能 1：关帖清掉私聊条（队列、当前条、定时器全清）
+        if (followupTimerRef.current != null) { window.clearTimeout(followupTimerRef.current); followupTimerRef.current = null; }
+        setFollowupQueue([]);
+        setCurrentFollowup(null);
     };
 
     // 七改-UI：评论输入弹层的开合（xhs 手感：升起 0.34s，180ms 后聚焦防滚动跑偏）
@@ -1881,12 +2061,21 @@ ${namedSection}### 禁令
         setIsRefreshing(false);
         setLoadingComments(false);
         setIsReplyingToUser(false);
-        feedRef.current = [];
-        setFeed([]);
+        // spark-follow 2-D（Ann 2026-09-17）：清空只删发现里的帖——用户笔记、关注帖（moments）留下。
+        // 用户笔记判定与「我的」页同口径（含旧版无 authorType 的本人帖）。
+        const isUserNote = (p: SocialPost) => p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name);
+        const doomedIds = new Set(feedRef.current.filter(p => !isUserNote(p) && p.origin !== 'moments').map(p => p.id));
+        feedRef.current = feedRef.current.filter(p => !doomedIds.has(p.id));
+        setFeed(feedRef.current);
         setSelectedPost(null);
-        DB.clearSocialPosts();
-        // 帖子都没了，追踪无意义——全部断开（用户决策：清空推荐流断开追踪）
-        saveTrackedSparkPosts({});
+        // 逐帖删除，不再调 DB.clearSocialPosts（那会把笔记和关注帖一起端走）
+        for (const id of doomedIds) DB.deleteSocialPost(id);
+        // 追踪名单只删被删帖的条目，不一把清空——关注帖/笔记的追踪保留
+        try {
+            const tracked = loadTrackedSparkPosts();
+            for (const id of doomedIds) delete tracked[id];
+            saveTrackedSparkPosts(tracked);
+        } catch {}
         setShowSettings(false);
         addToast('推荐流已清空', 'success');
         trackEvent('清空 Spark 推荐流');
@@ -1904,12 +2093,14 @@ ${namedSection}### 禁令
     };
 
     // 1. Feed Item (Glassmorphism)
-    const renderFeedItem = (post: SocialPost) => (
+    // spark-follow 2-C/2-H：opts.hideDelete = 关注页复用本卡片时藏掉自带 ×（编辑/删除由关注页自己的角标负责，删除要多断开追踪）；
+    // images 为空（关注帖没图）时不渲染媒体，只留 bgStyle 空白底——不塞 ✨ 冒充有图
+    const renderFeedItem = (post: SocialPost, opts?: { hideDelete?: boolean }) => (
         <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid mb-3 bg-white/70 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all cursor-pointer active:scale-[0.98] border border-white/50 relative group">
             <div className="aspect-[4/5] w-full flex items-center justify-center relative overflow-hidden" style={{ background: post.bgStyle }}>
                 {/* Decorative Overlay for "Premium" look */}
                 <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
-                {renderPostMedia(post.images[0], 'text-6xl drop-shadow-xl filter saturate-150 transform transition-transform group-hover:scale-110 duration-500', 'w-full h-full object-cover')}
+                {post.images.length > 0 && renderPostMedia(post.images[0], 'text-6xl drop-shadow-xl filter saturate-150 transform transition-transform group-hover:scale-110 duration-500', 'w-full h-full object-cover')}
                 {post.title && (
                     <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black/50 via-black/20 to-transparent">
                         <h3 className="text-white font-bold text-sm line-clamp-2 drop-shadow-md leading-tight">{post.title}</h3>
@@ -1928,7 +2119,7 @@ ${namedSection}### 禁令
                     </div>
                 </div>
             </div>
-            <button onClick={(e) => { e.stopPropagation(); handleDeletePost(post.id); }} className="absolute top-2 right-2 z-20 w-6 h-6 bg-black/20 text-white rounded-full flex items-center justify-center text-xs backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80">×</button>
+            {!opts?.hideDelete && <button onClick={(e) => { e.stopPropagation(); handleDeletePost(post.id); }} className="absolute top-2 right-2 z-20 w-6 h-6 bg-black/20 text-white rounded-full flex items-center justify-center text-xs backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80">×</button>}
         </div>
     );
 
@@ -1944,6 +2135,22 @@ ${namedSection}### 禁令
             >
                 {/* 七改-UI：楼中楼展开动画（xhs 参考：0.24s 淡入 + 上浮 4px，缓动 cubic-bezier(.16,1,.3,1)） */}
                 <style>{`@keyframes sparkRepliesIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}.spark-replies-in{animation:sparkRepliesIn .24s cubic-bezier(.16,1,.3,1) both}`}</style>
+                {/* spark-follow 任务 1-B：私聊弹窗条 —— 微信式白底横条，贴顶滑入，整条可点。
+                    只画在详情页；白底浅灰边 shadow-sm，不用共享 Modal、没有按钮文字/声音/振动/图标 emoji。 */}
+                <style>{`@keyframes sparkFollowupIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}.spark-followup-in{animation:sparkFollowupIn .26s cubic-bezier(.16,1,.3,1) both}`}</style>
+                {currentFollowup && (
+                    <button
+                        onClick={() => handleFollowupClick(currentFollowup)}
+                        className="spark-followup-in absolute left-3 right-3 z-[80] flex items-center gap-2.5 bg-white rounded-2xl border border-slate-100 shadow-sm px-3 py-2.5 text-left active:scale-[0.98] transition-transform"
+                        style={{ top: 'var(--safe-top)' }}
+                    >
+                        <TokenImg value={currentFollowup.avatar} className="w-9 h-9 rounded-full object-cover shrink-0" />
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-bold text-slate-800 truncate">{currentFollowup.name}</span>
+                            <span className="block text-xs text-slate-500 truncate">{currentFollowup.firstLine}</span>
+                        </span>
+                    </button>
+                )}
                 {/* 
                    Animation Wrapper. 
                    We want the whole overlay content to slide up. 
@@ -1976,9 +2183,9 @@ ${namedSection}### 禁令
                                         </div>
                                     ))}
                                 </div>
-                            ) : (
+                            ) : selectedPost.images[0] !== undefined ? (
                                 <div className="relative z-10 drop-shadow-2xl filter saturate-125">{codepointToEmoji(selectedPost.images[0])}</div>
-                            )}
+                            ) : null}
                         </div>
 
                         <div className="p-6 space-y-4">
@@ -2435,6 +2642,14 @@ ${namedSection}### 禁令
                                             ? { background: '#f1f5f9', color: '#94a3b8', borderColor: '#e2e8f0' }
                                             : { background: '#ff2442', color: '#fff', borderColor: '#ff2442' }}
                                     >{loadPrivateChatOff()[c.id] ? '私聊关' : '私聊开'}</button>
+                                    {/* spark-follow 2-B：关注「发帖开/关」——语义与私聊开关相反：名单里=开，不在名单=关，默认全关 */}
+                                    <button
+                                        onClick={() => { setMomentsPostOn(c.id, !loadMomentsPostOn()[c.id]); forceIdentityTick(t => t + 1); addToast(loadMomentsPostOn()[c.id] ? `${c.name} 的关注发帖已开` : `${c.name} 的关注发帖已关`, 'info'); }}
+                                        className="text-[10px] px-2 py-1 rounded-full border active:scale-95 transition-transform"
+                                        style={loadMomentsPostOn()[c.id]
+                                            ? { background: '#ff2442', color: '#fff', borderColor: '#ff2442' }
+                                            : { background: '#f1f5f9', color: '#94a3b8', borderColor: '#e2e8f0' }}
+                                    >{loadMomentsPostOn()[c.id] ? '发帖开' : '发帖关'}</button>
                                     <button onClick={() => addSubAccount(c.id)} className="ml-auto text-[10px] bg-[#ff2442] text-white px-2 py-1 rounded-full shadow-sm active:scale-95 transition-transform">+ 添加马甲</button>
                                 </div>
                                 
@@ -2601,7 +2816,7 @@ ${namedSection}### 禁令
                     {/* Create Header —— 自理安全区：外层扛 safe-top + 背景，内层保持 h-14 内容栏（同主栏，避开 border-box 吃 padding） */}
                     <div className="sticky top-0 z-20 bg-white border-b border-slate-50" style={{ paddingTop: 'var(--safe-top)' }}>
                         <div className="h-14 flex items-center justify-between px-4">
-                            <button onClick={() => { setNewPostMentions([]); setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setEditingPostId(null); setIsCreateOpen(false); }} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
+                            <button onClick={() => { setNewPostMentions([]); setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setNewPostVisibleCharIds([]); setEditingPostId(null); setIsCreateOpen(false); }} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
                             <span className="text-sm font-bold text-slate-800">{editingPostId ? '编辑笔记' : '发布笔记'}</span>
                             <button
                                 onClick={handleCreatePost}
@@ -2682,6 +2897,32 @@ ${namedSection}### 禁令
                             )}
                         </div>
 
+                        {/* spark-follow 2-F：编辑关注帖（moments）时——藏掉圈子/不给谁看/发帖@，另出一排「谁可以看见」：
+                            列出除作者外的全部角色，勾上 = 进 visibleCharIds（下次评论/搅动才带 Ta 的人设和记忆）。
+                            用户发笔记/编用户笔记：现有面板原样。 */}
+                        {editingPostId && feed.find(p => p.id === editingPostId)?.origin === 'moments' ? (
+                            <div className="mt-4 pt-4 border-t border-slate-50">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">谁可以看见（勾了的角色才进这条动态的评论/搅动名单；作者自己永远看得见）</p>
+                                {newPostVisibleCharIds.length > 0 && (
+                                    <p className="text-[10px] text-slate-400 mb-2">已勾：{newPostVisibleCharIds.map(id => characters.find(c => c.id === id)?.name).filter(Boolean).join('、')}</p>
+                                )}
+                                <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                                    {characters.filter(c => c.id !== feed.find(p => p.id === editingPostId)?.authorCharId).map(c => {
+                                        const visible = newPostVisibleCharIds.includes(c.id);
+                                        return (
+                                            <button
+                                                key={c.id}
+                                                onClick={() => setNewPostVisibleCharIds(prev => (visible ? prev.filter(id => id !== c.id) : [...prev, c.id]))}
+                                                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${visible ? 'bg-[#ff2442] text-white border-[#ff2442]' : 'bg-white text-slate-500 border-slate-200'}`}
+                                            >
+                                                {c.name}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ) : (
+                        <>
                         {/* v8c-2（Ann 2026-09-16）：圈子 —— 选了只附加该圈的世界观原文，角色范围不因此受限 */}
                         <div className="mt-4 pt-4 border-t border-slate-50">
                             <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">圈子（只附加该圈的世界观，不限角色范围）</p>
@@ -2755,6 +2996,8 @@ ${namedSection}### 禁令
                                 })}
                             </div>
                         </div>
+                        </>
+                        )}
                     </div>
                 </div>
             )}
@@ -2770,7 +3013,8 @@ ${namedSection}### 禁令
                         <button onClick={closeApp} className="p-1"><Icons.Back onClick={closeApp} /></button>
                         <div className="flex gap-6 text-base font-bold text-slate-300">
                             <button className={`${activeTab === 'home' ? 'text-slate-800 scale-110 border-b-2 border-[#ff2442] pb-1' : 'hover:text-slate-500'} transition-all`} onClick={() => { setActiveTab('home'); trackEvent('切换 Spark 主标签', { tab: 'home' }); }}>发现</button>
-                            <button className={`${activeTab === 'me' ? 'text-slate-800 scale-110 border-b-2 border-[#ff2442] pb-1' : 'hover:text-slate-500'} transition-all`} onClick={() => { setActiveTab('me'); trackEvent('切换 Spark 主标签', { tab: 'me' }); }}>我的</button>
+                            {/* spark-follow 2-C：顶部「我的」改名「关注」；用户主页只从右下角人形进 */}
+                            <button className={`${activeTab === 'follow' ? 'text-slate-800 scale-110 border-b-2 border-[#ff2442] pb-1' : 'hover:text-slate-500'} transition-all`} onClick={() => { setActiveTab('follow'); trackEvent('切换 Spark 主标签', { tab: 'follow' }); }}>关注</button>
                         </div>
                         <button onClick={() => { setShowSettings(true); trackEvent('打开身份管理面板'); }} className="text-slate-800 font-bold text-sm">管理</button>
                     </div>
@@ -2815,8 +3059,9 @@ ${namedSection}### 禁令
                                 两列都从最新开始交错往下——观感保持瀑布流、顺序保持时间线 */}
                             {(() => {
                                 // 五修-11：推荐流只放 AI/路人帖；用户自己发的帖只在主页「笔记」tab 展示
+                                // spark-follow 2-D：发现不放关注帖（moments）
                                 const timeline = filterPostsByCircle(feed, activeCircleId, validCircleIds)
-                                    .filter(p => p.authorType !== 'user');
+                                    .filter(p => p.authorType !== 'user' && p.origin !== 'moments');
                                 const colA = timeline.filter((_, i) => i % 2 === 0);
                                 const colB = timeline.filter((_, i) => i % 2 === 1);
                                 return (
@@ -2826,6 +3071,44 @@ ${namedSection}### 禁令
                                     </div>
                                 );
                             })()}
+                        </div>
+                    )}
+
+                    {/* spark-follow 2-C：关注页 —— 只要 origin === 'moments' 的帖；没有刷新、没有圈子条；
+                        学发现的瀑布流排版 + 笔记 tab 的编辑/删除角标；空了学笔记 tab 的「空空如也」 */}
+                    {activeTab === 'follow' && (
+                        <div className="p-2 min-h-full">
+                            {(() => {
+                                const momentsFeed = feed.filter(p => p.origin === 'moments').sort((a, b) => b.timestamp - a.timestamp);
+                                const colA = momentsFeed.filter((_, i) => i % 2 === 0);
+                                const colB = momentsFeed.filter((_, i) => i % 2 === 1);
+                                const renderFollowItem = (post: SocialPost) => (
+                                    <div key={post.id} className="relative">
+                                        {renderFeedItem(post, { hideDelete: true })}
+                                        {/* 学笔记 tab：编辑/删除；删关注帖走现有 handleDeletePost，顺手断开这条帖的追踪 */}
+                                        <div className="absolute top-2 right-2 z-20 flex gap-1">
+                                            <button onClick={(e) => { e.stopPropagation(); startEditPost(post); }} className="w-6 h-6 rounded-full bg-white/90 shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 active:scale-90 transition-transform" title="编辑">
+                                                <Pencil size={12} />
+                                            </button>
+                                            <button onClick={(e) => { e.stopPropagation(); if (window.confirm('删除这条关注动态？评论区也会一起删掉。')) { handleDeletePost(post.id); untrackSparkPost(post.id); } }} className="w-6 h-6 rounded-full bg-white/90 shadow-sm border border-slate-100 flex items-center justify-center text-red-300 active:scale-90 transition-transform" title="删除">
+                                                <Trash size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                                return (
+                                    <div className="flex gap-2 items-start pb-24">
+                                        <div className="flex-1 space-y-2 min-w-0">{colA.map(renderFollowItem)}</div>
+                                        <div className="flex-1 space-y-2 min-w-0">{colB.map(renderFollowItem)}</div>
+                                    </div>
+                                );
+                            })()}
+                            {feed.filter(p => p.origin === 'moments').length === 0 && (
+                                <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
+                                    <Package size={48} className="text-slate-300 opacity-30" />
+                                    <span className="text-xs">空空如也</span>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -2934,7 +3217,7 @@ ${namedSection}### 禁令
                                             )}
                                             <div onClick={() => handleOpenPost(post)} className="cursor-pointer">
                                                 <div className="aspect-[4/5] flex items-center justify-center text-4xl overflow-hidden" style={{ background: post.bgStyle }}>
-                                                    {renderPostMedia(post.images[0], 'text-4xl', 'w-full h-full object-cover')}
+                                                    {post.images.length > 0 && renderPostMedia(post.images[0], 'text-4xl', 'w-full h-full object-cover')}
                                                 </div>
                                                 <div className="p-3">
                                                     <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{post.title}</h4>
@@ -2969,7 +3252,7 @@ ${namedSection}### 禁令
                     <button onClick={() => { setActiveTab('home'); trackEvent('切换 Spark 主标签', { tab: 'home' }); }} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'home' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <House size={24} weight={activeTab === 'home' ? 'fill' : 'regular'} />
                     </button>
-                    <button onClick={() => { setNewPostMentions([]); setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setIsCreateOpen(true); trackEvent('打开发布笔记面板'); }} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
+                    <button onClick={() => { setNewPostMentions([]); setNewPostWorldCircleId(''); setNewPostExcludedCharIds([]); setNewPostVisibleCharIds([]); setIsCreateOpen(true); trackEvent('打开发布笔记面板'); }} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
                     <button onClick={() => { setActiveTab('me'); trackEvent('切换 Spark 主标签', { tab: 'me' }); }} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'me' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <User size={24} />
                     </button>

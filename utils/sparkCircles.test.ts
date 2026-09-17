@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId,
     filterPostsByCircle, SPARK_CIRCLE_ALL, SPARK_CIRCLES_KEY, SPARK_ACTIVE_CIRCLE_KEY,
+    loadMomentsPostOn, setMomentsPostOn,
 } from './sparkCircles';
 import type { SocialPost, SparkCircle } from '../types';
 
@@ -65,6 +66,32 @@ describe('filterPostsByCircle', () => {
         expect(ids).toEqual(['c2-a']);
         expect(ids).not.toContain('old');
         expect(ids).not.toContain('orphan');
+    });
+});
+
+describe('发帖开关 loadMomentsPostOn / setMomentsPostOn（spark-follow 2-B）', () => {
+    it('默认全关：没设置过的角色不在名单里', () => {
+        expect(loadMomentsPostOn()).toEqual({});
+        expect(loadMomentsPostOn()['char-a']).toBeUndefined();
+    });
+
+    it('打开后再关：名单里=开，删掉=关；互不影响其他角色', () => {
+        setMomentsPostOn('char-a', true);
+        expect(loadMomentsPostOn()['char-a']).toBe(true);
+        setMomentsPostOn('char-b', true);
+        expect(loadMomentsPostOn()['char-b']).toBe(true);
+        setMomentsPostOn('char-a', false);
+        expect(loadMomentsPostOn()['char-a']).toBeUndefined();
+        expect(loadMomentsPostOn()['char-b']).toBe(true);
+        setMomentsPostOn('char-b', false);
+        expect(loadMomentsPostOn()).toEqual({});
+    });
+
+    it('脏数据（非对象）按空名单处理，不抛异常', () => {
+        localStorage.setItem('spark_moments_post_on', '[1,2,3]');
+        expect(loadMomentsPostOn()).toEqual({});
+        localStorage.setItem('spark_moments_post_on', 'garbage');
+        expect(loadMomentsPostOn()).toEqual({});
     });
 });
 
