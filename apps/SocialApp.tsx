@@ -9,6 +9,7 @@ import { DB } from '../utils/db';
 import { codepointToEmoji, SparkPostImage } from './social/SparkPostImage';
 import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile, SparkCircle } from '../types';
 import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, SparkCircleWorld } from '../utils/socialGeneration';
+import { canSparkPrivateChat, mergeSparkMentionIds, splitSparkCommentItem } from '../utils/sparkCommentParse';
 import { loadSparkCircles, saveSparkCircles, loadActiveCircleId, saveActiveCircleId, filterPostsByCircle, SPARK_CIRCLE_ALL, loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, untrackSparkPost, ensureSeenCommentIds, loadPrivateChatOff, setPrivateChatOff, loadSparkReplyWatermarks, saveSparkReplyWatermark } from '../utils/sparkCircles';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
@@ -929,31 +930,23 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 const comments: SocialComment[] = json
                     .flatMap((c: any) => {
                         const author = resolveSparkAuthor(c, selectedChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
-                        if (!author || typeof c.content !== 'string' || !c.content.trim()) return [];
+                        if (!author) return [];
+                        const split = splitSparkCommentItem(c);
+                        if (!split.publicContent && !split.privateLines.length) return [];
+                        const char = author.character;
+                        // 私聊硬闸只挡私聊：没同步 / 开关关 / 路人 → 丢掉私聊，公开评论照常落
+                        if (split.privateLines.length && canSparkPrivateChat(char?.id, syncedIds, loadPrivateChatOff())) {
+                            privateMessages.push({ charId: char!.id, lines: split.privateLines });
+                        }
+                        if (!split.publicContent) return [];
                         const authorName = author.name;
                         let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
-                        const char = author.character;
                         if (char) avatar = char.avatar;
-                        // 六改-6 同款：privateChat 数组 = 角色连发多条私聊，逐条落库，不进公开评论区
-                        if (Array.isArray(c.privateChat)) {
-                            if (char) {
-                                if (!syncedIds.includes(char.id)) return []; // v8c-4 硬闸：没同步过这条帖子 = 没有私聊资格，直接丢弃
-                                if (loadPrivateChatOff()[char.id]) return []; // 开关关闭：私聊直接丢弃，不转公开评论
-                                const lines = c.privateChat.map((x: any) => String(x ?? '').trim()).filter(Boolean);
-                                if (lines.length) privateMessages.push({ charId: char.id, lines });
-                            }
-                            return []; // 路人没有私聊能力，漏到这里的直接丢弃
-                        }
-                        // 兼容旧格式：toPrivateChat: true = 单条私聊
-                        if (c.toPrivateChat === true) {
-                            if (char && syncedIds.includes(char.id) && !loadPrivateChatOff()[char.id]) privateMessages.push({ charId: char.id, lines: [c.content.trim()] });
-                            return []; // 路人没有私聊能力，漏到这里的直接丢弃
-                        }
                         return [{
                             id: `cmt-${Math.random()}`,
                             authorName: authorName,
                             authorAvatar: avatar,
-                            content: c.content || '...',
+                            content: split.publicContent,
                             likes: Math.floor(Math.random() * 100),
                             isCharacter: !!char,
                             authorType: char ? 'character' : 'stranger',
@@ -984,7 +977,10 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                             ? (alsoPublic ? `${charName} 私聊连发了 ${pm.lines.length} 条，也在评论区发了言` : `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）`)
                             : (alsoPublic ? `${charName} 私聊了你一句，也在评论区发了言` : `${charName} 私聊了你一句（没发在评论区）`), 'info');
                         trackEvent('Spark 首评产生私聊消息');
-                    } catch {}
+                    } catch (e) {
+                        console.warn('[Spark] 首评私聊落库失败', { charId: pm.charId, e });
+                        addToast('私聊没能写进聊天', 'error');
+                    }
                 }
                 // 只有私聊、没有公开评论时不算"身份不匹配"；两边都空才报错
                 if (!comments.length && !privateMessages.length) throw new Error('模型返回的评论身份不匹配，未添加评论');
@@ -1037,7 +1033,10 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
             await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: `[Spark 动态·${kindLabel}]`, metadata: { post, syncKind, mentioned: viaMention } });
             trackSparkPost(post.id, charId, (post.comments || []).map(c => c.id));
             return true;
-        } catch (e) { return false; }
+        } catch (e) {
+            console.warn('[Spark] 同步失败', { postId: post.id, charId, viaMention, e });
+            return false;
+        }
     };
 
     const handleSyncToChar = async (charId: string) => {
@@ -1178,6 +1177,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                         if (await syncPostToChar(latest, cid, true)) okCount++;
                     }
                     if (okCount) addToast(`已提醒 ${okCount} 个角色：你在帖子里 @ 了 Ta`, 'success');
+                    else addToast('@ 提醒发送失败，请到帖子页手动同步', 'error');
                 }
             }
             return;
@@ -1221,6 +1221,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 if (await syncPostToChar(post, cid, true)) okCount++;
             }
             if (okCount) addToast(`已提醒 ${okCount} 个角色：你在帖子里 @ 了 Ta`, 'success');
+            else addToast('@ 提醒发送失败，请到帖子页手动同步', 'error');
         }
         setNewPostMentions([]);
     };
@@ -1422,6 +1423,7 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 if (await syncPostToChar(updatedPost, cid, true)) okCount++;
             }
             if (okCount) addToast(`已提醒 ${okCount} 个角色：你在评论里 @ 了 Ta`, 'success');
+            else addToast('@ 提醒发送失败，请到帖子页手动同步', 'error');
         }
         setCommentMentions([]);
         setComposerMentionOpen(false);
@@ -1571,9 +1573,16 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 return merged;
             })();
             const selectedChars = selectSparkParticipants(post, [...candidatePool].sort(() => 0.5 - Math.random()), characterHandles);
-            // 返工⑩：用户刚 @ 的角色强制进入本轮名单（去重并入）
-            const mentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
+            // 发帖 @ + 评论 @ + 楼中楼被回复的角色：强制进本轮名单（去重并入）
+            const commentMentionIds = (lastUserCommentRef.current?.postId === post.id && Array.isArray(lastUserCommentRef.current.mentionedCharIds))
                 ? lastUserCommentRef.current.mentionedCharIds : [];
+            const replyCharId = (() => {
+                if (lastUserCommentRef.current?.postId !== post.id) return [] as string[];
+                const rid = lastUserCommentRef.current.repliedToCommentId;
+                const target = rid ? (post.comments || []).find(x => x.id === rid) : undefined;
+                return target?.authorCharId ? [target.authorCharId] : [];
+            })();
+            const mentionIds = mergeSparkMentionIds(post.mentions, commentMentionIds, replyCharId);
             const forcedChars = mentionIds
                 .map(id => characters.find(c => c.id === id))
                 .filter((c): c is NonNullable<typeof c> => !!c && !selectedChars.some(s => s.id === c.id));
@@ -1587,13 +1596,13 @@ ${mentionSection}${privateChatSection}### 路人（charId 为 null）：刷到�
                 ? `\n**用户「${socialProfile.name}」最近在评论区发的评论**: \"${recent.content}\"${recent.repliedToCommentId ? `（是在楼中楼里回复别人的）` : ''}`
                 : '';
             let mentionLine = '';
-            if (mentionIds.length) {
+            if (commentMentionIds.length) {
                 const replyToName = (() => {
                     const rid = lastUserCommentRef.current?.repliedToCommentId;
                     const target = rid ? (post.comments || []).find(c => c.id === rid) : undefined;
                     return target?.authorName;
                 })();
-                const mentionedNames = mentionIds
+                const mentionedNames = commentMentionIds
                     .map(id => characters.find(c => c.id === id))
                     .filter(Boolean)
                     .map(c => (characterHandles[c!.id] || [])[0]?.handle || c!.name);
@@ -1686,25 +1695,16 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
             const newComments: SocialComment[] = [];
             const privateMessages: { charId: string; lines: string[] }[] = [];
             json.forEach((c: any) => {
-                if (typeof c.content !== 'string' || !c.content.trim()) return;
                 const author = resolveSparkAuthor(c, finalChars, candidatePool, characterHandles, [socialProfile.name, userProfile.name]);
                 if (!author) return;
+                const split = splitSparkCommentItem(c);
+                if (!split.publicContent && !split.privateLines.length) return;
                 const matchedChar = author.character;
-                // 六改-6：私聊升级——"privateChat": [...] 数组 = 角色连发多条（像真人刷屏），逐条落库
-                if (Array.isArray(c.privateChat)) {
-                    if (matchedChar) {
-                        if (!syncedIds.includes(matchedChar.id)) return; // v8c-4 硬闸：没同步过这条帖子 = 没有私聊资格，直接丢弃（不落库、不转公开评论）
-                        if (loadPrivateChatOff()[matchedChar.id]) return; // 开关关闭：私聊直接丢弃，不转公开评论
-                        const lines = c.privateChat.map((x: any) => String(x ?? '').trim()).filter(Boolean);
-                        if (lines.length) privateMessages.push({ charId: matchedChar.id, lines });
-                    }
-                    return; // 路人没有私聊能力，漏到这里的直接丢弃
+                // 私聊硬闸只挡私聊：没同步 / 开关关 / 路人 → 丢掉私聊，公开评论照常落
+                if (split.privateLines.length && canSparkPrivateChat(matchedChar?.id, syncedIds, loadPrivateChatOff())) {
+                    privateMessages.push({ charId: matchedChar!.id, lines: split.privateLines });
                 }
-                // 兼容旧格式：toPrivateChat: true = 单条私聊（老帖子上下文还在用这个写法）
-                if (c.toPrivateChat === true) {
-                    if (matchedChar && syncedIds.includes(matchedChar.id) && !loadPrivateChatOff()[matchedChar.id]) privateMessages.push({ charId: matchedChar.id, lines: [c.content.trim()] }); // v8c-4 硬闸：没同步 = 没私聊资格；开关关闭：私聊直接丢弃
-                    return; // 路人没有私聊能力，漏到这里的直接丢弃
-                }
+                if (!split.publicContent) return;
                 let avatar = matchedChar
                     ? matchedChar.avatar
                     : `https://api.dicebear.com/7.x/${['micah', 'avataaars', 'bottts', 'notionists'][[...author.name].reduce((s, ch) => s + ch.codePointAt(0)!, 0) % 4]}/svg?seed=${encodeURIComponent(author.name)}`;
@@ -1716,7 +1716,7 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
                     id: `cmt-evo-${Date.now()}-${Math.random()}`,
                     authorName: author.name,
                     authorAvatar: avatar,
-                    content: c.content,
+                    content: split.publicContent,
                     likes: Math.floor(Math.random() * 10),
                     isCharacter: !!matchedChar,
                     authorType: matchedChar ? 'character' as const : 'stranger' as const,
@@ -1739,7 +1739,10 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
                         ? (alsoPublic ? `${charName} 私聊连发了 ${pm.lines.length} 条，也在评论区发了言` : `${charName} 私聊连发了 ${pm.lines.length} 条（没发在评论区）`)
                         : (alsoPublic ? `${charName} 私聊了你一句，也在评论区发了言` : `${charName} 私聊了你一句（没发在评论区）`), 'info');
                     trackEvent('Spark 搅动产生私聊消息');
-                } catch {}
+                } catch (e) {
+                    console.warn('[Spark] 搅动私聊落库失败', { charId: pm.charId, e });
+                    addToast('私聊没能写进聊天', 'error');
+                }
             }
             const merged = updatePostInFeed(post.id, current => ({
                 ...current,
@@ -1748,7 +1751,11 @@ ${privateChatSection}### 新刷进来的陌生网友（charId 为 null）：偶�
             const added = (merged?.comments?.length ?? existing.length) - existing.length;
             if (added > 0) {
                 addToast(`评论区有 ${added} 条新动静`, 'info');
-            } else if (!privateMessages.length) {
+            } else if (privateMessages.length) {
+                // 私聊 toast 已在上面逐条说过
+            } else if (json.length > 0) {
+                addToast('模型回了内容，但没能写进评论区', 'error');
+            } else {
                 addToast('这段时间评论区没什么动静', 'info');
             }
             // 搅动过后清掉"用户刚评论"的记忆——再搅动就是普通的时间流逝
