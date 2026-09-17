@@ -3781,12 +3781,16 @@ const MessageItem = React.memo(({
     const generatedVoiceSubtitle = showSarTruth && hasSarSurface
         ? voiceSubtitleText
         : cleanVoiceText(voiceData?.originalText);
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    // 新式用户语音记号：content 是纯文本（识别字在正文里，导出走正文），
+    // 靠 metadata.stt 认出这是语音条——原声不在本机（换设备导入/资产丢失）也照旧认。
+    const hasUserSttMarker = isUser && m.type === 'text' && !!(m.metadata as any)?.stt;
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || hasUserSttMarker;
     // 用户语音消息（语音识别直发 + 原声）：按 AI 语音条同款 sully-voice 类名渲染，
     // 用户自定义 CSS 的语音条美化自动匹配；文本藏进「转文字」展开区。
+    // 认条不再依赖壳标签：有壳或有 stt 记号都算，顶部不再重复渲染正文文字泡。
     const isUserVoiceMsg = isUser && m.type === 'text' && (
         (hasVoiceTag)
-        || (!!voiceData?.url && !!(m.metadata as any)?.stt)
+        || hasUserSttMarker
     );
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
@@ -4025,11 +4029,13 @@ const MessageItem = React.memo(({
                             </div>
                             <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
                         </div>
-                    ) : hasVoiceTag ? (
+                    ) : (hasVoiceTag || isUserVoiceMsg) ? (
                         /* Voice tag exists in content but no audio yet — either TTS is still
                            pending (app restart / auto-TTS) or the character has no MiniMax voice
                            configured. Offer a 转文字 toggle here too so the text stays readable,
-                           aligning fake voice messages with real ones. */
+                           aligning fake voice messages with real ones.
+                           新式用户语音（纯文本 + stt 记号）也走这条占位条：原声不在本机时
+                           照旧一条语音条，「转文字」读正文里的同一句字。 */
                         <div className="max-w-[260px]">
                             <div
                                 className="sully-voice-bar sully-voice-bar-placeholder flex items-center gap-2 px-3 py-2 rounded-2xl"
@@ -4090,6 +4096,8 @@ const MessageItem = React.memo(({
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
            prev.msg.metadata?.sarModuleSurface?.surface === next.msg.metadata?.sarModuleSurface?.surface &&
+           // 用户语音记号 metadata.stt（含 transcript）变了要重渲染，否则补完字气泡不刷新。
+           (prev.msg.metadata as any)?.stt === (next.msg.metadata as any)?.stt &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
            prev.activeTheme === next.activeTheme &&

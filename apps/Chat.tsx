@@ -4,6 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDeliveryFlags, peekNoticeKind, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
+import { needsVoiceBackfill, computeBackfillContent } from '../utils/voiceContentBackfill';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, processImageToBlob } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
@@ -931,6 +932,49 @@ const Chat: React.FC = () => {
         return () => { cancelled = true; };
     }, [messages]);
 
+    // ---- 旧用户语音消息的识别字静默回写（补字 + 拆壳，进聊天扫一遍）----
+    // 旧版把识别字包进 <语音>…</语音> 壳里或只存在原声资产里；壳会被清洗规则连字吃掉，
+    // 存档导出后字就丢了。这里把字写回同一条消息的 content（纯文本，不新建消息、不改气泡样式）：
+    //   · 正文剥壳后没有有效文字，且资产 voice_msg_${id} 有 originalText/transcript → 补字
+    //   · 只有壳的（壳里有字但资产没了）→ 拆壳保字，同样写纯文本
+    //   · 正文已经是纯文本有字的 / 壳外夹着字的 / AI 消息 → 一律不碰
+    //   · 顺带补 metadata.stt 记号（缺的时候），界面继续按同一条语音条渲染，不多出文字泡
+    const voiceBackfillTriedRef = useRef<Set<number>>(new Set());
+    useEffect(() => {
+        if (!messages.length) return;
+        const pending = messages.filter(m =>
+            m.id && m.type === 'text' && m.role === 'user'
+            && !voiceBackfillTriedRef.current.has(m.id)
+            && needsVoiceBackfill(m.content)
+        );
+        if (!pending.length) return;
+        let cancelled = false;
+        (async () => {
+            for (const m of pending) {
+                voiceBackfillTriedRef.current.add(m.id);
+                if (cancelled) return;
+                try {
+                    const stored = await DB.getAssetRaw(voiceAssetKey(m.id)) as StoredVoice | null;
+                    const text = computeBackfillContent({
+                        content: m.content,
+                        assetText: stored?.originalText || (stored as any)?.transcript || '',
+                    });
+                    if (!text) continue;
+                    const meta: any = { ...(m.metadata || {}) };
+                    if (!meta.stt) meta.stt = { engine: 'backfill' };
+                    if (!meta.stt.transcript) meta.stt.transcript = text;
+                    await DB.updateMessageMetadata(m.id, () => meta);
+                    await DB.updateMessage(m.id, text);
+                    if (cancelled) return;
+                    setMessages(prev => prev.map(x => x.id === m.id ? { ...x, content: text, metadata: meta } : x));
+                } catch (e) {
+                    console.warn('[Chat] 用户语音识别字回写失败', m.id, e);
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [messages]);
+
     // The archive can remove an item while this chat stays mounted. Keep the
     // long-press menu's 收藏/取消收藏 label in sync without touching audio data.
     useEffect(() => {
@@ -1264,21 +1308,20 @@ const Chat: React.FC = () => {
     // ---- 语音消息（STT）：麦克风说话 → 点停止 → 整段直接发成一条语音消息 ----
     // 不经过输入框草稿；原声 WAV 存 IndexedDB（AI 语音消息同一套存储），
     // MessageItem 用 sully-voice 同款类名渲染，用户自定义 CSS 自动匹配。
-    // 新发送包 <语音>，和 AI 同一套标签；旧消息不回写。编辑框露出标签，删掉标签即变回纯文字。
+    // 识别字以纯文本写正文（原版存档导出/外部程序读到的就是这句话本身），不再包
+    // <语音> 标签——那种标记会被展示/导出侧的清洗规则连字一起吃掉，导出就丢。
+    // 语音条由 metadata.stt 记号 + 本机原声资产驱动（MessageItem 认记号）；
+    // 旧消息没有字的由下方 backfill 静默补写。
     const userContentHasVoiceTag = (content?: string) => /<[语語]音[^>]*>/.test(content || '');
-    const wrapUserVoiceContent = (text: string) => {
-        const t = (text || '').trim();
-        if (!t || userContentHasVoiceTag(t)) return t;
-        return `<语音>${t}</语音>`;
-    };
     const extractVoiceInner = (content: string) => {
         const tagged = (content || '').match(/<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/)
             || (content || '').match(/<[语語]音[^>]*>([\s\S]*)$/);
         return ((tagged && tagged[1]) ? tagged[1] : content).trim();
     };
     const handleVoiceMessage = async (text: string, rec: VoiceRecording | null) => {
-        const meta: any = { stt: { engine: apiConfig.sttApi?.engine || 'doubao', durationMs: rec?.durationMs } };
-        const savedId = await handleSendText(wrapUserVoiceContent(text), 'text', meta);
+        const t = (text || '').trim();
+        const meta: any = { stt: { engine: apiConfig.sttApi?.engine || 'doubao', durationMs: rec?.durationMs, transcript: t } };
+        const savedId = await handleSendText(t, 'text', meta);
         if (savedId && rec) {
             try {
                 const url = URL.createObjectURL(rec.wav);
@@ -3029,10 +3072,11 @@ const Chat: React.FC = () => {
         if (!selectedMessage) return;
         const contentChanged = editContent !== selectedMessage.content;
         await DB.updateMessage(selectedMessage.id, editContent);
-        // 用户语音：标签还在就留原声，还能重播；把 <语音> 删掉 = 改回纯文字，这时才扔掉原声。
-        // AI 语音仍是「字变了旧合成作废」。旧用户语音（没有标签、靠 stt 标记）不批量回写。
+        // 用户语音：新式（纯文本 + stt 记号）改字 = 改转写，原声保留、资产 originalText 同步；
+        // 旧式带标签的：标签还在就留原声，还能重播；把 <语音> 删掉 = 改回纯文字，这时才扔掉原声。
+        // AI 语音仍是「字变了旧合成作废」。
         const keepUserVoice = selectedMessage.role === 'user'
-            && userContentHasVoiceTag(editContent)
+            && (userContentHasVoiceTag(editContent) || !!(selectedMessage.metadata as any)?.stt)
             && (!!voiceDataMap[selectedMessage.id] || !!(selectedMessage.metadata as any)?.stt);
         if (contentChanged && keepUserVoice) {
             const inner = extractVoiceInner(editContent);
