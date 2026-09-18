@@ -19,6 +19,8 @@ interface Props {
   dataReady: boolean;
   /** 当前壁纸（url / data / blob / 渐变或颜色字符串 / 空）。开机场景以它为底「活过来」。 */
   wallpaper?: string;
+  /** 外观 App「全屏模式」总开关（默认 true）。关闭时点入桌面不再请求全屏（逃生门），其余照旧。 */
+  allowFullscreen?: boolean;
   /** 退场动画播完后回调，交还控制权给 PhoneShell。 */
   onDone: () => void;
 }
@@ -28,7 +30,7 @@ const prefersReducedMotion = () =>
   !!window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
+const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, allowFullscreen = true, onDone }) => {
   // 壁纸解析：url/data/blob 走 url() 并虚化压暗；渐变/颜色字符串直接当背景；空则回退深空渐变。
   const wp = wallpaper?.trim() || '';
   const wpIsImage = /^(https?:|data:|blob:|\.?\/)/.test(wp);
@@ -121,7 +123,8 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
       // 一旦落进 setTimeout/await 手势就断了，手机上会静默失败。目标用
       // documentElement（整页），不选某个子节点。iOS/部分内置浏览器可能拒绝——
       // 全链可选 + .catch 吞失败，拒了不崩、不挡进桌面。
-      if (!document.fullscreenElement) {
+      // 外观 App「全屏模式」关掉时（allowFullscreen=false）跳过请求：仍照常点入桌面。
+      if (allowFullscreen && !document.fullscreenElement) {
         void document.documentElement.requestFullscreen?.()?.catch(() => {});
       }
     }
