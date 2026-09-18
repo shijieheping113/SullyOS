@@ -9,6 +9,19 @@ import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
 import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
+import { DEFAULT_INCOMING_CALL_PROMPT, formatIncomingCallRecord } from './incomingCall';
+import {
+    BLOCK_SOURCE,
+    BLOCK_FRIEND_REQUEST_SOURCE,
+    BLOCK_PEEK_SOURCE,
+    BLOCK_NOTICE_SOURCE,
+    SYSTEM_LOG_LEAD,
+    formatBlockFriendRequestRecord,
+    formatBlockPeekRecord,
+    formatBlockRecord,
+    formatBlockSendFailedRecord,
+    isBlockSystemSource,
+} from './block';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
@@ -695,7 +708,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - 如果用户发送了图片，请对图片内容进行评论。
 6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`
-   - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
+${!forFirePack && char.allowProactiveCall ? `   - **打电话给对方**: ${String(char.incomingCallPrompt || DEFAULT_INCOMING_CALL_PROMPT).trim()}\n` : ''}   - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
    - **处理用户转账**: 当历史里出现 \`[[记录:TRANSFER|to=char|...|status=待处理]]\`（用户转给你、还没处理）时，你可以决定收下或退回。收下: \`[[ACTION:TRANSFER_ACCEPT]]\`；退回: \`[[ACTION:TRANSFER_RETURN]]\`。请结合人设和情境自然选择（比如害羞地退回、开心地收下），并配上一句话。
    - **【重要】\`[[记录:...]]\` 是系统日志**: 历史里以 \`[[记录:\` 开头的标签是已经发生的事实（谁转给谁、什么状态），只供你了解，**严禁**在回复里照抄输出。你要做动作时只能用 \`[[ACTION:...]]\`。
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
@@ -1168,6 +1181,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
         // 这里再次校验统一边界，兼容只提供内存快照的入口。
         let effectiveHistory = selectCharacterContextMessages(messages, char);
+        // 给用户看的浅灰句（求看看结果/好友申请结果/挂断提醒）不进模型，状态已经写在对应卡上。
+        effectiveHistory = effectiveHistory.filter(m => m.metadata?.source !== BLOCK_NOTICE_SOURCE);
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
@@ -1278,7 +1293,17 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 
                 // TODO(记录形态): 戳一戳 / 时间间隔提示等其他系统事件, 等转账的 [[记录:TRANSFER]]
                 // 观察一段时间后再迁 (transferFormat.ts 头注) —— 防线已按整个记录命名空间就位。
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
+                if (m.metadata?.source === 'incoming-call') content = `${timeStr} ${formatIncomingCallRecord(m)}`;
+                // 拉黑玩法的三类记录：状态 / 好友申请卡 / 求看看卡。跟 incoming-call 同款——
+                // 落库时正文已是 [[记录:...]] 形态，这里从 metadata 重建（申请/求看读 live 状态）。
+                else if (m.metadata?.source === BLOCK_SOURCE) {
+                    const bMeta = m.metadata || {};
+                    const bStatus = bMeta.blockStatus === '已解除' ? '已解除' : '已拉黑';
+                    content = `${timeStr} ${formatBlockRecord({ at: Number(m.timestamp || 0), status: bStatus, blockCallsToo: !!bMeta.blockCallsToo })}`;
+                }
+                else if (m.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE) content = `${timeStr} ${formatBlockFriendRequestRecord(m)}`;
+                else if (m.metadata?.source === BLOCK_PEEK_SOURCE) content = `${timeStr} ${formatBlockPeekRecord(m)}`;
+                else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
                 else if (m.type === 'collaboration_file') {
                     const fileName = String(m.metadata?.fileName || m.content || '未命名文件');
                     content = `${timeStr} [你在聊天界面向用户交付了协同文件：《${fileName}》]`;
@@ -1540,6 +1565,19 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
                 }
                 else content = `${timeStr} ${sourceTag} ${content}`;
+
+                // 拉黑期间角色的消息被拒收：让角色看到自己这条是「已拒收」，以为什么都没送达。
+                // 标记在 metadata.blockSendFailed（落库时打），这里只拼前缀记录，不改原文。
+                if (m.role === 'assistant' && m.metadata?.blockSendFailed) {
+                    content = `${formatBlockSendFailedRecord(Number(m.timestamp || 0))}\n${content}`;
+                }
+
+                const asSystemLog = m.role === 'system'
+                    || isBlockSystemSource(m.metadata?.source);
+                if (asSystemLog && typeof content === 'string') {
+                    const body = content.indexOf(SYSTEM_LOG_LEAD) >= 0 ? content : `${SYSTEM_LOG_LEAD} ${content}`;
+                    return { role: 'system', content: body };
+                }
 
                 return { role: m.role, content };
             }),

@@ -14,6 +14,14 @@ import {
     extractCollaborationFileDirectives,
     resolveCollaborationFileByTitle,
 } from '../features/collaboration/chatLibrary';
+import { extractIncomingCallAction, resolveIncomingCallPopupStyle, isIncomingCallBlockedByBlock } from './incomingCall';
+import { canOfferIncomingCallNow, offerIncomingCall } from './incomingCallBridge';
+import {
+    BLOCK_FRIEND_REQUEST_SOURCE,
+    BLOCK_PEEK_SOURCE,
+    extractBlockFriendRequestAction,
+    extractBlockPeekAction,
+} from './block';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -433,6 +441,105 @@ export const ChatParser = {
         }
         // 暗号永远不进气泡：发过了 / 开关关着 / 缺正文 / 写歪了 → 一律静默剥掉
         content = content.replace(/\[\[ACTION:SPARK_POST[^\]]*\]\]/g, '').trim();
+
+        // CALL — 角色在聊天里打语音过来。主动消息 2.0 重放只剥标签不弹。
+        const callExtract = extractIncomingCallAction(content);
+        if (callExtract.consumed) {
+            content = callExtract.text;
+            const amsgReplay = !!(inheritMeta && (inheritMeta as any).activeMsg2);
+            try {
+                const chars = await DB.getAllCharacters();
+                const charProfile = chars.find(c => c.id === charId);
+                const req = {
+                    charId,
+                    charName,
+                    charAvatar: charProfile?.avatar,
+                    line: callExtract.line,
+                    popupStyle: resolveIncomingCallPopupStyle(charProfile),
+                    ringtone: charProfile?.incomingCallRingtone,
+                    amsgReplay,
+                };
+                const recentCallMessages = await DB.getMessagesByCharId(charId, true);
+                if (isIncomingCallBlockedByBlock(recentCallMessages)) {
+                    await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: '打不通',
+                        metadata: {
+                            source: 'incoming-call',
+                            callOutcome: 'blocked',
+                            callBlocked: true,
+                            callLine: callExtract.line,
+                            calledAt: Date.now(),
+                            resolvedAt: Date.now(),
+                        },
+                    });
+                } else if (await canOfferIncomingCallNow(req)) {
+                    const messageId = await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: callExtract.line ? `[来电] ${callExtract.line}` : '[来电]',
+                        metadata: {
+                            source: 'incoming-call',
+                            callOutcome: 'ringing',
+                            callLine: callExtract.line,
+                            calledAt: Date.now(),
+                        },
+                    });
+                    offerIncomingCall({ ...req, messageId });
+                }
+            } catch (e) {
+                console.warn('[IncomingCall] 处理来电暗号失败，已剥标签:', e);
+            }
+        }
+
+        // PEEK — 拉黑期间角色求用户看一眼。短句直接显示在卡上（代码不截字数，只剥符号；
+        // 15 字是提示词里的玩法约束）。落一张系统卡，用户点「看看」即标记已看。
+        const peekExtract = extractBlockPeekAction(content);
+        if (peekExtract.consumed) {
+            content = peekExtract.text;
+            try {
+                await persist({
+                    charId,
+                    role: 'system',
+                    type: 'system',
+                    content: peekExtract.line ? `[求看看] ${peekExtract.line}` : '[求看看]',
+                    metadata: {
+                        source: BLOCK_PEEK_SOURCE,
+                        peekText: peekExtract.line,
+                        peekViewed: false,
+                        askedAt: Date.now(),
+                    },
+                });
+            } catch (e) {
+                console.warn('[Block] 落求看看卡失败，已剥标签:', e);
+            }
+        }
+
+        // FRIEND_REQUEST — 拉黑期间角色申请重新加好友。附言直接显示在卡上，
+        // 卡上有「通过」「忽略」两个按钮；通过即解除（聊天电话一起恢复）。
+        const frExtract = extractBlockFriendRequestAction(content);
+        if (frExtract.consumed) {
+            content = frExtract.text;
+            try {
+                await persist({
+                    charId,
+                    role: 'system',
+                    type: 'system',
+                    content: frExtract.line ? `[好友申请] ${frExtract.line}` : '[好友申请]',
+                    metadata: {
+                        source: BLOCK_FRIEND_REQUEST_SOURCE,
+                        requestText: frExtract.line,
+                        requestStatus: 'pending',
+                        askedAt: Date.now(),
+                    },
+                });
+            } catch (e) {
+                console.warn('[Block] 落好友申请卡失败，已剥标签:', e);
+            }
+        }
 
         // TRANSFER_ACCEPT / TRANSFER_RETURN — char 收下 / 退回 user 最近一笔待处理的转账。
         // 找最近一条 user 发出、还没被收/退、且不是回执卡本身的转账，标记状态并补一张回执小卡。

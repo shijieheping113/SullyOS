@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDeliveryFlags, peekNoticeKind, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
+import { needsVoiceBackfill, computeBackfillContent } from '../utils/voiceContentBackfill';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, processImageToBlob } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
@@ -40,6 +42,7 @@ import {resolveDecorationTheme} from '../utils/chatDecoration';
 import ChatDecorationAnnouncement from '../components/chat/ChatDecorationAnnouncement';
 import ChatDecorationPanel, {DecorationTab} from '../components/chat/ChatDecorationPanel';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import { useVoiceInput, type VoiceRecording } from '../hooks/useVoiceInput';
 import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
@@ -75,6 +78,7 @@ import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { collectRelatedCallMessageIds, DEFAULT_INCOMING_CALL_PROMPT, isCallRecordCard } from '../utils/incomingCall';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import { formatHours } from '../utils/format';
@@ -135,7 +139,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { activeApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { activeApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, proactiveComposingChars, openDateWithChar, registerBackHandler } = useOS();
     const osTheme = useMemo(()=>resolveDecorationTheme(baseOsTheme,characters.find(c=>c.id===activeCharacterId)||characters[0]),[baseOsTheme,characters,activeCharacterId]);
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
@@ -196,6 +200,8 @@ const Chat: React.FC = () => {
     const activeCharIdRef = useRef(activeCharacterId);
     // 流式预览接棒过的正式消息在当前会话内始终跳过入场动画，避免后续 DB 刷新时动画类又被加回来。
     const streamPreviewHandoverIdsRef = useRef<Set<number>>(new Set());
+    // 预览还在时，不画这轮新落库的正式气泡，避免和预览叠两份。
+    const streamHideAfterIdRef = useRef<number | null>(null);
     const registerStreamPreviewHandover = useCallback((charId: string, messageIds: number[]) => {
         if (activeCharIdRef.current !== charId) return;
         messageIds.forEach(id => streamPreviewHandoverIdsRef.current.add(id));
@@ -211,10 +217,16 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result' | 'block-toggle'>('none');
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
     const [decorationTab, setDecorationTab] = useState<DecorationTab>('layout');
     // 切换角色时收掉装扮气泡：定制是 per-character 的，避免误改到下一个角色
+    useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); }, [activeCharacterId]);
+    // 白框自定义弹窗开着时，系统返回只关弹窗、不退聊天（对齐 DateSession/StoryTheater 的做法）：
+    useEffect(() => {
+        if (modalType !== 'chrome-css') return;
+        return registerBackHandler(() => { setModalType('none'); return true; });
+    }, [modalType, registerBackHandler]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
     const dismissScheduleChangeNotice = useCallback(() => setScheduleChangeNotice(null), []);
@@ -232,6 +244,9 @@ const Chat: React.FC = () => {
     const [inputPreferences, setInputPreferences] = useState(loadChatInputPreferences);
     const [settingsInputPreferences, setSettingsInputPreferences] = useState(loadChatInputPreferences);
     const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
+    const [settingsIncomingCallPrompt, setSettingsIncomingCallPrompt] = useState('');
+    const [settingsIncomingCallCooldownMin, setSettingsIncomingCallCooldownMin] = useState('');
+    const [settingsIncomingCallDailyMax, setSettingsIncomingCallDailyMax] = useState('');
     const contextSuiteAnyEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         || memoryPalaceConfig.featureFlags?.interactionAdaptation === true
         || memoryPalaceConfig.featureFlags?.deepEngagement === true;
@@ -860,7 +875,8 @@ const Chat: React.FC = () => {
     useEffect(() => {
         if (!messages.length) return;
         const map = voiceDataMap;
-        const toFetch = messages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
+        // 用户的语音消息（metadata.stt）原声也在同一个资产桶里，刷新后同样要恢复
+        const toFetch = messages.filter(m => m.id && m.type === 'text' && (m.role !== 'user' || !!(m.metadata as any)?.stt) && !map[m.id]);
         if (!toFetch.length) return;
         let cancelled = false;
         (async () => {
@@ -916,6 +932,49 @@ const Chat: React.FC = () => {
             }
             if (cancelled || !Object.keys(updates).length) return;
             setVoiceDataMap(prev => ({ ...updates, ...prev }));
+        })();
+        return () => { cancelled = true; };
+    }, [messages]);
+
+    // ---- 旧用户语音消息的识别字静默回写（补字 + 拆壳，进聊天扫一遍）----
+    // 旧版把识别字包进 <语音>…</语音> 壳里或只存在原声资产里；壳会被清洗规则连字吃掉，
+    // 存档导出后字就丢了。这里把字写回同一条消息的 content（纯文本，不新建消息、不改气泡样式）：
+    //   · 正文剥壳后没有有效文字，且资产 voice_msg_${id} 有 originalText/transcript → 补字
+    //   · 只有壳的（壳里有字但资产没了）→ 拆壳保字，同样写纯文本
+    //   · 正文已经是纯文本有字的 / 壳外夹着字的 / AI 消息 → 一律不碰
+    //   · 顺带补 metadata.stt 记号（缺的时候），界面继续按同一条语音条渲染，不多出文字泡
+    const voiceBackfillTriedRef = useRef<Set<number>>(new Set());
+    useEffect(() => {
+        if (!messages.length) return;
+        const pending = messages.filter(m =>
+            m.id && m.type === 'text' && m.role === 'user'
+            && !voiceBackfillTriedRef.current.has(m.id)
+            && needsVoiceBackfill(m.content)
+        );
+        if (!pending.length) return;
+        let cancelled = false;
+        (async () => {
+            for (const m of pending) {
+                voiceBackfillTriedRef.current.add(m.id);
+                if (cancelled) return;
+                try {
+                    const stored = await DB.getAssetRaw(voiceAssetKey(m.id)) as StoredVoice | null;
+                    const text = computeBackfillContent({
+                        content: m.content,
+                        assetText: stored?.originalText || (stored as any)?.transcript || '',
+                    });
+                    if (!text) continue;
+                    const meta: any = { ...(m.metadata || {}) };
+                    if (!meta.stt) meta.stt = { engine: 'backfill' };
+                    if (!meta.stt.transcript) meta.stt.transcript = text;
+                    await DB.updateMessageMetadata(m.id, () => meta);
+                    await DB.updateMessage(m.id, text);
+                    if (cancelled) return;
+                    setMessages(prev => prev.map(x => x.id === m.id ? { ...x, content: text, metadata: meta } : x));
+                } catch (e) {
+                    console.warn('[Chat] 用户语音识别字回写失败', m.id, e);
+                }
+            }
         })();
         return () => { cancelled = true; };
     }, [messages]);
@@ -1034,6 +1093,9 @@ const Chat: React.FC = () => {
                 setSettingsContextRangeMode(resolveContextRangeMode(char));
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
                 setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
+                setSettingsIncomingCallPrompt((char.incomingCallPrompt || '').trim() || DEFAULT_INCOMING_CALL_PROMPT);
+                setSettingsIncomingCallCooldownMin(char.incomingCallCooldownMin == null ? '' : String(char.incomingCallCooldownMin));
+                setSettingsIncomingCallDailyMax(char.incomingCallDailyMax == null ? '' : String(char.incomingCallDailyMax));
                 clearUnread(char.id);
             }
             // Per-character translation toggle + language pair
@@ -1174,6 +1236,9 @@ const Chat: React.FC = () => {
         setSettingsContextRangeMode(resolveContextRangeMode(char));
         setSettingsHideSysLogs(char.hideSystemLogs || false);
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
+        setSettingsIncomingCallPrompt((char.incomingCallPrompt || '').trim() || DEFAULT_INCOMING_CALL_PROMPT);
+        setSettingsIncomingCallCooldownMin(char.incomingCallCooldownMin == null ? '' : String(char.incomingCallCooldownMin));
+        setSettingsIncomingCallDailyMax(char.incomingCallDailyMax == null ? '' : String(char.incomingCallDailyMax));
         setSettingsInputPreferences(inputPreferences);
     }, [modalType, char?.id]);
 
@@ -1243,6 +1308,42 @@ const Chat: React.FC = () => {
         if (val.trim()) localStorage.setItem(draftKey, val);
         else localStorage.removeItem(draftKey);
     };
+
+    // ---- 语音消息（STT）：麦克风说话 → 点停止 → 整段直接发成一条语音消息 ----
+    // 不经过输入框草稿；原声 WAV 存 IndexedDB（AI 语音消息同一套存储），
+    // MessageItem 用 sully-voice 同款类名渲染，用户自定义 CSS 自动匹配。
+    // 识别字以纯文本写正文（原版存档导出/外部程序读到的就是这句话本身），不再包
+    // <语音> 标签——那种标记会被展示/导出侧的清洗规则连字一起吃掉，导出就丢。
+    // 语音条由 metadata.stt 记号 + 本机原声资产驱动（MessageItem 认记号）；
+    // 旧消息没有字的由下方 backfill 静默补写。
+    const userContentHasVoiceTag = (content?: string) => /<[语語]音[^>]*>/.test(content || '');
+    const extractVoiceInner = (content: string) => {
+        const tagged = (content || '').match(/<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/)
+            || (content || '').match(/<[语語]音[^>]*>([\s\S]*)$/);
+        return ((tagged && tagged[1]) ? tagged[1] : content).trim();
+    };
+    const handleVoiceMessage = async (text: string, rec: VoiceRecording | null) => {
+        const t = (text || '').trim();
+        const meta: any = { stt: { engine: apiConfig.sttApi?.engine || 'doubao', durationMs: rec?.durationMs, transcript: t } };
+        const savedId = await handleSendText(t, 'text', meta);
+        if (savedId && rec) {
+            try {
+                const url = URL.createObjectURL(rec.wav);
+                voiceBlobUrlsRef.current.add(url);
+                setVoiceDataMap(prev => ({ ...prev, [savedId]: { url, originalText: text } }));
+                await DB.saveAssetRaw(voiceAssetKey(savedId), { blob: rec.wav, originalText: text, favorite: false } as any);
+            } catch (e) {
+                console.warn('[Chat] 保存用户语音原声失败', e);
+            }
+        }
+    };
+    const voiceInput = useVoiceInput({
+        getConfig: () => apiConfig.sttApi,
+        onVoiceMessage: handleVoiceMessage,
+        onError: (msg) => addToast(msg, 'error'),
+    });
+    // 卸载时兜底停录音，防止麦克风灯常亮
+    useEffect(() => () => voiceInput.dispose(), []);
 
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
@@ -1623,19 +1724,20 @@ const Chat: React.FC = () => {
         if (!inputPreferences.autoReply && type === 'text' && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
             // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
             // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
-            if (isTyping) return;
+            if (isTyping) return savedUserMsgId;
             // 标记"准备中"三个点：拼接+发送期间显示，SSE POST 入队 (onInstantPosted) 后清除。
             setInstantSendingActive(true);
             triggerAI(messages, undefined, () => setInstantSendingActive(false));
         }
-        return true;
+        return savedUserMsgId; // 语音消息路径要拿 id 存原声（voiceAssetKey）
     };
 
     const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
         const finish = autoReply.beginSend(char?.id || null);
         try {
             const sent = await sendText(customContent, customType, metadata);
-            finish(sent === true && (!customType || ['text', 'image', 'emoji'].includes(customType)));
+            finish(!!sent && (!customType || ['text', 'image', 'emoji'].includes(customType)));
+            return sent;
         } catch (error) {
             finish(false);
             throw error;
@@ -1678,6 +1780,54 @@ const Chat: React.FC = () => {
         }
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
+
+    // 拉黑（冷战玩法）两张卡：
+    //  求看看卡「看看」→ 标记已看（角色知道自己被看到了，但拉黑没解除）；
+    //  好友申请卡「通过」→ 落一条「已解除」记录（聊天电话一起恢复）+ 卡标记已通过；
+    //  好友申请卡「忽略」→ 只标记已忽略，拉黑继续。
+    const patchMessageMeta = useCallback((id: number, patch: Record<string, unknown>) => {
+        setMessages(prev => prev.map(item => item.id === id
+            ? { ...item, metadata: { ...(item.metadata || {}), ...patch } }
+            : item));
+    }, []);
+
+    const handleResolveBlockAction = useCallback(async (msg: Message, action: 'peek-viewed' | 'peek-discard' | 'peek-secret' | 'request-accept' | 'request-ignore') => {
+        if (!char) return;
+        const appendNotice = async (kind: Parameters<typeof saveBlockNotice>[1]) => {
+            const noticeId = await saveBlockNotice(char.id, kind);
+            const row = await DB.getMessageById(noticeId);
+            if (row) setMessages(prev => prev.some(item => item.id === row.id) ? prev : [...prev, row]);
+        };
+        if (action === 'peek-viewed' || action === 'peek-discard' || action === 'peek-secret') {
+            if (msg.metadata?.peekOutcome || msg.metadata?.peekViewed) return;
+            const knows = action === 'peek-secret' ? (Math.random() < 0.5) : action === 'peek-viewed';
+            const patch = {
+                peekOutcome: action === 'peek-viewed' ? 'reveal' : action === 'peek-discard' ? 'discard' : 'secret',
+                peekViewed: action === 'peek-viewed' || (action === 'peek-secret' && knows),
+                peekCharacterKnows: action === 'peek-viewed' || (action === 'peek-secret' && knows),
+                peekDiscarded: action === 'peek-discard',
+                viewedAt: Date.now(),
+            };
+            patchMessageMeta(msg.id, patch);
+            await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), ...patch }));
+            await appendNotice(peekNoticeKind(action, knows));
+            return;
+        }
+        if (action === 'request-accept') {
+            if (msg.metadata?.requestStatus && msg.metadata.requestStatus !== 'pending') return;
+            patchMessageMeta(msg.id, { requestStatus: 'accepted', resolvedAt: Date.now() });
+            await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), requestStatus: 'accepted', resolvedAt: Date.now() }));
+            await appendNotice('request-accept');
+            await saveBlockRecord(char.id, '已解除');
+            setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
+            await reloadMessages(visibleCountRef.current);
+            return;
+        }
+        if (msg.metadata?.requestStatus && msg.metadata.requestStatus !== 'pending') return;
+        patchMessageMeta(msg.id, { requestStatus: 'ignored', resolvedAt: Date.now() });
+        await DB.updateMessageMetadata(msg.id, (prev: any) => ({ ...(prev || {}), requestStatus: 'ignored', resolvedAt: Date.now() }));
+        await appendNotice('request-ignore');
+    }, [char, patchMessageMeta, reloadMessages]);
 
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
@@ -1774,6 +1924,7 @@ const Chat: React.FC = () => {
             case 'active-msg-2': setShowActiveMsg2Modal(true); break;
             case 'emotion': setModalType('schedule'); break; // 情绪已并入日程，打开同一 modal
             case 'schedule': setModalType('schedule'); break;
+            case 'block-toggle': setBlockCallsTooChecked(false); setShowPanel('none'); setModalType('block-toggle'); break;
             case 'mcd-not-configured':
                 addToast('请先到设置 → 麦当劳 启用并填入 MCP Token', 'info');
                 break;
@@ -1820,6 +1971,25 @@ const Chat: React.FC = () => {
 
     // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
     const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
+    // 拉黑状态读完整记录。只在换角色时恢复历史未送达并刷新，不跟着每条新消息 reload（会把来电卡闪没）。
+    const [blockState, setBlockState] = useState<BlockState>({ blocked: false, blockCallsToo: false, since: 0, count: 0 });
+    useEffect(() => {
+        if (!activeCharacterId) {
+            setBlockState({ blocked: false, blockCallsToo: false, since: 0, count: 0 });
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            await restoreBlockDeliveryFlags(activeCharacterId);
+            if (cancelled) return;
+            const next = await getBlockStateForChar(activeCharacterId);
+            if (!cancelled) setBlockState(next);
+            await reloadMessages(visibleCountRef.current);
+        })().catch(() => {});
+        return () => { cancelled = true; };
+    }, [activeCharacterId]);
+    // 拉黑确认弹窗里「连电话一起拉黑」的勾选
+    const [blockCallsTooChecked, setBlockCallsTooChecked] = useState(false);
     const [mcdAppOpen, setMcdAppOpen] = useState(false);
     // mcdMiniAppRef 声明在文件靠前 (传给 useChatAI), 这里仅占位
     const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
@@ -2382,6 +2552,9 @@ const Chat: React.FC = () => {
             contextUserStartMessageId: nextUserStart,
             hideSystemLogs: settingsHideSysLogs,
             htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
+            incomingCallPrompt: settingsIncomingCallPrompt.trim() === DEFAULT_INCOMING_CALL_PROMPT.trim() ? '' : settingsIncomingCallPrompt,
+            incomingCallCooldownMin: settingsIncomingCallCooldownMin.trim() === '' ? undefined : Math.max(0, Number(settingsIncomingCallCooldownMin) || 0),
+            incomingCallDailyMax: settingsIncomingCallDailyMax.trim() === '' ? undefined : Math.max(0, Number(settingsIncomingCallDailyMax) || 0),
         } as any);
         setInputPreferences(settingsInputPreferences);
         saveChatInputPreferences(settingsInputPreferences);
@@ -2879,17 +3052,23 @@ const Chat: React.FC = () => {
     // --- Message Management ---
     const handleDeleteMessage = async () => {
         if (!selectedMessage) return;
-        const deletedId = selectedMessage.id;
-        await DB.deleteMessage(deletedId);
-        discardVoiceForMessages([deletedId]);
+        let ids = [selectedMessage.id];
+        if (isCallRecordCard(selectedMessage) && char?.id) {
+            const all = await DB.getMessagesByCharId(char.id, true);
+            ids = collectRelatedCallMessageIds(all, selectedMessage);
+        }
+        const idSet = new Set(ids);
+        if (ids.length === 1) await DB.deleteMessage(ids[0]);
+        else await DB.deleteMessages(ids);
+        discardVoiceForMessages(ids);
         // 满血主动消息：云端 fire_pack 里带最近对话原文，删了消息不打脏的话，角色到点
         // 还会提起这条已经不存在的消息（快照的消息在 flush 时从 DB 重读，这里只管打脏）。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        setMessages(prev => prev.filter(m => m.id !== deletedId));
-        setTotalMsgCount(prev => Math.max(0, prev - 1));
+        setMessages(prev => prev.filter(m => !idSet.has(m.id)));
+        setTotalMsgCount(prev => Math.max(0, prev - ids.length));
         setModalType('none');
         setSelectedMessage(null);
-        addToast('消息已删除', 'success');
+        addToast(ids.length > 1 ? '这通通话记录已删除' : '消息已删除', 'success');
         trackEvent('删除一条消息');
     };
 
@@ -2897,8 +3076,27 @@ const Chat: React.FC = () => {
         if (!selectedMessage) return;
         const contentChanged = editContent !== selectedMessage.content;
         await DB.updateMessage(selectedMessage.id, editContent);
-        // 内容变了旧语音就作废，否则语音条仍会播放编辑前的音频。
-        if (contentChanged) discardVoiceForMessages([selectedMessage.id]);
+        // 用户语音：新式（纯文本 + stt 记号）改字 = 改转写，原声保留、资产 originalText 同步；
+        // 旧式带标签的：标签还在就留原声，还能重播；把 <语音> 删掉 = 改回纯文字，这时才扔掉原声。
+        // AI 语音仍是「字变了旧合成作废」。
+        const keepUserVoice = selectedMessage.role === 'user'
+            && (userContentHasVoiceTag(editContent) || !!(selectedMessage.metadata as any)?.stt)
+            && (!!voiceDataMap[selectedMessage.id] || !!(selectedMessage.metadata as any)?.stt);
+        if (contentChanged && keepUserVoice) {
+            const inner = extractVoiceInner(editContent);
+            setVoiceDataMap(prev => {
+                const cur = prev[selectedMessage.id];
+                if (!cur) return prev;
+                return { ...prev, [selectedMessage.id]: { ...cur, originalText: inner } };
+            });
+            try {
+                const stored = await DB.getAssetRaw(voiceAssetKey(selectedMessage.id));
+                if (stored) await DB.saveAssetRaw(voiceAssetKey(selectedMessage.id), { ...stored, originalText: inner });
+            } catch (e) {
+                console.warn('[Chat] 更新用户语音转写失败', e);
+            }
+        }
+        if (contentChanged && !keepUserVoice) discardVoiceForMessages([selectedMessage.id]);
         // 同 handleDeleteMessage：正文改了要让云端 fire_pack 跟上。
         if (contentChanged) markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
         setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
@@ -3042,6 +3240,14 @@ const Chat: React.FC = () => {
                 const { thinkingChain, ...rest } = prev;
                 return rest;
             });
+        }
+        if (char?.id) {
+            const all = await DB.getMessagesByCharId(char.id, true);
+            for (const m of all) {
+                if (msgIdsToDelete.has(m.id) && isCallRecordCard(m)) {
+                    collectRelatedCallMessageIds(all, m).forEach(id => msgIdsToDelete.add(id));
+                }
+            }
         }
         const ids = Array.from(msgIdsToDelete);
         if (ids.length > 0) {
@@ -3395,7 +3601,6 @@ const Chat: React.FC = () => {
     }, [chatDisplayMessages, visibleCount, windowedFocusMsgId, historyWindowRange]);
 
     // 预览整组交接前，不把同一批逐条落库的正式气泡再画一遍。
-    // 仅处理本轮已匹配的 ID；旧回复、未预览的卡片和二次回复仍正常显示。
     const renderedMessages = useMemo(() => {
         if (selectionMode || (!streamingBubbles.length && !streamingThinking)) return displayMessages;
         const pending = new Set(streamingHandoverIds);
@@ -3842,6 +4047,13 @@ const Chat: React.FC = () => {
                     updateCharacter(char.id, { chatVoiceLang: lang });
                     trackEvent('设置聊天语音语种', { 语种: voiceLanguageAnalyticsValue(lang) });
                 }}
+                onUpdateIncomingCall={(patch) => updateCharacter(char.id, patch)}
+                incomingCallPromptDraft={settingsIncomingCallPrompt}
+                setIncomingCallPromptDraft={setSettingsIncomingCallPrompt}
+                incomingCallCooldownDraft={settingsIncomingCallCooldownMin}
+                setIncomingCallCooldownDraft={setSettingsIncomingCallCooldownMin}
+                incomingCallDailyMaxDraft={settingsIncomingCallDailyMax}
+                setIncomingCallDailyMaxDraft={setSettingsIncomingCallDailyMax}
                 voiceAvailable={characterHasVoice(char, apiConfig)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
                 voiceDownloadable={!!(selectedMessage?.id && voiceDataMap[selectedMessage.id])}
@@ -4112,7 +4324,7 @@ const Chat: React.FC = () => {
                         && !(pushMessageId && (nextMessage?.metadata as any)?.activeMsg2?.messageId === pushMessageId);
                     return (
                         <div
-                            key={m.id || i}
+                            key={`${m.id || i}-${m.metadata?.requestStatus || ''}-${m.metadata?.peekOutcome || ''}`}
                             id={`chat-msg-${m.id}`}
                             className={[
                                 flashMsgId === m.id ? 'ring-2 ring-yellow-300 bg-yellow-50/40 rounded-2xl mx-2' : '',
@@ -4163,6 +4375,7 @@ const Chat: React.FC = () => {
                             onMcdCandidate={handleMcdCandidate}
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
+                            onResolveBlockAction={handleResolveBlockAction}
                             onOpenCollaborationFile={handleOpenCollaborationFile}
                             onOpenSparkPost={handleOpenSparkPost}
                             thinkingChainOptions={thinkingChainOptions}
@@ -4403,6 +4616,7 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    blockActive={blockState.blocked}
                     mcdConfigured={mcdConfiguredFlag}
                     mcdActivated={mcdActivated}
                     luckinConfigured={luckinConfiguredFlag}
@@ -4413,9 +4627,92 @@ const Chat: React.FC = () => {
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
+                    voiceState={voiceInput.state}
+                    onToggleVoice={voiceInput.toggle}
+                    onCancelVoice={voiceInput.cancel}
                 />
             </div>
 
+
+            {/* 拉黑确认。状态只写聊天记录。 */}
+            {char && (
+                <Modal
+                    isOpen={modalType === 'block-toggle'}
+                    title={blockState.blocked ? '重新接收？' : '拒收消息？'}
+                    onClose={() => setModalType('none')}
+                    footer={(
+                        <>
+                            <button
+                                onClick={() => setModalType('none')}
+                                className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                            >取消</button>
+                            <button
+                                onClick={async () => {
+                                    if (!char) return;
+                                    if (blockState.blocked) {
+                                        await saveBlockRecord(char.id, '已解除');
+                                        setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
+                                    } else {
+                                        await saveBlockRecord(char.id, '已拉黑', blockCallsTooChecked);
+                                        setBlockState(prev => ({ ...prev, blocked: true, blockCallsToo: blockCallsTooChecked, since: Date.now() }));
+                                    }
+                                    setModalType('none');
+                                    await reloadMessages(visibleCountRef.current);
+                                }}
+                                className={`flex-1 py-3 font-bold rounded-2xl active:scale-95 transition-transform ${blockState.blocked ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}
+                            >{blockState.blocked ? '重新接收' : '拒收'}</button>
+                        </>
+                    )}
+                >
+                    {blockState.blocked ? (
+                        <div className="space-y-3">
+                            <p className="text-sm text-slate-600 leading-relaxed">
+                                之后 ta 的新消息不再标未送达。以前那些还留着。
+                            </p>
+                            {blockState.blockCallsToo ? (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (!char) return;
+                                        await saveBlockRecord(char.id, '已拉黑', false, { relaxedCalls: true });
+                                        setBlockState(prev => ({ ...prev, blockCallsToo: false }));
+                                        setModalType('none');
+                                        await reloadMessages(visibleCountRef.current);
+                                    }}
+                                    className="w-full py-3 rounded-2xl bg-white text-slate-700 text-sm font-bold border border-slate-200 active:scale-95 transition-transform"
+                                >只把电话解开</button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (!char) return;
+                                        await saveBlockRecord(char.id, '已拉黑', true, { patchedCalls: true });
+                                        setBlockState(prev => ({ ...prev, blockCallsToo: true }));
+                                        setModalType('none');
+                                        await reloadMessages(visibleCountRef.current);
+                                    }}
+                                    className="w-full py-3 rounded-2xl bg-slate-800 text-white text-sm font-bold active:scale-95 transition-transform"
+                                >把电话也拒了</button>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            <p className="text-sm text-slate-600 leading-relaxed">
+                                ta 发的你还能看见，只是 ta 会以为没送到。你说话、打电话照常。
+                            </p>
+                            <label className="flex items-center gap-2 select-none cursor-pointer min-h-[44px]">
+                                <input
+                                    type="checkbox"
+                                    checked={blockCallsTooChecked}
+                                    onChange={(e) => setBlockCallsTooChecked(e.target.checked)}
+                                    className="w-4 h-4 accent-rose-500"
+                                />
+                                <span className="text-sm text-slate-700 font-medium">连电话也拒收（你打给 ta 照常）</span>
+                            </label>
+                        </div>
+                    )}
+                </Modal>
+            )}
 
             {/* Proactive Settings Modal */}
             {char && (

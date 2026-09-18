@@ -2042,6 +2042,7 @@ export const useChatAI = ({
             // Phase 2 会让 worker 端把识别的副作用打包成 directives 传过来重放。
             // 后处理会逐条写库/刷新，第一条落库并不代表其余气泡已准备好。
             // 整轮结束前保持预览，登记对应正式消息供 UI 暂时隐藏；全部落库后再一起交接。
+            // 预览留到 finally 再清；Chat 在预览还在时不画这轮新正式气泡，交棒那一帧定格成正式消息。
             const previewHandoverIds = new Set<number>();
             const previewBaselineMaxId = contextMsgs.reduce(
                 (maxId, message) => Math.max(maxId, message.id),
@@ -2055,6 +2056,13 @@ export const useChatAI = ({
                     previewHandoverIds,
                 );
                 const handoverIds = new Set(newlyHandedOverIds);
+                if (streamPreviewShown) {
+                    for (const message of msgs) {
+                        if (message.id > previewBaselineMaxId && message.role === 'assistant' && !previewHandoverIds.has(message.id)) {
+                            handoverIds.add(message.id);
+                        }
+                    }
+                }
                 if (streamThinkingShown) {
                     const thinkingHost = msgs.find(message =>
                         message.id > previewBaselineMaxId && message.role === 'assistant'

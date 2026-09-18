@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>电话界面纸模型</title>
+<style>
+  :root {
+    --accent: #8b5cf6;
+    --ink: #f6f3ff;
+    --body: 13px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: #141218;
+    color: var(--ink);
+    font-family: ui-sans-serif, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  }
+  body { padding: 12px 12px calc(18px + env(safe-area-inset-bottom)); }
+  .page { max-width: 430px; margin: 0 auto; }
+  .note {
+    font-size: 12px;
+    line-height: 1.65;
+    color: rgba(255,255,255,.62);
+    margin: 0 4px 12px;
+  }
+  .note b { color: #fff; font-weight: 650; }
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(20,18,24,.92);
+    backdrop-filter: blur(10px);
+    padding: 8px 0 10px;
+  }
+  .seg {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.08);
+    margin-bottom: 8px;
+  }
+  .seg button {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: rgba(255,255,255,.55);
+    font-size: 12px;
+    padding: 8px 4px;
+    border-radius: 999px;
+  }
+  .seg button.on {
+    background: rgba(255,255,255,.12);
+    color: #fff;
+  }
+  .phone {
+    position: relative;
+    overflow: hidden;
+    height: 74vh;
+    min-height: 580px;
+    border-radius: 28px;
+    border: 1px solid rgba(255,255,255,.1);
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(139,92,246,.28), transparent 46%),
+      linear-gradient(180deg, #1a1424 0%, #120f18 100%);
+    box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    display: flex;
+    flex-direction: column;
+  }
+  .spark {
+    position: absolute;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: .45;
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+  }
+  .corner {
+    position: absolute;
+    font-size: 8px;
+    color: var(--accent);
+    opacity: .7;
+    pointer-events: none;
+  }
+  .overlay-meta {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    right: 14px;
+    z-index: 3;
+    display: flex;
+    justify-content: space-between;
+    font-size: 8px;
+    letter-spacing: .22em;
+    color: rgba(255,255,255,.4);
+    font-weight: 700;
+    pointer-events: none;
+  }
+
+  .soft-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 18px 8px;
+    flex-shrink: 0;
+  }
+  .soft-name { font-size: 16px; font-weight: 650; }
+  .soft-meta { font-size: 11px; color: rgba(255,255,255,.48); margin-top: 3px; }
+  .soft-timer { margin-left: auto; font-size: 12px; color: var(--accent); }
+
+  .both-head {
+    position: relative;
+    flex-shrink: 0;
+    text-align: center;
+    padding: 28px 12px 8px;
+  }
+  .both-name {
+    margin-top: 8px;
+    font-family: ui-serif, "Songti SC", serif;
+    font-size: 1.45rem;
+    line-height: 1.15;
+    text-shadow: 0 0 18px rgba(139,92,246,.55);
+  }
+  .both-name .hana {
+    display: inline-block;
+    margin-right: 6px;
+    color: rgba(196,181,253,.95);
+    text-shadow: 0 0 10px var(--accent);
+    font-size: .72em;
+    vertical-align: 2px;
+  }
+  .both-timer {
+    margin-top: 4px;
+    font-size: 13px;
+    letter-spacing: .16em;
+    color: var(--accent);
+    font-weight: 300;
+  }
+  .both-status {
+    margin-top: 4px;
+    font-size: 11px;
+    color: rgba(255,255,255,.55);
+    letter-spacing: .08em;
+  }
+
+  .avatar {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #c4b5fd, #6d28d9 70%);
+    box-shadow: 0 0 0 1px rgba(139,92,246,.4), 0 0 18px rgba(139,92,246,.35);
+    position: relative;
+    flex-shrink: 0;
+  }
+  .avatar.mid { width: 54px; height: 54px; margin: 0 auto; }
+  .avatar:after {
+    content: "";
+    position: absolute; inset: -5px;
+    border-radius: 50%;
+    border: 1px solid rgba(139,92,246,.35);
+  }
+
+  .viz {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    height: 22px;
+    width: 86%;
+    max-width: 320px;
+    margin: 8px auto 0;
+  }
+  .viz i {
+    display: block;
+    width: 3px;
+    height: 22px;
+    margin: 0 2px;
+    flex: 1;
+    max-width: 4px;
+    border-radius: 99px;
+    background: linear-gradient(to top, rgba(139,92,246,.2), var(--accent));
+    -webkit-transform-origin: center bottom;
+    transform-origin: center bottom;
+    -webkit-transform: scaleY(0.22);
+    transform: scaleY(0.22);
+  }
+  .viz.live i {
+    -webkit-animation: sullyWave .62s ease-in-out infinite;
+    animation: sullyWave .62s ease-in-out infinite;
+  }
+  .viz.listen i {
+    -webkit-animation: sullyWave 1.55s ease-in-out infinite;
+    animation: sullyWave 1.55s ease-in-out infinite;
+  }
+  .viz.think i:nth-child(6),
+  .viz.think i:nth-child(7),
+  .viz.think i:nth-child(8) {
+    -webkit-transform: scaleY(0.38);
+    transform: scaleY(0.38);
+  }
+  @-webkit-keyframes sullyWave {
+    0%, 100% { -webkit-transform: scaleY(0.22); transform: scaleY(0.22); }
+    50% { -webkit-transform: scaleY(1); transform: scaleY(1); }
+  }
+  @keyframes sullyWave {
+    0%, 100% { -webkit-transform: scaleY(0.22); transform: scaleY(0.22); }
+    50% { -webkit-transform: scaleY(1); transform: scaleY(1); }
+  }
+
+  .card {
+    flex: 1;
+    min-height: 0;
+    margin: 4px 14px 8px;
+    padding: 14px 14px 10px;
+    overflow: auto;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,.1);
+    background: rgba(255,255,255,.04);
+    box-shadow: inset 0 1px 0 rgba(139,92,246,.2);
+  }
+  .row { margin: 0 0 14px; }
+  .who { font-size: 10px; color: rgba(255,255,255,.4); margin-bottom: 4px; }
+  .who .dot { color: var(--accent); font-size: 8px; margin-right: 4px; }
+  .right { text-align: right; }
+  .ai-now {
+    font-size: 16px;
+    line-height: 1.75;
+    color: rgba(255,255,255,.95);
+  }
+  .user-now {
+    display: inline-block;
+    max-width: 82%;
+    text-align: left;
+    font-size: 16px;
+    line-height: 1.75;
+    color: rgba(255,255,255,.9);
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 16px 16px 4px 16px;
+    padding: 8px 14px;
+  }
+  .ai-soft { font-size: var(--body); line-height: 1.62; }
+  .line { display: block; margin: 0 0 .35em; transition: color .25s, text-shadow .25s; }
+  .pending { color: rgba(255,255,255,.56); }
+  .active { color: #fff; text-shadow: 0 0 12px rgba(139,92,246,.55); }
+  .done { color: rgba(255,255,255,.42); }
+  .user-soft {
+    display: inline-block;
+    max-width: 78%;
+    text-align: left;
+    font-size: calc(var(--body) + 0.5px);
+    line-height: 1.55;
+    color: rgba(255,255,255,.92);
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 16px 16px 4px 16px;
+    padding: 7px 12px;
+  }
+  .cue {
+    color: rgba(196,181,253,.9);
+    font-style: italic;
+    font-size: .88em;
+    margin: .35em 0 .45em;
+  }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .pill {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.7);
+  }
+  .dock {
+    display: flex;
+    justify-content: space-around;
+    padding: 4px 10px 12px;
+    flex-shrink: 0;
+  }
+  .knob { width: 52px; text-align: center; color: rgba(255,255,255,.7); font-size: 10px; }
+  .knob .c {
+    width: 42px; height: 42px; margin: 0 auto 4px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .knob.end .c { background: #e11d48; border-color: transparent; color: #fff; }
+  .legend {
+    margin: 12px 4px 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: rgba(255,255,255,.6);
+  }
+
+  .now-top { padding: 16px 18px 4px; text-align: center; flex-shrink: 0; }
+  .now-name {
+    margin-top: 4px;
+    font-family: ui-serif, "Songti SC", serif;
+    font-size: 2.4rem;
+    line-height: 1;
+    text-shadow: 0 0 26px rgba(139,92,246,.66);
+  }
+  .now-sub { margin-top: 10px; font-size: 11px; letter-spacing: .25em; color: rgba(255,255,255,.55); }
+  .now-timer { margin-top: 6px; font-size: 18px; letter-spacing: .2em; color: var(--accent); font-weight: 200; }
+  .now-hero {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 8px 18px 6px;
+    flex-shrink: 0;
+  }
+  .now-status .cn { font-size: 14px; color: rgba(255,255,255,.85); }
+  .now-status .en { font-size: 9px; letter-spacing: .3em; color: rgba(255,255,255,.35); margin-top: 2px; }
+  .now-flower { color: rgba(139,92,246,.85); text-shadow: 0 0 12px var(--accent); font-size: 14px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="note">❀ 已经离开头像，贴在名字旁边。<br>
+  上面改成：头像 → 名字 → 时间 → <strong>一整条会跳的波形</strong> → 再写「思考中 / 正在说话 / 在听你」。<br>
+  点「正在读」，波形会跟着动。下拉刷新。真电话还没动。</p>
+
+  <div class="toolbar">
+    <div class="seg" id="skin">
+      <button data-v="now">现在（挤）</button>
+      <button data-v="prev">上一版</button>
+      <button data-v="both" class="on">兼得</button>
+    </div>
+    <div class="seg" id="scene">
+      <button data-v="idle" class="on">没开始读</button>
+      <button data-v="play">正在读</button>
+      <button data-v="done">读完了</button>
+    </div>
+    <div class="seg" id="size">
+      <button data-v="12">字偏小</button>
+      <button data-v="13" class="on">适中</button>
+      <button data-v="14">偏大一点</button>
+    </div>
+  </div>
+
+  <div class="phone" id="phone"></div>
+</div>
+
+<script>
+(function () {
+  var skin = 'both';
+  var scene = 'idle';
+  var size = 13;
+  var playIdx = 0;
+  var timer = null;
+  var lines = [
+    '嗯……是啊。风也软。',
+    '你要不要出门走走？',
+    '猫儿可以在这边听你讲路上看到的。',
+    '路上要是看到猫，也可以跟猫儿说一声。'
+  ];
+  var delays = [0, .08, .18, .05, .26, .12, .31, .07, .22, .15, .28, .1, .19, .04, .24, .14, .3, .09, .21, .16, .27, .06, .2];
+
+  function bindSeg(id, apply) {
+    var box = document.getElementById(id);
+    var buttons = box.getElementsByTagName('button');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].onclick = (function (btn) {
+        return function () {
+          for (var j = 0; j < buttons.length; j++) buttons[j].className = '';
+          btn.className = 'on';
+          apply(btn.getAttribute('data-v'));
+        };
+      })(buttons[i]);
+    }
+  }
+
+  function stopPlay() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+  function startPlay() {
+    stopPlay();
+    playIdx = 0;
+    timer = setInterval(function () {
+      playIdx = playIdx + 1;
+      if (playIdx >= lines.length) playIdx = 0;
+      draw();
+    }, 1600);
+  }
+  function lineClass(i) {
+    if (scene === 'idle') return 'line pending';
+    if (scene === 'done') return 'line done';
+    if (i === playIdx) return 'line active';
+    if (i < playIdx) return 'line done';
+    return 'line pending';
+  }
+  function vizClass() {
+    if (scene === 'play') return 'viz live';
+    if (scene === 'done') return 'viz listen';
+    return 'viz think';
+  }
+  function vizHtml() {
+    var html = '<div class="' + vizClass() + '">';
+    for (var i = 0; i < delays.length; i++) {
+      html += '<i style="animation-delay:' + delays[i] + 's;-webkit-animation-delay:' + delays[i] + 's"></i>';
+    }
+    return html + '</div>';
+  }
+  function sparks() {
+    return (
+      '<span class="spark" style="top:11%;left:16%"></span>' +
+      '<span class="spark" style="top:18%;left:78%"></span>' +
+      '<span class="spark" style="top:7%;left:62%"></span>' +
+      '<span class="spark" style="top:24%;left:22%"></span>' +
+      '<span class="corner" style="left:14px;top:38%">✦</span>' +
+      '<span class="corner" style="right:14px;bottom:22%">✦</span>'
+    );
+  }
+  function dock() {
+    return (
+      '<div class="dock">' +
+        '<div class="knob"><div class="c">麦</div>麦克风</div>' +
+        '<div class="knob"><div class="c">外</div>外放</div>' +
+        '<div class="knob"><div class="c">译</div>翻译</div>' +
+        '<div class="knob end"><div class="c">挂</div>结束</div>' +
+      '</div>'
+    );
+  }
+  function statusWord() {
+    if (scene === 'play') return '正在说话';
+    if (scene === 'done') return '在听你';
+    return '思考中';
+  }
+  function karaoke(useSmall) {
+    var html = '<div class="cue">（软软的）</div>';
+    for (var i = 0; i < lines.length; i++) {
+      html += '<span class="' + lineClass(i) + '"' + (useSmall ? '' : ' style="font-size:16px;line-height:1.75"') + '>' + lines[i] + '</span>';
+    }
+    return html;
+  }
+  function userBubble(cls) {
+    return '<div class="row right"><div class="who">你 · 刚刚</div><div class="' + cls + '">今天天气也太好了吧</div></div>';
+  }
+  function aiBlock(small) {
+    var inner;
+    if (skin === 'now' && scene === 'idle') {
+      inner = '<div class="ai-now">（软软的）<br>' + lines.join('<br>') + '</div>';
+    } else {
+      inner = (small ? '<div class="ai-soft">' : '') + karaoke(small) + (small ? '</div>' : '');
+    }
+    return (
+      userBubble(small ? 'user-soft' : 'user-now') +
+      '<div class="row"><div class="who"><span class="dot">◍</span>Sully · 刚刚</div>' + inner +
+        '<div class="pills"><span class="pill">播放语音</span><span class="pill">换个说法</span></div></div>'
+    );
+  }
+
+  function drawNow() {
+    return (
+      sparks() +
+      '<div class="now-top">' +
+        '<div class="overlay-meta" style="position:relative;top:0;left:0;right:0;margin-bottom:8px"><span>PRIVATE CHANNEL</span><span>信号良好 ▂▃▅▇</span></div>' +
+        '<div class="now-flower">❀</div>' +
+        '<div class="now-name">Sully</div>' +
+        '<div class="now-sub">VOICE SYNC · 已接通</div>' +
+        '<div class="now-timer">00:12</div>' +
+      '</div>' +
+      '<div class="now-hero">' +
+        '<div class="avatar"></div>' +
+        '<div class="now-status"><div class="cn">' + statusWord() + '…</div>' + vizHtml() + '</div>' +
+      '</div>' +
+      '<div class="card">' + aiBlock(false) + '</div>' +
+      dock()
+    );
+  }
+
+  function drawPrev() {
+    return (
+      '<div class="soft-top">' +
+        '<div class="avatar"></div>' +
+        '<div><div class="soft-name">Sully</div><div class="soft-meta">' + statusWord() + '</div></div>' +
+        '<div class="soft-timer">00:12</div>' +
+      '</div>' +
+      '<div class="card">' + aiBlock(true) + '</div>' +
+      dock()
+    );
+  }
+
+  function drawBoth() {
+    return (
+      sparks() +
+      '<div class="overlay-meta"><span>PRIVATE CHANNEL</span><span>信号良好 ▂▃▅▇</span></div>' +
+      '<div class="both-head">' +
+        '<div class="avatar mid"></div>' +
+        '<div class="both-name"><span class="hana">❀</span>Sully</div>' +
+        '<div class="both-timer">00:12</div>' +
+        vizHtml() +
+        '<div class="both-status">' + statusWord() + '</div>' +
+      '</div>' +
+      '<div class="card">' + aiBlock(true) + '</div>' +
+      dock()
+    );
+  }
+
+  function draw() {
+    document.documentElement.style.setProperty('--body', size + 'px');
+    var html = drawBoth();
+    if (skin === 'now') html = drawNow();
+    if (skin === 'prev') html = drawPrev();
+    document.getElementById('phone').innerHTML = html;
+  }
+
+  bindSeg('skin', function (v) { skin = v; draw(); });
+  bindSeg('scene', function (v) {
+    scene = v;
+    if (v === 'play') startPlay();
+    else { stopPlay(); playIdx = 0; }
+    draw();
+  });
+  bindSeg('size', function (v) { size = parseInt(v, 10); draw(); });
+  draw();
+})();
+</script>
+</body>
+</html>

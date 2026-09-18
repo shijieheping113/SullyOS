@@ -120,7 +120,8 @@ import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
-import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
+import { BROWSER_BACK_GUARD_KEY, isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
+import IncomingCallOverlay from './call/IncomingCallOverlay';
 
 /*
 // Internal Error Boundary Component
@@ -452,7 +453,7 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
 };
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
 
   // 三档顶部状态栏：安全显示 / 紧凑显示 / 隐藏。旧存档仍由 hideStatusBar 兼容解析。
@@ -463,9 +464,20 @@ const PhoneShell: React.FC = () => {
     document.documentElement.classList.toggle('sully-statusbar-compact', statusBarMode === 'compact');
   }, [statusBarMode]);
 
+  useEffect(() => {
+    if (!incomingCall || incomingCall.status !== 'ringing' || incomingCall.popupStyle !== 'fullscreen') return;
+    return registerBackHandler(() => {
+      snoozeIncomingCall();
+      return true;
+    });
+  }, [incomingCall, registerBackHandler, snoozeIncomingCall]);
+
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
   const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
+  // 「全屏模式」总开关（外观 App 里的逃生门）：undefined 视为开启；关闭后开屏点入与
+  // 空白处恢复两个全屏请求点都不再拉起全屏，回到带浏览器栏的普通模式。
+  const fullscreenEnabled = theme.fullscreenEnabled !== false;
   useEffect(() => {
     // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
     if (!bootAnimationEnabled) setBootDone(true);
@@ -742,21 +754,22 @@ const PhoneShell: React.FC = () => {
 
     const guardIsCurrent = isBrowserBackGuardState(window.history.state);
     if (activeApp === AppID.Launcher) {
+      // 桌面上看到守卫标记：用 replaceState 原地摘掉，绝不 history.back()。
+      // back() 会把历史位置退到「打开本页之前」的那条记录——刷新后栈顶恰好
+      // 就是脏标记，这一下直接关掉整页（2026-09-18 Ann 实测）。摘标只清理
+      // 状态字段、不移动历史位置；返回键语义由下方 armGuard 循环正常维护。
       if (!guardIsCurrent) return;
-
-      // A nested view can inherit our marker. Unwind every marked same-page entry
-      // and stop as soon as the original browser entry is current again.
-      let disposed = false;
-      const releaseGuardEntries = () => {
-        if (disposed || !isBrowserBackGuardState(window.history.state)) return;
-        try { window.history.back(); } catch { /* leave browser history untouched */ }
-      };
-      window.addEventListener('popstate', releaseGuardEntries);
-      releaseGuardEntries();
-      return () => {
-        disposed = true;
-        window.removeEventListener('popstate', releaseGuardEntries);
-      };
+      try {
+        const current = window.history.state as Record<string, unknown> | null;
+        if (current && typeof current === 'object' && BROWSER_BACK_GUARD_KEY in current) {
+          const rest: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(current)) {
+            if (k !== BROWSER_BACK_GUARD_KEY) rest[k] = v;
+          }
+          window.history.replaceState(rest, '', window.location.href);
+        }
+      } catch { /* 摘不掉就留着标记，绝不因清理而崩 */ }
+      return;
     }
 
     const armGuard = () => {
@@ -786,6 +799,30 @@ const PhoneShell: React.FC = () => {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [activeApp, handleBack]);
+
+  // 全屏回归（替代被否掉的遮罩方案）：安卓 Chrome 下一旦退出全屏（返回键/误触），
+  // 再次请求必须处在用户手势里。这里在 document 捕获阶段挂 click——非全屏时，
+  // 点「空白处」（解锁、桌面空白、聊天空白）在同一手势里顺带 requestFullscreen，
+  // 全屏跟着回来。不占位、不挡脸、无任何视觉。
+  // 收窄：点到交互零件（按钮/链接/输入框/文本域/下拉/label/role=button|dialog）不抢全屏——
+  // 否则非全屏下点「清空白框」这类按钮也会顺带拉起全屏，安卓进全屏的瞬间先露一帧
+  // index.html 的深色底(#0f1115)，看起来像「黑屏一下」。交互交给 UI 自己，空白才回归全屏。
+  // 用 click 不用 pointerdown：滑列表时 pointerdown 也触发，会滑动误进全屏。
+  // 已在全屏直接 return；外观 App 的「全屏模式」总开关关掉时整条不生效（逃生门）；
+  // 原生壳（Capacitor）没有浏览器全屏概念，不挂。
+  useEffect(() => {
+    if (typeof window === 'undefined' || Capacitor.isNativePlatform()) return;
+    if (!fullscreenEnabled) return;
+    const onCaptureClick = (event: MouseEvent) => {
+      if (document.fullscreenElement) return;
+      const target = event.target as Element | null;
+      if (target && typeof target.closest === 'function' &&
+          target.closest('button, a, input, textarea, select, label, [role="button"], [role="dialog"]')) return;
+      void document.documentElement.requestFullscreen?.()?.catch(() => {});
+    };
+    document.addEventListener('click', onCaptureClick, true);
+    return () => document.removeEventListener('click', onCaptureClick, true);
+  }, [fullscreenEnabled]);
 
   // Capacitor Native Handling
   useEffect(() => {
@@ -858,7 +895,15 @@ const PhoneShell: React.FC = () => {
   // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
   // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
   if (!bootDone && bootAnimationEnabled) {
-    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} style={theme.bootAnimationStyle} onDone={() => setBootDone(true)} />;
+    return (
+      <BootSequence
+        dataReady={isDataLoaded}
+        wallpaper={theme.wallpaper}
+        style={theme.bootAnimationStyle}
+        allowFullscreen={fullscreenEnabled}
+        onDone={() => setBootDone(true)}
+      />
+    );
   }
 
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
@@ -1068,6 +1113,15 @@ const PhoneShell: React.FC = () => {
               错误指示器、系统调试终端与开关无关、始终在。 */}
           <StatusBar />
           
+          {incomingCall && activeApp !== AppID.Call && (
+            <IncomingCallOverlay
+              call={incomingCall}
+              onAccept={acceptIncomingCall}
+              onReject={rejectIncomingCall}
+              onSnooze={snoozeIncomingCall}
+            />
+          )}
+
           {/* Overlays: Suspended Call Bar */}
           {suspendedCall && activeApp !== AppID.Call && (
             <button

@@ -170,6 +170,15 @@
       html.sully-statusbar-compact {
         --chrome-top: max(var(--safe-top), 1.5rem);
       }
+      /* 浏览器整页全屏（安卓 Chrome Fullscreen API）：系统栏已被全屏隐藏，部分设备
+         env(safe-area-inset-top) 反而从 0 拉大成虚拟值 → 美化顶栏 calc(var(--safe-top)+…)
+         顶部空一大截。全屏态清顶；放在 statusbar-hidden/compact 之后（同特异性按源序取胜）。
+         底部 --safe-bottom 保留（手势条区域仍需让位）；iOS PWA 探测逻辑（iosStandalone）不动。 */
+      html:fullscreen,
+      html:-webkit-full-screen {
+        --safe-top: 0px;
+        --chrome-top: 0px;
+      }
       body.ios-standalone {
         min-height: var(--app-height);
         height: var(--app-height);

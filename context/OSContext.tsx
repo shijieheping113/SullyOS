@@ -45,6 +45,11 @@ import { markBackupDone } from '../utils/backupReminder';
 import { collectSARLocalBackup, restoreSARLocalBackup } from '../utils/vrWorld/sarBackup';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { normalizeModelIds } from '../utils/modelList';
+import { getBlockStateFromMessages, restoreBlockDeliveryFlags } from '../utils/block';
+import { runBlockedCallHangupReply } from '../utils/blockCallHangupReply';
+import { setIncomingCallHooks, type IncomingCallRequest } from '../utils/incomingCallBridge';
+import { shouldOfferIncomingCall, type IncomingCallLaunch, type IncomingCallState } from '../utils/incomingCall';
+import { startIncomingCallRingtone, stopIncomingCallRingtone } from '../utils/incomingCallRingtone';
 import {
   CONTEXT_RANGE_POLICY_VERSION,
   DEFAULT_MANUAL_CONTEXT_LIMIT,
@@ -439,6 +444,15 @@ interface OSContextType {
   suspendCall: (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; pendingAvatarTouches?: AvatarTouchRecord[] }) => void;
   resumeCall: () => void;
   clearSuspendedCall: () => void;
+  incomingCall: IncomingCallState | null;
+  acceptIncomingCall: () => void;
+  rejectIncomingCall: () => void;
+  snoozeIncomingCall: () => void;
+  incomingCallLaunch: IncomingCallLaunch | null;
+  consumeIncomingCallLaunch: () => void;
+  incomingCallHandoff: IncomingCallRequest | null;
+  bindIncomingCallSession: (sessionId: string) => void;
+  completeIncomingCall: (result: { durationSec: number; sessionId: string }) => void;
 
   // 从聊天「见面」按钮跳进见面：携带目标角色，DateApp 挂载时自动进入该角色的见面流程
   dateAutoStartCharId: string | null;
@@ -968,6 +982,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; pendingAvatarTouches?: AvatarTouchRecord[] } | null>(null);
+  const [incomingCall, setIncomingCall] = useState<IncomingCallState | null>(null);
+  const incomingCallRef = useRef(incomingCall);
+  incomingCallRef.current = incomingCall;
+  const [incomingCallLaunch, setIncomingCallLaunch] = useState<IncomingCallLaunch | null>(null);
+  const [incomingCallHandoff, setIncomingCallHandoff] = useState<IncomingCallRequest | null>(null);
   // 聊天「见面」按钮 → 见面：记录目标角色，DateApp 挂载后消费一次并自动进入见面
   const [dateAutoStartCharId, setDateAutoStartCharId] = useState<string | null>(null);
 
@@ -2287,7 +2306,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const justMetOffline = lastRealMsgRaw?.metadata?.source === 'date'
                   && (now.getTime() - lastRealMsgRaw.timestamp) < DATE_AFTERGLOW_MS;
 
-              const hintContent = justMetOffline
+              // 拉黑冷战：机制上主动消息照常发，只是叙事上角色知道自己被拉黑、
+              // 发出去会拒收，换成「想办法挽回」的语境。用上面已读的 recentMsgs 判定，零额外 IO。
+              const blockState = getBlockStateFromMessages(recentMsgs);
+              const tagBlock = (meta?: Record<string, unknown>) => (
+                  blockState.blocked ? { ...(meta || {}), blockSendFailed: true } : meta
+              );
+              let blockedForStr = '';
+              if (blockState.blocked && blockState.since > 0) {
+                  const gapMin = Math.max(0, Math.floor((now.getTime() - blockState.since) / 60000));
+                  if (gapMin < 60) blockedForStr = `${gapMin}分钟`;
+                  else if (gapMin < 1440) blockedForStr = `${Math.floor(gapMin / 60)}小时`;
+                  else blockedForStr = `${Math.floor(gapMin / 1440)}天`;
+              }
+
+              const hintContent = blockState.blocked
+                      ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${blockedForStr ? `拒收已经过了约${blockedForStr}。` : ''}${userName}还是看不见你普通消息。这不是${userName}在找你，是你自己拿起了手机。一两句话就好，别装已经送到。]`
+                      : justMetOffline
                       ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。你和${userName}刚刚在线下见过面（如果上下文里有标着 [约会] 的内容，那就是你们见面时发生的事），现在你们暂时分开了，你拿起手机想给${userName}发条消息。请基于刚才的见面来发——可以回味见面里的某个细节、补一句当时没说出口的话、关心${userName}到家了没，或者就是刚分开就有点想念。绝对不要表现得好像很久没联系，更不要对刚才的见面毫不知情。一两句话就好。]`
                       : `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${timeSinceUser && parseInt(timeSinceUser) > 2 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : ''}]`;
 
@@ -2431,11 +2466,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               type: 'html_card',
                               content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
                               timestamp: baseTimestamp + offset,
-                              metadata: {
+                              metadata: tagBlock({
                                   htmlSource: blk.html,
                                   htmlTextPreview: blk.textPreview,
                                   ...(meta || {}),
-                              },
+                              }),
                           } as any);
                           if (blk.textPreview) savedPreviewChunks.push(blk.textPreview);
                           offset += 1;
@@ -2467,7 +2502,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               type: 'emoji',
                               content: foundEmoji.url,
                               timestamp: baseTimestamp + offset,
-                              ...(meta ? { metadata: meta } : {}),
+                              metadata: tagBlock(meta),
                           });
                           offset += 1;
                       };
@@ -2489,7 +2524,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'text',
                                       content: chunk,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                                   savedPreviewChunks.push(chunk);
                                   offset += 1;
@@ -2521,7 +2556,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   type: 'text',
                                   content: biContent,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
+                                  metadata: tagBlock(meta),
                               });
                               savedPreviewChunks.push(originalText || translatedText);
                               offset += 1;
@@ -2547,7 +2582,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'emoji',
                                       content: foundEmoji.url,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                               } else {
                                   const fallbackText = `发送了表情包：${part.content}`;
@@ -2558,7 +2593,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'text',
                                       content: fallbackText,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                                   savedPreviewChunks.push(fallbackText);
                               }
@@ -2578,7 +2613,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   type: 'text',
                                   content: chunk,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
+                                  metadata: tagBlock(meta),
                               });
                               savedPreviewChunks.push(chunk);
                               offset += 1;
@@ -2591,6 +2626,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120)
                       || `${char.name} sent a proactive message`;
+
+                  if (blockState.blocked) await restoreBlockDeliveryFlags(charId);
 
                   // 6. Notify OS for unread badge + toast
                   window.dispatchEvent(new CustomEvent('proactive-message-sent', {
@@ -5218,6 +5255,90 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setSuspendedCall(null);
   };
 
+  const updateIncomingCallRecord = useCallback(async (outcome: 'accepted' | 'rejected' | 'snoozed') => {
+    const call = incomingCall;
+    if (!call?.messageId) return;
+    await DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: outcome, resolvedAt: Date.now() }));
+  }, [incomingCall]);
+
+  const acceptIncomingCall = useCallback(() => {
+    const call = incomingCall;
+    if (!call) return;
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('accepted');
+    setIncomingCallHandoff({ charId: call.charId, charName: call.charName, charAvatar: call.charAvatar, line: call.line, messageId: call.messageId, popupStyle: call.popupStyle, ringtone: call.ringtone });
+    setIncomingCallLaunch({ charId: call.charId, line: call.line, messageId: call.messageId });
+    setIncomingCall(null);
+    setActiveCharacterId(call.charId);
+    setActiveApp(AppID.Call);
+  }, [incomingCall, updateIncomingCallRecord]);
+
+  const triggerBlockedCallHangupReply = useCallback((charId: string) => {
+    const profile = userProfileRef.current;
+    if (!profile) return;
+    window.setTimeout(() => {
+      void runBlockedCallHangupReply({
+        charId,
+        userName: profile.name || '用户',
+        characters: charactersRef.current,
+        userProfile: profile,
+        groups: groupsRef.current,
+        apiConfig: apiConfigRef.current,
+        realtimeConfig: realtimeConfigRef.current,
+        addToast,
+      }).catch(err => console.warn('[BlockCallHangup] 回一句失败:', err));
+    }, 400);
+  }, [addToast]);
+
+  const rejectIncomingCall = useCallback(() => {
+    const charId = incomingCall?.charId;
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('rejected');
+    setIncomingCall(null);
+    if (charId) triggerBlockedCallHangupReply(charId);
+  }, [incomingCall, updateIncomingCallRecord, triggerBlockedCallHangupReply]);
+
+  const snoozeIncomingCall = useCallback(() => {
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('snoozed');
+    setIncomingCall(prev => prev ? { ...prev, status: 'snoozed' } : null);
+  }, [updateIncomingCallRecord]);
+
+  const consumeIncomingCallLaunch = useCallback(() => setIncomingCallLaunch(null), []);
+  const bindIncomingCallSession = useCallback((sessionId: string) => {
+    setIncomingCallHandoff(prev => prev ? { ...prev, sessionId } as IncomingCallRequest : prev);
+  }, []);
+  const completeIncomingCall = useCallback((result: { durationSec: number; sessionId: string }) => {
+    const call = incomingCallHandoff;
+    if (!call?.messageId) return;
+    void DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: 'accepted', durationSec: result.durationSec, sessionId: result.sessionId, resolvedAt: Date.now() }));
+    setIncomingCallHandoff(null);
+    if (call.charId) triggerBlockedCallHangupReply(call.charId);
+  }, [incomingCallHandoff, triggerBlockedCallHangupReply]);
+
+  useEffect(() => {
+    setIncomingCallHooks({
+      canOffer: async (req) => {
+        const messages = await DB.getMessagesByCharId(req.charId, true);
+        const char = charactersRef.current.find(item => item.id === req.charId);
+        return shouldOfferIncomingCall({
+          char,
+          hasPending: !!incomingCallRef.current,
+          inCall: activeAppRef.current === AppID.Call,
+          suspended: !!suspendedCallRef.current,
+          hidden: false,
+          amsgReplay: !!req.amsgReplay,
+          messages,
+        });
+      },
+      offer: (req) => {
+        startIncomingCallRingtone(req.ringtone);
+        setIncomingCall({ ...req, startedAt: Date.now(), status: 'ringing' });
+      },
+    });
+    return () => setIncomingCallHooks(null);
+  }, []);
+
   // --- Back Handler Logic ---
   const registerBackHandler = useCallback((handler: () => boolean) => {
       backHandlerRef.current = handler;
@@ -5333,6 +5454,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     suspendCall,
     resumeCall,
     clearSuspendedCall,
+    incomingCall,
+    acceptIncomingCall,
+    rejectIncomingCall,
+    snoozeIncomingCall,
+    incomingCallLaunch,
+    consumeIncomingCallLaunch,
+    incomingCallHandoff,
+    bindIncomingCallSession,
+    completeIncomingCall,
     dateAutoStartCharId,
     openDateWithChar,
     consumeDateAutoStart

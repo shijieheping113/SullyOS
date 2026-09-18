@@ -61,6 +61,9 @@ xiaohongshu-skills/
 .android-sdk/
 .gradle-user-home/
 
+# 本地 HTTPS 自签证书（给手机麦克风用），不要进仓库
+.dev-certs/
+
 # Local fishing QA screenshots, cached existing Tailwind CDN script, isolated build.
 /output/fishing-qa/
 /output/fishing-build/

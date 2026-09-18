@@ -1,0 +1,197 @@
+.icall-full {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 52px 24px 40px;
+  overflow: hidden;
+  background: #3a3a3c;
+}
+.icall-full-bg {
+  position: absolute;
+  inset: -8%;
+  width: 116%;
+  height: 116%;
+  object-fit: cover;
+  filter: blur(28px) saturate(1.05);
+  transform: scale(1.08);
+  pointer-events: none;
+}
+.icall-full-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(28, 28, 30, 0.28) 0%, rgba(28, 28, 30, 0.55) 48%, rgba(28, 28, 30, 0.78) 100%);
+  pointer-events: none;
+}
+.icall-full-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+}
+.icall-later-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.icall-avatar-lg {
+  width: 108px;
+  height: 108px;
+  margin-top: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  animation: icall-breathe 2.4s ease-in-out infinite;
+}
+.icall-name {
+  margin-top: 20px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.icall-sub {
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+}
+.icall-line {
+  margin-top: 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.88);
+  text-align: center;
+  max-width: 260px;
+}
+.icall-full-keys {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 260px;
+  margin-top: auto;
+  padding-bottom: 8px;
+}
+.icall-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  min-width: 72px;
+}
+.icall-key i {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+.icall-key-down i { background: #ff3b30; }
+.icall-key-up i { background: #34c759; }
+.icall-key span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.icall-banner {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 80;
+  min-height: 72px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 18px;
+  background: rgba(44, 44, 46, 0.94);
+  color: #fff;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+}
+.icall-banner img,
+.icall-pill img {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.icall-banner img { width: 40px; height: 40px; }
+.icall-banner-copy { min-width: 0; flex: 1; }
+.icall-banner-name { font-size: 15px; font-weight: 600; }
+.icall-banner-line {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.icall-banner-keys { display: flex; gap: 8px; flex-shrink: 0; }
+.icall-mini {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.icall-mini-later { background: #48484a; }
+.icall-mini-down { background: #ff3b30; }
+.icall-mini-up { background: #34c759; }
+
+.icall-pill {
+  position: absolute;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 22px;
+  background: rgba(44, 44, 46, 0.96);
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+.icall-pill:active { cursor: grabbing; }
+.icall-pill img { width: 28px; height: 28px; }
+.icall-pill-name {
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.icall-pill .icall-mini { width: 36px; height: 36px; }
+
+@keyframes icall-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .icall-avatar-lg { animation: none; }
+}
