@@ -120,9 +120,6 @@ export interface OSTheme {
   chatCharacterSwitchAnimationEnabled?: boolean;
   /** App 代码块加载较慢时是否显示加载柔光动画。默认开启；超时恢复页不受影响。 */
   appLoadingAnimationEnabled?: boolean;
-  /** 安卓 Chrome 整页全屏总开关（外观 App「全屏显示」逃生门）。默认开启（undefined 视为 true）。
-   *  关闭时：立即退出全屏，且开屏点入、空白处恢复两个请求点都不再拉起全屏，回到带浏览器栏的普通模式。 */
-  fullscreenEnabled?: boolean;
   /** 桌面整体皮肤。'animalcrossing' = 动森风格（NookPhone 彩色圆角图标 + 暖色界面）；
    *  'mobilegame' = 二次元手游首页风格（角色卡 + 等级经验条 + 货币栏 + 网格卡 + 罗盘 dock）；
    *  'tamagotchi' = 电子宠物养成机（桌面即角色的小屋舞台 + 四颗糖果实体键）。默认 'default'。 */

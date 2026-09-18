@@ -354,9 +354,22 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         </div>
     ) : null;
 
+    // 美化钩子 .sully-chat-avatar 必须是裁切框，图在里面 cover。
+    // 钩子若直接套在 <img> 上，用户 CSS 的 overflow:visible 会让谷歌把原图画到框外。
+    const renderHeaderAvatar = () => (
+        <div className={`sully-chat-avatar relative shrink-0 overflow-hidden w-10 h-10 shadow-sm ${avatarRadiusClass}`}>
+            <TokenImg
+                value={activeCharacter.avatar}
+                alt="avatar"
+                className="block h-full w-full object-cover"
+                style={{ width: '100%', height: '100%', maxWidth: 'none', objectFit: 'cover', objectPosition: 'center' }}
+            />
+        </div>
+    );
+
     const renderCenteredInfo = () => (
         <div className="flex w-full min-w-0 max-w-full flex-col items-center text-center">
-            <TokenImg value={activeCharacter.avatar} className={`sully-chat-avatar w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            {renderHeaderAvatar()}
             <div className={`sully-chat-name mt-1 font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
             <div className="sully-chat-status flex items-center justify-center gap-2 flex-wrap">
                 {onlineStatusNode}
@@ -371,7 +384,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
     const renderStandardInfo = () => (
         <>
-            <TokenImg value={activeCharacter.avatar} className={`sully-chat-avatar w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            {renderHeaderAvatar()}
             <div className="sully-chat-info flex-1 min-w-0 flex flex-col items-start text-left">
                 <div className={`sully-chat-name font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
                 <div className="sully-chat-status flex items-center gap-2 flex-wrap">
@@ -405,6 +418,10 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         <div className="shrink-0 z-30 sticky top-0">
         {/* header 主体：sully-chat-header 钩子背景从 y=0 铺起、paddingTop 让出 safe-top，刘海段即顶栏自己的背景（无缝，和其余 App 统一）；内容垂直居中 */}
         <div className={`sully-chat-header ${headerDensityClass} flex items-center relative ${headerToneClass}`} style={headerSafeStyle}>
+            <style>{`
+                .sully-chat-avatar{overflow:hidden!important;}
+                .sully-chat-avatar img{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:cover!important;object-position:center!important;display:block!important;}
+            `}</style>
             {/* 动森彩蛋：顶栏右下角纯色松树剪影（z-[-1] 在内容之下，不挡按钮）。塞在 header 主体内而非外层 spacer，否则会飘到刘海上 */}
             {acnh && !selectionMode && (
                 <svg viewBox="0 0 140 46" className="absolute right-2 bottom-[5px] h-9 w-auto pointer-events-none" style={{ zIndex: -1, opacity: 0.9 }} fill="#76b48f" aria-hidden>

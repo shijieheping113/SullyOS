@@ -853,24 +853,6 @@ const Appearance: React.FC = () => {
       }
   };
 
-  // 「全屏模式」总开关当前态（undefined 视为开启，与各动画开关同口径）。
-  const fullscreenOn = theme.fullscreenEnabled !== false;
-  // 切开关的即时动作：关=立刻退出全屏（逃生门本体）；开=趁这次点击手势尽力进全屏，
-  // 失败也不拦（之后点空白处/重开页面仍会按开关状态走）。
-  const toggleFullscreen = () => {
-      const next = !fullscreenOn;
-      updateTheme({ fullscreenEnabled: next });
-      try {
-          if (!next && document.fullscreenElement) {
-              void document.exitFullscreen?.()?.catch(() => {});
-          } else if (next && !document.fullscreenElement) {
-              void document.documentElement.requestFullscreen?.()?.catch(() => {});
-          }
-      } catch { /* ignore */ }
-      addToast(next ? '全屏已开启：点空白处或重开页面即可进入' : '已退回普通模式（带浏览器地址栏）', 'success');
-      trackEvent('切换全屏模式', { enabled: next });
-  };
-
   return (
     <div className="h-full w-full bg-slate-50 flex flex-col font-light">
       <ChatDecorationAnnouncement surface="appearance"/>
@@ -940,29 +922,6 @@ const Appearance: React.FC = () => {
                                 </div>
                             );
                         })}
-                    </div>
-                </section>
-
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">全屏显示</h2>
-                    <p className="text-[10px] text-slate-400 mb-2">安卓 Chrome 专属逃生门：全屏出任何问题时，关掉它立刻退回普通模式。</p>
-                    <div className="divide-y divide-slate-100">
-                        <div className="flex items-center gap-3 py-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-xs font-bold text-slate-700">全屏模式</div>
-                                <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">开着：开机点一下进全屏，退出后点空白处恢复。关掉：立刻退出全屏回普通模式；再打开后，点一下空白处即回全屏。</div>
-                            </div>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={fullscreenOn}
-                                aria-label="全屏模式"
-                                onClick={toggleFullscreen}
-                                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${fullscreenOn ? 'bg-primary' : 'bg-slate-300'}`}
-                            >
-                                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${fullscreenOn ? 'translate-x-5' : 'translate-x-0'}`} style={{ left: 2 }} />
-                            </button>
-                        </div>
                     </div>
                 </section>
 

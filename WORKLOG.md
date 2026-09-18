@@ -1,5 +1,35 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-19 猫儿：顶栏头像原图溢出框外
+
+- Ann 对照后确认：不是顶距，是角色头像没裁进虚线框，谷歌上按原图尺寸画到框外。原因：`.sully-chat-avatar` 直接套在 `<img>` 上，美化又写了 `overflow:visible`，谷歌就不按 `object-fit:cover` 裁。
+- `ChatHeaderShell`：钩子改成裁切框，图在里面铺满 cover；顶栏内后写一条守护 CSS，盖过美化的 `overflow:visible`。群聊共用这颗顶栏。未 commit。手机强制刷新后再看 646 那页。
+
+## 2026-09-19 猫儿：美化顶栏往下偏是 CSS 自己叠了一层 --safe-top
+
+- 对照 Spark：`index.html` / Appearance / 开机三份 / ChatHeaderShell 已一致；合体那条 `html:fullscreen { --safe-top:0 }` 工作区没有。PhoneShell 只多来电叠层和桌面 `replaceState` 守卫，不垫顶距。未改 Spark 公式。
+- 本机 https://localhost:5173 读数：`--safe-top: max(0px, 0px)`，`--chrome-top: calc(max(0px, 0px) + 1.5rem)`，`--standalone-safe-area-top: 0px`，`env(safe-area-inset-top): 0`，`fullscreenElement: null`。桌面浏览器不垫；Ann 谷歌非全屏那截来自美化。
+- Ann 美化 `sullyos-whitebox-20260919.txt`：顶栏固定 108px，又把系统 `paddingTop: var(--safe-top)` 清掉，自己用 `top: calc(var(--safe-top) + 数字)` 摆 `.Chat` / 头像 / 名字。谷歌有地址栏时 `env(safe-area-inset-top)` 仍可能非 0，字就被垫下一截；永恒全屏那张看起来正常，是那边顶距接近 0。
+- 按 Ann 点头改美化、不动系统公式。桌面已出可粘贴版：`C:\Users\Administrator\Desktop\sullyos-whitebox-20260919-fix.txt`（顶栏所有 `calc(var(--safe-top)+N)` 改成只要 `Npx`；输入栏底部 `env(safe-area-inset-bottom)` 没动）。未 commit。
+
+## 2026-09-19 猫儿：私聊崩溃 setFineTuneOpen 未定义
+
+- Ann 进私聊报 `ReferenceError: setFineTuneOpen is not defined`（Chat.tsx 切换角色时收装扮气泡）。合体笔误：Spark 线装扮已走 `modalType === 'chrome-css'`，拉黑线旧名没改干净。
+- 改成换角色时若装扮面板开着就关：`setModalType(prev => prev === 'chrome-css' ? 'none' : prev)`。全仓不再有 `setFineTuneOpen`。未 commit。手机强制刷新后再进私聊。
+
+## 2026-09-19 猫儿：无全屏分支拆完，功能文件自检过
+
+- `fix/spark-block-no-fullscreen`：拆掉外观全屏开关、PhoneShell 空白点击恢复全屏、BootSequence/Classic/Jellyfish 开机请求全屏与开机返回守卫、`index.html` 全屏 safe-area 覆盖、`types.OSTheme.fullscreenEnabled`。小游戏钓鱼/恐龙按 F 全屏未动。
+- 对照 `experiment/spark-follow`：`apps/Appearance.tsx`、三份开机动画、`index.html` 已回到 Spark 原线；`PhoneShell.tsx` 只留来电弹窗/返回守卫等合体内容，不再有浏览器 Fullscreen API 请求；Spark、拉黑、语音文件仍在差异清单里。
+- 验收：本次改动功能文件 `tsc` 筛查报错 **0**；ReadLints 报错 **0**；全量 vitest 基线仍是 **Test Files 6 failed | 430 passed (436)，Tests 7 failed | 5206 passed (5213)，Errors 12**（原生/环境旧错，不继续修）；`pnpm.cmd build` 通过，**5** 个 worker bundle、**6349** modules、**25.82s**。未 commit、未 push。
+- 局域网：旧 5173 进程 PID 29452 已停，端口确认空后用新分支重开 `node dev-https2.tmp.mjs`；`curl -k -I https://localhost:5173/` 返回 **200 OK**，手机地址仍是 `https://192.168.0.103:5173/`，需要强制刷新。
+
+## 2026-09-19 猫儿：从合体提交开无全屏分支
+
+- 旧乱线 `fix/chrome-return-refresh` 的未提交改动已保存到 stash：`ann-preserve-chrome-refresh-dirty-before-no-fullscreen`，未丢、未提交。
+- 新分支 `fix/spark-block-no-fullscreen` 从合体提交 `3215228c` 开出，工作区干净。
+- 目标只拆谷歌全屏相关：外观全屏开关、手机壳点空白恢复全屏、开机请求全屏 / history 守卫 / fullscreenRestore；钓鱼/恐龙小游戏 F 全屏不动。管理闪屏本轮不做。
+
 ## 2026-09-18 猫儿：integration/spark-block 合体（Spark 基底 + 拉黑/语音/全屏 merge，未 commit）
 
 - 自 `experiment/spark-follow` 开 `integration/spark-block`，merge `feat/block-coldwar --no-commit`。

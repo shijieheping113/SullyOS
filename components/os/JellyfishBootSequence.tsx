@@ -9,8 +9,6 @@ const BOOT_SEEN_KEY = 'sullyos_boot_seen_session';
 interface Props {
   /** 数据是否已就绪（IndexedDB 加载完）。未就绪时场景持续呼吸等待，不退场。 */
   dataReady: boolean;
-  /** 外观 App「全屏模式」总开关（默认 true）。关闭时点入桌面不再请求全屏。 */
-  allowFullscreen?: boolean;
   /** 退场动画播完后回调，交还控制权给 PhoneShell。 */
   onDone: () => void;
 }
@@ -20,7 +18,7 @@ const prefersReducedMotion = () =>
   !!window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const JellyfishBootSequence: React.FC<Props> = ({ dataReady, allowFullscreen = true, onDone }) => {
+const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
   // 本会话是否首次看到开场：刷新页面仍属同 session → 走极短版。
   const firstThisSession = useMemo(() => {
     try { return !sessionStorage.getItem(BOOT_SEEN_KEY); } catch { return true; }
@@ -48,6 +46,9 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, allowFullscreen = t
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       if (dataReady && now - startRef.current >= HOLD) {
+        setPhase('exit');
+        // 只报区间不报精确毫秒。注意这里的时长带 HOLD 下限（完整版 2000ms / 极短版 520ms），
+        // 真正有信息量的是 3-8s / 8s+ 这条尾巴 —— 数据加载慢才会落到那儿。
         const waited = now - startRef.current;
         trackEvent('冷启动等待数据就绪', {
           等待档位: waited < 1000 ? '<1s' : waited < 3000 ? '1-3s' : waited < 8000 ? '3-8s' : '8s+',
@@ -68,33 +69,14 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, allowFullscreen = t
     return () => clearTimeout(t);
   }, [phase, EXIT, onDone]);
 
-  const bootGuardReleasedRef = useRef(false);
-  useEffect(() => {
-    const alreadyArmed = !!(window.history.state && (window.history.state as any).sullyosBootGuard);
-    if (!alreadyArmed) {
-      try { window.history.pushState({ sullyosBootGuard: true }, '', window.location.href); } catch { return; }
-    }
-    const onPop = () => {
-      if (bootGuardReleasedRef.current) return;
-      try { window.history.pushState({ sullyosBootGuard: true }, '', window.location.href); } catch { /* ignore */ }
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-
   // 轻触跳过：进入平滑退场（非硬切）。
   const skip = () => {
     if (phase !== 'exit') {
-      bootGuardReleasedRef.current = true;
-      try { window.history.back(); } catch { /* ignore */ }
       setPhase('exit');
       trackEvent('跳过开机动画', {
         数据是否已就绪: dataReady ? '是' : '否',
         开场版本: cinematic ? '完整版' : '极短版',
       });
-      if (allowFullscreen && !document.fullscreenElement) {
-        void document.documentElement.requestFullscreen?.()?.catch(() => {});
-      }
     }
   };
 
@@ -134,7 +116,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, allowFullscreen = t
         <div className="sully-boot-rule" aria-hidden="true" />
         <p className="sully-boot-greeting">欢迎回家</p>
       </div>
-      {!exiting && <div className="sully-boot-hint">轻触进入</div>}
+      {cinematic && !exiting && <div className="sully-boot-hint">轻触进入</div>}
     </div>
   );
 };

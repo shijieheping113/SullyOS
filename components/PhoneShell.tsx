@@ -475,9 +475,6 @@ const PhoneShell: React.FC = () => {
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
   const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
-  // 「全屏模式」总开关（外观 App 里的逃生门）：undefined 视为开启；关闭后开屏点入与
-  // 空白处恢复两个全屏请求点都不再拉起全屏，回到带浏览器栏的普通模式。
-  const fullscreenEnabled = theme.fullscreenEnabled !== false;
   useEffect(() => {
     // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
     if (!bootAnimationEnabled) setBootDone(true);
@@ -800,30 +797,6 @@ const PhoneShell: React.FC = () => {
     return () => window.removeEventListener('popstate', onPopState);
   }, [activeApp, handleBack]);
 
-  // 全屏回归（替代被否掉的遮罩方案）：安卓 Chrome 下一旦退出全屏（返回键/误触），
-  // 再次请求必须处在用户手势里。这里在 document 捕获阶段挂 click——非全屏时，
-  // 点「空白处」（解锁、桌面空白、聊天空白）在同一手势里顺带 requestFullscreen，
-  // 全屏跟着回来。不占位、不挡脸、无任何视觉。
-  // 收窄：点到交互零件（按钮/链接/输入框/文本域/下拉/label/role=button|dialog）不抢全屏——
-  // 否则非全屏下点「清空白框」这类按钮也会顺带拉起全屏，安卓进全屏的瞬间先露一帧
-  // index.html 的深色底(#0f1115)，看起来像「黑屏一下」。交互交给 UI 自己，空白才回归全屏。
-  // 用 click 不用 pointerdown：滑列表时 pointerdown 也触发，会滑动误进全屏。
-  // 已在全屏直接 return；外观 App 的「全屏模式」总开关关掉时整条不生效（逃生门）；
-  // 原生壳（Capacitor）没有浏览器全屏概念，不挂。
-  useEffect(() => {
-    if (typeof window === 'undefined' || Capacitor.isNativePlatform()) return;
-    if (!fullscreenEnabled) return;
-    const onCaptureClick = (event: MouseEvent) => {
-      if (document.fullscreenElement) return;
-      const target = event.target as Element | null;
-      if (target && typeof target.closest === 'function' &&
-          target.closest('button, a, input, textarea, select, label, [role="button"], [role="dialog"]')) return;
-      void document.documentElement.requestFullscreen?.()?.catch(() => {});
-    };
-    document.addEventListener('click', onCaptureClick, true);
-    return () => document.removeEventListener('click', onCaptureClick, true);
-  }, [fullscreenEnabled]);
-
   // Capacitor Native Handling
   useEffect(() => {
     const initNative = async () => {
@@ -895,15 +868,7 @@ const PhoneShell: React.FC = () => {
   // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
   // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
   if (!bootDone && bootAnimationEnabled) {
-    return (
-      <BootSequence
-        dataReady={isDataLoaded}
-        wallpaper={theme.wallpaper}
-        style={theme.bootAnimationStyle}
-        allowFullscreen={fullscreenEnabled}
-        onDone={() => setBootDone(true)}
-      />
-    );
+    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} style={theme.bootAnimationStyle} onDone={() => setBootDone(true)} />;
   }
 
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。

@@ -19,8 +19,6 @@ interface Props {
   dataReady: boolean;
   /** 当前壁纸（url / data / blob / 渐变或颜色字符串 / 空）。开机场景以它为底「活过来」。 */
   wallpaper?: string;
-  /** 外观 App「全屏模式」总开关（默认 true）。关闭时点入桌面不再请求全屏。 */
-  allowFullscreen?: boolean;
   /** 退场动画播完后回调，交还控制权给 PhoneShell。 */
   onDone: () => void;
 }
@@ -30,7 +28,7 @@ const prefersReducedMotion = () =>
   !!window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, allowFullscreen = true, onDone }) => {
+const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
   // 壁纸解析：url/data/blob 走 url() 并虚化压暗；渐变/颜色字符串直接当背景；空则回退深空渐变。
   const wp = wallpaper?.trim() || '';
   const wpIsImage = /^(https?:|data:|blob:|\.?\/)/.test(wp);
@@ -62,7 +60,9 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, allowFulls
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       if (dataReady && now - startRef.current >= HOLD) {
-        // 进桌面必须点一下（全屏手势需要），数据就绪只打点、不自动退场。
+        setPhase('exit');
+        // 只报区间不报精确毫秒。注意这里的时长带 HOLD 下限（完整版 2000ms / 极短版 520ms），
+        // 真正有信息量的是 3-8s / 8s+ 这条尾巴 —— 数据加载慢才会落到那儿。
         const waited = now - startRef.current;
         trackEvent('冷启动等待数据就绪', {
           等待档位: waited < 1000 ? '<1s' : waited < 3000 ? '1-3s' : waited < 8000 ? '3-8s' : '8s+',
@@ -83,33 +83,14 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, allowFulls
     return () => clearTimeout(t);
   }, [phase, EXIT, onDone]);
 
-  const bootGuardReleasedRef = useRef(false);
-  useEffect(() => {
-    const alreadyArmed = !!(window.history.state && (window.history.state as any).sullyosBootGuard);
-    if (!alreadyArmed) {
-      try { window.history.pushState({ sullyosBootGuard: true }, '', window.location.href); } catch { return; }
-    }
-    const onPop = () => {
-      if (bootGuardReleasedRef.current) return;
-      try { window.history.pushState({ sullyosBootGuard: true }, '', window.location.href); } catch { /* ignore */ }
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-
   // 轻触跳过：进入平滑退场（非硬切）。
   const skip = () => {
     if (phase !== 'exit') {
-      bootGuardReleasedRef.current = true;
-      try { window.history.back(); } catch { /* ignore */ }
       setPhase('exit');
       trackEvent('跳过开机动画', {
         数据是否已就绪: dataReady ? '是' : '否',
         开场版本: cinematic ? '完整版' : '极短版',
       });
-      if (allowFullscreen && !document.fullscreenElement) {
-        void document.documentElement.requestFullscreen?.()?.catch(() => {});
-      }
     }
   };
 

@@ -221,7 +221,7 @@ const Chat: React.FC = () => {
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
     const [decorationTab, setDecorationTab] = useState<DecorationTab>('layout');
     // 切换角色时收掉装扮气泡：定制是 per-character 的，避免误改到下一个角色
-    useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); }, [activeCharacterId]);
+    useEffect(() => { setModalType(prev => prev === 'chrome-css' ? 'none' : prev); }, [activeCharacterId]);
     // 白框自定义弹窗开着时，系统返回只关弹窗、不退聊天（对齐 DateSession/StoryTheater 的做法）：
     useEffect(() => {
         if (modalType !== 'chrome-css') return;
