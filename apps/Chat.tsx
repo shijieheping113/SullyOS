@@ -140,7 +140,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { activeApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { activeApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar, registerBackHandler } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -223,6 +223,13 @@ const Chat: React.FC = () => {
     const [fineTunePanelOpen, setFineTunePanelOpen] = useState(false); // 小面板展开/收起
     // 切换角色时收掉装扮气泡：定制是 per-character 的，避免误改到下一个角色
     useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); }, [activeCharacterId]);
+    // 白框自定义弹窗开着时，系统返回只关弹窗、不退聊天（对齐 DateSession/StoryTheater 的做法）：
+    // 导入 PNG/CSS 会拉起系统文件选择器、短暂挂起页面——这段时间里任何返回动作都应就地消化在弹窗层，
+    // 不许穿透到聊天（退聊天会连弹窗带现场一起丢）。卸载时自动注销，不影响聊天本身的返回逻辑。
+    useEffect(() => {
+        if (modalType !== 'chrome-css') return;
+        return registerBackHandler(() => { setModalType('none'); return true; });
+    }, [modalType, registerBackHandler]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
     const dismissScheduleChangeNotice = useCallback(() => setScheduleChangeNotice(null), []);
