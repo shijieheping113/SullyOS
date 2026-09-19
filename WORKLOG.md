@@ -1,5 +1,11 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-19 猫儿：回桌面改回原地摘标
+
+Ann 点头做第 3 条。回桌面不再 `history.back()`，用 `replaceState` + `stripBrowserBackGuardState` 摘掉守卫标记。`browserBackGuard` 3/3 过。本条提交只存这刀。切手机桌面再回来会刷新，另开临时正规 https 试 PWA。
+
+这刀只保证不关浏览器标签。手机切走再回来，标签还在但页面被系统冻死/重开、后台断掉——那是浏览器杀后台页，摘标修不了。原生壳 = Capacitor 打的安装包，不是添加到主屏幕。
+
 ## 2026-09-19 猫儿：合体存档（作者底 + Spark/拉黑/语音/来电）
 
 Ann 点头 commit 当前工作区。分支 `merge/author-plus-custom`，完成对 `2465b829` 的合并。没 push。不带 `dev-https2.tmp.mjs`、`public/instant-worker.bundle.js`、HANDOFF-spark、开工单、检讨、小红书参考页。

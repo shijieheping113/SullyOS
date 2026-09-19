@@ -120,7 +120,7 @@ import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
-import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
+import { isBrowserBackGuardState, makeBrowserBackGuardState, stripBrowserBackGuardState } from '../utils/browserBackGuard';
 import IncomingCallOverlay from './call/IncomingCallOverlay';
 
 /*
@@ -712,21 +712,19 @@ const PhoneShell: React.FC = () => {
 
     const guardIsCurrent = isBrowserBackGuardState(window.history.state);
     if (activeApp === AppID.Launcher) {
+      // 桌面上看到守卫标记：用 replaceState 原地摘掉，绝不 history.back()。
+      // back() 会把历史位置退到「打开本页之前」——刷新后栈顶恰好是脏标记，
+      // 这一下直接关掉整页（2026-09-18 Ann 实测）。摘标只清理状态字段、
+      // 不移动历史位置；返回键语义由下面 armGuard 循环正常维护。
       if (!guardIsCurrent) return;
-
-      // A nested view can inherit our marker. Unwind every marked same-page entry
-      // and stop as soon as the original browser entry is current again.
-      let disposed = false;
-      const releaseGuardEntries = () => {
-        if (disposed || !isBrowserBackGuardState(window.history.state)) return;
-        try { window.history.back(); } catch { /* leave browser history untouched */ }
-      };
-      window.addEventListener('popstate', releaseGuardEntries);
-      releaseGuardEntries();
-      return () => {
-        disposed = true;
-        window.removeEventListener('popstate', releaseGuardEntries);
-      };
+      try {
+        window.history.replaceState(
+          stripBrowserBackGuardState(window.history.state),
+          '',
+          window.location.href,
+        );
+      } catch { /* 摘不掉就留着标记，绝不因清理而崩 */ }
+      return;
     }
 
     const armGuard = () => {

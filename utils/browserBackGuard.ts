@@ -16,3 +16,12 @@ export const makeBrowserBackGuardState = (state: unknown): HistoryStateRecord =>
     ...asHistoryStateRecord(state),
     [BROWSER_BACK_GUARD_KEY]: true,
 });
+
+/** 只摘掉守卫标记，其它历史字段留下。回桌面用这个，不要 history.back()。 */
+export const stripBrowserBackGuardState = (state: unknown): HistoryStateRecord => {
+    const rest: HistoryStateRecord = {};
+    for (const [k, v] of Object.entries(asHistoryStateRecord(state))) {
+        if (k !== BROWSER_BACK_GUARD_KEY) rest[k] = v;
+    }
+    return rest;
+};
