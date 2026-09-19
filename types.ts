@@ -262,11 +262,45 @@ export interface VisionApiConfig {
   model: string;
 }
 
+// ===== 语音识别（STT）三引擎配置 =====
+// 聊天输入框的麦克风按钮使用；从 stt-test.html 验证过的三方案移植：
+//   doubao  → 豆包流式 2.0（火山引擎，走 /api/volc-ws 代理，情绪 5 格，1元/时按实说话计费）
+//   omni    → Qwen3-Omni 全模态（硅基流动，走 /v1/chat/completions 代理，情绪词库细腻，按段计费）
+//   teleasr → TeleASR 出字（硅基流动，走 /api/sf-stt 代理，可选 SenseVoice 后台补情绪，免费档）
+export type SttEngineId = 'doubao' | 'omni' | 'teleasr';
+
+export interface SttApiConfig {
+  engine: SttEngineId;
+  // 火山引擎 API Key（豆包流式 2.0 专用）
+  volcApiKey?: string;
+  // 硅基流动 API Key（Omni / TeleASR / SenseVoice 共用）
+  sfApiKey?: string;
+  // 热词，逗号/顿号分隔。豆包走 corpus 接口级热词，Omni 写进提示词。
+  hotwords?: string;
+  // 情绪标注开关（缺省 true）。豆包/Omni 是引擎自带情绪；TeleASR 是 SenseVoice 后台补。
+  emotionEnabled?: boolean;
+  // Omni 专属：自定义情绪识别提示词（留空 → utils/volcStt.ts 内置默认）
+  qwenEmotionPrompt?: string;
+}
+
+// STT 费用统计（本机 localStorage: stt_usage_stats_v1，不随云备份走）
+export interface SttUsageStats {
+  // 豆包累计实际发送毫秒数（计费口径：1元/小时 → 元 = ms/3600000）
+  doubaoMs: number;
+  // Omni 累计识别段数
+  omniSegments: number;
+  // TeleASR 累计识别段数（SenseVoice 情绪补识别不计费，不单独记）
+  teleasrSegments: number;
+  lastUpdated: number;
+}
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
   // 可选识图中转：给不支持 image_url 的主模型补视觉能力。
   visionApi?: VisionApiConfig;
+  // 可选语音识别：聊天麦克风按钮的三引擎配置。
+  sttApi?: SttApiConfig;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
   // 'domestic' → https://api.minimaxi.com (国内站)
@@ -2985,6 +3019,18 @@ export interface CharacterProfile {
   dateVoiceLang?: string;
   // Call (voice phone) — remembered translation language for this character
   callVoiceLang?: string;
+  /** 聊天里这个角色能不能打语音过来。空 = 关。 */
+  allowProactiveCall?: boolean;
+  /** 来电弹窗：长条通知 / 全屏。空 = 长条。 */
+  incomingCallPopupStyle?: 'banner' | 'fullscreen';
+  /** 教角色什么时候打电话。空 = 用内置默认。不是语音合成提示词。 */
+  incomingCallPrompt?: string;
+  /** 拒接后再打间隔（分钟）。空 = 不额外卡时间。 */
+  incomingCallCooldownMin?: number;
+  /** 每天最多几通。空 = 不额外卡次数。 */
+  incomingCallDailyMax?: number;
+  /** 这个角色的来电铃声。空 = 不响。 */
+  incomingCallRingtone?: { src: string; volume?: number };
 
   // Cross-session guidebook insights: what char has discovered about user across games
   guidebookInsights?: string[];
@@ -3660,9 +3706,13 @@ export interface SocialComment {
     authorAvatar?: string;
     content: string;
     likes: number;
+    /** 七改-UI：用户是否点过赞（乐观更新，随帖子一起落库） */
+    isLiked?: boolean;
     isCharacter?: boolean;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 楼中楼：指向被回复的评论 id */
+    replyToId?: string;
 }
 
 export interface SocialPost {
@@ -3681,12 +3731,40 @@ export interface SocialPost {
     bgStyle?: string;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 所属 Spark 圈子；undefined = 旧帖/「全部」视图（无圈子标记） */
+    circleId?: string;
+    /** 五修-10：用户发帖 @ 的角色 charId 列表（发帖时自动同步给这些角色并告知被艾特）。旧数据无此字段 */
+    mentions?: string[];
+    /** 九改-b：帖子配图的识图描述缓存——首次生成评论时识一次，之后只把描述附进 prompt，不再重复烧识图 token。编辑换图时清空 */
+    imageCaption?: string;
+    /** v8c-2（Ann 2026-09-16）：世界观来源圈子；undefined = 不附加世界观（与 feed 分组的 circleId 解耦） */
+    worldCircleId?: string;
+    /** v8c-2（Ann 2026-09-16）：「不给谁看」名单——这些角色不进生成池，不发人设和记忆。旧帖无此字段 */
+    excludedCharIds?: string[];
+    /** 发帖 @ 的强制回复是否已经用掉过一轮。旧帖无此字段 = 还没用过 */
+    mentionForceUsed?: boolean;
+    /** spark-follow 2-A（Ann 2026-09-17）：关注帖来源标记——只有角色从私聊发的关注帖带 'moments'；
+     *  发现刷新出来的角色帖不许带。旧帖无此字段 = 普通帖 */
+    origin?: 'moments';
+    /** spark-follow 2-A：关注帖可见名单——勾了的角色才进这条帖评论/搅动的候选池。
+     *  缺省或 [] = 谁都看不见（作者本人除外）。与「不给谁看」excludedCharIds 方向相反，互不相干 */
+    visibleCharIds?: string[];
 }
 
 export interface SubAccount {
     id: string;
-    handle: string; 
-    note: string;   
+    handle: string;
+    note: string;
+}
+
+/** Spark 圈子（用户自建的平行世界）：成员 + 可选世界观描述 */
+export interface SparkCircle {
+    id: string;
+    name: string;
+    /** 世界观描述，注入 Spark 生成 prompt，约束角色与路人的言行不 OOC */
+    worldPrompt: string;
+    memberCharIds: string[];
+    createdAt: number;
 }
 
 export interface SocialAppProfile {

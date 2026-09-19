@@ -1,6 +1,6 @@
 import EmojiExportDialog from './EmojiExportDialog';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Briefcase } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, LockOpen, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Briefcase, Microphone, X, Check } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import TokenImg from '../os/TokenImg';
@@ -58,6 +58,8 @@ interface ChatInputAreaProps {
     canReroll: boolean;
     // Proactive messaging
     isProactiveActive?: boolean;
+    /** 拉黑玩法：当前是否拉黑中（决定加号面板「拉黑 / 重新接收」） */
+    blockActive?: boolean;
     // 麦当劳 MCP
     mcdConfigured?: boolean;   // 设置里 token 已填且启用
     mcdActivated?: boolean;    // 当前会话已发"麦请求"
@@ -74,6 +76,13 @@ interface ChatInputAreaProps {
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
     acnh?: boolean;
+    // ---- 语音识别（STT）：不传 = 不显示麦克风按钮 ----
+    /** 录音状态：idle 空闲 / connecting 连接中 / recording 录音中 / muted 静音停发(不扣费) / stopping 收尾中 */
+    voiceState?: 'idle' | 'connecting' | 'recording' | 'muted' | 'stopping';
+    /** 点击麦克风：开始 / 结束录音 */
+    onToggleVoice?: () => void;
+    /** 取消本次录音（丢弃，不发送）——录音面板的 × 按钮 */
+    onCancelVoice?: () => void;
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -90,6 +99,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
+    blockActive = false,
     mcdConfigured = false,
     mcdActivated = false,
     luckinConfigured = false,
@@ -100,6 +110,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
     acnh = false,
+    voiceState = 'idle',
+    onToggleVoice,
+    onCancelVoice,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -167,6 +180,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const actionsSwipeStart = useRef<{ x: number; y: number } | null>(null);
     const actionsSwipeMoved = useRef(false);
     const useIOSStandaloneInputFix = isIOSStandaloneWebApp();
+
+    const [voiceRecSec, setVoiceRecSec] = useState(0);
+    useEffect(() => {
+        if (voiceState === 'idle') { setVoiceRecSec(0); return; }
+        if (voiceState === 'stopping') return;
+        const t = window.setInterval(() => setVoiceRecSec(s => s + 1), 1000);
+        return () => window.clearInterval(t);
+    }, [voiceState]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         // 候选词确认不能当发送；229 兼容部分输入法在确认时漏报 isComposing。
@@ -632,6 +653,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               <Star className="w-6 h-6" weight="fill" />
           </span>
           <span className="text-xs font-bold">收藏</span>
+        </button>,
+        <button key="block-toggle" onClick={() => onPanelAction('block-toggle')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-500 border-rose-100'}`}>
+                {blockActive ? <LockOpen className="w-6 h-6" weight="bold" /> : <Lock className="w-6 h-6" weight="bold" />}
+            </div>
+            <span className="text-xs font-bold">{blockActive ? '重新接收' : '拉黑'}</span>
         </button>
     ];
     const actionPageCount = Math.max(1, Math.ceil(actionTiles.length / ACTION_PAGE_SIZE));
@@ -698,6 +725,37 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 </div>
             ) : (
                 <div className="sully-chat-composer p-3 px-4 flex gap-3 items-end relative">
+                    {onToggleVoice && voiceState !== 'idle' ? (
+                        <>
+                            <button onClick={onCancelVoice} title="取消本次语音" className={`sully-chat-actions-button ${actionButtonClass}`}>
+                                <X className="w-6 h-6" weight="bold" />
+                            </button>
+                            <div className={`flex-1 min-w-0 h-11 flex items-center justify-center gap-2.5 px-2 ${inputWrapClass}`}>
+                                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${voiceState === 'muted' ? 'bg-slate-300 dark:bg-slate-600' : voiceState === 'stopping' ? 'bg-amber-400' : 'bg-red-500 animate-pulse'}`} />
+                                <span className={`text-[15px] font-semibold tabular-nums truncate ${isDiscordStyle ? 'text-white/90' : isPixelStyle ? 'text-[#6a4c35]' : 'text-slate-700'}`}>
+                                    {voiceState === 'connecting' ? '连接中…'
+                                        : voiceState === 'stopping' ? '正在收尾…'
+                                        : voiceState === 'muted' ? '静音中 · 不计费'
+                                        : `录音中 ${Math.floor(voiceRecSec / 60)}:${String(voiceRecSec % 60).padStart(2, '0')}`}
+                                </span>
+                                <span className={`text-[10px] truncate ${isDiscordStyle ? 'text-white/40' : isPixelStyle ? 'text-[#9b8677]' : 'text-slate-400'}`}>
+                                    {voiceState === 'connecting' ? '正在连接识别引擎'
+                                        : voiceState === 'stopping' ? '补齐最后一句话'
+                                        : voiceState === 'muted' ? '开口继续，录音没断'
+                                        : '说完点 ✓ 发送'}
+                                </span>
+                            </div>
+                            <button
+                                onClick={onToggleVoice}
+                                title="完成并发送语音消息"
+                                disabled={voiceState === 'stopping'}
+                                className={`sully-chat-send-button ${sendButtonClass} ${voiceState === 'stopping' ? 'opacity-45' : ''}`}
+                            >
+                                <Check className="w-6 h-6" weight="bold" />
+                            </button>
+                        </>
+                    ) : (
+                    <>
                     <button aria-label="聊天功能" aria-expanded={showPanel === 'actions'} onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={`sully-chat-actions-button ${actionButtonClass}`}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
@@ -723,6 +781,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
+                        {onToggleVoice && (
+                            <button
+                                onClick={onToggleVoice}
+                                title={voiceState === 'idle' ? '语音输入' : voiceState === 'recording' ? '正在听，点一下结束' : voiceState === 'muted' ? '静音中（没说话不扣费），开口继续识别' : '处理中…'}
+                                className={`p-2 shrink-0 transition-all ${voiceState === 'recording' ? 'text-red-500 animate-pulse' : voiceState === 'muted' ? 'text-slate-300 dark:text-slate-600' : voiceState !== 'idle' ? 'text-primary animate-pulse' : isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}
+                            >
+                                <Microphone className="w-6 h-6" weight={voiceState === 'recording' ? 'fill' : 'regular'} />
+                            </button>
+                        )}
                     </div>
                     <button
                         ref={sendButtonRef}
@@ -744,6 +811,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 ? <Lightning className={`w-5 h-5 ${isTyping ? 'animate-pulse' : ''}`} weight="fill" />
                                 : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
                     </button>
+                    </>
+                    )}
 
                     {emojiSelectionMode && (
                         <div className={`absolute inset-0 z-10 ${isPixelStyle ? 'bg-[#eadfce]/70 backdrop-blur-[2px]' : isDiscordStyle ? 'bg-slate-950/70 backdrop-blur-[2px]' : 'bg-white/60 backdrop-blur-[2px]'}`} />

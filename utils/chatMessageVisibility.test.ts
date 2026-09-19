@@ -27,6 +27,14 @@ describe('私聊与桌面预览的消息范围', () => {
         expect(isChatPreviewMessage(message({ groupId: 'group' }))).toBe(false);
     });
 
+    it('求看看/好友申请/挂断浅灰句在聊天里可见，桌面预览不当成气泡', () => {
+        const notice = message({ role: 'system', metadata: { source: 'block-notice', blockNoticeKind: 'peek-reveal' } });
+        expect(isVisibleChatMessage(notice)).toBe(true);
+        expect(isVisibleChatMessage(notice, true)).toBe(true);
+        expect(isChatPreviewMessage(notice)).toBe(false);
+        expect(isVisibleChatMessage(message({ role: 'user', metadata: { source: 'block-call-hangup', hidden: true } }))).toBe(false);
+    });
+
     it('桌面隐藏系统消息，聊天的隐藏日志设置仍保留评分卡', () => {
         const log = message({ role: 'system' });
         expect(isVisibleChatMessage(log)).toBe(true);

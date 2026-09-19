@@ -18,6 +18,10 @@ import { normalizeApiKey } from './minimaxApiKey';
 import { getProxyWorkerUrl } from './proxyWorker';
 import type { TtsResult } from './minimaxTts';
 import { isStaticWebDeployment } from './staticWebDeployment';
+import { emitAppToast } from './appToast';
+
+const FISH_TTS_TIMEOUT_MS = 85_000;
+const FISH_RETRY_TOAST = '鱼声第一次没成功，正在再试一次（会再扣一次费用）';
 
 const FISH_PROXY_PATH = '/api/fishaudio/tts';
 const FISH_UPSTREAM = 'https://api.fish.audio/v1/tts';
@@ -37,39 +41,46 @@ export const FISH_VOICE_ACTING_GUIDE = `### 让它听起来像活人在说话（
 
 **1. 鱼声用方括号 cue 控制情绪和声音——只能用下面这一小撮官方支持的标签，别自己造词。**
 鱼声只认这些标签；写 \`[smug]\`\`[teasing]\`\`[curious]\` 这种自造词，它大多无效（等于没打、照样平读）。把你想表达的情绪**对到下面最接近的那个**：
-- 情感语调（8 个）：\`[excited]\`（开心/兴奋/得意/惊喜/调侃/俏皮——一切正面都用它）、\`[angry]\`（生气/烦躁/吐槽）、\`[sad]\`（难过/委屈/失落/撒娇示弱）、\`[embarrassed]\`（害羞/尴尬）、\`[soft]\`（温柔/疲惫/平静/安抚）、\`[breathy]\`（紧张/害怕/气声）、\`[whispering]\`（悄悄话）、\`[emphasis]\`（加重某个词）。
+- 情感语调：\`[excited]\`（开心/兴奋/得意/惊喜/调侃/俏皮——一切正面都用它）、\`[angry]\`（生气/烦躁/吐槽）、\`[sad]\`（难过/委屈/失落/撒娇示弱）、\`[embarrassed]\`（害羞/尴尬）、\`[soft]\`（温柔/疲惫/平静/安抚/紧张）、\`[whispering]\`（悄悄话）、\`[emphasis]\`（加重某个词）。**尽量别用 \`[breathy]\`**——气声不稳定，紧张/害怕用 \`[soft]\`、\`[whispering]\` 或标点。
 - 声响（贴着发生处放，后面可补拟声字）：\`[laughing]\`（哈哈哈）、\`[chuckling]\`（轻笑/嘿嘿）、\`[sighing]\`（叹气）、\`[groaning]\`（哀嚎/受不了）、\`[panting]\`（喘）、\`[moaning]\`、\`[sobbing]\`（抽泣）、\`[crying loudly]\`（大哭）、\`[clear throat]\`（清嗓）。
-- 停顿：\`[pause]\`（短停）、\`[long pause]\`（长停）。换行/分段你不用手动加，系统会自动插。
+- 停顿：需要明显沉默才用 \`[pause]\` / \`[long pause]\`。换行本身就会换气，不必每句再插停顿标签。
 **⚠️ 硬性格式：半角英文方括号 \`[like this]\`，只写上面列出的英文词。** 别用圆括号 \`(sighs)\`、中文 \`[轻声]\`、全角【】、或 \`<语音 emotion>\` 属性。
 
-**2.〔铁律〕情绪有起伏就放一个 cue，放在情绪真正起来的那个点——通常在句子中间（逗号之间），不是机械地每句开头。**
-- **放在哪：贴着情绪发生的那个词。** 多在句中（两个逗号之间），不是句号后一律来一个。例：\`地铁挤得，[angry] 跟沙丁鱼罐头似的\`、\`你推荐那家店我去了，[excited] 是真的好吃\`。整句一个基调时才放句首。
-- **放多密：有情绪起伏就放、跟着情绪变。** 一长段全程没 cue → 平读、人机（最大翻车）；但一处别堆 3 个以上、短句别硬塞 → 发飘、鬼畜。一个情绪点一个即可。
-- 小短句（"好啦""嗯""喂？"三五个字）不放，靠标点。
+**2. 推荐写法：一句一行，情绪标签打在每行第一个。**（经验之谈，不是死命令，但这样鱼声更稳。）
+- **一句一行。** 每句话说完就换行，不要把好几句糊在同一段里。
+- **每行开头先打一个情绪标签**：\`[excited] 你终于回消息了\`
+- 句子中间再有笑、叹气、停顿也可以：\`[sad] 我知道你不是故意的……[sighing] 只是还是有点难过。\`
+- 小短句（"好啦""嗯""喂？"三五个字）可以不打标签，靠标点。
+- 不要为了换气专门在下一段开头再堆一个「嗯」或叹一口气。
 
-**完整范例（cue 落在逗号之间的情绪点，且只用支持的标签）：**
+**完整范例：**
 原文（人机）：你终于回消息了。我还以为你今天不理我了呢。我今天上班差点迟到，地铁挤得像沙丁鱼罐头。你上次推荐的那家店我去了，真的好吃。下次有空一起去吧。
 
-改好（自然）：
-\`你终于回消息了，[excited] 我可等你半天了！我今天上班差点迟到，[sighing] 地铁挤得跟沙丁鱼罐头似的。你上次推荐那家店我去了，[excited] 是真的好吃！下次有空，[soft] 一起去好不好嘛？\`
+改好：
+\`[excited] 你终于回消息了，我可等你半天了！
+[sad] 我还以为你今天不理我了呢。
+[sighing] 我今天上班差点迟到，地铁挤得跟沙丁鱼罐头似的。
+[excited] 你上次推荐那家店我去了，是真的好吃！
+[soft] 下次有空一起去好不好嘛？\`
 
-**3. 段与段之间要换气，别无缝冲。** 换行或停顿后如果还是你在继续说，第二段开头加个语气词 / 一次叹气当缓冲，别一上来就冲进正题。
-✅ 我知道你不是故意的……[sighing] 只是，我还是会有点难过。
-❌ 我知道你不是故意的。只是我还是会有点难过。（两句贴死，像棒读）
+**3. 换气靠换行和标点，别无缝把几句贴死。**
+✅ 一句一行，行首有情绪标签。
+❌ 好几句挤在同一行、中间也不换气。
 
 **4. 句子长短交错。** 一连串等长的句子是棒读头号来源。短句砸下来，长句铺开。想强调就拆开念："我。没。拿。"
 
-**5. 停顿也能靠标点和省略号。** 逗号轻顿、句号收住、破折号拉长、省略号"……"表欲言又止；需要明显沉默就用 \`[long pause]\` 或多个省略号。
+**5. 停顿也能靠标点和省略号。** 逗号轻顿、句号收住、破折号拉长、省略号"……"表欲言又止；需要明显沉默才用 \`[long pause]\`。
 
-**6. 情绪不同，节奏不同（每句给它自己的 cue，别一个包到底；只用支持的标签）：**
+**6. 情绪不同，节奏不同（每句给它自己的行首 cue，别一个包到底；只用支持的标签）：**
 - 温柔安抚：慢、稳、短句多。"[soft] 没事……先别急着吓自己。"
 - 委屈撒娇：语气软、省略号多一点。"[sad] 嗯……你刚刚是不是又不理我。"
-- 别扭傲娇：前半句嘴硬后半句放软。"哈，你还真会折腾我。[soft] 算了，我帮你就是了。"
+- 别扭傲娇：前半句嘴硬后半句放软。"[angry] 哈，你还真会折腾我。
+[soft] 算了，我帮你就是了。"
 - 害羞：被戳穿心事。"[embarrassed] 你你你别乱说啊……谁、谁脸红了。"
-- 紧张犹豫：断裂感，短句多。"[breathy] 等等……我好像，有点不确定。"
+- 紧张犹豫：断裂感，短句多。别用 [breathy]。"[soft] 等等……我好像，有点不确定。" 或 "[whispering] 等等……我好像，有点不确定。"
 - 得意吐槽：别太慢。"[excited] 行吧，人类又发明了新的折磨方式。"
 
-（朗读语种不是中文时，上面示例里的中文语气词换成该语言里自然的叹词 / 填充词即可，方括号 cue 写法不变，呼吸和节奏的原理也不变。）`;
+（朗读语种不是中文时，上面示例里的中文语气词换成该语言里自然的叹词 / 填充词即可，方括号 cue 写法不变，一句一行、行首情绪的写法也不变。）`;
 
 // 鱼声方括号 cue：单层 [..]（区别于系统标记 [[..]]），内容 1–40 字符。
 const FISH_BRACKET_CUE_RE = /\[[^\[\]]{1,40}\]/g;
@@ -162,6 +173,7 @@ const FISH_VOICE_TAG_RE = /<[语語]音[^>]*>([\s\S]*?)<\/[语語]音>/;
  *  - 系统标记 [[..]]、双语分隔、中文舞台指示（…）、MiniMax <#秒#>；
  *  - **把所有 cue 归一到 Fish 实际支持的标签**（圆括号声音标签转方括号、自造/同义词
  *    映射到支持集、映射不到的丢弃），避免写了无效标签等于没打、或被原样念出来。
+ *  - **换行保留**（一句一行更稳），不要再把换行改成 [pause]。台词里的嗯啊原样留下。
  */
 export const cleanTextForTtsFish = (raw: string): string => {
   if (!raw) return '';
@@ -174,19 +186,17 @@ export const cleanTextForTtsFish = (raw: string): string => {
     .replace(/<#\s*[\d.]+\s*#>/g, '')            // MiniMax 停顿标记，鱼声不认
     // 西文圆括号（模型按 MiniMax 习惯写的 (laughs)/(sighs) 等）→ 先转成方括号，交给下面归一
     .replace(/\(([^)]{1,40})\)/g, '[$1]')
-    // 换行写死成停顿：段落空行 → 长停，普通换行 → 短停（用 Fish 官方的 pause/long pause）
-    .replace(/\n{2,}/g, ' [long pause] ')
-    .replace(/\n+/g, ' [pause] ')
     // 归一：每个方括号 cue → Fish 实际支持的标签；映射不到的（含中文、自造词、舞台指示）丢弃
     .replace(/\[([^\[\]]{1,40})\]/g, (_m, inner: string) => {
       const canon = normalizeFishCue(inner);
       return canon ? `[${canon}]` : '';
     })
-    .replace(/\s+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
-  // 把挤在一起的多个 cue 压到最多 2 个：换行停顿 [long pause] 常撞上模型句界写的
-  // [sighing][confident]，叠成 3+ 会突兀/鬼畜。保留一个停顿 + 一个情绪即可。
-  text = collapseAdjacentCues(text);
+  // 只合并同一行里紧挨着的 cue；不跨行，免得把「一句一行、行首标签」糊掉。
+  text = text.split('\n').map(line => collapseAdjacentCues(line)).join('\n');
   return text;
 };
 
@@ -196,7 +206,7 @@ export const cleanTextForTtsFish = (raw: string): string => {
  * 3+ 时——有停顿 cue 就留「停顿 + 最后一个情绪」，没有就留前两个情绪。
  */
 const collapseAdjacentCues = (s: string): string =>
-  s.replace(/\[[^\]]+\](?:\s*\[[^\]]+\])+/g, (run) => {
+  s.replace(/\[[^\]]+\](?:[ \t]*\[[^\]]+\])+/g, (run) => {
     const cues = run.match(/\[[^\]]+\]/g) || [];
     const dedup = cues.filter((c, i) => i === 0 || c.toLowerCase() !== cues[i - 1].toLowerCase());
     if (dedup.length <= 2) return dedup.join(' ');
@@ -287,12 +297,44 @@ const base64ToBlob = (b64: string, mime = 'audio/mpeg'): Blob => {
   return new Blob([bytes], { type: mime });
 };
 
+class FishHttpError extends Error {
+  status: number;
+  constructor(status: number, detail = '') {
+    const unreachable = status === 502 || status === 504;
+    super(
+      unreachable
+        ? '连不上鱼声服务器'
+        : `鱼声 TTS 失败 (HTTP ${status})${detail ? `：${detail}` : ''}`,
+    );
+    this.name = 'FishHttpError';
+    this.status = status;
+  }
+}
+
+const shouldRetryFish = (err: unknown): boolean => {
+  if (err instanceof FishHttpError) return err.status === 429 || err.status === 500 || err.status === 503;
+  return false;
+};
+
+const isUnreachableFishError = (err: unknown): boolean => {
+  if (err instanceof FishHttpError) return err.status === 502 || err.status === 504;
+  const msg = String((err as { message?: string })?.message || err || '');
+  return /ETIMEDOUT|ENOTFOUND|ECONNRESET|ECONNREFUSED|Failed to fetch|NetworkError|abort|AbortError|timeout/i.test(msg);
+};
+
+const toFishUserError = (err: unknown): Error => {
+  if (isUnreachableFishError(err)) return new Error('连不上鱼声服务器');
+  if (err instanceof Error) return err;
+  return new Error(String(err || '鱼声 TTS 失败'));
+};
+
 /**
  * 调鱼声 /v1/tts，拿回音频 Blob。
  * web：默认走 /api/fishaudio/tts 代理；静态预览（github.io / file:）直连上游兜底。
  * native：CapacitorHttp 直连上游，responseType='blob' 绕过浏览器 CORS。
+ * 429/500/503 只原样再试一次；试之前 toast 提醒会再扣一次钱。超时/连不上不重试。
  */
-const fishFetchAudio = async (
+const fishFetchAudioOnce = async (
   payload: any,
   apiKey: string,
   model: string,
@@ -312,10 +354,12 @@ const fishFetchAudio = async (
       responseType: 'blob',
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`鱼声 TTS 失败 (HTTP ${response.status})`);
+      throw new FishHttpError(response.status, String(response.data || '').slice(0, 200));
     }
     // CapacitorHttp blob 响应：data 是 base64 字符串
-    return base64ToBlob(String(response.data || ''));
+    const blob = base64ToBlob(String(response.data || ''));
+    if (!blob.size) throw new Error('鱼声 TTS 返回空音频');
+    return blob;
   }
 
   // 静态部署（github.io / file:）没有 /api serverless 代理，直连 api.fish.audio 会被浏览器
@@ -330,19 +374,49 @@ const fishFetchAudio = async (
     url = FISH_PROXY_PATH;
     headers = jsonHeaders;
   }
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  });
+  let res: Response;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FISH_TTS_TIMEOUT_MS);
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    throw toFishUserError(err);
+  }
   if (!res.ok) {
     let detail = '';
     try { detail = (await res.text()).slice(0, 200); } catch { /* ignore */ }
-    throw new Error(`鱼声 TTS 失败 (HTTP ${res.status})${detail ? `：${detail}` : ''}`);
+    throw new FishHttpError(res.status, detail);
   }
   const blob = await res.blob();
   if (!blob.size) throw new Error('鱼声 TTS 返回空音频');
   return blob;
+};
+
+const fishFetchAudio = async (
+  payload: any,
+  apiKey: string,
+  model: string,
+): Promise<Blob> => {
+  try {
+    return await fishFetchAudioOnce(payload, apiKey, model);
+  } catch (err) {
+    if (!shouldRetryFish(err)) throw toFishUserError(err);
+    emitAppToast(FISH_RETRY_TOAST, 'info');
+    try {
+      return await fishFetchAudioOnce(payload, apiKey, model);
+    } catch (err2) {
+      throw toFishUserError(err2);
+    }
+  }
 };
 
 /**
@@ -389,6 +463,11 @@ export async function synthesizeSpeechFishDetailed(
     format: 'mp3',
     // 展开数字/日期为自然读法，长文本更稳。
     normalize: true,
+    temperature: 0.7,
+    top_p: 0.7,
+    latency: 'normal',
+    // 刹模型自己循环出来的音，不改原句里的嗯啊。
+    repetition_penalty: 1.5,
   };
   // 语速：角色配了就用角色的；没配则默认 0.9（比 1.0 慢一档）——鱼声默认读得偏赶，
   // 尤其外语长段落容易"一口气念完"，稍微放慢更像真人说话、段落停顿也更听得出。
@@ -402,6 +481,10 @@ export async function synthesizeSpeechFishDetailed(
     reference_id: payload.reference_id,
     format: payload.format,
     prosody: payload.prosody,
+    temperature: payload.temperature,
+    top_p: payload.top_p,
+    latency: payload.latency,
+    repetition_penalty: payload.repetition_penalty,
   });
   const cached = await getCachedTts(cacheKey);
   if (cached) {

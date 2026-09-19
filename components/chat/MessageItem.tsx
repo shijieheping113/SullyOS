@@ -16,6 +16,12 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
+// v8c-1（Ann 2026-09-16）：Spark 卡片头像也走共用解析器（自定义 > 主聊天头像 > 快照 > 名字 hash）
+import { resolveSparkCharAvatar } from '../../utils/sparkAvatar';
+// 六改-3：Spark 帖子图共用组件——social_card 卡片里 sparkimg: 引用渲染真图（原来被当文本铺成一串图名）
+import { SparkPostImage, codepointToEmoji } from '../../apps/social/SparkPostImage';
+import { BLOCK_NOTICE_SOURCE, BLOCK_SOURCE, blockNoticeText, blockRecordDisplayText, peekCardStatusText, type BlockNoticeKind } from '../../utils/block';
+import './blockCards.css';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
@@ -1422,8 +1428,12 @@ interface MessageItemProps {
     onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
     /** 用户点「生活记录」卡 → 确认 / 否决（角色代记的记录） */
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
+    /** 拉黑玩法：求看看三键 / 好友申请通过忽略 */
+    onResolveBlockAction?: (m: Message, action: 'peek-viewed' | 'peek-discard' | 'peek-secret' | 'request-accept' | 'request-ignore') => void;
     /** 打开协同文件柜里的原始 Blob；消息本身只保存 assetId 引用。 */
     onOpenCollaborationFile?: (m: Message) => void | Promise<void>;
+    /** 点击 Spark 帖子卡片 → 跳回 Spark 原帖（ postId 由上层写 localStorage 并打开 social app ） */
+    onOpenSparkPost?: (postId: string) => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1471,8 +1481,10 @@ const MessageItem = React.memo(({
     onLuckinCandidate,
     onResolveTransfer,
     onResolveLifeRecord,
+    onResolveBlockAction,
     onOpenCollaborationFile,
     thinkingChainOptions,
+    onOpenSparkPost,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -1499,6 +1511,10 @@ const MessageItem = React.memo(({
     const bubbleBgUrl = useBlobRefUrl(styleConfig.backgroundImage);
     const [showVoiceText, setShowVoiceText] = useState(false);
     const [showSarTruth, setShowSarTruth] = useState(false);
+    const [peekExpanded, setPeekExpanded] = useState(false);
+    useEffect(() => {
+        setPeekExpanded(!!m.metadata?.peekViewed);
+    }, [m.id, m.metadata?.peekViewed]);
     const [openingCollaborationFile, setOpeningCollaborationFile] = useState(false);
     const [replyOffset, setReplyOffset] = useState(0);
     const [isReplyGestureActive, setIsReplyGestureActive] = useState(false);
@@ -1806,6 +1822,151 @@ const MessageItem = React.memo(({
 
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
+
+        if (m.metadata?.source === BLOCK_SOURCE || m.metadata?.source === BLOCK_NOTICE_SOURCE) {
+            const noticeKind = m.metadata?.blockNoticeKind as BlockNoticeKind | undefined;
+            const line = m.metadata?.source === BLOCK_NOTICE_SOURCE
+                ? (noticeKind ? blockNoticeText(noticeKind) : String(m.content || ''))
+                : blockRecordDisplayText(m.metadata);
+            return (
+                <div className={`flex items-center justify-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="px-6 py-2" {...interactionProps}>
+                        <p className="text-[11px] leading-relaxed text-slate-400 text-center">{line}</p>
+                    </div>
+                </div>
+            );
+        }
+
+        if (m.metadata?.source === 'incoming-call') {
+            const outcome = String(m.metadata?.callOutcome || 'ringing');
+            const label = m.metadata?.callBlocked || outcome === 'blocked'
+                ? '打不通'
+                : outcome === 'accepted' ? '已接听' : outcome === 'rejected' ? '已拒绝' : outcome === 'snoozed' ? '稍后决定' : outcome === 'missed' ? '未接' : '来电中';
+            const line = String(m.metadata?.callLine || '').trim();
+            const durationSec = Number(m.metadata?.durationSec || 0);
+            const durationText = outcome === 'accepted'
+                ? `${String(Math.floor(Math.max(0, durationSec) / 60)).padStart(2, '0')}:${String(Math.max(0, durationSec) % 60).padStart(2, '0')}`
+                : '';
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-5 my-3" {...interactionProps}>
+                        <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100/80 border border-slate-200/50 p-4 shadow-sm">
+                            <div className="flex items-center gap-3">
+                                <TokenImg value={charAvatar} alt={charName} className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200/80" loading="lazy" decoding="async" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-slate-600 truncate">{charName} 打来的电话</div>
+                                    <div className="text-xs text-slate-400 mt-0.5">{label}{durationText ? ` · ${durationText}` : ''}</div>
+                                </div>
+                            </div>
+                            {line ? (
+                                <div className="mt-3 rounded-2xl bg-white/70 border border-slate-100 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-500">
+                                    {line}
+                                </div>
+                            ) : null}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        if (m.metadata?.source === 'peek-request') {
+            const line = String(m.metadata?.peekText || '').trim();
+            const outcome = String(m.metadata?.peekOutcome || (m.metadata?.peekViewed ? 'reveal' : ''));
+            const discarded = outcome === 'discard';
+            const secret = outcome === 'secret';
+            const revealed = outcome === 'reveal';
+            const pending = !outcome;
+            const showLine = !!line && (secret || revealed || peekExpanded);
+            const statusText = peekCardStatusText(m.metadata);
+            const cardState = discarded ? 'discarded' : secret ? 'secret-view' : revealed ? 'revealed' : '';
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-4 my-2" {...interactionProps}>
+                        <article className={`block-card peek ${cardState}`}>
+                            <div className="card-head">
+                                <div className="avatar"><TokenImg value={charAvatar} alt={charName} className="w-full h-full object-cover" loading="lazy" decoding="async" /></div>
+                                <div>
+                                    <div className="eyebrow">A LITTLE LOOK</div>
+                                    <div className="title">求你看看</div>
+                                    <div className="subtitle">只想确认你还在不在</div>
+                                </div>
+                            </div>
+                            {line ? (
+                                <p className={`copy${showLine ? '' : ' hidden'}`}>{showLine ? line : line}</p>
+                            ) : null}
+                            {pending && (
+                                <div className="actions peek-actions">
+                                    <button type="button" className="peek-choice peek-discard" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-discard'); }}>不看，扔掉</button>
+                                    <button type="button" className="peek-choice peek-secret" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'peek-secret'); }}>偷偷看一下</button>
+                                    <button type="button" className="peek-choice peek-reveal" onClick={(e) => { e.stopPropagation(); setPeekExpanded(true); onResolveBlockAction?.(m, 'peek-viewed'); }}>看看</button>
+                                </div>
+                            )}
+                            <div className="status">{statusText}</div>
+                        </article>
+                    </div>
+                </div>
+            );
+        }
+
+        if (m.metadata?.source === 'friend-request') {
+            const line = String(m.metadata?.requestText || '').trim();
+            const status = String(m.metadata?.requestStatus || 'pending');
+            const done = status === 'accepted' || status === 'ignored';
+            const title = status === 'accepted' ? '已重新加好友' : status === 'ignored' ? '已忽略' : '重新加好友';
+            const statusText = status === 'accepted' ? '门已经打开一条缝。' : status === 'ignored' ? '猫儿会先安静一会儿。' : '通过后，聊天会慢慢恢复';
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-4 my-2" {...interactionProps}>
+                        <article className={`block-card request${done ? ' done' : ''}`}>
+                            <div className="card-head">
+                                <div className="avatar"><TokenImg value={charAvatar} alt={charName} className="w-full h-full object-cover" loading="lazy" decoding="async" /></div>
+                                <div>
+                                    <div className="eyebrow">ONE MORE CHANCE</div>
+                                    <div className="title">{title}</div>
+                                    <div className="subtitle">把门留一条缝，好吗</div>
+                                </div>
+                            </div>
+                            {line ? <p className="copy">{line}</p> : null}
+                            {status === 'pending' && (
+                                <div className="actions">
+                                    <button type="button" className="primary" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-accept'); }}>通过</button>
+                                    <button type="button" className="secondary" onClick={(e) => { e.stopPropagation(); onResolveBlockAction?.(m, 'request-ignore'); }}>忽略</button>
+                                </div>
+                            )}
+                            <div className="status">{statusText}</div>
+                        </article>
+                    </div>
+                </div>
+            );
+        }
 
         if (isCallSummary) {
             const durationSec = Math.max(1, Number(m.metadata?.durationSec || 0));
@@ -3059,27 +3220,114 @@ const MessageItem = React.memo(({
 
     if (m.type === 'social_card' && m.metadata?.post) {
         const post = m.metadata.post;
-        // If the saved image is a raw twemoji codepoint (eg "2728"), convert it to the actual emoji character;
-        // otherwise leave whatever the AI / user picked unchanged.
+        // 六改-3：帖子配图三路渲染——
+        //   1) `sparkimg:` 引用 → SparkPostImage 从 assets 表读真图（读不到降级 🖼️ 占位）；
+        //   2) 纯 twemoji 码点（eg "2728"）→ 转真 emoji 字符；
+        //   3) 其余字符串原样（AI 自己给的 emoji/文本）。
+        // 修复：原来 sparkimg: 引用不匹配码点正则，被当纯文本铺成一串图名。
         const rawImage: string | undefined = post.images?.[0];
-        let displayImage: string | undefined = rawImage;
-        if (typeof rawImage === 'string' && /^[0-9a-fA-F-]+$/.test(rawImage)) {
-            try {
-                const points = rawImage.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
-                if (points.length > 0) displayImage = String.fromCodePoint(...points);
-            } catch {}
+        const isSparkImgRef = typeof rawImage === 'string' && rawImage.startsWith('sparkimg:');
+        const displayImage: string | undefined = typeof rawImage === 'string' && !isSparkImgRef ? codepointToEmoji(rawImage) : rawImage;
+        const syncKind = (m.metadata as any)?.syncKind;
+        const newComments: any[] = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
+        // 角色侧「我的 Spark 动态」卡片（用户点「同步到私聊」生成的 assistant 卡）：
+        // 顶部角标写明「谁的动态 · 在 Spark 干了什么」，与普通分享卡区分开
+        if (m.role === 'assistant' && syncKind && syncKind !== 'update') {
+            const mentioned = !!(m.metadata as any)?.mentioned;
+            // spark-follow 2-I：moments 帖角标换「关注动态」口吻（发布→发布了关注动态 / 刷到→看见了关注动态）；其余卡原样
+            const isMomentsPost = post.origin === 'moments';
+            const kindBadge = mentioned ? '用户 @ 了你' : syncKind === 'published' ? (isMomentsPost ? '发布了关注动态' : '发布了笔记') : syncKind === 'commented' ? '在帖子下留了言' : (isMomentsPost ? '看见了关注动态' : '刷到了帖子');
+            return commonLayout(
+                <div
+                    className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-rose-100 cursor-pointer active:opacity-90 transition-opacity"
+                    onClick={() => onOpenSparkPost?.(post.id)}
+                    title="点开原帖"
+                >
+                    <div className="px-3 pt-3 pb-2 flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-[#ff2442] bg-[#ff2442]/10 px-1.5 py-0.5 rounded">{charName || 'Ta'} 的 Spark 动态</span>
+                        <span className="text-[10px] text-slate-400">· {kindBadge}</span>
+                    </div>
+                    <div className="h-28 w-full flex items-center justify-center text-5xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
+                        {isSparkImgRef && rawImage ? (
+                            <SparkPostImage assetId={rawImage.slice('sparkimg:'.length)} imgClassName="absolute inset-0 w-full h-full object-cover" emojiClass="text-5xl" />
+                        ) : (displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-10 h-10" />)}
+                        <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
+                            <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
+                        </div>
+                    </div>
+                    <div className="p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                            <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-4 h-4 rounded-full" />
+                            <span className="text-[10px] text-slate-500">{post.authorName}</span>
+                        </div>
+                        {Array.isArray(post.comments) && post.comments.length > 0 && (
+                            <div className="mt-2 space-y-2">
+                                {post.comments.slice(0, 3).map((c: any, i: number) => (
+                                    <div key={c?.id || i} className="flex items-start gap-2">
+                                        <TokenImg value={resolveSparkCharAvatar(c.authorCharId, c.authorAvatar, c.authorName)} className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5" />
+                                        <div className="min-w-0">
+                                            <div className="text-[10px] text-slate-500 font-bold truncate">{c.authorName}</div>
+                                            <p className="text-[11px] text-slate-600 line-clamp-2 leading-snug">{c.content}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                {post.comments.length > 3 && <div className="text-[10px] text-slate-400">… 还有 {post.comments.length - 3} 条评论</div>}
+                            </div>
+                        )}
+                        <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-slate-400">
+                            <span className="text-red-400">Spark</span> • 公开足迹
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        // 追踪通知卡（syncKind: 'update'）：帖子有新评论时同步进聊天的动态卡
+        if (syncKind === 'update') {
+            return commonLayout(
+                <div
+                    className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-amber-100 cursor-pointer active:opacity-90 transition-opacity"
+                    onClick={() => onOpenSparkPost?.(post.id)}
+                    title="点开原帖"
+                >
+                    <div className="px-3 pt-3 pb-2 flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">{post.origin === 'moments' ? '关注有新动静' : '帖子有新动态'}</span>
+                        <span className="text-[10px] text-slate-400 truncate">{post.title}</span>
+                    </div>
+                    <div className="px-3 pb-3 space-y-2">
+                        {newComments.slice(0, 3).map((c, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                                <TokenImg value={resolveSparkCharAvatar(c.authorCharId, c.authorAvatar, c.authorName)} className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5" />
+                                <div className="min-w-0">
+                                    <div className="text-[10px] text-slate-500 font-bold truncate">{c.authorName}</div>
+                                    <p className="text-[11px] text-slate-600 line-clamp-2 leading-snug">{c.content}</p>
+                                </div>
+                            </div>
+                        ))}
+                        {newComments.length > 3 && <div className="text-[10px] text-slate-400">… 还有 {newComments.length - 3} 条新评论</div>}
+                        <div className="pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-slate-400">
+                            <span className="text-red-400">Spark</span> • 动态同步
+                        </div>
+                    </div>
+                </div>
+            );
         }
         return commonLayout(
-            <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
+            <div
+                className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity"
+                onClick={() => onOpenSparkPost?.(post.id)}
+                title="点开原帖"
+            >
                 <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
-                    {displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-12 h-12" />}
+                    {isSparkImgRef && rawImage ? (
+                        <SparkPostImage assetId={rawImage.slice('sparkimg:'.length)} imgClassName="absolute inset-0 w-full h-full object-cover" emojiClass="text-6xl" />
+                    ) : (displayImage || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-12 h-12" />)}
                     <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
                         <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
                     </div>
                 </div>
                 <div className="p-3">
                     <div className="flex items-center gap-2 mb-2">
-                        <TokenImg value={post.authorAvatar} className="w-4 h-4 rounded-full" />
+                        <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-4 h-4 rounded-full" />
                         <span className="text-[10px] text-slate-500">{post.authorName}</span>
                     </div>
                     <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{post.content}</p>
@@ -3589,7 +3837,7 @@ const MessageItem = React.memo(({
     const voiceMarkupContent = hasSarSurface && !showSarTruth && /<[语語]音[^>]*>/.test(sarSurfaceText)
         ? sarSurfaceText
         : m.content;
-    const hasVoiceTag = !isUser && /<[语語]音[^>]*>/.test(voiceMarkupContent);
+    const hasVoiceTag = /<[语語]音[^>]*>/.test(voiceMarkupContent);
     // Spoken text inside the <语音> tag — lets the placeholder bar offer a 转文字 toggle
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
@@ -3608,12 +3856,22 @@ const MessageItem = React.memo(({
     const generatedVoiceSubtitle = showSarTruth && hasSarSurface
         ? voiceSubtitleText
         : cleanVoiceText(voiceData?.originalText);
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    // 新式用户语音记号：content 是纯文本（识别字在正文里，导出走正文），
+    // 靠 metadata.stt 认出这是语音条——原声不在本机（换设备导入/资产丢失）也照旧认。
+    const hasUserSttMarker = isUser && m.type === 'text' && !!(m.metadata as any)?.stt;
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || hasUserSttMarker;
+    // 用户语音消息（语音识别直发 + 原声）：按 AI 语音条同款 sully-voice 类名渲染，
+    // 用户自定义 CSS 的语音条美化自动匹配；文本藏进「转文字」展开区。
+    // 认条不再依赖壳标签：有壳或有 stt 记号都算，顶部不再重复渲染正文文字泡。
+    const isUserVoiceMsg = isUser && m.type === 'text' && (
+        (hasVoiceTag)
+        || hasUserSttMarker
+    );
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
     // Voice-only messages (no display text, only voice bar): skip bubble styling
-    const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
+    const isVoiceOnlyMsg = isUserVoiceMsg || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
 
     // 外语语音消息：语音条展开区（转文字）本身就完整呈现「口播原文 + 中文翻译」两行，
     // 顶部气泡再渲染一遍 displayContent 就成了重复——翻译模式下顶部是中文、语音条翻译行
@@ -3662,8 +3920,9 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
-            {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文 */}
-            {displayContent && !isForeignVoiceMsg && (
+            {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文；
+                用户语音消息同样把文字收进语音条「转文字」，顶部不重复 */}
+            {displayContent && !isForeignVoiceMsg && !isUserVoiceMsg && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
                 {showExpandedTranslation && (
@@ -3679,6 +3938,14 @@ const MessageItem = React.memo(({
                 <div className="sar-chat-speech-control" style={{ color: styleConfig.textColor }}>
                     <SARSpeechSwitch truth={showSarTruth} moduleTitle={m.metadata?.sarModuleSurface?.moduleTitle}
                         onToggle={() => setShowSarTruth(value => !value)} />
+                </div>
+            )}
+
+            {/* 拉黑（冷战玩法）：角色这条消息被拒收，气泡末尾挂「未送达」——用户全看得到，角色以为自己没送达 */}
+            {!isUser && m.metadata?.blockSendFailed && (
+                <div className="relative z-10 mt-1.5 flex items-center gap-1 text-[10px] font-medium text-amber-500/90 select-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 6a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 6Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" /></svg>
+                    <span>未送达</span>
                 </div>
             )}
 
@@ -3709,7 +3976,7 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 6: Voice Bar */}
-            {(voiceData?.url || voiceLoading || hasVoiceTag) && !isUser && m.type === 'text' && (() => {
+            {(voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMsg) && m.type === 'text' && (() => {
                 const vbBg = styleConfig.voiceBarBg;
                 const vbActiveBg = styleConfig.voiceBarActiveBg;
                 const vbBtn = styleConfig.voiceBarBtnColor;
@@ -3717,7 +3984,8 @@ const MessageItem = React.memo(({
                 const vbText = styleConfig.voiceBarTextColor;
                 // Voice-only mode: no visible text, voice bar is primary content.
                 // 外语语音消息顶部正文已隐藏（交给语音条渲染），同样按纯语音处理，去掉多余上间距。
-                const isVoiceOnly = !!voiceData?.url && (!displayContent || isForeignVoiceMsg);
+                // 用户语音消息同理：语音条就是消息本体，文字在「转文字」里。
+                const isVoiceOnly = isUserVoiceMsg || (!!voiceData?.url && (!displayContent || isForeignVoiceMsg));
                 return (
                 <div className={`sully-voice-bar-shell relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
                     {voiceData?.url ? (
@@ -3836,11 +4104,13 @@ const MessageItem = React.memo(({
                             </div>
                             <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
                         </div>
-                    ) : hasVoiceTag ? (
+                    ) : (hasVoiceTag || isUserVoiceMsg) ? (
                         /* Voice tag exists in content but no audio yet — either TTS is still
                            pending (app restart / auto-TTS) or the character has no MiniMax voice
                            configured. Offer a 转文字 toggle here too so the text stays readable,
-                           aligning fake voice messages with real ones. */
+                           aligning fake voice messages with real ones.
+                           新式用户语音（纯文本 + stt 记号）也走这条占位条：原声不在本机时
+                           照旧一条语音条，「转文字」读正文里的同一句字。 */
                         <div className="max-w-[260px]">
                             <div
                                 className="sully-voice-bar sully-voice-bar-placeholder flex items-center gap-2 px-3 py-2 rounded-2xl"
@@ -3901,6 +4171,8 @@ const MessageItem = React.memo(({
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
            prev.msg.metadata?.sarModuleSurface?.surface === next.msg.metadata?.sarModuleSurface?.surface &&
+           // 用户语音记号 metadata.stt（含 transcript）变了要重渲染，否则补完字气泡不刷新。
+           (prev.msg.metadata as any)?.stt === (next.msg.metadata as any)?.stt &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
            prev.activeTheme === next.activeTheme &&

@@ -47,7 +47,8 @@ import {
 } from '../utils/avatarModelBackup';
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '../utils/apiConfigNormalize';
 import { configFromPreset, findActivePresetId, type PresetSwitchPatch } from '../utils/apiPresetSwitch';
-import type { APIConfig, TtsProvider } from '../types';
+import type { APIConfig, TtsProvider, SttEngineId, SttApiConfig, SttUsageStats } from '../types';
+import { defaultQwenEmotionPrompt, getSttUsage, resetSttUsage, doubaoGzipSupported, isSttSupported } from '../utils/volcStt';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
 import {
     FIRECRAWL_API_KEYS_URL,
@@ -535,6 +536,17 @@ const Settings: React.FC = () => {
   const [showVoicePrompts, setShowVoicePrompts] = useState(false);
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
+  // ---- 语音识别（STT）：聊天麦克风按钮的三引擎配置 ----
+  const [localSttEngine, setLocalSttEngine] = useState<SttEngineId>(apiConfig.sttApi?.engine || 'doubao');
+  const [localSttVolcKey, setLocalSttVolcKey] = useState(apiConfig.sttApi?.volcApiKey || '');
+  const [localSttSfKey, setLocalSttSfKey] = useState(apiConfig.sttApi?.sfApiKey || '');
+  const [localSttHotwords, setLocalSttHotwords] = useState(apiConfig.sttApi?.hotwords || '');
+  const [localSttEmotion, setLocalSttEmotion] = useState(apiConfig.sttApi?.emotionEnabled !== false);
+  const [localSttQwenPrompt, setLocalSttQwenPrompt] = useState(apiConfig.sttApi?.qwenEmotionPrompt || '');
+  const [showSttQwenPrompt, setShowSttQwenPrompt] = useState(false);
+  // 费用统计：面板打开时从 localStorage 读，清零后刷新
+  const [sttUsage, setSttUsage] = useState<SttUsageStats>(() => getSttUsage());
+  const [sttStatusMsg, setSttStatusMsg] = useState('');
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -954,6 +966,17 @@ const Settings: React.FC = () => {
       setLocalVisionModel(apiConfig.visionApi?.model || '');
   }, [apiConfig.visionApi?.baseUrl || '', apiConfig.visionApi?.apiKey || '', apiConfig.visionApi?.model || '']);
 
+  // 语音识别（STT）独立区块的同步 —— 与识图同样的套路：
+  // 依赖写到具体字段上，避免整个 apiConfig 对象变化时把还没保存的草稿冲掉。
+  useEffect(() => {
+      setLocalSttEngine(apiConfig.sttApi?.engine || 'doubao');
+      setLocalSttVolcKey(apiConfig.sttApi?.volcApiKey || '');
+      setLocalSttSfKey(apiConfig.sttApi?.sfApiKey || '');
+      setLocalSttHotwords(apiConfig.sttApi?.hotwords || '');
+      setLocalSttEmotion(apiConfig.sttApi?.emotionEnabled !== false);
+      setLocalSttQwenPrompt(apiConfig.sttApi?.qwenEmotionPrompt || '');
+  }, [apiConfig.sttApi?.engine, apiConfig.sttApi?.volcApiKey, apiConfig.sttApi?.sfApiKey, apiConfig.sttApi?.hotwords, apiConfig.sttApi?.emotionEnabled, apiConfig.sttApi?.qwenEmotionPrompt]);
+
   useEffect(() => {
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
@@ -1273,8 +1296,39 @@ const Settings: React.FC = () => {
         elevenlabs: localVoicePromptElevenLabs.trim() ? localVoicePromptElevenLabs : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
       },
+      // 语音识别（STT）已独立成「语音识别」区块（与识图 API 平级），不再跟随「其他 API」保存——
+      // 否则在这边点保存会把那边还没保存的草稿覆盖掉。
       ...overrides,
   });
+
+  /** 语音识别独立区块的保存：只提交 sttApi 一个字段，不牵连其他区块的草稿 */
+  const buildSttApiConfig = (): SttApiConfig => ({
+      engine: localSttEngine,
+      volcApiKey: localSttVolcKey.trim() || undefined,
+      sfApiKey: localSttSfKey.trim() || undefined,
+      hotwords: localSttHotwords.trim() || undefined,
+      emotionEnabled: localSttEmotion,
+      qwenEmotionPrompt: localSttQwenPrompt.trim() || undefined,
+  });
+
+  const handleSaveSttApi = () => {
+      const next = buildSttApiConfig();
+      if (!next.volcApiKey && !next.sfApiKey) {
+          addToast('请至少填一个 Key（豆包填火山引擎、Omni/TeleASR 填硅基流动）', 'error');
+          return;
+      }
+      if (next.engine === 'doubao' && !next.volcApiKey) {
+          addToast('豆包引擎需要填火山引擎 API Key', 'error');
+          return;
+      }
+      if (next.engine !== 'doubao' && !next.sfApiKey) {
+          addToast('Omni / TeleASR 引擎需要填硅基流动 API Key', 'error');
+          return;
+      }
+      updateApiConfig({ sttApi: next });
+      setSttStatusMsg('语音识别配置已保存');
+      setTimeout(() => setSttStatusMsg(''), 2200);
+  };
 
   const handleSaveOtherApis = () => {
     updateApiConfig(buildOtherApiConfig());
@@ -1302,6 +1356,28 @@ const Settings: React.FC = () => {
   const selectElevenLabsModel = (model: string) => {
     setLocalElevenLabsModel(model);
     updateApiConfig(buildOtherApiConfig({ elevenLabsModel: model }));
+  };
+
+  // STT 引擎三选一：立即落库。只提交 sttApi 一个字段，并把当前草稿一起带上，
+  // 避免刚填还没保存的 Key 被同步 effect 冲掉（与 TTS 引擎切换同一个套路）。
+  const selectSttEngine = (engine: SttEngineId) => {
+    setLocalSttEngine(engine);
+    updateApiConfig({ sttApi: {
+      engine,
+      volcApiKey: localSttVolcKey.trim() || undefined,
+      sfApiKey: localSttSfKey.trim() || undefined,
+      hotwords: localSttHotwords.trim() || undefined,
+      emotionEnabled: localSttEmotion,
+      qwenEmotionPrompt: localSttQwenPrompt.trim() || undefined,
+    } });
+    const label = engine === 'doubao' ? '豆包流式' : engine === 'omni' ? 'Qwen3-Omni' : 'TeleASR';
+    addToast(`语音识别已切到 ${label}（记得点保存确认 Key）`, 'success');
+  };
+
+  // STT 费用清零
+  const handleResetSttUsage = () => {
+    resetSttUsage();
+    setSttUsage(getSttUsage());
   };
 
   const fetchModels = async () => {
@@ -2729,6 +2805,148 @@ const Settings: React.FC = () => {
                     }`}>
                         {visionTestResult}
                     </div>
+                )}
+            </div>
+        </SettingsSection>
+
+        {/* 语音识别（STT）—— 独立区块（与识图 API 平级）：聊天麦克风按钮 + 通话共用的三引擎配置 */}
+        <SettingsSection
+            title="语音识别"
+            icon={
+                <div className="p-2 bg-teal-100 rounded-xl text-teal-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                        <path d="M8.25 4.5a3.75 3.75 0 1 1 7.5 0v8.25a3.75 3.75 0 1 1-7.5 0V4.5Z" />
+                        <path d="M6 10.5a.75.75 0 0 1 .75.75v1.5a5.25 5.25 0 1 0 10.5 0v-1.5a.75.75 0 0 1 1.5 0v1.5a6.751 6.751 0 0 1-6 6.709v2.291h3a.75.75 0 0 1 0 1.5h-7.5a.75.75 0 0 1 0-1.5h3v-2.291a6.751 6.751 0 0 1-6-6.709v-1.5A.75.75 0 0 1 6 10.5Z" />
+                    </svg>
+                </div>
+            }
+        >
+            <div className="space-y-3">
+                <p className="text-[11px] text-slate-400 leading-relaxed">说话转文字 + 情绪标注。聊天输入框的 🎤 按钮用这里选的引擎；三个引擎的 Key 都保存在这儿，随时切换对比。</p>
+                {!isSttSupported() && (
+                    <p className="text-[11px] text-rose-500 leading-relaxed">⚠️ 当前浏览器不支持录音（需要 HTTPS 访问 + 麦克风权限）。手机请用 https:// 开头的地址访问。</p>
+                )}
+
+                {/* 引擎三选一：立即生效，Key 用下面填的 */}
+                <div className="space-y-2">
+                    {([
+                        ['doubao', '豆包流式 2.0', '最准最快 · 热词接口级 · 情绪5格 · 1元/时只按实说话计费（静音不扣钱）'],
+                        ['omni', 'Qwen3-Omni', '情绪最细腻（委屈/不耐烦/撒娇）· 长句偶有幻听 · 按段计费'],
+                        ['teleasr', 'TeleASR', '免费档 · 出字快 · 专有名词较弱 · 情绪靠 SenseVoice 后台补'],
+                    ] as const).map(([key, name, desc]) => {
+                        const active = localSttEngine === key;
+                        return (
+                            <button
+                                key={key}
+                                type="button"
+                                onClick={() => selectSttEngine(key)}
+                                className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-primary bg-primary/5 shadow-sm' : 'border-slate-200 bg-white/70 active:bg-white'}`}
+                            >
+                                <span className={`shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${active ? 'border-primary' : 'border-slate-300'}`}>
+                                    {active && <span className="w-2 h-2 rounded-full bg-primary" />}
+                                </span>
+                                <span className="flex-1 min-w-0">
+                                    <span className={`text-sm font-semibold ${active ? 'text-primary' : 'text-slate-700'}`}>{name}</span>
+                                    <span className="block text-[11px] text-slate-400 mt-0.5">{desc}</span>
+                                </span>
+                                {active && <span className="text-[10px] font-bold text-primary shrink-0">使用中</span>}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* 两个 Key 常驻显示：各引擎用哪个 Key 一目了然，不再跟着引擎选择隐藏 */}
+                <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">火山引擎 API Key <span className="normal-case font-medium text-slate-400">→ 豆包流式 2.0 用</span></label>
+                    <input type="password" name="stt-volc-key" autoComplete="new-password" spellCheck={false} value={localSttVolcKey} onChange={(e) => setLocalSttVolcKey(e.target.value)} placeholder="火山控制台「语音技术」创建的 API Key" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">需开通「豆包流式语音识别模型 2.0」。免费送 20 小时/半年。{doubaoGzipSupported() ? '' : '⚠️ 这台浏览器较老，豆包引擎无法 gzip 压缩，建议换新浏览器。'}</p>
+                </div>
+                <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">硅基流动 API Key <span className="normal-case font-medium text-slate-400">→ Omni / TeleASR / SenseVoice 用</span></label>
+                    <input type="password" name="stt-sf-key" autoComplete="new-password" spellCheck={false} value={localSttSfKey} onChange={(e) => setLocalSttSfKey(e.target.value)} placeholder="sk-xxx（siliconflow.cn 控制台创建）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">Omni 走 Qwen3-Omni-30B-A3B（按段计费）；TeleASR 免费档。</p>
+                </div>
+
+                <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">热词（人名 / 昵称 / 专有词，逗号分隔）</label>
+                    <input type="text" spellCheck={false} value={localSttHotwords} onChange={(e) => setLocalSttHotwords(e.target.value)} placeholder="如：诚哥,猫儿,阿贝贝" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">豆包走接口级热词（识别层纠音）；Omni 写进提示词（理解层纠字）；TeleASR 暂不支持热词。</p>
+                </div>
+
+                <label className="flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                    <span>情绪标注（在每句前加「（委屈地）」这类标签，让 AI 听懂语气）</span>
+                    <input
+                        type="checkbox"
+                        checked={localSttEmotion}
+                        onChange={(e) => setLocalSttEmotion(e.target.checked)}
+                        className="w-4 h-4 accent-primary"
+                    />
+                </label>
+
+                {localSttEngine === 'omni' && (
+                    <div className="rounded-xl border border-slate-200/60 bg-white/40 p-2.5">
+                        <button
+                            type="button"
+                            onClick={() => setShowSttQwenPrompt(v => !v)}
+                            className="w-full flex items-center justify-between text-left"
+                        >
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Omni 情绪提示词（高级 · 可自定义）</span>
+                            <span className={`shrink-0 ml-2 text-slate-400 transition-transform ${showSttQwenPrompt ? 'rotate-180' : ''}`}>▾</span>
+                        </button>
+                        {showSttQwenPrompt && (
+                            <div className="mt-2.5">
+                                <p className="text-[10px] text-slate-400 mb-1.5">教 Omni 怎么转写和标情绪。留空 → 用内置默认（18 词情绪库，负面情绪宁重勿轻）。改完记得点下面的「保存」。</p>
+                                <textarea
+                                    value={localSttQwenPrompt}
+                                    onChange={(e) => setLocalSttQwenPrompt(e.target.value)}
+                                    placeholder="留空 → 使用内置默认。点「载入默认模板」可把内置文案填进来再改。"
+                                    rows={8}
+                                    spellCheck={false}
+                                    className="w-full bg-white/60 border border-slate-200/60 rounded-xl px-3 py-2.5 text-xs font-mono leading-relaxed focus:bg-white transition-all resize-y"
+                                />
+                                <div className="flex items-center justify-between mt-1.5">
+                                    <span className="text-[10px] text-slate-400">{localSttQwenPrompt.length} 字 · {localSttQwenPrompt.trim() ? '已自定义' : '使用内置默认'}</span>
+                                    <span className="flex gap-3">
+                                        <button type="button" onClick={() => setLocalSttQwenPrompt(defaultQwenEmotionPrompt(localSttHotwords.split(/[,，、\s]+/).filter(Boolean)))} className="text-[11px] font-semibold text-slate-500 hover:text-primary active:scale-95 transition-all">载入默认模板</button>
+                                        <button type="button" onClick={() => setLocalSttQwenPrompt('')} disabled={!localSttQwenPrompt.trim()} className="text-[11px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none">清空（恢复默认）</button>
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* 费用统计：豆包按实际发送秒数折算，Omni/TeleASR 按段数 */}
+                <div className="rounded-xl border border-slate-200/60 bg-white/40 p-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">费用统计（本机）</div>
+                        <div className="text-[11px] text-slate-500 leading-relaxed">
+                            {sttUsage.doubaoMs || sttUsage.omniSegments || sttUsage.teleasrSegments ? (
+                                <>
+                                    {sttUsage.doubaoMs > 0 && <span className="block">豆包 {(sttUsage.doubaoMs / 60000).toFixed(1)} 分钟 ≈ {(sttUsage.doubaoMs / 3600000).toFixed(4)} 元（按实际发送音频）</span>}
+                                    {sttUsage.omniSegments > 0 && <span className="block">Omni {sttUsage.omniSegments} 段（按段计费，账单以硅基流动控制台为准）</span>}
+                                    {sttUsage.teleasrSegments > 0 && <span className="block">TeleASR {sttUsage.teleasrSegments} 段（免费档）</span>}
+                                </>
+                            ) : (
+                                <span>暂无用量——用麦克风说过话后这里会有记录</span>
+                            )}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleResetSttUsage}
+                        disabled={!(sttUsage.doubaoMs || sttUsage.omniSegments || sttUsage.teleasrSegments)}
+                        className="shrink-0 text-[11px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                        清零
+                    </button>
+                </div>
+
+                <button onClick={handleSaveSttApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-teal-500/20 bg-teal-500 active:scale-95 transition-all">
+                    保存语音识别
+                </button>
+                {sttStatusMsg && (
+                    <div className="text-[11px] text-center text-teal-600 bg-teal-50 px-3 py-2 rounded-xl">{sttStatusMsg}</div>
                 )}
             </div>
         </SettingsSection>

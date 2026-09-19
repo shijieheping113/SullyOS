@@ -28,6 +28,7 @@ export type RecallEntryPoint =
     | 'vr_world'
     | 'world_home'
     | 'chat_payload'
+    | 'spark'
     | 'direct';
 
 export type RecallOutcome =

@@ -27,6 +27,7 @@
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeConfig, GroupProfile } from '../types';
 import { DB } from './db';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
+import { SYSTEM_LOG_LEAD } from './block';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -55,6 +56,7 @@ import { announceScheduleChanges, applyAssistantScheduleChanges } from './schedu
 import { isBlobRef } from './blobRef';
 import { consumeSARChatSurfaceChunk, type SARModuleSurfaceMeta } from './vrWorld/sarModuleRuntime';
 import { stripLeakedSourceTags } from './sanitize';
+import { getBlockStateFromMessages } from './block';
 
 // ─── 模块内辅助 ──────────────────────────────────────────────────────────────
 
@@ -793,6 +795,12 @@ export async function applyAssistantPostProcessing(
 
     // 把一段文本 (parseAndExecuteActions / HTML 之外的部分) 渲染成气泡并落库 —— 双语 / 表情 / 引用 / 分段
     // 与原 inline 末尾逻辑一致。抽出来是为了让"执行功能前的本轮正文 A"能在二轮前先展示, 二轮结果 B 复用同一套。
+    // 拉黑（冷战玩法）：拉黑期间角色发的每条气泡照常落库，只是 metadata.blockSendFailed=true。
+    // 判定用 ctx.contextMsgs（调用方已给的本轮上下文窗口）零额外 IO；窗口里没有 BLOCK 记录时
+    // getBlockStateFromMessages 内部会按「最后一条 assistant 是否已带拒收标记」兜底，窗口无关。
+    // 挂点在 takeMeta：所有 assistant 正文/表情气泡都走它，一处收口。用户消息与系统卡不受影响。
+    const blockFailed = getBlockStateFromMessages((contextMsgs || []) as any).blocked;
+
     let sarSurfaceClaimed = false;
     const renderAndPersist = async (rawContent: string, firstThinkingChain: string | null): Promise<void> => {
         let firstMeta: any = firstThinkingChain ? { thinkingChain: firstThinkingChain } : null;
@@ -811,9 +819,10 @@ export async function applyAssistantPostProcessing(
             const sarMeta = surfaceChunk && sarModuleSurface
                 ? { sarModuleSurface: { ...sarModuleSurface, surface: surfaceChunk } }
                 : undefined;
-            const merged = firstMeta || sarMeta
+            let merged = firstMeta || sarMeta
                 ? { ...(base || {}), ...(sarMeta || {}), ...(firstMeta || {}) }
                 : base;
+            if (blockFailed) merged = { ...(merged || {}), blockSendFailed: true };
             firstMeta = null;
             return merged;
         };
@@ -2250,6 +2259,33 @@ export async function applyAssistantPostProcessing(
             d.type === 'music_action' && !!d.song,
     )?.song;
     aiContent = await ChatParser.parseAndExecuteActions(aiContent, char.id, char.name, addToast, musicHooks, resolveCharTimeZone(char), messageTimestamp, mcdInheritMeta, frozenMusicSong);
+
+    if (!skipSecondPassLLM && !String(aiContent || '').trim()) {
+        try {
+            const recentAfterCall = await DB.getRecentMessagesByCharId(char.id, 8, true);
+            const blockedCall = [...recentAfterCall].reverse().find(m => m.metadata?.source === 'incoming-call' && m.metadata?.callBlocked);
+            if (blockedCall) {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        model: effectiveApi.model,
+                        messages: [
+                            ...fullMessages,
+                            { role: 'system', content: `${SYSTEM_LOG_LEAD} 你刚打的电话没打通。对方拒收了来电。这不是对方在说话。请只说一两句你自己的反应，不要假装接通，不要再输出打电话暗号。` },
+                        ],
+                        temperature: 0.8,
+                        max_tokens: 800,
+                        stream: false,
+                    }),
+                }, 2, 0, { ...apiLogMeta, purpose: '来电打不通反应' });
+                updateTokenUsage(data, historyMsgCount, 'blocked-call');
+                aiContent = normalizeAiContent(data?.choices?.[0]?.message?.content || '');
+            }
+        } catch (blockedCallErr) {
+            console.warn('[IncomingCall] 打不通后补反应失败:', blockedCallErr);
+        }
+    }
 
     // ─── Step 4: thinking chain 抽取 (本轮末尾展示用) ───
     // 跑过二轮 (data !== initialData) → 取二轮 data 的 reasoning; 没跑二轮 → 取一轮 (round1ThinkingChain,

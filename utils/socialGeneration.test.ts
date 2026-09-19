@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CharacterProfile, Message, SocialPost, UserProfile } from '../types';
-import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants } from './socialGeneration';
+import { buildSparkCommentHistory, buildSparkGenerationContext, resolveSparkAuthor, selectSparkParticipants, sparkCommentCandidatePool } from './socialGeneration';
 
 const character = (id: string, name: string, systemPrompt: string) => ({
     id, name, systemPrompt, avatar: '', description: '', memories: [], timeAwarenessEnabled: false,
@@ -36,7 +36,11 @@ describe('Spark persona and conversation context', () => {
             { authorName: 'SullyDev', authorCharId: 'b-id', authorType: 'character', content: '你指的是周六那次吗？' },
             { authorName: social.name, authorType: 'user', content: '对，就是那次' },
         ] } as SocialPost;
-        expect(selectSparkParticipants(post, [c, b, a], handles).map(ch => ch.id)).toEqual(['a-id', 'b-id']);
+        const picked = selectSparkParticipants(post, [c, b, a], handles).map(ch => ch.id);
+        // 楼主与楼中楼作者排在最前（这一段是这条用例的本意，不变）
+        expect(picked.slice(0, 2)).toEqual(['a-id', 'b-id']);
+        // v8d 任务 1：名单不再截断，候选池其余角色按序并入（出场与否交给 AI 判断）
+        expect(picked).toEqual(['a-id', 'b-id', 'c-id']);
         const history = buildSparkCommentHistory(post);
         expect(history).toContain('周六那次');
         expect(history).toContain('对，就是那次');
@@ -48,13 +52,67 @@ describe('Spark persona and conversation context', () => {
     });
 });
 
+describe('sparkCommentCandidatePool（spark-follow 2-E）', () => {
+    const circles = [{ id: 'circle-1', memberCharIds: ['a-id'] }];
+    const momentsPost = (over: Partial<SocialPost> = {}): SocialPost => ({
+        id: 'm1', authorName: '小花园', authorAvatar: '', title: 't', content: 'c', images: [],
+        likes: 0, isCollected: false, isLiked: false, comments: [], timestamp: 0, tags: [],
+        authorType: 'character', authorCharId: 'a-id', origin: 'moments', visibleCharIds: [],
+        ...over,
+    } as SocialPost);
+
+    it('关注帖：默认可见名单为空 → 池里只有作者本人', () => {
+        const pool = sparkCommentCandidatePool(momentsPost(), chars, circles, ['b-id']);
+        expect(pool.map(c => c.id)).toEqual(['a-id']);
+    });
+
+    it('关注帖：作者 + 勾了可见的角色，作者排最前；没勾的不在；追踪名单不被加回', () => {
+        const pool = sparkCommentCandidatePool(momentsPost({ visibleCharIds: ['b-id', 'a-id'] }), chars, circles, ['c-id']);
+        expect(pool.map(c => c.id)).toEqual(['a-id', 'b-id']);
+        expect(pool.map(c => c.id)).not.toContain('c-id');
+    });
+
+    it('关注帖：作者删号了对不上就跳过，只留可见角色；excludedCharIds 不影响关注帖', () => {
+        const pool = sparkCommentCandidatePool(
+            momentsPost({ authorCharId: 'gone-id', visibleCharIds: ['b-id'], excludedCharIds: ['b-id'] }),
+            chars, circles, [],
+        );
+        expect(pool.map(c => c.id)).toEqual(['b-id']);
+    });
+
+    it('用户帖三步构造原样保留：全角色 −「不给谁看」+ 追踪名单补回（去重）', () => {
+        const userPost = {
+            id: 'p1', authorName: '林雨', authorAvatar: '', title: 't', content: 'c', images: [],
+            likes: 0, isCollected: false, isLiked: false, comments: [], timestamp: 0, tags: [],
+            authorType: 'user', excludedCharIds: ['c-id'],
+        } as SocialPost;
+        // c 被「不给谁看」拦住；b 不在池里但被同步过（追踪名单）→ 补回
+        const pool = sparkCommentCandidatePool(userPost, chars, circles, ['b-id', 'a-id']);
+        expect(pool.map(c => c.id)).toEqual(['a-id', 'b-id']);
+        // 关注帖的 excludedCharIds 规则不外溢：普通无 origin 帖照旧走三步
+        const noCircleAiPost = { ...userPost, authorType: 'character', authorCharId: 'b-id', excludedCharIds: undefined } as unknown as SocialPost;
+        expect(sparkCommentCandidatePool(noCircleAiPost, chars, circles, []).map(c => c.id)).toEqual(['a-id', 'b-id', 'c-id']);
+    });
+
+    it('圈子帖三步构造原样保留：只收圈内成员，追踪名单补圈外人', () => {
+        const circlePost = {
+            id: 'p2', authorName: '小花园', authorAvatar: '', title: 't', content: 'c', images: [],
+            likes: 0, isCollected: false, isLiked: false, comments: [], timestamp: 0, tags: [],
+            authorType: 'character', authorCharId: 'a-id', circleId: 'circle-1',
+        } as SocialPost;
+        const pool = sparkCommentCandidatePool(circlePost, chars, circles, ['b-id']);
+        expect(pool.map(c => c.id)).toEqual(['a-id', 'b-id']);
+    });
+});
+
 describe('Spark author attribution', () => {
     it('rejects an ID that contradicts the handle instead of attaching the wrong avatar/persona', () => {
         expect(resolve({ authorName: '小花园', charId: 'b-id', isCharacter: true })).toBeNull();
         expect(resolve({ author: '小花园', charId: 'invented-id' })).toBeNull();
     });
-    it('rejects unselected characters, user impersonation and strangers using character handles', () => {
-        expect(resolve({ author: '阿白', charId: 'c-id' })).toBeNull();
+    it('accepts pool characters even when absent from the participant table; still rejects user impersonation and handle misuse', () => {
+        // 池内但不在身份表（participants=[a,b]）：放行——旧版整条丢弃会报「身份不匹配」
+        expect(resolve({ author: '阿白', charId: 'c-id' })?.character).toBe(c);
         expect(resolve({ author: ' 林雨 ' })).toBeNull();
         expect(resolve({ author: social.name })).toBeNull();
         expect(resolve({ author: '小花园', isCharacter: false })).toBeNull();

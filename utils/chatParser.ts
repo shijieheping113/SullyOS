@@ -1,7 +1,9 @@
 
 import { DB } from './db';
+import { loadTrackedSparkPosts, saveTrackedSparkPosts, trackSparkPost, loadMomentsPostOn } from './sparkCircles';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { CharacterProfile, CharPlaylistSong } from '../types';
+import { CharacterProfile, CharPlaylistSong, SocialComment, SocialPost } from '../types';
+import { normalizeSparkSticker, pickSparkPostBg } from '../apps/social/SparkPostImage';
 import { sanitizeForBubble } from './sanitize';
 import { extractTransferCommands } from './transferFormat';
 import { executeLifeDirectives } from './lifeRecords';
@@ -12,6 +14,14 @@ import {
     extractCollaborationFileDirectives,
     resolveCollaborationFileByTitle,
 } from '../features/collaboration/chatLibrary';
+import { extractIncomingCallAction, resolveIncomingCallPopupStyle, isIncomingCallBlockedByBlock } from './incomingCall';
+import { canOfferIncomingCallNow, offerIncomingCall } from './incomingCallBridge';
+import {
+    BLOCK_FRIEND_REQUEST_SOURCE,
+    BLOCK_PEEK_SOURCE,
+    extractBlockFriendRequestAction,
+    extractBlockPeekAction,
+} from './block';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -209,6 +219,326 @@ export const ChatParser = {
         if (content.includes('[[ACTION:POKE]]')) {
             await persist({ charId, role: 'assistant', type: 'interaction', content: '[戳一戳]' });
             content = content.replace('[[ACTION:POKE]]', '').trim();
+        }
+
+        // SPARK_COMMENT — 角色在聊天里决定去 Spark 公开评论分享过的帖子。
+                        // P6/SPARK_COMMENT：角色在聊天里决定去 Spark 公开评论分享过的帖子。
+        // 可及范围 = 该角色见过的 social_card（user 分享卡 + assistant 同步卡）对应的活帖；
+        // 支持指定帖子（按标题匹配）和楼中楼回复（作者:原话片段定位）。幂等：同角色同内容已存在就跳过。
+        const sparkCommentMatch = content.match(/\[\[ACTION:SPARK_COMMENT\|([^\]]+)\]\]/);
+        if (sparkCommentMatch) {
+            // P6：SPARK_COMMENT 支持三种写法。段数判定用「验证式」——第一段能按标题匹配到
+            // 角色见过的活帖才算新格式，否则整段视为老格式的评论内容（内容里碰巧含 | 不会误判）：
+            //   [[ACTION:SPARK_COMMENT|评论内容]]                       → 最近互动的活帖，顶层
+            //   [[ACTION:SPARK_COMMENT|帖子标题|评论内容]]               → 指定帖子，顶层
+            //   [[ACTION:SPARK_COMMENT|帖子标题|作者:原话片段|评论内容]]  → 指定帖子里那条评论的楼中楼
+            const rawAction = sparkCommentMatch[1].trim();
+            content = content.replace(sparkCommentMatch[0], '').trim();
+            const segments = rawAction.split('|').map(s => s.trim()).filter(s => s.length > 0);
+            let commentText = rawAction;
+            let requestedTitle: string | null = null;
+            let replyTargetHint: string | null = null;
+            if (segments.length >= 2) {
+                requestedTitle = segments[0];
+                if (segments.length >= 3) {
+                    replyTargetHint = segments[1];
+                    commentText = segments.slice(2).join('|');
+                } else {
+                    commentText = segments.slice(1).join('|');
+                }
+            }
+            if (commentText) {
+                try {
+                    const all = await DB.getMessagesByCharId(charId, true);
+                    // P2：匹配放宽——user 分享卡和 assistant 同步卡（「让角色知道」写入的）都算
+                    // "角色见过的帖子"。原来只认 user 卡，同步卡永远匹配不到 → 误报"帖子不在了"。
+                    const candidates = [...all].reverse().filter(
+                        x => x.type === 'social_card' && (x.metadata as any)?.post?.id,
+                    );
+                    const posts = await DB.getSocialPosts();
+                    // 角色可及的活帖 = 见过的卡对应的活帖（信息边界：只能评论见过的帖子），由新到旧
+                    const liveSeen = candidates
+                        .map(x => posts.find(p => p.id === ((x.metadata as any).post.id as string)))
+                        .filter((p): p is SocialPost => !!p);
+                    let livePost = liveSeen[0];
+                    if (requestedTitle) {
+                        // 标题匹配：去书名号/引号/空白后双向 includes，命中不到回退最近活帖
+                        const strip = (s: string) => s.replace(/[《》「」『』“”‘’"']/g, '').replace(/\s+/g, '');
+                        const key = strip(requestedTitle);
+                        const hit = key ? liveSeen.find(p => {
+                            const t = strip(p.title || '');
+                            return !!t && (t.includes(key) || key.includes(t));
+                        }) : undefined;
+                        if (hit) livePost = hit;
+                    }
+                    if (livePost) {
+                        const postId = livePost.id;
+                        // P6：四段式楼中楼定位。兜底链：作者+片段 → 只作者（取最近一条）→ 只片段 → 顶层降级
+                        let replyToId: string | undefined;
+                        if (replyTargetHint) {
+                            const colonIdx = replyTargetHint.search(/[:：]/);
+                            const authorPart = colonIdx >= 0 ? replyTargetHint.slice(0, colonIdx).trim().toLowerCase() : '';
+                            const snippetPart = colonIdx >= 0 ? replyTargetHint.slice(colonIdx + 1).trim() : replyTargetHint.trim();
+                            const pool = livePost.comments || [];
+                            const byAuthor = authorPart
+                                ? pool.filter(c => (c.authorName || '').trim().toLowerCase() === authorPart)
+                                : [];
+                            const bySnippet = snippetPart ? byAuthor.filter(c => (c.content || '').includes(snippetPart)) : [];
+                            const looseBySnippet = snippetPart && bySnippet.length === 0
+                                ? pool.filter(c => (c.content || '').includes(snippetPart))
+                                : [];
+                            const noAuthorBySnippet = !authorPart && snippetPart
+                                ? pool.filter(c => (c.content || '').includes(snippetPart))
+                                : [];
+                            const target = bySnippet[bySnippet.length - 1]
+                                || byAuthor[byAuthor.length - 1]
+                                || looseBySnippet[looseBySnippet.length - 1]
+                                || noAuthorBySnippet[noAuthorBySnippet.length - 1];
+                            if (target) replyToId = target.id;
+                        }
+                        const already = (livePost.comments || []).some(
+                            c => c.authorCharId === charId && c.content === commentText,
+                        );
+                        if (!already) {
+                            // 角色 Spark 马甲：与 SocialApp getSparkHandles 同逻辑（配置 > 主账号 > 角色名）
+                            let handleName = charName;
+                            let avatar: string | undefined;
+                            try {
+                                const chars = await DB.getAllCharacters();
+                                const char = chars.find(c => c.id === charId);
+                                if (char) {
+                                    avatar = char.avatar;
+                                    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
+                                    const configured = raw ? (JSON.parse(raw) || {})[charId] : [];
+                                    handleName = (Array.isArray(configured) && configured[0]?.handle?.trim())
+                                        || char.socialProfile?.handle || char.name;
+                                }
+                            } catch {}
+                            const comment: SocialComment = {
+                                id: `cmt-char-${Date.now()}-${Math.random()}`,
+                                authorName: handleName,
+                                authorAvatar: avatar,
+                                content: commentText,
+                                likes: 0,
+                                isCharacter: true,
+                                authorType: 'character',
+                                authorCharId: charId,
+                                // P6：四段式命中楼中楼目标时挂进去；没命中保持顶层（undefined）
+                                ...(replyToId ? { replyToId } : {}),
+                            };
+                            await DB.saveSocialPost({ ...livePost, comments: [...(livePost.comments || []), comment] });
+                            // 帖子追踪：这条帖子被分享追踪过的话，给每个追踪中的角色
+                            // 追加一条「帖子有新动态」通知消息（含角色自己刚发的评论），
+                            // 上下文里角色自然知道评论已发出、帖子最新状态——不再往气泡正文里塞留痕
+                            try {
+                                const tracked = loadTrackedSparkPosts();
+                                const entry = tracked[postId];
+                                if (entry) {
+                                    const updatedPost = { ...livePost, comments: [...(livePost.comments || []), comment] };
+                                    // spark-follow 2-I：moments 帖的追踪通知卡写「关注有新动静」；别的帖原样。别的字段不动
+                                    const updateCardContent = livePost.origin === 'moments' ? '[Spark 关注有新动静]' : '[Spark 帖子动态更新]';
+                                    for (const trackedCharId of entry.charIds) {
+                                        if (trackedCharId === charId) {
+                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: updateCardContent, metadata: { post: updatedPost, syncKind: 'update', newComments: [comment], bySelf: true } });
+                                        } else {
+                                            await DB.saveMessage({ charId: trackedCharId, role: 'user', type: 'social_card', content: updateCardContent, metadata: { post: updatedPost, syncKind: 'update', newComments: [comment] } });
+                                        }
+                                    }
+                                    const allIds = (livePost.comments || []).map(c => c.id);
+                                    entry.seenCommentIds = Array.isArray(entry.seenCommentIds)
+                                        ? [...new Set([...entry.seenCommentIds, comment.id])]
+                                        : [...allIds];
+                                    entry.lastSyncedCommentCount = allIds.length + 1; // 兼容字段，不参与判定
+                                    saveTrackedSparkPosts(tracked);
+                                }
+                            } catch {}
+                            addToast(replyToId ? '评论已发布到 Spark（挂进了楼中楼）' : '评论已发布到 Spark', 'success');
+                            // 留痕不再写进气泡正文（会露馅成"（你把这条评论发布到了……）"）；
+                            // 角色的自我认知由上面追加的追踪通知消息承担
+                        } else {
+                            // 幂等：同角色同内容的评论已存在 → 不重发（主动消息重试会重跑这里）
+                            addToast('这条评论刚才已经发过了', 'info');
+                        }
+                    } else if (candidates.length > 0) {
+                        // P7 失败回写：见过的卡还在但帖子全没了（典型：用户清空了推荐流）；
+                        // 不写这条的话，角色下一轮还以为自己评论成功了
+                        const deadTitle = ((candidates[0].metadata as any).post?.title) || '之前互动过的帖子';
+                        addToast('那些帖子都已经不在了，评论没发出去', 'error');
+                        try {
+                            await persist({ charId, role: 'system', type: 'text', content: `[系统: ${charName} 想去 Spark 评论「${deadTitle}」，但那些帖子都已经不在了（推荐流可能被清空过），评论没有发出去。之后别再提去评论这件事。]` });
+                        } catch {}
+                    } else {
+                        addToast('还没分享过帖子给角色，评论没发出去', 'error');
+                        try {
+                            await persist({ charId, role: 'system', type: 'text', content: `[系统: ${charName} 想去 Spark 评论，但当前没有任何分享给 Ta 的帖子，评论没有发出去。Ta 只能评论用户分享过的帖子。]` });
+                        } catch {}
+                    }
+                } catch (error) {
+                    console.warn('[SparkComment] 发布评论失败:', error);
+                    addToast('Spark 评论发布失败', 'error');
+                    try {
+                        await persist({ charId, role: 'system', type: 'text', content: `[系统: ${charName} 想去 Spark 评论，但发布过程出了故障，评论没有发出去。可以下次再试一次。]` });
+                    } catch {}
+                }
+            }
+        }
+
+        // SPARK_POST — spark-follow 2-G（Ann 2026-09-17）：角色在私聊里主动发「关注动态」（朋友圈）。
+        // 语法：[[ACTION:SPARK_POST|标题|正文]]。一条回复只处理第一个（match 一次，与 SPARK_COMMENT 同款）；
+        // 开关关着 / 缺正文 → 静默剥掉暗号不当发帖（少打扰）；多出来的 | 段丢掉不崩。
+        // 发帖 = 落 socialPosts（origin: 'moments'）+ 作者聊天发布卡（与 SPARK_COMMENT 通知卡同一条路）+ 注册追踪。
+        const sparkPostMatch = content.match(/\[\[ACTION:SPARK_POST\|([^\]]+)\]\]/);
+        if (sparkPostMatch && loadMomentsPostOn()[charId] === true) {
+            const segments = sparkPostMatch[1].split('|').map(s => s.trim());
+            const postTitle = segments[0] || '';
+            const postContent = segments[1] || '';
+            const tags = (segments[2] || '').split(/[#,，、\s]+/).map(t => t.trim()).filter(Boolean);
+            const cover = normalizeSparkSticker(segments[3] || '');
+            if (postContent) {
+                try {
+                    // 角色 Spark 马甲与头像：与 SPARK_COMMENT 同源（配置 spark_char_handles > 社交档案 > 角色名）
+                    let handleName = charName;
+                    let avatar: string | undefined;
+                    try {
+                        const chars = await DB.getAllCharacters();
+                        const char = chars.find(c => c.id === charId);
+                        if (char) {
+                            avatar = char.avatar;
+                            const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
+                            const configured = raw ? (JSON.parse(raw) || {})[charId] : [];
+                            handleName = (Array.isArray(configured) && configured[0]?.handle?.trim())
+                                || char.socialProfile?.handle || char.name;
+                        }
+                    } catch {}
+                    const momentsPost: SocialPost = {
+                        id: `moments-${charId}-${Date.now()}`,
+                        authorName: handleName,
+                        authorAvatar: avatar || '',
+                        title: postTitle || '无标题',
+                        content: postContent,
+                        images: [cover],
+                        likes: Math.floor(Math.random() * 100),
+                        isCollected: false,
+                        isLiked: false,
+                        comments: [],
+                        timestamp: Date.now(),
+                        tags: tags.length ? tags : ['日常'],
+                        bgStyle: pickSparkPostBg(),
+                        authorType: 'character',
+                        authorCharId: charId,
+                        origin: 'moments',
+                        visibleCharIds: [],
+                    };
+                    await DB.saveSocialPost(momentsPost);
+                    await DB.saveMessage({ charId, role: 'assistant', type: 'social_card', content: '[Spark 动态·发布了关注动态]', metadata: { post: momentsPost, syncKind: 'published' } });
+                    trackSparkPost(momentsPost.id, charId, []);
+                    addToast('已发到 Spark 关注', 'success');
+                } catch (error) {
+                    console.warn('[SparkPost] 发布关注动态失败:', error);
+                    addToast('Spark 关注发帖失败', 'error');
+                }
+            }
+        }
+        // 暗号永远不进气泡：发过了 / 开关关着 / 缺正文 / 写歪了 → 一律静默剥掉
+        content = content.replace(/\[\[ACTION:SPARK_POST[^\]]*\]\]/g, '').trim();
+
+        // CALL — 角色在聊天里打语音过来。主动消息 2.0 重放只剥标签不弹。
+        const callExtract = extractIncomingCallAction(content);
+        if (callExtract.consumed) {
+            content = callExtract.text;
+            const amsgReplay = !!(inheritMeta && (inheritMeta as any).activeMsg2);
+            try {
+                const chars = await DB.getAllCharacters();
+                const charProfile = chars.find(c => c.id === charId);
+                const req = {
+                    charId,
+                    charName,
+                    charAvatar: charProfile?.avatar,
+                    line: callExtract.line,
+                    popupStyle: resolveIncomingCallPopupStyle(charProfile),
+                    ringtone: charProfile?.incomingCallRingtone,
+                    amsgReplay,
+                };
+                const recentCallMessages = await DB.getMessagesByCharId(charId, true);
+                if (isIncomingCallBlockedByBlock(recentCallMessages)) {
+                    await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: '打不通',
+                        metadata: {
+                            source: 'incoming-call',
+                            callOutcome: 'blocked',
+                            callBlocked: true,
+                            callLine: callExtract.line,
+                            calledAt: Date.now(),
+                            resolvedAt: Date.now(),
+                        },
+                    });
+                } else if (await canOfferIncomingCallNow(req)) {
+                    const messageId = await persist({
+                        charId,
+                        role: 'system',
+                        type: 'system',
+                        content: callExtract.line ? `[来电] ${callExtract.line}` : '[来电]',
+                        metadata: {
+                            source: 'incoming-call',
+                            callOutcome: 'ringing',
+                            callLine: callExtract.line,
+                            calledAt: Date.now(),
+                        },
+                    });
+                    offerIncomingCall({ ...req, messageId });
+                }
+            } catch (e) {
+                console.warn('[IncomingCall] 处理来电暗号失败，已剥标签:', e);
+            }
+        }
+
+        // PEEK — 拉黑期间角色求用户看一眼。短句直接显示在卡上（代码不截字数，只剥符号；
+        // 15 字是提示词里的玩法约束）。落一张系统卡，用户点「看看」即标记已看。
+        const peekExtract = extractBlockPeekAction(content);
+        if (peekExtract.consumed) {
+            content = peekExtract.text;
+            try {
+                await persist({
+                    charId,
+                    role: 'system',
+                    type: 'system',
+                    content: peekExtract.line ? `[求看看] ${peekExtract.line}` : '[求看看]',
+                    metadata: {
+                        source: BLOCK_PEEK_SOURCE,
+                        peekText: peekExtract.line,
+                        peekViewed: false,
+                        askedAt: Date.now(),
+                    },
+                });
+            } catch (e) {
+                console.warn('[Block] 落求看看卡失败，已剥标签:', e);
+            }
+        }
+
+        // FRIEND_REQUEST — 拉黑期间角色申请重新加好友。附言直接显示在卡上，
+        // 卡上有「通过」「忽略」两个按钮；通过即解除（聊天电话一起恢复）。
+        const frExtract = extractBlockFriendRequestAction(content);
+        if (frExtract.consumed) {
+            content = frExtract.text;
+            try {
+                await persist({
+                    charId,
+                    role: 'system',
+                    type: 'system',
+                    content: frExtract.line ? `[好友申请] ${frExtract.line}` : '[好友申请]',
+                    metadata: {
+                        source: BLOCK_FRIEND_REQUEST_SOURCE,
+                        requestText: frExtract.line,
+                        requestStatus: 'pending',
+                        askedAt: Date.now(),
+                    },
+                });
+            } catch (e) {
+                console.warn('[Block] 落好友申请卡失败，已剥标签:', e);
+            }
         }
 
         // TRANSFER_ACCEPT / TRANSFER_RETURN — char 收下 / 退回 user 最近一笔待处理的转账。

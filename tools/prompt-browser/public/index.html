@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SullyOS 提示词看板</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <strong>提示词看板</strong>
+      <span>勾上要改的 → 右边写意见 → 复制给别的 AI</span>
+    </div>
+    <label class="search">
+      <span class="sr">搜索</span>
+      <input id="q" type="search" placeholder="搜标题、说明或符号名" autocomplete="off" />
+    </label>
+    <div class="top-actions">
+      <span id="picked-count">还没勾</span>
+      <button type="button" class="copy primary" id="copy-pack">复制给 AI 去改</button>
+      <button type="button" class="ghost" id="clear-picked">清空勾选</button>
+    </div>
+  </header>
+  <main class="board">
+    <nav class="col groups" id="groups" aria-label="App 分组"></nav>
+    <section class="col titles" aria-label="提示词列表">
+      <h2 id="group-title">选择左侧 App</h2>
+      <ul id="titles"></ul>
+    </section>
+    <article class="col detail" id="detail" aria-label="提示词正文">
+      <p class="empty">从中间点一条。勾选后，在右边写下「要怎么改」。</p>
+    </article>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

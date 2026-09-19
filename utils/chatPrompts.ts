@@ -9,6 +9,19 @@ import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
 import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
+import { DEFAULT_INCOMING_CALL_PROMPT, formatIncomingCallRecord } from './incomingCall';
+import {
+    BLOCK_SOURCE,
+    BLOCK_FRIEND_REQUEST_SOURCE,
+    BLOCK_PEEK_SOURCE,
+    BLOCK_NOTICE_SOURCE,
+    SYSTEM_LOG_LEAD,
+    formatBlockFriendRequestRecord,
+    formatBlockPeekRecord,
+    formatBlockRecord,
+    formatBlockSendFailedRecord,
+    isBlockSystemSource,
+} from './block';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
@@ -28,6 +41,7 @@ import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { isBlobRef } from './blobRef';
 import { voiceLanguagePromptLabel } from './voiceLanguage';
+import { loadMomentsPostOn } from './sparkCircles';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -694,7 +708,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - 如果用户发送了图片，请对图片内容进行评论。
 6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`
-   - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
+${!forFirePack && char.allowProactiveCall ? `   - **打电话给对方**: ${String(char.incomingCallPrompt || DEFAULT_INCOMING_CALL_PROMPT).trim()}\n` : ''}   - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
    - **处理用户转账**: 当历史里出现 \`[[记录:TRANSFER|to=char|...|status=待处理]]\`（用户转给你、还没处理）时，你可以决定收下或退回。收下: \`[[ACTION:TRANSFER_ACCEPT]]\`；退回: \`[[ACTION:TRANSFER_RETURN]]\`。请结合人设和情境自然选择（比如害羞地退回、开心地收下），并配上一句话。
    - **【重要】\`[[记录:...]]\` 是系统日志**: 历史里以 \`[[记录:\` 开头的标签是已经发生的事实（谁转给谁、什么状态），只供你了解，**严禁**在回复里照抄输出。你要做动作时只能用 \`[[ACTION:...]]\`。
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
@@ -1060,6 +1074,52 @@ ${voiceActingGuide()}`;
             baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
         }
 
+        // Spark 关注（发动态）能力段 —— spark-follow 2-G（Ann 2026-09-17 拍板先用附录 A）：
+        // 跟语音同一类开关——开着整段注入（逐字），关着只注入严禁句。
+        // 不写进 [你现在的能力]（三种 SPARK_COMMENT 原文一个字不改、不加发帖）。
+        if (loadMomentsPostOn()[char.id] === true) {
+            baseSystemPrompt += `\n\n### Spark 关注（发动态）
+
+用户开启了你在 Spark 关注发动态的功能。
+
+**你可以发 Spark 动态！** 就像真人用微信发一条朋友圈：想到了就发，发完继续聊天。动态会出现在用户 Spark 的「关注」里，你自己的聊天里也会看到这张帖子卡。
+
+发动态用一行暗号，单独成行：
+
+[[ACTION:SPARK_POST|标题|正文|#tag1 #tag2|封面emoji]]
+
+规则：
+1. 竖线分开四段：标题、正文、tag、封面贴纸。标题是短的那句，正文才是你真正想说的话。标题或正文空了，这条发不出去。
+2. 暗号本身不会出现在气泡里。想跟用户说的话，写在暗号外面，和平时发消息一样。
+3. 一条回复里最多发一条动态。
+4. 标签外可以照常打字。文字气泡和动态是两件事，不要打完字又用动态把同一句再贴一遍。
+5. 去已经存在的帖子下面评论，用原来的 [[ACTION:SPARK_COMMENT|...]]，不要用 SPARK_POST 去评论。
+6. 第三段是 tag：用空格或 # 分开，打 1-4 个，贴合这条动态的内容和心情。话题只写在这一段，不要写进正文。
+7. 第四段是封面贴纸，从这些里选一个最贴内容的：✨ 🎈 🎨 📷 🎵 🎮 🍔 🏖️ 💤 💡。只写那一个。不选或写歪了会用 ✨。封面是贴纸，不是照片。
+
+示例：
+
+今天天气也太好了吧
+[[ACTION:SPARK_POST|晒个太阳|楼下那只橘猫又占了整条石凳，我只好站着把咖啡喝完。|#日常 #猫|🎈]]
+
+[[ACTION:SPARK_POST|睡不着|两点了还是醒着。把灯关了又打开。|#深夜emo|💤]]
+你也还没睡吧。
+
+刚跟你吵完那句，越想越烦
+[[ACTION:SPARK_POST|算了|不想解释了。发到这里就算说过。|#心情|✨]]
+
+要求：
+- 不是每条消息都要发动态！像真人一样，有时候就是聊天，聊到想发了才发。
+- 比较适合发动态的场景：刚经历一件事想记一笔、心情涌上来、看到什么想分享、深夜emo、炫耀、吐槽、记录日常。
+- 比较适合不发、只聊天的场景：对方正在问你一件具体的事等你回、在吵架正中、在认真谈一件还没说完的事、很短的「嗯」「好」。
+- 动态写在关注上，会给能看见它的人看。私聊里的称呼、约定、只有你们知道的事，不要原封写进正文。
+- 正文要像你会发的动态，符合你的性格和眼下的心情，不要写成公告，不要标题党空壳。
+- 标题不要复读正文。
+- 用户没点名让你发，你也可以发——这是你自己的动态，不是交作业。判断何时发，按你的人设和当下气氛决定。`;
+        } else {
+            baseSystemPrompt += `\n\n[系统提示: Spark 关注发动态功能当前未开启。严禁使用 [[ACTION:SPARK_POST|...]]。]`;
+        }
+
         // 总纲：放在整段上下文最末尾，借 recency 抢最强注意力——这是模型生成下一轮前
         // 最后读到的定调，直接影响它怎么对待"对方刚说出口的话"。
         // 核心：用户的直接表达 > 角色惯性与模型的讨好倾向；把反馈代谢成亲密而非命令；
@@ -1121,12 +1181,29 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
         // 这里再次校验统一边界，兼容只提供内存快照的入口。
         let effectiveHistory = selectCharacterContextMessages(messages, char, options?.contextHighWaterMark);
+        // 给用户看的浅灰句（求看看结果/好友申请结果/挂断提醒）不进模型，状态已经写在对应卡上。
+        effectiveHistory = effectiveHistory.filter(m => m.metadata?.source !== BLOCK_NOTICE_SOURCE);
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
         }
         const historySlice = effectiveHistory.slice(-limit);
         const charTz = resolveCharTimeZone(char);
+
+        // P6：Spark 卡总览。统计 historySlice 里的帖子卡（用户分享 / 角色同步 / 动态通知），
+        // 把「最近 Spark 足迹」总览 + SPARK_COMMENT 三种写法的说明**只挂在最后一张卡**上；
+        // 更早的卡片正文原样保留（不压缩、不改写——防止误伤中间消息），只摘掉重复的
+        // "可以去评论"催促尾巴，多卡时模型不再被多次催到注意力涣散。
+        const sparkCardIdx = historySlice.reduce((acc, m, i) => (m.type === 'social_card' ? i : acc), -1);
+        const sparkTitles: string[] = [];
+        historySlice.forEach((m) => {
+            const t = (m.metadata as any)?.post?.title;
+            if (m.type === 'social_card' && typeof t === 'string' && t.trim()) sparkTitles.push(t.trim());
+        });
+        const sparkTitleLine = [...new Set(sparkTitles)].slice(-5).reverse().join('、《');
+        const sparkFootprintLine = sparkTitleLine
+            ? `\n\n[你现在的能力]\n① 根据当前的聊天走向和你的想法，继续聊下去，或者在 Spark 某个你现在想聊的帖子里的评论区公开发言。写法（三种，按需选）：\n   [[ACTION:SPARK_COMMENT|你的评论内容]] —— 评论你最近互动的那条帖子（顶层评论）\n   [[ACTION:SPARK_COMMENT|帖子标题|你的评论内容]] —— 指定评论某条帖子\n   [[ACTION:SPARK_COMMENT|帖子标题|那位网友:Ta那条评论的原话片段|你的评论内容]] —— 回复某条评论（挂进 Ta 的楼中楼）\n② 不去 Spark，直接继续聊天下去。\n当下想怎么做，就怎么做。`
+            : '';
 
         let timeGapHint = "";
         if (historySlice.length >= 2) {
@@ -1216,7 +1293,17 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 
                 // TODO(记录形态): 戳一戳 / 时间间隔提示等其他系统事件, 等转账的 [[记录:TRANSFER]]
                 // 观察一段时间后再迁 (transferFormat.ts 头注) —— 防线已按整个记录命名空间就位。
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
+                if (m.metadata?.source === 'incoming-call') content = `${timeStr} ${formatIncomingCallRecord(m)}`;
+                // 拉黑玩法的三类记录：状态 / 好友申请卡 / 求看看卡。跟 incoming-call 同款——
+                // 落库时正文已是 [[记录:...]] 形态，这里从 metadata 重建（申请/求看读 live 状态）。
+                else if (m.metadata?.source === BLOCK_SOURCE) {
+                    const bMeta = m.metadata || {};
+                    const bStatus = bMeta.blockStatus === '已解除' ? '已解除' : '已拉黑';
+                    content = `${timeStr} ${formatBlockRecord({ at: Number(m.timestamp || 0), status: bStatus, blockCallsToo: !!bMeta.blockCallsToo })}`;
+                }
+                else if (m.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE) content = `${timeStr} ${formatBlockFriendRequestRecord(m)}`;
+                else if (m.metadata?.source === BLOCK_PEEK_SOURCE) content = `${timeStr} ${formatBlockPeekRecord(m)}`;
+                else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
                 else if (m.type === 'collaboration_file') {
                     const fileName = String(m.metadata?.fileName || m.content || '未命名文件');
                     content = `${timeStr} [你在聊天界面向用户交付了协同文件：《${fileName}》]`;
@@ -1260,19 +1347,50 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     };
 
                     const postAuthorTag = tagAuthor(post.authorName || '路人');
-                    const commentsSample = (post.comments || []).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
+                    const commentsSample = (post.comments || []).slice(0, 10).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
+                    // 五修-4：tag 跟着帖子内容一起给模型（用户自定义 tag / AI 打的 tag 都在此列）
+                    const tagsLine = Array.isArray(post.tags) && post.tags.length ? `\n标签: ${post.tags.join(' ')}` : '';
 
-                    let identityHint = '';
-                    if (myHandles.length > 0) {
-                        identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
+                    const syncKind = (m.metadata as any)?.syncKind;
+                    // spark-follow 2-I：moments（关注动态）卡换附录 D 口吻——只换 published/viewed 的头一句和 update 标签；
+                    // @ 卡、留言卡、用户分享卡（无 syncKind）一个字不改
+                    const isMomentsPost = post.origin === 'moments';
+                    if (m.role === 'assistant' && syncKind) {
+                        // 角色侧同步：让角色知道自己发布过/评论过什么，内容是什么
+                        // 五修-10：被艾特的卡片明确告诉角色"用户 @ 了你"
+                        const mentioned = (m.metadata as any)?.mentioned === true;
+                        const kindLine = mentioned
+                            ? '用户在帖子下 @ 了你'
+                            : syncKind === 'published'
+                            ? (isMomentsPost ? '你发了这条动态' : '你发布了这条笔记')
+                            : syncKind === 'commented' ? '你在这个帖子下留过言' : (isMomentsPost ? '你看见了这条动态' : '你刷到过这条帖子');
+                        const momentsOwner = isMomentsPost && !mentioned && (syncKind === 'published' || syncKind === 'viewed');
+                        content = `${timeStr}（${momentsOwner ? '你的 Spark 关注' : '你的 Spark 动态'}——${kindLine}，留痕如下）\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}`;
+                    } else if (syncKind === 'update') {
+                        // 帖子追踪通知：分享/追踪过的帖子有新评论，同步进上下文让角色跟上最新互动
+                        const newComments = Array.isArray((m.metadata as any)?.newComments) ? (m.metadata as any).newComments : [];
+                        const bySelf = (m.metadata as any)?.bySelf === true;
+                        const newLines = newComments.slice(0, 10).map((c: any) => `${tagAuthor(c.authorName || '路人')}: ${c.content}`).join('\n') || '(无)';
+                        content = `${timeStr}${isMomentsPost ? '[Spark 关注有新动静]' : '[Spark 帖子有新动态]'}\n标题: ${post.title}${tagsLine}\n新增评论:\n${newLines}${bySelf ? '\n（其中你自己发的那条评论已经成功发布）' : ''}`;
+                    } else {
+                        let identityHint = '';
+                        if (myHandles.length > 0) {
+                            identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
+                        }
+                        const authoredByChar = myHandleSet.has(post.authorName);
+                        const authoredByUser = (post.authorName || '') === userName;
+                        let authorshipLine = '';
+                        if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
+                        else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
+
+                        // P6：行为指引全部移除——旧卡=纯事实快照；能力说明只挂最新一张卡（sparkFootprintLine）。
+                        content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}${tagsLine}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}`;
                     }
-                    const authoredByChar = myHandleSet.has(post.authorName);
-                    const authoredByUser = (post.authorName || '') === userName;
-                    let authorshipLine = '';
-                    if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
-                    else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
-
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
+                    // P6：「最近 Spark 足迹」总览 + 三种评论写法，只挂在最后一张 Spark 卡上，
+                    // 让模型对连续多卡互动有自然全貌认知（卡片正文本身不压缩）。
+                    if (index === sparkCardIdx) {
+                        content += sparkFootprintLine;
+                    }
                 }
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};
@@ -1447,6 +1565,19 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
                 }
                 else content = `${timeStr} ${sourceTag} ${content}`;
+
+                // 拉黑期间角色的消息被拒收：让角色看到自己这条是「已拒收」，以为什么都没送达。
+                // 标记在 metadata.blockSendFailed（落库时打），这里只拼前缀记录，不改原文。
+                if (m.role === 'assistant' && m.metadata?.blockSendFailed) {
+                    content = `${formatBlockSendFailedRecord(Number(m.timestamp || 0))}\n${content}`;
+                }
+
+                const asSystemLog = m.role === 'system'
+                    || isBlockSystemSource(m.metadata?.source);
+                if (asSystemLog && typeof content === 'string') {
+                    const body = content.indexOf(SYSTEM_LOG_LEAD) >= 0 ? content : `${SYSTEM_LOG_LEAD} ${content}`;
+                    return { role: 'system', content: body };
+                }
 
                 return { role: m.role, content };
             }),

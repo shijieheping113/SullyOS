@@ -121,6 +121,7 @@ import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
 import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
+import IncomingCallOverlay from './call/IncomingCallOverlay';
 
 /*
 // Internal Error Boundary Component
@@ -452,7 +453,7 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
 };
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError, sysOperation } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
 
   // 三档顶部状态栏：安全显示 / 紧凑显示 / 隐藏。旧存档仍由 hideStatusBar 兼容解析。
@@ -462,6 +463,14 @@ const PhoneShell: React.FC = () => {
     document.documentElement.classList.toggle('sully-statusbar-hidden', statusBarMode === 'hidden');
     document.documentElement.classList.toggle('sully-statusbar-compact', statusBarMode === 'compact');
   }, [statusBarMode]);
+
+  useEffect(() => {
+    if (!incomingCall || incomingCall.status !== 'ringing' || incomingCall.popupStyle !== 'fullscreen') return;
+    return registerBackHandler(() => {
+      snoozeIncomingCall();
+      return true;
+    });
+  }, [incomingCall, registerBackHandler, snoozeIncomingCall]);
 
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
@@ -1030,6 +1039,15 @@ const PhoneShell: React.FC = () => {
               错误指示器、系统调试终端与开关无关、始终在。 */}
           <StatusBar />
           
+          {incomingCall && activeApp !== AppID.Call && (
+            <IncomingCallOverlay
+              call={incomingCall}
+              onAccept={acceptIncomingCall}
+              onReject={rejectIncomingCall}
+              onSnooze={snoozeIncomingCall}
+            />
+          )}
+
           {/* Overlays: Suspended Call Bar */}
           {suspendedCall && activeApp !== AppID.Call && (
             <button

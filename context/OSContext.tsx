@@ -47,6 +47,11 @@ import { markBackupDone } from '../utils/backupReminder';
 import { collectSARLocalBackup, restoreSARLocalBackup } from '../utils/vrWorld/sarBackup';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { normalizeModelIds } from '../utils/modelList';
+import { getBlockStateFromMessages, restoreBlockDeliveryFlags } from '../utils/block';
+import { runBlockedCallHangupReply } from '../utils/blockCallHangupReply';
+import { setIncomingCallHooks, type IncomingCallRequest } from '../utils/incomingCallBridge';
+import { shouldOfferIncomingCall, type IncomingCallLaunch, type IncomingCallState } from '../utils/incomingCall';
+import { startIncomingCallRingtone, stopIncomingCallRingtone } from '../utils/incomingCallRingtone';
 import {
   CONTEXT_RANGE_POLICY_VERSION,
   DEFAULT_MANUAL_CONTEXT_LIMIT,
@@ -75,6 +80,7 @@ import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setElevenLabsModel, setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
+import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { formatBytes } from '../utils/format';
@@ -445,6 +451,15 @@ interface OSContextType {
   suspendCall: (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; pendingAvatarTouches?: AvatarTouchRecord[] }) => void;
   resumeCall: () => void;
   clearSuspendedCall: () => void;
+  incomingCall: IncomingCallState | null;
+  acceptIncomingCall: () => void;
+  rejectIncomingCall: () => void;
+  snoozeIncomingCall: () => void;
+  incomingCallLaunch: IncomingCallLaunch | null;
+  consumeIncomingCallLaunch: () => void;
+  incomingCallHandoff: IncomingCallRequest | null;
+  bindIncomingCallSession: (sessionId: string) => void;
+  completeIncomingCall: (result: { durationSec: number; sessionId: string }) => void;
 
   // 从聊天「见面」按钮跳进见面：携带目标角色，DateApp 挂载时自动进入该角色的见面流程
   dateAutoStartCharId: string | null;
@@ -593,6 +608,24 @@ const defaultTheme: OSTheme = {
   darkMode: false,
   preserveCustomIconOutlines: false,
   nowPlayingWidgetLight: true,
+};
+
+/** 开屏开关/风格必须在第一帧就对上，否则 PhoneShell 会先按默认「开」播一遍，设置里关掉也不认。 */
+const readStoredBootTheme = (): Pick<OSTheme, 'bootAnimationEnabled' | 'bootAnimationStyle'> => {
+  try {
+    const raw = localStorage.getItem('os_theme');
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const patch: Pick<OSTheme, 'bootAnimationEnabled' | 'bootAnimationStyle'> = {};
+    if (typeof parsed.bootAnimationEnabled === 'boolean') patch.bootAnimationEnabled = parsed.bootAnimationEnabled;
+    if (parsed.bootAnimationStyle === 'classic' || parsed.bootAnimationStyle === 'jellyfish') {
+      patch.bootAnimationStyle = parsed.bootAnimationStyle;
+    }
+    return patch;
+  } catch {
+    return {};
+  }
 };
 
 /** 锁屏壁纸使用独立资产槽；undefined 表示继续跟随桌面壁纸。 */
@@ -846,7 +879,7 @@ const OSContext = import.meta.env.DEV
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ... (State declarations same as before) ...
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
-  const [theme, setTheme] = useState<OSTheme>(defaultTheme);
+  const [theme, setTheme] = useState<OSTheme>(() => ({ ...defaultTheme, ...readStoredBootTheme() }));
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
   
@@ -974,6 +1007,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; pendingAvatarTouches?: AvatarTouchRecord[] } | null>(null);
+  const [incomingCall, setIncomingCall] = useState<IncomingCallState | null>(null);
+  const incomingCallRef = useRef(incomingCall);
+  incomingCallRef.current = incomingCall;
+  const [incomingCallLaunch, setIncomingCallLaunch] = useState<IncomingCallLaunch | null>(null);
+  const [incomingCallHandoff, setIncomingCallHandoff] = useState<IncomingCallRequest | null>(null);
   // 聊天「见面」按钮 → 见面：记录目标角色，DateApp 挂载后消费一次并自动进入见面
   const [dateAutoStartCharId, setDateAutoStartCharId] = useState<string | null>(null);
 
@@ -2301,7 +2339,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const justMetOffline = lastRealMsgRaw?.metadata?.source === 'date'
                   && (now.getTime() - lastRealMsgRaw.timestamp) < DATE_AFTERGLOW_MS;
 
-              const hintContent = justMetOffline
+              // 拉黑冷战：机制上主动消息照常发，只是叙事上角色知道自己被拉黑、
+              // 发出去会拒收，换成「想办法挽回」的语境。用上面已读的 recentMsgs 判定，零额外 IO。
+              const blockState = getBlockStateFromMessages(recentMsgs);
+              const tagBlock = (meta?: Record<string, unknown>) => (
+                  blockState.blocked ? { ...(meta || {}), blockSendFailed: true } : meta
+              );
+              let blockedForStr = '';
+              if (blockState.blocked && blockState.since > 0) {
+                  const gapMin = Math.max(0, Math.floor((now.getTime() - blockState.since) / 60000));
+                  if (gapMin < 60) blockedForStr = `${gapMin}分钟`;
+                  else if (gapMin < 1440) blockedForStr = `${Math.floor(gapMin / 60)}小时`;
+                  else blockedForStr = `${Math.floor(gapMin / 1440)}天`;
+              }
+
+              const hintContent = blockState.blocked
+                      ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${blockedForStr ? `拒收已经过了约${blockedForStr}。` : ''}${userName}还是看不见你普通消息。这不是${userName}在找你，是你自己拿起了手机。一两句话就好，别装已经送到。]`
+                      : justMetOffline
                       ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。你和${userName}刚刚在线下见过面（如果上下文里有标着 [约会] 的内容，那就是你们见面时发生的事），现在你们暂时分开了，你拿起手机想给${userName}发条消息。请基于刚才的见面来发——可以回味见面里的某个细节、补一句当时没说出口的话、关心${userName}到家了没，或者就是刚分开就有点想念。绝对不要表现得好像很久没联系，更不要对刚才的见面毫不知情。一两句话就好。]`
                       : `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${timeSinceUser && parseInt(timeSinceUser) > 2 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : ''}]`;
 
@@ -2445,11 +2499,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               type: 'html_card',
                               content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
                               timestamp: baseTimestamp + offset,
-                              metadata: {
+                              metadata: tagBlock({
                                   htmlSource: blk.html,
                                   htmlTextPreview: blk.textPreview,
                                   ...(meta || {}),
-                              },
+                              }),
                           } as any);
                           if (blk.textPreview) savedPreviewChunks.push(blk.textPreview);
                           offset += 1;
@@ -2481,7 +2535,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               type: 'emoji',
                               content: foundEmoji.url,
                               timestamp: baseTimestamp + offset,
-                              ...(meta ? { metadata: meta } : {}),
+                              metadata: tagBlock(meta),
                           });
                           offset += 1;
                       };
@@ -2503,7 +2557,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'text',
                                       content: chunk,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                                   savedPreviewChunks.push(chunk);
                                   offset += 1;
@@ -2535,7 +2589,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   type: 'text',
                                   content: biContent,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
+                                  metadata: tagBlock(meta),
                               });
                               savedPreviewChunks.push(originalText || translatedText);
                               offset += 1;
@@ -2561,7 +2615,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'emoji',
                                       content: foundEmoji.url,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                               } else {
                                   const fallbackText = `发送了表情包：${part.content}`;
@@ -2572,7 +2626,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                       type: 'text',
                                       content: fallbackText,
                                       timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
+                                      metadata: tagBlock(meta),
                                   });
                                   savedPreviewChunks.push(fallbackText);
                               }
@@ -2592,7 +2646,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   type: 'text',
                                   content: chunk,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
+                                  metadata: tagBlock(meta),
                               });
                               savedPreviewChunks.push(chunk);
                               offset += 1;
@@ -2605,6 +2659,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120)
                       || `${char.name} sent a proactive message`;
+
+                  if (blockState.blocked) await restoreBlockDeliveryFlags(charId);
 
                   // 6. Notify OS for unread badge + toast
                   window.dispatchEvent(new CustomEvent('proactive-message-sent', {
@@ -2902,6 +2958,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [isDataLoaded]);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
+    // 作者用 sessionStorage 记「这轮开屏看过了」；永恒关标签经常还不清。
+    // 设置里一切开机开关/风格，撕掉这张纸条，下次冷启动重新播完整淡入。
+    if ('bootAnimationEnabled' in updates || 'bootAnimationStyle' in updates) {
+      try { sessionStorage.removeItem('sullyos_boot_seen_session'); } catch { /* ignore */ }
+    }
     const { wallpaper, lockWallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
     // Legacy slots are banned — never let them enter state, regardless of caller intent.
     const sanitizedWidgets = launcherWidgets !== undefined
@@ -3480,7 +3541,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (stored) await DB.saveAsset(`icon_${appId}`, stored);
       else await DB.deleteAsset(`icon_${appId}`);
   };
-  const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  const addToast = (message: string, type: Toast['type'] = 'info') => { // 七改-UI：id 带随机后缀——同毫秒多条 toast（私聊连发）撞 id 会让 React 留下永远不消失的鬼节点
+    const id = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`; setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  useEffect(() => {
+    const onAppToast = (event: Event) => {
+      const detail = (event as CustomEvent<AppToastDetail>).detail;
+      if (detail?.message) addToast(detail.message, detail.type || 'info');
+    };
+    window.addEventListener(APP_TOAST_EVENT, onAppToast as EventListener);
+    return () => window.removeEventListener(APP_TOAST_EVENT, onAppToast as EventListener);
+  }, []);
   const showError = (title: string, details: string) => {
       setErrorDialog({ title, details });
       // showError 是分发型入口，title 由调用方传。这里写显式白名单：
@@ -3871,6 +3941,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               id === 'custom_font_data' ||
               id === 'spark_social_profile' ||
               id === 'spark_user_bg' ||
+              // 五修-5：Spark 用户发帖的图片是本地缓存（Ann 定稿：不进备份——
+              // 原版没有这套数据，进备份会破坏导出 zip 与原版的互通）。只存本机，删帖即清理。
+              id.startsWith('spark_img_') ||
               id === 'room_custom_assets_list' ||
               id.startsWith('widget_') ||
               id.startsWith('deco_') ||
@@ -5247,6 +5320,90 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setSuspendedCall(null);
   };
 
+  const updateIncomingCallRecord = useCallback(async (outcome: 'accepted' | 'rejected' | 'snoozed') => {
+    const call = incomingCall;
+    if (!call?.messageId) return;
+    await DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: outcome, resolvedAt: Date.now() }));
+  }, [incomingCall]);
+
+  const acceptIncomingCall = useCallback(() => {
+    const call = incomingCall;
+    if (!call) return;
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('accepted');
+    setIncomingCallHandoff({ charId: call.charId, charName: call.charName, charAvatar: call.charAvatar, line: call.line, messageId: call.messageId, popupStyle: call.popupStyle, ringtone: call.ringtone });
+    setIncomingCallLaunch({ charId: call.charId, line: call.line, messageId: call.messageId });
+    setIncomingCall(null);
+    setActiveCharacterId(call.charId);
+    setActiveApp(AppID.Call);
+  }, [incomingCall, updateIncomingCallRecord]);
+
+  const triggerBlockedCallHangupReply = useCallback((charId: string) => {
+    const profile = userProfileRef.current;
+    if (!profile) return;
+    window.setTimeout(() => {
+      void runBlockedCallHangupReply({
+        charId,
+        userName: profile.name || '用户',
+        characters: charactersRef.current,
+        userProfile: profile,
+        groups: groupsRef.current,
+        apiConfig: apiConfigRef.current,
+        realtimeConfig: realtimeConfigRef.current,
+        addToast,
+      }).catch(err => console.warn('[BlockCallHangup] 回一句失败:', err));
+    }, 400);
+  }, [addToast]);
+
+  const rejectIncomingCall = useCallback(() => {
+    const charId = incomingCall?.charId;
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('rejected');
+    setIncomingCall(null);
+    if (charId) triggerBlockedCallHangupReply(charId);
+  }, [incomingCall, updateIncomingCallRecord, triggerBlockedCallHangupReply]);
+
+  const snoozeIncomingCall = useCallback(() => {
+    stopIncomingCallRingtone();
+    void updateIncomingCallRecord('snoozed');
+    setIncomingCall(prev => prev ? { ...prev, status: 'snoozed' } : null);
+  }, [updateIncomingCallRecord]);
+
+  const consumeIncomingCallLaunch = useCallback(() => setIncomingCallLaunch(null), []);
+  const bindIncomingCallSession = useCallback((sessionId: string) => {
+    setIncomingCallHandoff(prev => prev ? { ...prev, sessionId } as IncomingCallRequest : prev);
+  }, []);
+  const completeIncomingCall = useCallback((result: { durationSec: number; sessionId: string }) => {
+    const call = incomingCallHandoff;
+    if (!call?.messageId) return;
+    void DB.updateMessageMetadata(call.messageId, (prev: any) => ({ ...(prev || {}), callOutcome: 'accepted', durationSec: result.durationSec, sessionId: result.sessionId, resolvedAt: Date.now() }));
+    setIncomingCallHandoff(null);
+    if (call.charId) triggerBlockedCallHangupReply(call.charId);
+  }, [incomingCallHandoff, triggerBlockedCallHangupReply]);
+
+  useEffect(() => {
+    setIncomingCallHooks({
+      canOffer: async (req) => {
+        const messages = await DB.getMessagesByCharId(req.charId, true);
+        const char = charactersRef.current.find(item => item.id === req.charId);
+        return shouldOfferIncomingCall({
+          char,
+          hasPending: !!incomingCallRef.current,
+          inCall: activeAppRef.current === AppID.Call,
+          suspended: !!suspendedCallRef.current,
+          hidden: false,
+          amsgReplay: !!req.amsgReplay,
+          messages,
+        });
+      },
+      offer: (req) => {
+        startIncomingCallRingtone(req.ringtone);
+        setIncomingCall({ ...req, startedAt: Date.now(), status: 'ringing' });
+      },
+    });
+    return () => setIncomingCallHooks(null);
+  }, []);
+
   // --- Back Handler Logic ---
   const registerBackHandler = useCallback((handler: () => boolean) => {
       backHandlerRef.current = handler;
@@ -5362,6 +5519,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     suspendCall,
     resumeCall,
     clearSuspendedCall,
+    incomingCall,
+    acceptIncomingCall,
+    rejectIncomingCall,
+    snoozeIncomingCall,
+    incomingCallLaunch,
+    consumeIncomingCallLaunch,
+    incomingCallHandoff,
+    bindIncomingCallSession,
+    completeIncomingCall,
     dateAutoStartCharId,
     openDateWithChar,
     consumeDateAutoStart
