@@ -77,6 +77,7 @@ import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setElevenLabsModel, setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
+import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { formatBytes } from '../utils/format';
@@ -603,6 +604,24 @@ const defaultTheme: OSTheme = {
   nowPlayingWidgetLight: true,
 };
 
+/** 开屏开关/风格必须在第一帧就对上，否则 PhoneShell 会先按默认「开」播一遍，设置里关掉也不认。 */
+const readStoredBootTheme = (): Pick<OSTheme, 'bootAnimationEnabled' | 'bootAnimationStyle'> => {
+  try {
+    const raw = localStorage.getItem('os_theme');
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const patch: Pick<OSTheme, 'bootAnimationEnabled' | 'bootAnimationStyle'> = {};
+    if (typeof parsed.bootAnimationEnabled === 'boolean') patch.bootAnimationEnabled = parsed.bootAnimationEnabled;
+    if (parsed.bootAnimationStyle === 'classic' || parsed.bootAnimationStyle === 'jellyfish') {
+      patch.bootAnimationStyle = parsed.bootAnimationStyle;
+    }
+    return patch;
+  } catch {
+    return {};
+  }
+};
+
 /** 锁屏壁纸使用独立资产槽；undefined 表示继续跟随桌面壁纸。 */
 const resolveLockWallpaperStoredValue = async (w: string | undefined): Promise<string | undefined> => {
     const revokePrev = () => {
@@ -854,7 +873,7 @@ const OSContext = import.meta.env.DEV
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ... (State declarations same as before) ...
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
-  const [theme, setTheme] = useState<OSTheme>(defaultTheme);
+  const [theme, setTheme] = useState<OSTheme>(() => ({ ...defaultTheme, ...readStoredBootTheme() }));
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
   
@@ -2904,6 +2923,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [isDataLoaded]);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
+    // 作者用 sessionStorage 记「这轮开屏看过了」；永恒关标签经常还不清。
+    // 设置里一切开机开关/风格，撕掉这张纸条，下次冷启动重新播完整淡入。
+    if ('bootAnimationEnabled' in updates || 'bootAnimationStyle' in updates) {
+      try { sessionStorage.removeItem('sullyos_boot_seen_session'); } catch { /* ignore */ }
+    }
     const { wallpaper, lockWallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
     // Legacy slots are banned — never let them enter state, regardless of caller intent.
     const sanitizedWidgets = launcherWidgets !== undefined
@@ -3484,6 +3508,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
   const addToast = (message: string, type: Toast['type'] = 'info') => { // 七改-UI：id 带随机后缀——同毫秒多条 toast（私聊连发）撞 id 会让 React 留下永远不消失的鬼节点
     const id = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`; setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  useEffect(() => {
+    const onAppToast = (event: Event) => {
+      const detail = (event as CustomEvent<AppToastDetail>).detail;
+      if (detail?.message) addToast(detail.message, detail.type || 'info');
+    };
+    window.addEventListener(APP_TOAST_EVENT, onAppToast as EventListener);
+    return () => window.removeEventListener(APP_TOAST_EVENT, onAppToast as EventListener);
+  }, []);
   const showError = (title: string, details: string) => {
       setErrorDialog({ title, details });
       // showError 是分发型入口，title 由调用方传。这里写显式白名单：

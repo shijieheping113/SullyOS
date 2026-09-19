@@ -200,8 +200,6 @@ const Chat: React.FC = () => {
     const activeCharIdRef = useRef(activeCharacterId);
     // 流式预览接棒过的正式消息在当前会话内始终跳过入场动画，避免后续 DB 刷新时动画类又被加回来。
     const streamPreviewHandoverIdsRef = useRef<Set<number>>(new Set());
-    // 预览还在时，不画这轮新落库的正式气泡，避免和预览叠两份。
-    const streamHideAfterIdRef = useRef<number | null>(null);
     const registerStreamPreviewHandover = useCallback((charId: string, messageIds: number[]) => {
         if (activeCharIdRef.current !== charId) return;
         messageIds.forEach(id => streamPreviewHandoverIdsRef.current.add(id));

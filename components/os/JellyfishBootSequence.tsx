@@ -35,10 +35,6 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
     startRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
   }
 
-  useEffect(() => {
-    try { sessionStorage.setItem(BOOT_SEEN_KEY, '1'); } catch { /* ignore */ }
-  }, []);
-
   // 「数据就绪 且 停留够 HOLD」→ 退场；否则一直呼吸等待。
   useEffect(() => {
     if (phase === 'exit') return;
@@ -62,9 +58,10 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
     return () => cancelAnimationFrame(raf);
   }, [dataReady, phase, HOLD]);
 
-  // 退场动画播完 → 交还控制权。
+  // 退场动画播完 → 交还控制权。标记挪到退场时才写，避免开发模式 StrictMode 拆装一次就把淡入掐掉。
   useEffect(() => {
     if (phase !== 'exit') return;
+    try { sessionStorage.setItem(BOOT_SEEN_KEY, '1'); } catch { /* ignore */ }
     const t = setTimeout(onDone, EXIT);
     return () => clearTimeout(t);
   }, [phase, EXIT, onDone]);

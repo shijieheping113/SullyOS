@@ -222,6 +222,19 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
         rewrite: () => '/v1/tts',
+        timeout: 85_000,
+        proxyTimeout: 85_000,
+        configure(proxy: any) {
+          proxy.on('error', (err: any, _req: any, res: any) => {
+            const code = err?.code || '';
+            const message = err?.message || String(err);
+            console.log('[fishaudio proxy] error', { code, message });
+            if (res && !res.headersSent && typeof res.writeHead === 'function') {
+              res.writeHead(502, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Fish Audio upstream failed', detail: message, code }));
+            }
+          });
+        },
       }),
       // ElevenLabs TTS：开发环境把同源查询参数改写到官方 voice_id 路径。
       '/api/elevenlabs/tts': withOutboundProxy({
