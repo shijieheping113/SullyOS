@@ -1,5 +1,13 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-19 猫儿：PWA 独立窗口能扛切走重开
+
+Ann 实测：正规 https 上「添加到主屏幕 / 安装应用」成独立窗口后，切手机桌面再回来不刷新、不关页。浏览器标签扛不住；真 PWA 可以。局域网 `192.168.0.103` 自签证书装不成真 PWA。实验用的是 Cloudflare 免登录快速隧道（`trycloudflare.com`），不是 Ann 自己的 Cloudflare 账号，测完已拆。日常仍回局域网地址。这版作为二改主线放到 `my-custom`。
+
+## 2026-09-19 猫儿：临时域名试 PWA（实验中）
+
+摘标已进 `bc491362`。停掉开发热更新 5173，不压缩 `vite build --minify false`（30 秒过），`vite preview` 占本机 5173。Cloudflare 快速隧道：`https://airport-cartridge-necessarily-scales.trycloudflare.com`。日常地址仍是 `192.168.0.103`，这条域名只给 Ann 导入存档、装桌面、切走再回来测。测完拆隧道。未再 commit。未 push。
+
 ## 2026-09-19 猫儿：回桌面改回原地摘标
 
 Ann 点头做第 3 条。回桌面不再 `history.back()`，用 `replaceState` + `stripBrowserBackGuardState` 摘掉守卫标记。`browserBackGuard` 3/3 过。本条提交只存这刀。切手机桌面再回来会刷新，另开临时正规 https 试 PWA。
