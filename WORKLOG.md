@@ -1,5 +1,43 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-19 猫儿：核对修复 bug 的版本（开工鱼声前存档）
+
+Ann 点名先 commit、注明是核对修复 bug 的版本。代码主体已在 `09a6433f`（拆谷歌全屏、私聊崩溃、顶栏头像裁切）。本提交把过夜对照日志钉上，测完或鱼声改砸了可以回到这里。未 push。不带本地预览脚本 `dev-https2.tmp.mjs`。下一刀才是鱼声 500 / 语气词。
+
+## 2026-09-19 猫儿：过夜对照报告（Ann 未测完先睡）
+
+存档：`09a6433f` `fix: 拆谷歌全屏并修好私聊崩溃与顶栏头像裁切`（10 文件）。未 push。本地还留着 `dev-https2.tmp.mjs`、stash `ann-preserve-chrome-refresh-dirty-before-no-fullscreen`。管理闪屏按原计划没动。
+
+对照范围：`HEAD` vs `experiment/spark-follow`（Spark）vs `feat/block-coldwar`（拉黑/语音/来电，全屏那几笔刻意不算漏）。说明书对过 `docs/spark-experiment-follow.md`、`docs/block-coldwar.md`、`HANDOFF.md`、本日志前几条。全屏没有加回去。
+
+### 功能没漏（文件对齐）
+
+Spark 专属界面字节级同原线：`SocialApp.tsx`、`sparkCircles.ts`、`sparkCommentParse.ts`、`SparkPostImage.tsx`。弹窗仍是 **1800ms**，推荐流仍走 `pickSparkFeedEmoji`，关注发帖仍走 `SPARK_POST` 四段 + `origin:'moments'`。
+
+拉黑/语音/来电核心字节级同拉黑线：`block.ts`、`incomingCall.ts`、`volcStt.ts`、`useVoiceInput.ts`、来电叠层和小手机 B。OSContext 里主动消息 `tagBlock`、来电接听/拒接/挂断回一句都在。
+
+合体文件两边都在：`chatParser` 是 SPARK_COMMENT / SPARK_POST + CALL / PEEK / FRIEND_REQUEST；`ChatInputArea` 有聊天装扮 + 拉黑第三页 + 语音键；`MessageItem` 有关注动态卡和求看看/好友申请卡；`applyAssistantPostProcessing` 的 `takeMeta` 会打未送达。
+
+外观/开机/index 已退回 Spark：没有 `fullscreenEnabled`、开机不再 `requestFullscreen`、没有 `html:fullscreen` 清顶距。钓鱼/恐龙按 F 全屏没动。PhoneShell 相对 Spark 只多来电叠层和桌面 `replaceState` 守卫（Ann 点名留着）。
+
+### 错写 / 残留（不是漏功能）
+
+1. **已修并进了这版提交**：切换角色 `setFineTuneOpen` 未定义；顶栏头像原图漏框（钩子改成裁切框）。
+2. **还在、不崩**：`apps/Chat.tsx` 第 204 行 `streamHideAfterIdRef` 只声明没用。拉黑线旧预览隐藏，合体后真正用的是 Spark 的 `streamingHandoverIds`。同类合体笔误，跟 FineTune 一个家族，目前不会炸。醒了要清就删这一行。
+3. **文案过时、功能对**：`SocialApp.tsx` 注释仍写「每条停 2 秒」，定时器是 1800。Spark 原线就这样，不是合体弄坏的。
+4. **统计名单没写拉黑**：打开「拉黑」面板不进 `打开聊天功能面板项`。埋点规矩严，没擅自加。
+
+### 刻意没做
+
+- 谷歌整页全屏整套（开关、空白恢复、开机请求、全屏清顶距）
+- 管理闪屏
+- 备份导入导出
+- 把 Spark 公式改成永恒专用清顶距
+
+### Ann 醒了建议先手测（没测完的那些）
+
+私聊进得去、装扮还能开、顶栏头像裁在框里；Spark 关注/弹窗/评论@；拉黑未送达/求看看/好友申请；语音听写；角色来电（长条/全屏弹窗，不是浏览器全屏）。全屏开关不应该再出现在外观里。
+
 ## 2026-09-19 猫儿：顶栏头像原图溢出框外
 
 - Ann 对照后确认：不是顶距，是角色头像没裁进虚线框，谷歌上按原图尺寸画到框外。原因：`.sully-chat-avatar` 直接套在 `<img>` 上，美化又写了 `overflow:visible`，谷歌就不按 `object-fit:cover` 裁。
