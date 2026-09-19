@@ -629,8 +629,15 @@ const Launcher: React.FC = () => {
               if (cancelled) return;
               const last = recent.messages[0];
               if (last) {
-                  const cleanContent = last.content.replace(/\[.*?\]/g, '').trim();
-                  setLastMessage(cleanContent || (last.type === 'image' ? '[图片]' : '[消息]'));
+                  if (last.type === 'image') {
+                      setLastMessage('[图片]');
+                  } else if (last.type === 'video') {
+                      const vt = typeof last.metadata?.videoTitle === 'string' ? last.metadata.videoTitle.trim() : '';
+                      setLastMessage(vt || '[视频]');
+                  } else {
+                      const cleanContent = last.content.replace(/\[.*?\]/g, '').trim();
+                      setLastMessage(cleanContent || '[消息]');
+                  }
               } else {
                   setLastMessage(targetChar.description || "System Ready.");
               }

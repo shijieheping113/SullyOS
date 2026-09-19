@@ -1,6 +1,6 @@
 import EmojiExportDialog from './EmojiExportDialog';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, LockOpen, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Briefcase, Microphone, X, Check } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, FilmStrip, Lock, LockOpen, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Briefcase, Microphone, X, Check } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import TokenImg from '../os/TokenImg';
@@ -49,6 +49,8 @@ interface ChatInputAreaProps {
     actionsContent?: React.ReactNode;
     onPanelAction: (type: string, payload?: any) => void;
     onImageSelect: (file: File) => void;
+    /** 私聊发本地视频（打开半屏，不是视频通话） */
+    onVideoFilePick?: (file: File) => void;
     isSummarizing: boolean;
     // Categories Support
     categories?: EmojiCategory[];
@@ -95,7 +97,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
     actionsContent,
-    onPanelAction, onImageSelect, isSummarizing,
+    onPanelAction, onImageSelect, onVideoFilePick, isSummarizing,
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
@@ -115,6 +117,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     onCancelVoice,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
+    const chatVideoInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const sendButtonRef = useRef<HTMLButtonElement>(null);
     const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -207,6 +210,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             onImageSelect(file);
         }
         if (e.target) e.target.value = ''; // Reset
+    };
+
+    const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file && onVideoFilePick) onVideoFilePick(file);
+        if (e.target) e.target.value = '';
     };
 
     // --- Unified Touch/Long-Press Logic ---
@@ -636,6 +645,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             </div>)}
             <span className="text-xs font-bold">相册</span>
         </button>,
+        ...(onVideoFilePick ? [
+        <button key="video" onClick={() => chatVideoInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+            {acnh ? (
+            <span className="w-14 h-14 rounded-2xl grid place-items-center shadow-sm border bg-white/70 border-[#e6dab4] text-[#8f674a]">
+                <FilmStrip className="w-6 h-6" weight="bold" />
+            </span>
+            ) : (
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>
+                <FilmStrip className="w-6 h-6" weight="bold" />
+            </div>)}
+            <span className="text-xs font-bold">发视频</span>
+        </button>,
+        ] : []),
         <button key="memory-link"
           onClick={() => onPanelAction('memory-link')}
           className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
@@ -993,6 +1015,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onClickCapture={handleActionsClickCapture}
                         >
                           <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
+                          {onVideoFilePick && (
+                            <input type="file" ref={chatVideoInputRef} className="hidden" accept="video/mp4,video/webm,video/*" onChange={handleVideoChange} />
+                          )}
                           {Array.from({length: actionPageCount}, (_, page) => (
                             <div key={page} role="group" aria-label={`聊天功能第 ${page + 1} 页`} className={`p-6 grid grid-cols-4 grid-rows-[repeat(2,96px)] gap-x-4 gap-y-8 ${actionsPage === page ? '' : 'hidden'}`}>
                               {actionTiles.slice(page * ACTION_PAGE_SIZE, (page + 1) * ACTION_PAGE_SIZE)}

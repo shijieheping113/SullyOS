@@ -82,6 +82,7 @@ function summarizeGroupMsgContent(m: Message): string {
     const meta = (m.metadata as any) || {};
     switch (m.type) {
         case 'image': return '[图片]';
+        case 'video': return '[视频]';
         case 'emoji': return '[表情]';
         case 'interaction': return '[戳了戳]';
         // 转账保持轻占位符, 不迁 [[记录:TRANSFER]] —— 这里是别人对话的背景叙述, 整片都是
@@ -1262,6 +1263,19 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     content = '[' + speaker + '引用了' + whose + '「' + quoted + '」，并回复了 ↓]\n' + content;
                 }
                 
+                if (m.type === 'video') {
+                    const title = typeof m.metadata?.videoTitle === 'string' && m.metadata.videoTitle.trim()
+                        ? m.metadata.videoTitle.trim()
+                        : '一段视频';
+                    const desc = typeof m.metadata?.videoDescription === 'string'
+                        ? m.metadata.videoDescription.trim()
+                        : '';
+                    let textPart = `${timeStr} [用户分享了一段短视频《${title}》]\n这是用户转发的外部短视频，不是你在现场拍的，也不一定是你本人出现在画面里；请把它当「用户发来给你看的分享」来回应。按照实际的视频内容来理解。\n用角色口吻自然衔接当前对话，融入视频的讨论，不要朗读或复述下面的画面说明，不要突兀换话题，而是交流讨论内容。`;
+                    if (desc) textPart += `\n（供你理解视频画面内容，勿照读）${desc}`;
+                    if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
+                    return { role: m.role, content: textPart };
+                }
+
                 if (m.type === 'image') {
                      const visionDescription = options?.useVisionDescriptions
                          && typeof m.metadata?.visionDescription === 'string'

@@ -44,6 +44,10 @@ import {resolveDecorationTheme} from '../utils/chatDecoration';
 import ChatDecorationAnnouncement from '../components/chat/ChatDecorationAnnouncement';
 import ChatDecorationPanel, {DecorationTab} from '../components/chat/ChatDecorationPanel';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import ChatVideoSendSheet from '../components/chat/ChatVideoSendSheet';
+import { describeVideoWithVideoApi, isVideoApiReady, resolveVideoApiCredentials } from '../utils/videoApi';
+import { parseVideoShareNote } from '../utils/videoShareNote';
+import { extractVideoCoverDataUrl, readVideoDurationSec } from '../utils/videoCoverFrame';
 import { useVoiceInput, type VoiceRecording } from '../hooks/useVoiceInput';
 import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
@@ -257,11 +261,15 @@ const Chat: React.FC = () => {
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
+    const [editVideoTitle, setEditVideoTitle] = useState('');
+    const [editVideoDescription, setEditVideoDescription] = useState('');
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showThinkingChainModal, setShowThinkingChainModal] = useState(false);
+    const [pendingVideoFile, setPendingVideoFile] = useState<File | null>(null);
+    const [videoSheetOpen, setVideoSheetOpen] = useState(false);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -1663,7 +1671,7 @@ const Chat: React.FC = () => {
         const finish = autoReply.beginSend(char?.id || null);
         try {
             const sent = await sendText(customContent, customType, metadata);
-            finish(!!sent && (!customType || ['text', 'image', 'emoji'].includes(customType)));
+            finish(!!sent && (!customType || ['text', 'image', 'emoji', 'video'].includes(customType)));
             return sent;
         } catch (error) {
             finish(false);
@@ -1791,6 +1799,103 @@ const Chat: React.FC = () => {
 
         // 重 roll：不注入上一轮残留的情绪 buff 与意识流（innerState），两边独立重新生成。
         triggerAI(newHistory, undefined, { skipEmotionInjection: true });
+    };
+
+    const handleVideoFilePick = (file: File) => {
+        if (!isVideoApiReady(apiConfig)) {
+            addToast('还没打开视频理解，请先到设置里开启', 'error');
+            return;
+        }
+        setPendingVideoFile(file);
+        setVideoSheetOpen(true);
+        setShowPanel('none');
+    };
+
+    const handleSendLocalVideo = async (noteRaw: string) => {
+        if (!char || !pendingVideoFile) return;
+        const file = pendingVideoFile;
+        const { title, source } = parseVideoShareNote(noteRaw, file.name);
+        setVideoSheetOpen(false);
+        setPendingVideoFile(null);
+        if (!inputPreferences.autoReply) setShowPanel('none');
+
+        noteMessageSent();
+        unlockWhiteboxAudio();
+        const finish = autoReply.beginSend(char.id);
+
+        let coverRef = '';
+        try {
+            const coverData = await extractVideoCoverDataUrl(file);
+            if (coverData) {
+                const blob = await fetch(coverData).then(r => r.blob());
+                const imgFile = new File([blob], 'cover.jpg', { type: 'image/jpeg' });
+                const base64 = await processImage(imgFile, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+                coverRef = await migrateDataUrlToRef(base64);
+            }
+        } catch { /* 封面失败仍发占位消息 */ }
+
+        const creds = resolveVideoApiCredentials(apiConfig);
+        const durationSec = await readVideoDurationSec(file).catch(() => 0);
+        const msgId = await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'video',
+            content: coverRef,
+            metadata: {
+                videoTitle: title,
+                videoDescription: '',
+                videoStatus: 'processing',
+                videoDurationSec: durationSec,
+                videoModel: creds.model,
+                videoFileName: file.name,
+                videoSource: source,
+            },
+        });
+        await reloadMessages(visibleCountRef.current);
+
+        void (async () => {
+            try {
+                const result = await describeVideoWithVideoApi(file, title, apiConfig);
+                const readyMeta = {
+                    videoTitle: title,
+                    videoDescription: result.description,
+                    videoStatus: 'ready',
+                    videoDurationSec: result.durationSec,
+                    videoRecognizedAt: Date.now(),
+                    videoSamplingRequestedFps: result.requestedSampling.fps,
+                    videoSamplingRequestedMaxFrames: result.requestedSampling.maxFrames,
+                    videoSamplingFps: result.sampling.fps,
+                    videoSamplingMaxFrames: result.sampling.maxFrames,
+                    videoSamplingDetail: result.sampling.detail,
+                    videoEffectiveFrames: result.sampling.effectiveFrames,
+                    videoSamplingFallback: result.samplingFallback,
+                    videoMaxTokens: result.maxTokens,
+                    videoDescribeRetried: result.describeRetried,
+                    videoUsagePromptTokens: result.usage?.promptTokens,
+                    videoUsageCompletionTokens: result.usage?.completionTokens,
+                };
+                await DB.updateMessageMetadata(msgId, (prev: any) => ({ ...(prev || {}), ...readyMeta }));
+                patchMessageMeta(msgId, readyMeta);
+                await reloadMessages(visibleCountRef.current);
+                addToast('视频识别结束了', 'success');
+                if (result.samplingFallback) {
+                    addToast('视频抽帧过密已自动降档重试，实际送帧见气泡详情', 'info');
+                }
+                if (result.describeRetried) {
+                    addToast('描述较短已自动加长输出重试一次', 'info');
+                }
+                if (result.usageToastLine) addToast(result.usageToastLine, 'info');
+                finish(true);
+            } catch (error: any) {
+                const msg = error?.message || '视频识别失败，换一段短的再试';
+                const failMeta = { videoStatus: 'failed', videoError: msg };
+                await DB.updateMessageMetadata(msgId, (prev: any) => ({ ...(prev || {}), ...failMeta }));
+                patchMessageMeta(msgId, failMeta);
+                await reloadMessages(visibleCountRef.current);
+                addToast(msg, 'error');
+                finish(false);
+            }
+        })();
     };
 
     const handleImageSelect = async (file: File) => {
@@ -3061,11 +3166,41 @@ const Chat: React.FC = () => {
 
     const handleCopyMessage = () => {
         if (!selectedMessage) return;
-        navigator.clipboard.writeText(selectedMessage.content);
+        if (selectedMessage.type === 'video') {
+            const title = typeof selectedMessage.metadata?.videoTitle === 'string'
+                ? selectedMessage.metadata.videoTitle.trim()
+                : '';
+            const desc = typeof selectedMessage.metadata?.videoDescription === 'string'
+                ? selectedMessage.metadata.videoDescription.trim()
+                : '';
+            const text = [title, desc].filter(Boolean).join('\n') || '[视频]';
+            navigator.clipboard.writeText(text);
+        } else {
+            navigator.clipboard.writeText(selectedMessage.content);
+        }
         setModalType('none');
         setSelectedMessage(null);
         addToast('已复制到剪贴板', 'success');
         trackEvent('复制一条消息');
+    };
+
+    const confirmEditVideoMessage = async () => {
+        if (!selectedMessage || selectedMessage.type !== 'video') return;
+        const nextTitle = editVideoTitle.trim();
+        const nextDesc = editVideoDescription.trim();
+        await DB.updateMessageMetadata(selectedMessage.id, (prev: any) => ({
+            ...prev,
+            videoTitle: nextTitle,
+            videoDescription: nextDesc,
+        }));
+        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+        setMessages(prev => prev.map(m => m.id === selectedMessage.id
+            ? { ...m, metadata: { ...m.metadata, videoTitle: nextTitle, videoDescription: nextDesc } }
+            : m));
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('视频消息已修改', 'success');
+        trackEvent('编辑一条消息');
     };
 
     const handleDeleteEmoji = async () => {
@@ -3919,6 +4054,17 @@ const Chat: React.FC = () => {
 
              {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={handleHistoryCleanupDone} />}
              {emojiExport && <EmojiExportDialog {...emojiExport} onClose={() => setEmojiExport(null)} />}
+             {pendingVideoFile && (
+                <ChatVideoSendSheet
+                    file={pendingVideoFile}
+                    open={videoSheetOpen}
+                    onClose={() => {
+                        setVideoSheetOpen(false);
+                        setPendingVideoFile(null);
+                    }}
+                    onSend={handleSendLocalVideo}
+                />
+             )}
             <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
@@ -3932,6 +4078,8 @@ const Chat: React.FC = () => {
                 contextSuiteAllEnabled={contextSuiteAllEnabled}
                 onToggleContextSuite={handleToggleContextSuite}
                 editContent={editContent} setEditContent={setEditContent}
+                editVideoTitle={editVideoTitle} setEditVideoTitle={setEditVideoTitle}
+                editVideoDescription={editVideoDescription} setEditVideoDescription={setEditVideoDescription}
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={(id: string) => {
                     setSelectedPromptId(id);
                     // 同步写 localStorage，让 palace extraction 的风格追加能读到最新选择
@@ -3952,8 +4100,18 @@ const Chat: React.FC = () => {
                 onOpenHistoryCleanup={() => { setModalType('none'); setShowHistoryCleanup(true); }} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
-                onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage}
+                onReplyMessage={handleReplyMessage} onEditMessageStart={() => {
+                    if (!selectedMessage) return;
+                    if (selectedMessage.type === 'video') {
+                        setEditVideoTitle(typeof selectedMessage.metadata?.videoTitle === 'string' ? selectedMessage.metadata.videoTitle : '');
+                        setEditVideoDescription(typeof selectedMessage.metadata?.videoDescription === 'string' ? selectedMessage.metadata.videoDescription : '');
+                        setModalType('edit-video-message');
+                    } else {
+                        setEditContent(selectedMessage.content);
+                        setModalType('edit-message');
+                    }
+                }}
+                onConfirmEditMessage={confirmEditMessage} onConfirmEditVideoMessage={confirmEditVideoMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage}
                 messageFavorited={!!(selectedMessage && contentFavoriteIds.has(contentFavoriteIdForMessage(selectedMessage)))}
                 onToggleMessageFavorite={selectedMessage ? () => handleToggleContentFavorite(selectedMessage) : undefined}
                 onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory} onRenameCategory={handleRenameCategory} onDownloadCategory={handleDownloadCategory}
@@ -4502,6 +4660,7 @@ const Chat: React.FC = () => {
                     onRemoveTheme={removeCustomTheme} activeThemeId={currentThemeId}
                     onPanelAction={handlePanelAction}
                     onImageSelect={handleImageSelect}
+                    onVideoFilePick={handleVideoFilePick}
                     isSummarizing={isSummarizing}
                     categories={visibleCategories}
                     activeCategory={activeCategory}

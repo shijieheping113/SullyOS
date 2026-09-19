@@ -50,6 +50,7 @@ import { configFromPreset, findActivePresetId, type PresetSwitchPatch } from '..
 import type { APIConfig, TtsProvider, SttEngineId, SttApiConfig, SttUsageStats } from '../types';
 import { defaultQwenEmotionPrompt, getSttUsage, resetSttUsage, doubaoGzipSupported, isSttSupported } from '../utils/volcStt';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
+import VideoUnderstandingSettings from '../components/settings/VideoUnderstandingSettings';
 import {
     FIRECRAWL_API_KEYS_URL,
     getFirecrawlApiKey,
@@ -2807,6 +2808,33 @@ const Settings: React.FC = () => {
                     </div>
                 )}
             </div>
+        </SettingsSection>
+
+        <SettingsSection
+            title="视频理解"
+            badge={
+                <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${
+                    apiConfig.videoApi?.enabled
+                        ? 'bg-violet-100 text-violet-600'
+                        : 'bg-slate-100 text-slate-400'
+                }`}>
+                    {apiConfig.videoApi?.enabled ? '已接入' : '未接入'}
+                </span>
+            }
+            icon={
+                <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                </div>
+            }
+        >
+            <VideoUnderstandingSettings
+                apiConfig={apiConfig}
+                apiPresets={apiPresets}
+                updateApiConfig={updateApiConfig}
+                addToast={addToast}
+            />
         </SettingsSection>
 
         {/* 语音识别（STT）—— 独立区块（与识图 API 平级）：聊天麦克风按钮 + 通话共用的三引擎配置 */}

@@ -1,4 +1,5 @@
 import type { APIConfig, ApiPreset } from '../types';
+import { normalizeVideoApiConfig } from './videoApi';
 
 // Clipboard contents can carry zero-width characters that String.trim() does not
 // remove. They are never valid at the edges of an API URL, token, or model id.
@@ -18,6 +19,7 @@ export const normalizeApiModel = (value: unknown): string =>
 
 export function normalizeApiConfig(config: APIConfig): APIConfig {
   const visionApi = config.visionApi;
+  const videoApi = config.videoApi;
   return {
     ...config,
     baseUrl: normalizeApiBaseUrl(config.baseUrl),
@@ -31,6 +33,7 @@ export function normalizeApiConfig(config: APIConfig): APIConfig {
         model: normalizeApiModel(visionApi.model),
       },
     } : {}),
+    ...(videoApi ? { videoApi: normalizeVideoApiConfig(videoApi) } : {}),
   };
 }
 

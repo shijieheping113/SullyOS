@@ -262,6 +262,21 @@ export interface VisionApiConfig {
   model: string;
 }
 
+export type VideoApiDetail = 'auto' | 'low' | 'high';
+
+/** 私聊发本地短视频：硅基 video_url 理解，原片不落库。 */
+export interface VideoApiConfig {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  detail: VideoApiDetail;
+  fps: number;
+  maxFrames: number;
+  maxDurationSec: number;
+  maxSizeMB: number;
+}
+
 // ===== 语音识别（STT）三引擎配置 =====
 // 聊天输入框的麦克风按钮使用；从 stt-test.html 验证过的三方案移植：
 //   doubao  → 豆包流式 2.0（火山引擎，走 /api/volc-ws 代理，情绪 5 格，1元/时按实说话计费）
@@ -299,6 +314,8 @@ export interface APIConfig {
   apiKey: string;
   // 可选识图中转：给不支持 image_url 的主模型补视觉能力。
   visionApi?: VisionApiConfig;
+  /** 私聊本地短视频理解（硅基 video_url）。默认关闭。 */
+  videoApi?: VideoApiConfig;
   // 可选语音识别：聊天麦克风按钮的三引擎配置。
   sttApi?: SttApiConfig;
   minimaxApiKey?: string;
@@ -3892,7 +3909,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card';
+export type MessageType = 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card';
 
 export interface Message {
     id: number;

@@ -16,6 +16,7 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
+import VideoMessageBubble from './VideoMessageBubble';
 // v8c-1（Ann 2026-09-16）：Spark 卡片头像也走共用解析器（自定义 > 主聊天头像 > 快照 > 名字 hash）
 import { resolveSparkCharAvatar } from '../../utils/sparkAvatar';
 // 六改-3：Spark 帖子图共用组件——social_card 卡片里 sparkimg: 引用渲染真图（原来被当文本铺成一串图名）
@@ -3633,6 +3634,12 @@ const MessageItem = React.memo(({
         );
     }
 
+    if (m.type === 'video') {
+        return commonLayout(
+            <VideoMessageBubble message={m} isLatestMessage={isLatestMessage} onMediaLoad={onMediaLoad} />
+        );
+    }
+
     if (m.type === 'image') {
         return commonLayout(
             <div className="relative group">
@@ -3813,9 +3820,7 @@ const MessageItem = React.memo(({
     // 历史快照里还可能原样躺着图片令牌 / data: / 图床 URL（用户侧引用图片消息时曾直接落库），
     // 那种值洗不出正文、截 10 个字就是一串 `blobref:b_`，交给写入端同一个快照函数换成占位符。
     const replyPreview = m.replyTo
-        ? (isImageValue(m.replyTo.content)
-            ? buildReplySnapshotContent({ content: m.replyTo.content })
-            : stripJunk(m.replyTo.content))
+        ? stripJunk(m.replyTo.content)
         : '';
 
     // Parse %%BILINGUAL%% for bilingual display (langA = "选" language, langB = "译" language)
@@ -4173,6 +4178,10 @@ const MessageItem = React.memo(({
            prev.msg.metadata?.sarModuleSurface?.surface === next.msg.metadata?.sarModuleSurface?.surface &&
            // 用户语音记号 metadata.stt（含 transcript）变了要重渲染，否则补完字气泡不刷新。
            (prev.msg.metadata as any)?.stt === (next.msg.metadata as any)?.stt &&
+           // 本地视频：识别中 → 完成时 videoStatus / 描述要刷新，否则气泡一直转圈。
+           (prev.msg.metadata as any)?.videoStatus === (next.msg.metadata as any)?.videoStatus &&
+           (prev.msg.metadata as any)?.videoDescription === (next.msg.metadata as any)?.videoDescription &&
+           (prev.msg.metadata as any)?.videoError === (next.msg.metadata as any)?.videoError &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
            prev.activeTheme === next.activeTheme &&

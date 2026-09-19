@@ -300,6 +300,9 @@ export function redactDevDebugSecrets(value: unknown): unknown {
     if (typeof value === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
         return `<image data omitted · ${value.length} chars>`;
     }
+    if (typeof value === 'string' && /^data:video\/[a-z0-9.+-]+;base64,/i.test(value)) {
+        return `<video data omitted · ${value.length} chars>`;
+    }
     if (!value || typeof value !== 'object') return value;
 
     const out: Record<string, unknown> = {};

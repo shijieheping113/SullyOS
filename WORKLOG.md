@@ -1,5 +1,55 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-20 凌晨 猫儿：25s 识别不全（括号总结收尾）
+
+根因：25s+看全/更密仍可能 max_tokens=2500 截断【画面过程】→ 片段3 后括号总结。改 pickVideoDescriptionMaxTokens 按送帧 4k/6k/8k/10k；截断检测+顶满 tokens 自动加长重试；提示词禁括号代写结尾；50507 降档 toast+metadata；max_frames 顶 256；新增「半分钟快剪」预设。vitest 含 Ann 坏例。未 commit。
+
+## 2026-09-20 凌晨 猫儿：视频气泡刷新 + 设置收简 + 去剪贴板
+
+MessageItem.memo 补上 videoStatus/描述判等 + 识别完成 patchMessageMeta，聊天内转圈能变播放键。发视频 sheet 不再读剪贴板。设置抽帧改芯片+自定义、说明帧数与看不全关系；长视频高帧数 max_tokens 提到 10000。未 commit。
+
+## 2026-09-20 凌晨 猫儿：视频理解体验二期（设置/异步发送/费用/长视频）
+
+设置页对齐识图层次：五档紧凑列表 + **常显** fps/max_frames/detail；连接配置独立卡片；本机 `video_api_usage_stats_v1` 费用统计与清零。发视频先落 `videoStatus=processing` 回聊天转圈，后台 `describeVideoWithVideoApi` 完成后写描述 + 双 toast（识别结束 + 费用）；`max_tokens` 按时长 2500/6000/8000；提示词要求【画面过程】覆盖全程。Sheet 去掉补全标题，选片试读剪贴板糊贴。vitest 补 `videoApiUsage` / `pickVideoDescriptionMaxTokens`。未 commit。
+
+## 2026-09-20 凌晨 猫儿：视频理解五档预设 + 真自定义 + 费用估算
+
+五档抽帧（含一分钟 60/100 帧）、设置页列表式档位 + 15/30/60s 粗算费用、max_frames 至 128；快剪三段式 VIDEO_MODEL_INSTRUCTION；50507 自动降档 minute_dense→minute_full。vitest 过。未 commit。
+
+## 2026-09-20 凌晨 猫儿：视频消息七项修复（Ann 定稿提示词）
+
+小红书首行清洗（去前缀/营销行）；封面多 seek+亮度；视频/主模型提示词定稿；长按编辑标题与画面说明；Launcher/历史搜索不再露 blobref；卡片固定高+播放三角。vitest 视频相关用例过。未 commit。
+
+## 2026-09-19 深夜 猫儿：视频设置 UI + 测试按钮修
+
+测试无反应：`normalizeApiModel` 未 import 一点就崩。UI 对齐识图：清晰度三格、抽帧双列、测试/保存并排；测时 toast + 结果区。`extractModelIds` 已改引 `modelList`。
+
+## 2026-09-19 深夜 猫儿：修设置崩溃（extractModelIds 错 import）
+
+`VideoUnderstandingSettings` 误从 `safeApi` 引 `extractModelIds`，应从 `modelList`（与主 Settings 一致）。vitest 视频相关 13 条仍过。
+
+## 2026-09-19 深夜 猫儿：私聊本地视频理解一期（feat/chat-video）
+
+从 `my-custom` 开 `feat/chat-video`。私聊加号「发视频」→ 半屏标题/糊贴清洗 → 硅基 `video_url` 理解 → 落 `type=video`（封面 blobref + metadata.videoDescription 进记录/记忆/备份）→ 原片不落库。设置「视频理解」默认关，detail 含 auto，体积默认 30MB，三套抽帧预设；**测试**走内置 `public/test-assets/video-understanding-probe.mp4`（约 2 秒）一键测通，不选本地文件。Ann 两例糊贴单测过。相关 vitest 12 条过。未 commit、未 push（等 Ann）。
+
+## 2026-09-19 晚 猫儿：对照作者开屏（upstream ≈ 8c6c7f50）
+
+逐文件对过：`BootSequence` / 两份开屏 / CSS / `Appearance` 开屏区与作者一致。相对作者只保留两处补丁：Classic/Jellyfish **退场才写** `sullyos_boot_seen_session`（防 StrictMode 秒出）；`OSContext` 首帧 `readStoredBootTheme` + 改开屏设置时 `removeItem`。不要把开屏 TSX checkout 回作者 mount 写 key 而不带回这两处。`PhoneShell` 开屏门闩与作者同；同标签刷新仍可能短开屏是作者原设计。
+
+## 2026-09-19 晚 猫儿：Ann 点名看项目，准备硅基视频识别二改（未开工）
+
+Ann 说要做新功能：接入硅基流动视频识别 API。本轮只读、不改代码。
+
+现场：分支 `my-custom` @ `cb451d34`（PWA 结论那版）。`SULLY.md` / `HANDOFF.md` / `TOMORROW.md` 三份人格交接文件都不在仓库里。人格按外层 `d:\SullyOS\AGENTS.md` + 用户规则 + 检讨铁律走。
+
+现有硅基：识图（设置里独立 visionApi，聊天图先转文字再给主模型）、记忆宫殿 Embedding/Rerank、STT（Omni / TeleASR，开发代理 `/api/sf-stt` 和 `/v1/chat/completions`）。聊天消息类型没有 video；输入栏只收图。硅基官方视频走同一套 `/v1/chat/completions`，content 用 `video_url`（Qwen3-VL / Qwen3-Omni 等）。
+
+未写代码。等 Ann 说用在哪、怎么用、以及「做吧」。
+
+## 2026-09-19 猫儿：删重复分支 + 备份二改主线
+
+`merge/author-plus-custom` 与 `my-custom` 同提交 `cb451d34`，无独有提交，已删本地分支。备份分支 `backup/my-custom-merge-author-20260919` 钉在同一提交（作者最新合体 + 摘标 + PWA 结论）。未 push 备份名。
+
 ## 2026-09-19 猫儿：PWA 独立窗口能扛切走重开
 
 Ann 实测：正规 https 上「添加到主屏幕 / 安装应用」成独立窗口后，切手机桌面再回来不刷新、不关页。浏览器标签扛不住；真 PWA 可以。局域网 `192.168.0.103` 自签证书装不成真 PWA。实验用的是 Cloudflare 免登录快速隧道（`trycloudflare.com`），不是 Ann 自己的 Cloudflare 账号，测完已拆。日常仍回局域网地址。这版作为二改主线放到 `my-custom`。

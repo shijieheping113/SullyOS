@@ -116,6 +116,13 @@ export function normalizeMessageContent(
 
     // 纯视觉类给占位；语音优先使用配套转写，避免把音频资源地址送进上下文。
     if (type === 'image') return '[图片]';
+    if (type === 'video') {
+        const title = typeof msg.metadata?.videoTitle === 'string' ? msg.metadata.videoTitle.trim() : '';
+        const desc = typeof msg.metadata?.videoDescription === 'string' ? msg.metadata.videoDescription.trim() : '';
+        const head = `[用户分享短视频]${title ? `《${title}》` : ''}`;
+        if (desc) return `${head}\n画面摘录：${desc}`;
+        return head;
+    }
     if (type === 'emoji') return '[表情包]';
     if (type === 'voice') {
         const transcript = getVoiceTranscript(msg);
@@ -413,6 +420,9 @@ export function formatMessageWithTime(
 export function isMessageSemanticallyRelevant(msg: Message): boolean {
     const type = msg.type as string;
     if (type === 'image' || type === 'emoji') return false;
+    if (type === 'video') {
+        return !!(typeof msg.metadata?.videoDescription === 'string' && msg.metadata.videoDescription.trim());
+    }
     if (type === 'voice') return !!getVoiceTranscript(msg);
     // 卡片是其它功能汇入聊天的结构化上下文；即使 content 为空，只要专用格式化器
     // 能从 metadata 生成可读摘要，也必须参与缓冲区计数和记忆总结。

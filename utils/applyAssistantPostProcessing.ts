@@ -69,12 +69,20 @@ import { getBlockStateFromMessages } from './block';
  * 每一个 id 的公共前缀，于是判定「引用面像是被截断过，不安全」→ 整库豁免，一个 Blob 都不删，
  * 而且不报任何错（唯一能察觉的信号是 runGc 返回值里的 keptBoundary）。
  */
-export function buildReplySnapshotContent(msg: { type?: string; content: string }): string {
+export function buildReplySnapshotContent(msg: { type?: string; content: string; metadata?: any }): string {
     const content = msg.content || '';
     const trimmed = content.trim();
     // 值形态判断跟 chatPrompts 的 isMediaValue 同义：data: / http(s) / blobref 令牌都是"一张图"
     const looksLikeMedia = /^(data:|https?:\/\/)/i.test(trimmed) || isBlobRef(trimmed);
     if (msg.type === 'emoji') return '[表情包]';
+    if (msg.type === 'video') {
+        const title = typeof msg.metadata?.videoTitle === 'string' ? msg.metadata.videoTitle.trim() : '';
+        if (title) {
+            const short = title.length > 24 ? `${title.slice(0, 24)}…` : title;
+            return `[视频] ${short}`;
+        }
+        return '[视频]';
+    }
     if (msg.type === 'image' || looksLikeMedia) return '[图片]';
     return content.length > 10 ? content.slice(0, 10) + '...' : content;
 }

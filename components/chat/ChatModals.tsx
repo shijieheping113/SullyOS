@@ -14,6 +14,7 @@ import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatCon
 import { trackEvent } from '../../utils/analytics';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
 import { chatMessageFuzzyMatchesKeyword } from '../../utils/chatMessageSearch';
+import { normalizeMessageContent } from '../../utils/messageFormat';
 
 interface ChatModalsProps {
     modalType: string;
@@ -38,6 +39,10 @@ interface ChatModalsProps {
     onToggleContextSuite: () => void;
     editContent: string;
     setEditContent: (v: string) => void;
+    editVideoTitle: string;
+    setEditVideoTitle: (v: string) => void;
+    editVideoDescription: string;
+    setEditVideoDescription: (v: string) => void;
     
     // New Category Props
     newCategoryName: string;
@@ -84,6 +89,7 @@ interface ChatModalsProps {
     onReplyMessage: () => void;
     onEditMessageStart: () => void;
     onConfirmEditMessage: () => void;
+    onConfirmEditVideoMessage: () => void;
     onDeleteMessage: () => void;
     onCopyMessage: () => void;
     onToggleMessageFavorite?: () => void;
@@ -258,6 +264,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsInputPreferences, setSettingsInputPreferences,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
     editContent, setEditContent,
+    editVideoTitle, setEditVideoTitle,
+    editVideoDescription, setEditVideoDescription,
     newCategoryName, setNewCategoryName, onAddCategory,
     newEmojiName, setNewEmojiName, onRenameEmoji,
     archivePrompts, selectedPromptId, setSelectedPromptId,
@@ -268,7 +276,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onOpenHistoryCleanup,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onToggleMessageFavorite, messageFavorited, onDeleteEmoji, onDeleteCategory, onRenameCategory, onDownloadCategory,
+    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onConfirmEditVideoMessage, onDeleteMessage, onCopyMessage, onToggleMessageFavorite, messageFavorited, onDeleteEmoji, onDeleteCategory, onRenameCategory, onDownloadCategory,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
@@ -1025,7 +1033,13 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                         <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
                                         <div className="flex-1 min-w-0">
                                             <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter.name}</div>
-                                            <div className="truncate">{renderHighlighted(m.content || '', query, contentClass)}</div>
+                                            <div className="truncate">{renderHighlighted(
+                                                m.type === 'video' || m.type === 'image' || m.type === 'voice' || m.type === 'emoji'
+                                                    ? normalizeMessageContent(m, activeCharacter.name, '我')
+                                                    : (m.content || ''),
+                                                query,
+                                                contentClass,
+                                            )}</div>
                                         </div>
                                         <div className="flex flex-wrap justify-end gap-1 max-w-[42%]">
                                             {isWatermark && <span className="text-violet-600 font-bold text-[9px] bg-white px-1.5 rounded-full border border-violet-200">水位线</span>}
@@ -1055,14 +1069,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     <button onClick={onReplyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         引用 / 回复
                     </button>
-                    {selectedMessage?.type === 'text' && (
+                    {(selectedMessage?.type === 'text' || selectedMessage?.type === 'video') && (
                         <button onClick={onEditMessageStart} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                            编辑内容
+                            {selectedMessage?.type === 'video' ? '编辑视频消息' : '编辑内容'}
                         </button>
                     )}
-                    {selectedMessage?.type === 'text' && (
+                    {(selectedMessage?.type === 'text' || selectedMessage?.type === 'video') && (
                         <button onClick={onCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                            复制文字
+                            {selectedMessage?.type === 'video' ? '复制标题与说明' : '复制文字'}
                         </button>
                     )}
                     {selectedMessage && onToggleMessageFavorite && (
@@ -1245,6 +1259,26 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     onChange={e => setEditContent(e.target.value)}
                     className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
                 />
+            </Modal>
+
+            <Modal
+                isOpen={modalType === 'edit-video-message'} title="编辑视频消息" onClose={() => setModalType('none')}
+                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onConfirmEditVideoMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
+            >
+                <div className="space-y-3">
+                    <label className="block text-xs font-bold text-slate-500">视频标题</label>
+                    <textarea
+                        value={editVideoTitle}
+                        onChange={e => setEditVideoTitle(e.target.value)}
+                        className="w-full h-20 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
+                    />
+                    <label className="block text-xs font-bold text-slate-500">画面说明（给角色看的描述）</label>
+                    <textarea
+                        value={editVideoDescription}
+                        onChange={e => setEditVideoDescription(e.target.value)}
+                        className="w-full h-36 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
+                    />
+                </div>
             </Modal>
 
             {/* Schedule Modal */}
