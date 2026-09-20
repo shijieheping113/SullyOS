@@ -44,6 +44,16 @@ export function buildVoiceLangTranslateSystemPrompt(
     return parts.join('\n\n');
 }
 
+/** 见面朗读翻译：作者原句 + 仅日语禁汉字。不拼语气指南，不写语音标签。 */
+export function buildDateVoiceLangTranslateSystemPrompt(targetLang: string): string {
+    const langLabel = voiceLanguagePromptLabel(targetLang);
+    const parts = [authorTranslateLine(langLabel)];
+    if ((targetLang || '').trim().toLowerCase() === 'ja') {
+        parts.push(JAPANESE_KANA_HINT);
+    }
+    return parts.join('\n\n');
+}
+
 /** 模型只出口语；若自己套了 <语音> 就抠内文。字幕一律不用模型的。 */
 export function applyLongpressTranslateResult(
     translated: string,

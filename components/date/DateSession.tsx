@@ -23,7 +23,8 @@ import { fetchBlobForShare } from '../../utils/shareExport';
 import VoiceFavoriteActionSheet from '../voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, makeVoiceFavoriteId, removeVoiceFavorite, saveVoiceFavorite } from '../../utils/voiceFavorites';
 import { MEETING_CONTINUE_DISPLAY_TEXT } from '../../utils/meetingContinue';
-import { VOICE_LANGUAGE_OPTIONS, voiceLanguageAnalyticsValue, voiceLanguageLabel, voiceLanguagePromptLabel } from '../../utils/voiceLanguage';
+import { VOICE_LANGUAGE_OPTIONS, voiceLanguageAnalyticsValue, voiceLanguageLabel } from '../../utils/voiceLanguage';
+import { buildDateVoiceLangTranslateSystemPrompt, translateVoiceLangText } from '../../utils/voiceLangTranslate';
 import { trackEvent } from '../../utils/analytics';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import { resolveSARDateSpeech } from '../../utils/sarDatePresentation';
@@ -292,19 +293,15 @@ const DateSession: React.FC<DateSessionProps> = ({
             let ttsText = cleanTextForTtsProvider(text, apiConfig);
             if (!ttsText || ttsText.length < 2) return null;
             if (voiceLang) {
-                const langLabel = voiceLanguagePromptLabel(voiceLang);
                 try {
-                    const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-                        body: JSON.stringify({
-                            model: apiConfig.model,
-                            messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.` }, { role: 'user', content: ttsText }],
-                            temperature: 0.3,
-                        }),
+                    const translated = await translateVoiceLangText({
+                        apiConfig,
+                        systemPrompt: buildDateVoiceLangTranslateSystemPrompt(voiceLang),
+                        text: ttsText,
+                        purpose: 'date-voice-translate',
+                        charId: char?.id,
+                        retryMainOnce: true,
                     });
-                    const transData = await transRes.json();
-                    const translated = transData?.choices?.[0]?.message?.content?.trim();
                     if (translated) ttsText = translated;
                 } catch { /* use original */ }
             }

@@ -9,6 +9,7 @@ import {
     VOICE_LANG_TRANSLATE_TEMPERATURE,
     VOICE_LANG_TRANSLATE_TIMEOUT_MS,
     applyLongpressTranslateResult,
+    buildDateVoiceLangTranslateSystemPrompt,
     buildVoiceLangTranslateSystemPrompt,
     translateVoiceLangText,
 } from './voiceLangTranslate';
@@ -171,10 +172,21 @@ describe('接线：只动长按外语翻译，不动路 A 和对话翻译', () =
         expect(source).not.toContain('SULLY_AI_REPAIR_PREFS_CUSTOM');
     });
 
-    it('见面朗读仍走作者原主 API，不接线', () => {
+    it('见面朗读只换辅助翻译 + 日语禁汉字，不拼指南、不包语音标签', () => {
         const source = readFileSync(path.resolve(__dirname, '../components/date/DateSession.tsx'), 'utf8');
-        expect(source).not.toContain('translateVoiceLangText');
+        expect(source).toContain("purpose: 'date-voice-translate'");
+        expect(source).toContain('buildDateVoiceLangTranslateSystemPrompt(voiceLang)');
         expect(source).not.toContain('buildVoiceLangTranslateSystemPrompt');
-        expect(source).toContain('Translate the following text to');
+        expect(source).not.toContain('wrapSpokenWithOriginalChinese');
+        expect(source).toContain('extractVoiceEmotionTag');
+        expect(source).toContain('catch { /* use original */ }');
+        const ja = buildDateVoiceLangTranslateSystemPrompt('ja');
+        expect(ja).toContain('Translate the following text to 日本語');
+        expect(ja).toContain('do not use kanji');
+        expect(ja).not.toContain('Follow the guide below');
+        expect(ja).not.toContain(FISH_VOICE_ACTING_GUIDE);
+        expect(ja).not.toContain('<语音');
+        expect(ja).not.toContain('字幕');
+        expect(buildDateVoiceLangTranslateSystemPrompt('en')).not.toContain('kanji');
     });
 });
