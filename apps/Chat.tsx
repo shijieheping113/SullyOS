@@ -54,6 +54,52 @@ import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/VoiceFavoritesPortal';
 import ChatModals from '../components/chat/ChatModals';
+import SullyAssistantSheet from '../components/chat/SullyAssistantSheet';
+import SullyAiRepairModal from '../components/chat/SullyAiRepairModal';
+import SullyRepairPrefsSheet from '../components/chat/SullyRepairPrefsSheet';
+import SullyFormatPickBar from '../components/chat/SullyFormatPickBar';
+import SullyFormatEditorModal from '../components/chat/SullyFormatEditorModal';
+import SullyBubbleOpsBar from '../components/chat/SullyBubbleOpsBar';
+import SullyBubbleComposeModal from '../components/chat/SullyBubbleComposeModal';
+import type { SullyAssistantFeatureId } from '../components/chat/SullyAssistantSheet';
+import type { RenderedBubble } from '../utils/reprocessChatMessage';
+import {
+    getChatNeighbors,
+    mergeMessagesToEditSource,
+    mergeNeighborMessagesToBubbles,
+    pickBatchRepairAnchor,
+} from '../utils/sullyChatNeighbors';
+import { sortChatMessages } from '../utils/chatMessageOrder';
+import { reprocessSourceToBubbles } from '../utils/reprocessChatMessage';
+import { isFormatFixableMessage } from '../utils/sullyMessageFormat';
+import {
+    applySullyFormatUndo,
+    loadSullyFormatUndo,
+    clearSullyFormatUndo,
+    saveSullyFormatUndo,
+    saveAiRepairOutcome,
+    saveMergedFormatReplace,
+    type SullyFormatUndoPayload,
+} from '../utils/sullyFormatUndo';
+import {
+    SULLY_FORMAT_PICK_REJECT,
+    SULLY_FORMAT_SAVE_OK,
+    SULLY_FORMAT_UNDO_SAVE,
+    SULLY_FORMAT_EMOJI_MISSING,
+    SULLY_FORMAT_UNDO_BAR,
+    SULLY_FORMAT_UNDO_DISMISS,
+    SULLY_AI_REPAIR_POST_SAVE_BAR,
+    SULLY_AI_REPAIR_UNDO_BTN,
+    SULLY_AI_REPAIR_RESUME_EDIT_BTN,
+    SULLY_AI_REPAIR_DONE_BTN,
+    SULLY_BUBBLE_COMPOSE_SAVE_OK,
+    SULLY_BUBBLE_MERGE_OK,
+    SULLY_AI_REPAIR_NO_API,
+    SULLY_AI_REPAIR_PICK_EMPTY,
+    SULLY_AI_REPAIR_PICK_ROLE_MISMATCH,
+    pickSullyAiRepairClickLine,
+} from '../utils/sullyAssistantCopy';
+import { isSecondaryLlmReady } from '../utils/secondaryLlmApi';
 import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
 import type { ChatCleanupPlan } from '../utils/chatHistoryCleanup';
 import Modal from '../components/os/Modal';
@@ -288,6 +334,24 @@ const Chat: React.FC = () => {
     // 思维链是 metadata.thinkingChain，没有独立 id，所以用宿主消息 id 作为键，
     // 与 selectedMsgIds 并行存在 —— 只勾思维链时只清 metadata，宿主消息保留。
     const [selectedThinkingMsgIds, setSelectedThinkingMsgIds] = useState<Set<number>>(new Set());
+
+    const [sullyAssistantOpen, setSullyAssistantOpen] = useState(false);
+    const [sullyPickMode, setSullyPickMode] = useState<null | 'edit-rerender' | 'bubble-ops' | 'ai-repair'>(null);
+    const [sullyFormatPickIds, setSullyFormatPickIds] = useState<Set<number>>(() => new Set());
+    const [formatEditorMessage, setFormatEditorMessage] = useState<Message | null>(null);
+    const [formatEditorInitialSource, setFormatEditorInitialSource] = useState<string | null>(null);
+    const [formatEditorSaving, setFormatEditorSaving] = useState(false);
+    const [bubbleCompose, setBubbleCompose] = useState<{ anchorId: number; position: 'before' | 'after' } | null>(null);
+    const [bubbleComposeSaving, setBubbleComposeSaving] = useState(false);
+    const [pendingFormatUndo, setPendingFormatUndo] = useState<SullyFormatUndoPayload | null>(null);
+    const [sullyAssistantSeed, setSullyAssistantSeed] = useState<Message | null>(null);
+    const [sullyAiRepairMessage, setSullyAiRepairMessage] = useState<Message | null>(null);
+    const [sullyAiRepairPicks, setSullyAiRepairPicks] = useState<Message[]>([]);
+    const [sullyAiRepairSaving, setSullyAiRepairSaving] = useState(false);
+    const [sullyAiRepairResume, setSullyAiRepairResume] = useState<import('../utils/sullyAiRepairSession').SullyAiRepairResumeSession | null>(null);
+    const [sullyAiRepairResumeToken, setSullyAiRepairResumeToken] = useState(0);
+    const [sullyFormatEditorMergeExtras, setSullyFormatEditorMergeExtras] = useState<Message[]>([]);
+    const [sullyRepairPrefsOpen, setSullyRepairPrefsOpen] = useState(false);
 
     // --- Translation State (per-character) ---
     const [translationEnabled, setTranslationEnabled] = useState(() => {
@@ -1084,7 +1148,7 @@ const Chat: React.FC = () => {
             // 即说明该角色的单聊消息已全部在手，此时把总数钳到实际可展示的条数。
             const exhausted = recent.length < fetchLimit;
             setTotalMsgCount(exhausted ? chatScopeMsgs.length : totalCount);
-            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+            setMessages(sortChatMessages(chatScopeMsgs).slice(-requestedVisibleCount));
         };
         try {
             const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit, accept);
@@ -3314,6 +3378,348 @@ const Chat: React.FC = () => {
         setModalType('message-options');
     }, []);
 
+    const sullyPickActive = sullyPickMode !== null;
+
+    const sullyFormatPickAnchorId = useMemo(() => {
+        const picked = messages.filter(m => sullyFormatPickIds.has(m.id));
+        if (!picked.length) return null;
+        if (sullyPickMode === 'bubble-ops') return picked[0]?.id ?? null;
+        return pickBatchRepairAnchor(picked)?.id ?? null;
+    }, [messages, sullyFormatPickIds, sullyPickMode]);
+
+    const sullyNeighbors = useMemo(() => {
+        if (sullyFormatPickAnchorId == null) return null;
+        return getChatNeighbors(messages, sullyFormatPickAnchorId);
+    }, [messages, sullyFormatPickAnchorId]);
+
+    const exitSullyPickMode = useCallback(() => {
+        setSullyPickMode(null);
+        setSullyFormatPickIds(new Set());
+        setBubbleCompose(null);
+    }, []);
+
+    const closeFormatEditor = useCallback(() => {
+        setFormatEditorMessage(null);
+        setFormatEditorInitialSource(null);
+        setSullyFormatEditorMergeExtras([]);
+    }, []);
+
+    const openSullyAssistantFromMenu = useCallback(() => {
+        setModalType('none');
+        setSullyAssistantSeed(selectedMessage);
+        setSullyAssistantOpen(true);
+    }, [selectedMessage]);
+
+    const clearSullyAiRepairPicks = useCallback(() => {
+        setSullyAiRepairPicks([]);
+    }, []);
+
+    const resolveSullyFormatPicks = useCallback((): Message[] => {
+        return messages
+            .filter(m => sullyFormatPickIds.has(m.id) && !m.groupId && isFormatFixableMessage(m))
+            .sort((a, b) => a.id - b.id);
+    }, [messages, sullyFormatPickIds]);
+
+    const handleTapCatForAiRepair = useCallback(() => {
+        setSullyAssistantOpen(false);
+        setSullyPickMode('ai-repair');
+        const seed = sullyAssistantSeed ?? selectedMessage;
+        if (seed && !seed.groupId && isFormatFixableMessage(seed)) {
+            setSullyFormatPickIds(new Set([seed.id]));
+        } else {
+            setSullyFormatPickIds(new Set());
+        }
+    }, [sullyAssistantSeed, selectedMessage]);
+
+    const closeSullyAiRepair = useCallback(() => {
+        setSullyAiRepairMessage(null);
+        clearSullyAiRepairPicks();
+        setSullyAiRepairSaving(false);
+    }, [clearSullyAiRepairPicks]);
+
+    const clearSullyAiRepairResume = useCallback(() => {
+        setSullyAiRepairResume(null);
+        setSullyAiRepairResumeToken(0);
+    }, []);
+
+    const confirmSullyAiRepairPick = useCallback(() => {
+        const picked = resolveSullyFormatPicks();
+        if (!picked.length) {
+            addToast(SULLY_AI_REPAIR_PICK_EMPTY, 'info');
+            return;
+        }
+        const roles = new Set(picked.map(m => m.role));
+        if (roles.size > 1) {
+            addToast(SULLY_AI_REPAIR_PICK_ROLE_MISMATCH, 'info');
+            return;
+        }
+        if (!isSecondaryLlmReady(apiConfig.secondaryLlm)) {
+            addToast(SULLY_AI_REPAIR_NO_API, 'info');
+            openApp(AppID.Settings);
+            return;
+        }
+        const anchor = pickBatchRepairAnchor(picked);
+        if (!anchor) return;
+        addToast(pickSullyAiRepairClickLine(userProfile?.name), 'info');
+        clearSullyAiRepairResume();
+        setSullyAiRepairPicks(picked);
+        setSullyAiRepairMessage(anchor);
+        exitSullyPickMode();
+    }, [resolveSullyFormatPicks, apiConfig.secondaryLlm, addToast, openApp, userProfile?.name, exitSullyPickMode, clearSullyAiRepairResume]);
+
+    const confirmSullyAiRepairSave = useCallback(async (payload: import('../components/chat/SullyAiRepairModal').SullyAiRepairSavePayload) => {
+        if (!sullyAiRepairMessage || !char) return;
+        setSullyAiRepairSaving(true);
+        try {
+            const anchor = sullyAiRepairMessage;
+            const role = anchor.role;
+            const reprocess = (source: string) => reprocessSourceToBubbles({
+                char,
+                emojis,
+                categories,
+                source,
+                role,
+                replyTo: anchor.replyTo,
+                inheritMetadata: anchor.metadata,
+            });
+            const bubbles = reprocess(payload.source);
+            const insertAboveBubbles = payload.insertAbove ? reprocess(payload.insertAbove) : undefined;
+            const insertBelowBubbles = payload.insertBelow ? reprocess(payload.insertBelow) : undefined;
+            const batch = sullyAiRepairPicks.length > 0 ? sullyAiRepairPicks : [anchor];
+            const removed = batch.filter(m => m.id !== anchor.id);
+            const outcome = await saveAiRepairOutcome({
+                charId: char.id,
+                anchorId: anchor.id,
+                anchorBubbles: bubbles,
+                removed,
+                insertAboveBubbles,
+                insertBelowBubbles,
+            });
+            setPendingFormatUndo(loadSullyFormatUndo(char.id));
+            const anchorAfterSave = outcome.replacedNewIds[0] ?? anchor.id;
+            setSullyAiRepairResume({
+                ...payload.resumeSession,
+                anchorMessageId: anchorAfterSave,
+            });
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+            setMessages(sortChatMessages(recent));
+            setSullyAiRepairMessage(null);
+            clearSullyAiRepairPicks();
+            const allBubbles = [...(insertAboveBubbles ?? []), ...bubbles, ...(insertBelowBubbles ?? [])];
+            const emojiFallback = allBubbles.some(
+                b => b.type === 'text' && /\[表情[：:]/.test(b.content),
+            );
+            addToast(emojiFallback ? SULLY_FORMAT_EMOJI_MISSING : SULLY_FORMAT_SAVE_OK, emojiFallback ? 'info' : 'success');
+        } catch (e) {
+            console.warn('[SullyAiRepair] save failed', e);
+            addToast('猫儿存失败了……再试一次？', 'error');
+        } finally {
+            setSullyAiRepairSaving(false);
+        }
+    }, [sullyAiRepairMessage, char, emojis, categories, userProfile, groups, realtimeConfig, addToast, sullyAiRepairPicks, clearSullyAiRepairPicks]);
+
+    const handleSullyAssistantFeature = useCallback((featureId: SullyAssistantFeatureId) => {
+        setSullyAssistantOpen(false);
+        setSullyPickMode(featureId);
+        const seed = selectedMessage;
+        if (featureId === 'edit-rerender' && seed && isFormatFixableMessage(seed)) {
+            setSullyFormatPickIds(new Set([seed.id]));
+        } else if (featureId === 'bubble-ops' && seed && !seed.groupId) {
+            setSullyFormatPickIds(new Set([seed.id]));
+        } else {
+            setSullyFormatPickIds(new Set());
+        }
+    }, [selectedMessage]);
+
+    const handleSullyPickMessage = useCallback((msg: Message) => {
+        if (msg.groupId) return;
+        if ((sullyPickMode === 'edit-rerender' || sullyPickMode === 'ai-repair') && !isFormatFixableMessage(msg)) {
+            addToast(SULLY_FORMAT_PICK_REJECT, 'info');
+            return;
+        }
+        if (sullyPickMode === 'bubble-ops') {
+            setSullyFormatPickIds(new Set([msg.id]));
+            return;
+        }
+        setSullyFormatPickIds(prev => {
+            const next = new Set(prev);
+            if (next.has(msg.id)) next.delete(msg.id);
+            else next.add(msg.id);
+            return next;
+        });
+    }, [addToast, sullyPickMode]);
+
+    const confirmSullyFormatPick = useCallback(() => {
+        const picked = resolveSullyFormatPicks();
+        if (!picked.length) {
+            addToast(SULLY_AI_REPAIR_PICK_EMPTY, 'info');
+            return;
+        }
+        const anchor = pickBatchRepairAnchor(picked);
+        if (!anchor) return;
+        exitSullyPickMode();
+        setFormatEditorMessage(anchor);
+        setSullyFormatEditorMergeExtras(picked.filter(m => m.id !== anchor.id));
+        if (picked.length > 1) {
+            setFormatEditorInitialSource(mergeMessagesToEditSource(picked, emojis));
+        } else {
+            setFormatEditorInitialSource(null);
+        }
+    }, [resolveSullyFormatPicks, exitSullyPickMode, emojis, addToast]);
+
+    const openBubbleCompose = useCallback((position: 'before' | 'after') => {
+        if (sullyFormatPickAnchorId == null) return;
+        setBubbleCompose({ anchorId: sullyFormatPickAnchorId, position });
+    }, [sullyFormatPickAnchorId]);
+
+    const executeMergeBubbles = useCallback(async (direction: 'above' | 'below') => {
+        if (!sullyNeighbors?.anchor || !char) return;
+        const partner = direction === 'above' ? sullyNeighbors.prev : sullyNeighbors.next;
+        if (!partner) return;
+        const kept = sullyNeighbors.anchor.timestamp <= partner.timestamp
+            ? sullyNeighbors.anchor
+            : partner;
+        const removed = kept.id === sullyNeighbors.anchor.id ? partner : sullyNeighbors.anchor;
+        try {
+            const bubbles = mergeNeighborMessagesToBubbles(
+                sullyNeighbors.anchor,
+                partner,
+                { char, emojis, categories, kept },
+            );
+            if (!bubbles.length) {
+                addToast('合并没成功……这两条猫儿拼不起来', 'info');
+                return;
+            }
+            const keptSnapshot = await DB.getMessageById(kept.id);
+            if (!keptSnapshot) return;
+            const { newIds, snapshot } = await DB.replaceMessageWithRendered(kept.id, bubbles);
+            const deletedSnapshot = await DB.getMessageById(removed.id);
+            if (deletedSnapshot) {
+                await DB.deleteMessage(removed.id);
+                saveSullyFormatUndo({
+                    kind: 'merge',
+                    charId: char.id,
+                    keptOriginal: snapshot,
+                    deletedId: removed.id,
+                    deletedSnapshot,
+                    newIds,
+                });
+            }
+            setPendingFormatUndo(loadSullyFormatUndo(char.id));
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+            setMessages(sortChatMessages(recent));
+            exitSullyPickMode();
+            addToast(SULLY_BUBBLE_MERGE_OK, 'success');
+        } catch (e) {
+            console.warn('[SullyBubble] merge failed', e);
+            addToast('合并没成功……猫儿再试一次？', 'error');
+        }
+    }, [sullyNeighbors, char, emojis, categories, userProfile, groups, realtimeConfig, addToast, exitSullyPickMode]);
+
+    const confirmBubbleComposeSave = useCallback(async (bubbles: RenderedBubble[]) => {
+        if (!bubbleCompose || !char) return;
+        const anchor = messages.find(m => m.id === bubbleCompose.anchorId);
+        if (!anchor) return;
+        setBubbleComposeSaving(true);
+        try {
+            const insertedIds = await DB.insertMessagesRelative(anchor.id, bubbleCompose.position, bubbles);
+            saveSullyFormatUndo({ kind: 'insert', charId: char.id, insertedIds });
+            setPendingFormatUndo(loadSullyFormatUndo(char.id));
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+            setMessages(sortChatMessages(recent));
+            setBubbleCompose(null);
+            exitSullyPickMode();
+            const emojiFallback = bubbles.some(
+                b => b.type === 'text' && /\[表情[：:]/.test(b.content),
+            );
+            addToast(emojiFallback ? SULLY_FORMAT_EMOJI_MISSING : SULLY_BUBBLE_COMPOSE_SAVE_OK, emojiFallback ? 'info' : 'success');
+        } catch (e) {
+            console.warn('[SullyBubble] insert failed', e);
+            addToast('猫儿加泡失败了……再试一次？', 'error');
+        } finally {
+            setBubbleComposeSaving(false);
+        }
+    }, [bubbleCompose, char, messages, userProfile, groups, realtimeConfig, addToast, exitSullyPickMode]);
+
+    const confirmSullyFormatSave = useCallback(async (source: string) => {
+        if (!formatEditorMessage || !char) return;
+        setFormatEditorSaving(true);
+        try {
+            const bubbles = reprocessSourceToBubbles({
+                char,
+                emojis,
+                categories,
+                source,
+                role: formatEditorMessage.role,
+                replyTo: formatEditorMessage.replyTo,
+                inheritMetadata: formatEditorMessage.metadata,
+            });
+            const anchor = formatEditorMessage;
+            const removed = sullyFormatEditorMergeExtras;
+            await saveMergedFormatReplace(char.id, anchor.id, bubbles, removed);
+            setPendingFormatUndo(loadSullyFormatUndo(char.id));
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+            setMessages(sortChatMessages(recent));
+            closeFormatEditor();
+            const emojiFallback = bubbles.some(
+                b => b.type === 'text' && /\[表情[：:]/.test(b.content),
+            );
+            addToast(emojiFallback ? SULLY_FORMAT_EMOJI_MISSING : SULLY_FORMAT_SAVE_OK, emojiFallback ? 'info' : 'success');
+        } catch (e) {
+            console.warn('[SullyFormat] save failed', e);
+            addToast('猫儿存失败了……再试一次？', 'error');
+        } finally {
+            setFormatEditorSaving(false);
+        }
+    }, [formatEditorMessage, char, emojis, categories, userProfile, groups, realtimeConfig, addToast, closeFormatEditor, sullyFormatEditorMergeExtras]);
+
+    const handleUndoSullyFormatSave = useCallback(async () => {
+        if (!pendingFormatUndo || !char) return;
+        try {
+            await applySullyFormatUndo(pendingFormatUndo);
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+            setMessages(sortChatMessages(recent));
+            setPendingFormatUndo(null);
+            clearSullyAiRepairResume();
+            addToast(SULLY_FORMAT_UNDO_SAVE, 'success');
+        } catch (e) {
+            console.warn('[SullyFormat] undo failed', e);
+            addToast('撤销没成功……猫儿再试一次？', 'error');
+        }
+    }, [pendingFormatUndo, char, userProfile, groups, realtimeConfig, addToast, clearSullyAiRepairResume]);
+
+    const dismissSullyFormatUndoBar = useCallback(() => {
+        if (!char?.id) return;
+        clearSullyFormatUndo(char.id);
+        setPendingFormatUndo(null);
+        clearSullyAiRepairResume();
+    }, [char?.id, clearSullyAiRepairResume]);
+
+    const resumeSullyAiRepairEditing = useCallback(() => {
+        if (!sullyAiRepairResume || !char) return;
+        const msg = messages.find(m => m.id === sullyAiRepairResume.anchorMessageId);
+        if (!msg || !isFormatFixableMessage(msg)) {
+            addToast('那条泡找不到了……撤销后重选试试？', 'info');
+            return;
+        }
+        setSullyAiRepairResumeToken(t => t + 1);
+        setSullyAiRepairMessage(msg);
+        clearSullyAiRepairPicks();
+    }, [sullyAiRepairResume, char, messages, addToast, clearSullyAiRepairPicks]);
+
+    useEffect(() => {
+        if (!char?.id) {
+            setPendingFormatUndo(null);
+            return;
+        }
+        setPendingFormatUndo(loadSullyFormatUndo(char.id));
+    }, [char?.id]);
+
     const handleBatchDelete = async () => {
         const msgIdsToDelete = new Set<number>(selectedMsgIds);
         // 思维链单独勾选、但宿主消息没选 -> 只清 metadata.thinkingChain，保留消息
@@ -3785,7 +4191,7 @@ const Chat: React.FC = () => {
         conversationId: activeCharacterId || null,
         active: activeApp === AppID.Chat && !!char,
         blocked: isInputFocused || !!input.trim() || showPanel !== 'none' || modalType !== 'none'
-            || selectionMode || isSummarizing || collaborationOpen || memoryRepairOpen || favoritesOpen
+            || selectionMode || sullyPickActive || !!formatEditorMessage || !!bubbleCompose || isSummarizing || collaborationOpen || memoryRepairOpen || favoritesOpen
             || showProactiveModal || showActiveMsg2Modal || showThinkingChainModal
             || mcdAppOpen || luckinAppOpen || showForwardModal,
         generating: isTyping || instantChatPending || isProactiveComposing,
@@ -4140,6 +4546,7 @@ const Chat: React.FC = () => {
                 onOpenHistoryCleanup={() => { setModalType('none'); setShowHistoryCleanup(true); }} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
+                onOpenSullyAssistant={openSullyAssistantFromMenu}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => {
                     if (!selectedMessage) return;
                     if (selectedMessage.type === 'video') {
@@ -4249,10 +4656,95 @@ const Chat: React.FC = () => {
                 document.body,
              )}
 
+             {sullyPickMode === 'edit-rerender' && sullyPickActive && (
+                <SullyFormatPickBar
+                    purpose="edit-rerender"
+                    selectedCount={sullyFormatPickIds.size}
+                    onCancel={exitSullyPickMode}
+                    onConfirm={confirmSullyFormatPick}
+                />
+             )}
+             {sullyPickMode === 'ai-repair' && sullyPickActive && (
+                <SullyFormatPickBar
+                    purpose="ai-repair"
+                    selectedCount={sullyFormatPickIds.size}
+                    onCancel={exitSullyPickMode}
+                    onConfirm={confirmSullyAiRepairPick}
+                />
+             )}
+             {sullyPickMode === 'bubble-ops' && sullyPickActive && !bubbleCompose && (
+                sullyFormatPickAnchorId != null && sullyNeighbors?.anchor ? (
+                    <SullyBubbleOpsBar
+                        canMergeAbove={!!sullyNeighbors.prev}
+                        canMergeBelow={!!sullyNeighbors.next}
+                        onAddAbove={() => openBubbleCompose('before')}
+                        onAddBelow={() => openBubbleCompose('after')}
+                        onMergeAbove={() => executeMergeBubbles('above')}
+                        onMergeBelow={() => executeMergeBubbles('below')}
+                        onCancel={exitSullyPickMode}
+                    />
+                ) : (
+                    <SullyFormatPickBar
+                        purpose="bubble-ops"
+                        selectedCount={sullyFormatPickIds.size}
+                        onCancel={exitSullyPickMode}
+                    />
+                )
+             )}
+
+             {pendingFormatUndo && !sullyPickActive && !formatEditorMessage && !sullyAiRepairMessage && (
+                <div className="shrink-0 px-4 py-2 bg-amber-50 border-b border-amber-100 flex items-center gap-2 text-xs text-amber-900">
+                    <span className="min-w-0 flex-1 truncate">
+                        {pendingFormatUndo.kind === 'ai-repair' && sullyAiRepairResume
+                            ? SULLY_AI_REPAIR_POST_SAVE_BAR
+                            : SULLY_FORMAT_UNDO_BAR}
+                    </span>
+                    <div className="flex shrink-0 gap-1.5">
+                        <button
+                            type="button"
+                            onClick={handleUndoSullyFormatSave}
+                            className="font-medium text-amber-900 px-2.5 py-1 rounded-lg bg-white/80 border border-amber-200/80"
+                        >
+                            {pendingFormatUndo.kind === 'ai-repair' && sullyAiRepairResume
+                                ? SULLY_AI_REPAIR_UNDO_BTN
+                                : '撤销这次理顺'}
+                        </button>
+                        {pendingFormatUndo.kind === 'ai-repair' && sullyAiRepairResume && (
+                            <button
+                                type="button"
+                                onClick={resumeSullyAiRepairEditing}
+                                className="font-medium text-violet-800 px-2.5 py-1 rounded-lg bg-violet-50 border border-violet-200/80"
+                            >
+                                {SULLY_AI_REPAIR_RESUME_EDIT_BTN}
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={dismissSullyFormatUndoBar}
+                            className="font-bold text-amber-800 px-2.5 py-1 rounded-lg bg-amber-100"
+                        >
+                            {pendingFormatUndo.kind === 'ai-repair' && sullyAiRepairResume
+                                ? SULLY_AI_REPAIR_DONE_BTN
+                                : SULLY_FORMAT_UNDO_DISMISS}
+                        </button>
+                    </div>
+                </div>
+             )}
+
              <ChatHeader
-                selectionMode={selectionMode}
-                selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
-                onCancelSelection={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); setSelectedThinkingMsgIds(new Set()); }}
+                selectionMode={selectionMode || sullyPickActive}
+                selectedCount={sullyPickActive && !selectionMode
+                    ? sullyFormatPickIds.size
+                    : selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
+                onCancelSelection={() => {
+                    if (sullyPickActive) {
+                        exitSullyPickMode();
+                        return;
+                    }
+                    setSelectionMode(false);
+                    setSelectedMsgIds(new Set());
+                    setSelectedThinkingMsgIds(new Set());
+                }}
                 activeCharacter={char}
                 isTyping={isTyping}
                 isSummarizing={isSummarizing}
@@ -4485,9 +4977,15 @@ const Chat: React.FC = () => {
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
-                            selectionMode={selectionMode}
-                            isSelected={selectedMsgIds.has(m.id)}
-                            onToggleSelect={toggleMessageSelection}
+                            selectionMode={selectionMode || sullyPickActive}
+                            isSelected={selectionMode ? selectedMsgIds.has(m.id) : sullyFormatPickIds.has(m.id)}
+                            onToggleSelect={(id) => {
+                                if (selectionMode) toggleMessageSelection(id);
+                                else {
+                                    const picked = messages.find(msg => msg.id === id);
+                                    if (picked) handleSullyPickMessage(picked);
+                                }
+                            }}
                             isThinkingSelected={selectedThinkingMsgIds.has(m.id)}
                             onToggleThinkingSelect={toggleThinkingSelection}
                             translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
@@ -4686,7 +5184,7 @@ const Chat: React.FC = () => {
 
                 <ChatInputArea
                     input={input} setInput={handleInputChange}
-                    isTyping={isTyping} selectionMode={selectionMode}
+                    isTyping={isTyping} selectionMode={selectionMode || sullyPickActive || !!formatEditorMessage}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
                     onGenerate={handleManualTrigger}
@@ -4931,6 +5429,103 @@ const Chat: React.FC = () => {
                     onJumpToMessage={handleOpenFavoriteMessage}
                 />
             )}
+
+            {char && createPortal(
+                <SullyAssistantSheet
+                    open={sullyAssistantOpen}
+                    characters={characters}
+                    userName={userProfile?.name}
+                    hasRepairSeed={!!(sullyAssistantSeed ?? selectedMessage)}
+                    onClose={() => setSullyAssistantOpen(false)}
+                    onSelectFeature={handleSullyAssistantFeature}
+                    onTapCatForAiRepair={handleTapCatForAiRepair}
+                    onOpenRepairPrefs={() => setSullyRepairPrefsOpen(true)}
+                />,
+                document.body,
+            )}
+
+            {char && createPortal(
+                <SullyRepairPrefsSheet
+                    open={sullyRepairPrefsOpen}
+                    onClose={() => setSullyRepairPrefsOpen(false)}
+                    onOpenSettings={() => openApp(AppID.Settings)}
+                />,
+                document.body,
+            )}
+
+            {char && createPortal(
+                <SullyAiRepairModal
+                    open={!!sullyAiRepairMessage}
+                    message={sullyAiRepairMessage}
+                    char={char}
+                    characters={characters}
+                    emojis={emojis}
+                    categories={categories}
+                    apiConfig={apiConfig}
+                    userName={userProfile?.name}
+                    preview={{
+                        activeTheme,
+                        userAvatar: userProfile.perCharAvatars?.[char.id] || userProfile.avatar,
+                        moduleAlign: mergedFineTune.chatModuleAlign || 'center',
+                        translationEnabled,
+                    }}
+                    saving={sullyAiRepairSaving}
+                    sourceMessages={sullyAiRepairPicks.length > 1 ? sullyAiRepairPicks : undefined}
+                    onClose={closeSullyAiRepair}
+                    onSave={confirmSullyAiRepairSave}
+                    onOpenPrefs={() => setSullyRepairPrefsOpen(true)}
+                    resumeSession={sullyAiRepairResume}
+                    resumeToken={sullyAiRepairResumeToken}
+                />,
+                document.body,
+            )}
+
+            {char && createPortal(
+                <SullyFormatEditorModal
+                    open={!!formatEditorMessage}
+                    message={formatEditorMessage}
+                    char={char}
+                    characters={characters}
+                    emojis={emojis}
+                    categories={categories}
+                    onClose={closeFormatEditor}
+                    onSave={confirmSullyFormatSave}
+                    saving={formatEditorSaving}
+                    userName={userProfile?.name}
+                    preview={{
+                        activeTheme,
+                        userAvatar: userProfile.perCharAvatars?.[char.id] || userProfile.avatar,
+                        moduleAlign: mergedFineTune.chatModuleAlign || 'center',
+                        translationEnabled,
+                    }}
+                    initialSource={formatEditorInitialSource}
+                />,
+                document.body,
+            )}
+
+            {char && bubbleCompose && (() => {
+                const anchor = messages.find(m => m.id === bubbleCompose.anchorId);
+                if (!anchor) return null;
+                return createPortal(
+                    <SullyBubbleComposeModal
+                        open
+                        position={bubbleCompose.position}
+                        anchor={anchor}
+                        char={char}
+                        characters={characters}
+                        emojis={aiVisibleEmojis}
+                        categories={visibleCategories}
+                        activeCategory={activeCategory}
+                        onActiveCategoryChange={setActiveCategory}
+                        translationEnabled={translationEnabled}
+                        userName={userProfile?.name}
+                        saving={bubbleComposeSaving}
+                        onClose={() => setBubbleCompose(null)}
+                        onSave={confirmBubbleComposeSave}
+                    />,
+                    document.body,
+                );
+            })()}
 
             {char && (
                 <React.Suspense fallback={collaborationOpen ? <div className="absolute inset-0 z-[120] grid place-items-center bg-slate-50 text-xs text-slate-400">正在打开协同工作…</div> : null}>

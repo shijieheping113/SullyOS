@@ -33,6 +33,14 @@ export function normalizeApiConfig(config: APIConfig): APIConfig {
         model: normalizeApiModel(visionApi.model),
       },
     } : {}),
+    ...(config.secondaryLlm ? {
+      secondaryLlm: {
+        enabled: config.secondaryLlm.enabled === true,
+        baseUrl: normalizeApiBaseUrl(config.secondaryLlm.baseUrl),
+        apiKey: normalizeApiCredential(config.secondaryLlm.apiKey),
+        model: normalizeApiModel(config.secondaryLlm.model),
+      },
+    } : {}),
     ...(videoApi ? { videoApi: normalizeVideoApiConfig(videoApi) } : {}),
   };
 }

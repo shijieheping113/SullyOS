@@ -268,6 +268,14 @@ export function normalizeVoiceTags(t: string): string {
   result = result.replace(/＜\s*((?:[语語]音|字幕)[^<>＜＞]*?)\s*＞/g, '<$1>');
   // 2. 闭合标签规整: </ 语音 > / <／字幕> / < /语音> → </语音> 等
   result = result.replace(/<\s*[/／]\s*([语語]音|字幕)\s*>/g, '</$1>');
+  // 3-pre. 简写 <语音=calm> / <语音="calm"> → <语音 emotion="calm">
+  result = result.replace(
+    /<([语語]音)\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-zA-Z]+))\s*>/g,
+    (_m, tag: string, a: string, b: string, c: string) => {
+      const emo = (a || b || c || '').trim();
+      return emo ? `<${tag} emotion="${emo}">` : `<${tag}>`;
+    },
+  );
   // 3. 开标签属性规整: 少空格 / 全角引号 / 全角等号
   result = result.replace(/<([语語]音|字幕)\s*([^<>]*?)\s*>/g, (_m, tag: string, attrs: string) => {
     if (!attrs) return `<${tag}>`;

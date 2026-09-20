@@ -15,6 +15,7 @@ import { trackEvent } from '../../utils/analytics';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
 import { chatMessageFuzzyMatchesKeyword } from '../../utils/chatMessageSearch';
 import { normalizeMessageContent } from '../../utils/messageFormat';
+import { SULLY_ASSISTANT_MENU_SUBTITLE } from '../../utils/sullyAssistantCopy';
 
 interface ChatModalsProps {
     modalType: string;
@@ -86,6 +87,7 @@ interface ChatModalsProps {
     onRestoreAdaptiveContext?: () => void;
     onJumpToMessageInChat?: (id: number) => void;
     onEnterSelectionMode: () => void;
+    onOpenSullyAssistant?: () => void;
     onReplyMessage: () => void;
     onEditMessageStart: () => void;
     onConfirmEditMessage: () => void;
@@ -276,7 +278,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onOpenHistoryCleanup,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onConfirmEditVideoMessage, onDeleteMessage, onCopyMessage, onToggleMessageFavorite, messageFavorited, onDeleteEmoji, onDeleteCategory, onRenameCategory, onDownloadCategory,
+    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onOpenSullyAssistant, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onConfirmEditVideoMessage, onDeleteMessage, onCopyMessage, onToggleMessageFavorite, messageFavorited, onDeleteEmoji, onDeleteCategory, onRenameCategory, onDownloadCategory,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
@@ -1069,6 +1071,15 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     <button onClick={onReplyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         引用 / 回复
                     </button>
+                    {onOpenSullyAssistant && (
+                        <button
+                            onClick={() => { onOpenSullyAssistant(); }}
+                            className="w-full py-3 bg-violet-50 text-violet-700 font-medium rounded-2xl active:bg-violet-100 transition-colors flex flex-col items-center justify-center gap-0.5"
+                        >
+                            <span>猫儿小助手</span>
+                            <span className="text-[11px] font-normal text-violet-400/90">{SULLY_ASSISTANT_MENU_SUBTITLE}</span>
+                        </button>
+                    )}
                     {(selectedMessage?.type === 'text' || selectedMessage?.type === 'video') && (
                         <button onClick={onEditMessageStart} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             {selectedMessage?.type === 'video' ? '编辑视频消息' : '编辑内容'}

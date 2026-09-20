@@ -875,7 +875,7 @@ export const ChatParser = {
 
     // Split text into bubbles (text and emojis)
     splitResponse: (content: string): { type: 'text' | 'emoji', content: string }[] => {
-        const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
+        const emojiPattern = /\[\[SEND_EMOJI[:：]\s*(.*?)\]\]|\[表情[:：]\s*([^\]\n]+?)\]/gi;
         const parts: {type: 'text' | 'emoji', content: string}[] = [];
         let lastIndex = 0;
         let emojiMatch;
@@ -885,7 +885,8 @@ export const ChatParser = {
                 const textBefore = content.slice(lastIndex, emojiMatch.index).trim();
                 if (textBefore) parts.push({ type: 'text', content: textBefore });
             }
-            parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
+            const name = (emojiMatch[1] ?? emojiMatch[2] ?? '').trim();
+            if (name) parts.push({ type: 'emoji', content: name });
             lastIndex = emojiMatch.index + emojiMatch[0].length;
         }
 

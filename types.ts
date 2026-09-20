@@ -262,6 +262,14 @@ export interface VisionApiConfig {
   model: string;
 }
 
+/** 全局辅助 LLM 连接（小助手修格式等共用）；temperature 由各功能自行传入 */
+export interface SecondaryLlmApiConfig {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
 export type VideoApiDetail = 'auto' | 'low' | 'high';
 
 /** 私聊发本地短视频：硅基 video_url 理解，原片不落库。 */
@@ -314,6 +322,8 @@ export interface APIConfig {
   apiKey: string;
   // 可选识图中转：给不支持 image_url 的主模型补视觉能力。
   visionApi?: VisionApiConfig;
+  /** 辅助 LLM（修格式等小任务）；与主聊天 API 独立 */
+  secondaryLlm?: SecondaryLlmApiConfig;
   /** 私聊本地短视频理解（硅基 video_url）。默认关闭。 */
   videoApi?: VideoApiConfig;
   // 可选语音识别：聊天麦克风按钮的三引擎配置。

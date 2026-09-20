@@ -40,6 +40,13 @@ describe('normalizeVoiceTags', () => {
     expect(normalizeVoiceTags('<语音>hi<／语音>')).toBe('<语音>hi</语音>');
   });
 
+  it('简写 <语音=calm> → emotion 属性', () => {
+    expect(normalizeVoiceTags('<语音=calm>嗯</语音>'))
+      .toBe('<语音 emotion="calm">嗯</语音>');
+    expect(normalizeVoiceTags('<语音="happy">嗨</语音>'))
+      .toBe('<语音 emotion="happy">嗨</语音>');
+  });
+
   it('属性少空格 / 全角引号 / 全角等号 → 规范', () => {
     expect(normalizeVoiceTags('<语音emotion="happy">hi</语音>'))
       .toBe('<语音 emotion="happy">hi</语音>');

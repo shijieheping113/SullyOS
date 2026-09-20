@@ -5,33 +5,18 @@
 // 2) 客户端把这些块从普通文本气泡里剥离，单独渲染为 html_card 消息（沙盒 iframe）；
 // 3) 上下文 / 归档 总结里只看到剥离 HTML 后的纯文字摘要，不浪费 token。
 
-const BUILTIN_HTML_PROMPT = `
-
-# 核心能力：HTML 模块生成
-
-你具备通过 HTML 生成丰富视觉模块的能力，用来模拟手机界面里的互动元素、情绪表达或信息卡片。
-
-## 触发规则（必须严格遵守）
-
+/** [html] 包裹与占位句禁令 — 主聊天发卡与修格式助手共用 */
+export const HTML_CARD_TAG_RULES = `
 每个 HTML 模块的整体内容必须用一对 \`[html]\` 与 \`[/html]\` 标签包裹。
 \`[html]\` 与 \`[/html]\` 之间只能放 HTML（一个完整的 \`<div>\` 区块），不要写解释文字。
 模块和正文文字可以同一条回复里出现，每个模块就是一对 \`[html]...[/html]\`。
 没有可呈现的卡片时，不要输出空标签。
 
 **【绝对禁止照抄占位句】**：聊天历史里可能出现形如 \`（系统记录：…发送过一张 HTML 卡片…）\`、\`[…发送了一张 HTML 卡片] …\` 或 \`[HTML卡片] …\` 的行。那只是系统对"已经渲染过的旧卡片"的文字占位描述，**不是发卡片的写法**。你绝对不要照抄、复述、模仿这种句子，也不要把卡片内容拆成一条条纯文字发出来。要发一张新卡片，唯一正确的做法是输出真正的 \`[html]<div>…</div>[/html]\`——**只有被 \`[html]\` 和 \`[/html]\` 包裹的 HTML 才会被渲染成卡片，其它任何写法都只会变成普通文字气泡。**
+`.trim();
 
-## 推荐场景
-
-当对话中出现下面这些"可视化呈现会更带感"的内容时，主动用一个 HTML 模块来满足：
-
-* **邀请函**：聚会、活动、约会的邀请；
-* **聊天记录截图**：回顾或展示一段（虚构的）聊天对话；
-* **订单 / 票据**：购物、点餐、电影票、机票、酒店预订的凭证；
-* **通知 / 提醒**：系统通知、日程提醒、推送、未读小红点；
-* **小卡片**：心情卡、纸条、便利贴、贴纸…… 任何能用一张视觉小卡承载的轻量内容。
-
-判断何时用，按你的人设和当下气氛决定。
-
+/** 设计约束 + 审美 + 示例 — 与 BUILTIN_HTML_PROMPT 正文同源，供修格式助手注入 */
+export const HTML_CARD_DESIGN_SPEC = `
 ## 设计约束
 
 1. **【最高优先级】环境无关性**：无论用户是手机或电脑，无论网络好坏，模块永远输出一个**完整、单一**的 \`<div>\` 区块。这条规则的优先级高于一切。
@@ -77,15 +62,60 @@ const BUILTIN_HTML_PROMPT = `
 正常聊天里穿插一个邀请函卡片：
 
 [html]<div style="width:260px;padding:16px;border-radius:14px;background:linear-gradient(135deg,#ffe4ec,#fff0f5);font-family:system-ui;color:#5a3a4a;"><div style="font-size:11px;letter-spacing:2px;opacity:0.6;">INVITATION</div><div style="font-size:20px;font-weight:700;margin-top:4px;">想和你一起去看电影</div><div style="font-size:13px;margin-top:8px;line-height:1.6;">本周六晚 19:30<br/>万象城 IMAX 3 号厅</div><div style="margin-top:12px;font-size:12px;opacity:0.7;">— 期待你的回复</div></div>[/html]
+`.trim();
+
+/**
+ * 与主聊天 `buildHtmlPrompt` 相同：把角色「HTML 模式 · 自定义提示词」(htmlModeCustomPrompt) 追加在文末。
+ */
+export function appendHtmlUserCustomPrompt(base: string, custom?: string): string {
+    const c = (custom || '').trim();
+    if (!c) return base;
+    return `${base}\n\n## 用户自定义补充\n\n${c}\n`;
+}
+
+/** 猫儿修格式：注入与主聊天一致的 HTML 卡规范（含角色 htmlModeCustomPrompt） */
+export function buildHtmlCardRepairPromptBlock(charCustomPrompt?: string): string {
+    const core = `
+【HTML 小卡片 — 与主聊天 htmlPrompt 同源（作者内置规范）】
+${HTML_CARD_TAG_RULES}
+
+${HTML_CARD_DESIGN_SPEC}
+
+当用户要求「只修格式、不改 html 样式和内容」时：只处理错标签、占位句、重复 [html] 壳等；**不得**用审美准则去改原有 style、配色与 DOM。
+当卡片损坏需重做或用户要求美化/重做时：在遵守锚点文字的前提下，按上面设计约束与视觉审美准则整卡输出，追求简洁高级而非花哨堆砌。
+`.trim();
+    return appendHtmlUserCustomPrompt(core, charCustomPrompt);
+}
+
+const BUILTIN_HTML_PROMPT = `
+
+# 核心能力：HTML 模块生成
+
+你具备通过 HTML 生成丰富视觉模块的能力，用来模拟手机界面里的互动元素、情绪表达或信息卡片。
+
+## 触发规则（必须严格遵守）
+
+${HTML_CARD_TAG_RULES}
+
+## 推荐场景
+
+当对话中出现下面这些"可视化呈现会更带感"的内容时，主动用一个 HTML 模块来满足：
+
+* **邀请函**：聚会、活动、约会的邀请；
+* **聊天记录截图**：回顾或展示一段（虚构的）聊天对话；
+* **订单 / 票据**：购物、点餐、电影票、机票、酒店预订的凭证；
+* **通知 / 提醒**：系统通知、日程提醒、推送、未读小红点；
+* **小卡片**：心情卡、纸条、便利贴、贴纸…… 任何能用一张视觉小卡承载的轻量内容。
+
+判断何时用，按你的人设和当下气氛决定。
+
+${HTML_CARD_DESIGN_SPEC}
 
 那要不？😳
 `;
 
 export function buildHtmlPrompt(custom?: string): string {
-  const c = (custom || '').trim();
-  if (!c) return BUILTIN_HTML_PROMPT;
-  // 自定义内容是**追加**而不是覆盖
-  return `${BUILTIN_HTML_PROMPT}\n\n## 用户自定义补充\n\n${c}\n`;
+  return appendHtmlUserCustomPrompt(BUILTIN_HTML_PROMPT, custom);
 }
 
 const HTML_BLOCK_RE = /\[html\]([\s\S]*?)\[\/html\]/gi;

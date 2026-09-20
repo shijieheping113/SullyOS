@@ -942,6 +942,147 @@ export const DB = {
     });
   },
 
+  putMessagePreserveId: async (msg: Message): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
+      transaction.objectStore(STORE_MESSAGES).put(msg);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('putMessagePreserveId aborted'));
+    });
+  },
+
+  getPreviousChatMessageBefore: async (charId: string, beforeId: number): Promise<Message | null> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const index = transaction.objectStore(STORE_MESSAGES).index('charId');
+      let prev: Message | null = null;
+      const req = index.openCursor(IDBKeyRange.only(charId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve(prev);
+          return;
+        }
+        const m = cursor.value as Message;
+        if (!m.groupId && m.id < beforeId && (!prev || m.id > prev.id)) prev = m;
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  getNextChatMessageAfter: async (charId: string, afterId: number): Promise<Message | null> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const index = transaction.objectStore(STORE_MESSAGES).index('charId');
+      let next: Message | null = null;
+      const req = index.openCursor(IDBKeyRange.only(charId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve(next);
+          return;
+        }
+        const m = cursor.value as Message;
+        if (!m.groupId && m.id > afterId && (!next || m.id < next.id)) next = m;
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  replaceMessageWithRendered: async (
+    originalId: number,
+    bubbles: Array<Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }>,
+  ): Promise<{ newIds: number[]; snapshot: Message }> => {
+    const original = await DB.getMessageById(originalId);
+    if (!original) throw new Error('Message not found');
+    const snapshot = { ...original };
+    const next = await DB.getNextChatMessageAfter(original.charId, originalId);
+    const t0 = original.timestamp;
+    const tEnd = next ? next.timestamp : t0 + Math.max(bubbles.length, 1) + 1;
+    const list = bubbles.length ? bubbles : [{
+      charId: original.charId,
+      role: original.role,
+      type: 'text' as const,
+      content: '',
+    }];
+    await DB.deleteMessage(originalId);
+    const newIds: number[] = [];
+    const n = list.length;
+    for (let i = 0; i < n; i++) {
+      const b = list[i];
+      const ts = typeof b.timestamp === 'number'
+        ? b.timestamp
+        : (n <= 1 ? t0 : t0 + Math.floor(((tEnd - t0) * i) / n));
+      const payload = {
+        charId: original.charId,
+        groupId: original.groupId,
+        role: b.role ?? original.role,
+        type: b.type,
+        content: b.content,
+        metadata: b.metadata ?? original.metadata,
+        replyTo: i === 0 ? (b.replyTo ?? original.replyTo) : b.replyTo,
+        timestamp: ts,
+      };
+      if (i === 0) {
+        await DB.putMessagePreserveId({
+          ...payload,
+          id: original.id,
+        } as Message);
+        newIds.push(original.id);
+      } else {
+        const newId = await DB.saveMessage(payload);
+        newIds.push(newId);
+      }
+    }
+    return { newIds, snapshot };
+  },
+
+  insertMessagesRelative: async (
+    anchorId: number,
+    position: 'before' | 'after',
+    bubbles: Array<Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }>,
+  ): Promise<number[]> => {
+    const anchor = await DB.getMessageById(anchorId);
+    if (!anchor) throw new Error('Message not found');
+    if (!bubbles.length) return [];
+    const prev = position === 'before'
+      ? await DB.getPreviousChatMessageBefore(anchor.charId, anchorId)
+      : anchor;
+    const next = position === 'after'
+      ? await DB.getNextChatMessageAfter(anchor.charId, anchorId)
+      : anchor;
+    const tLow = position === 'before' ? (prev?.timestamp ?? anchor.timestamp - 1) : anchor.timestamp;
+    const tHigh = position === 'before' ? anchor.timestamp : (next?.timestamp ?? anchor.timestamp + 1);
+    const n = bubbles.length;
+    const ids: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const b = bubbles[i];
+      const ts = typeof b.timestamp === 'number'
+        ? b.timestamp
+        : (n <= 1
+          ? (tLow + tHigh) / 2
+          : tLow + ((tHigh - tLow) * (i + 1)) / (n + 1));
+      const id = await DB.saveMessage({
+        charId: anchor.charId,
+        groupId: anchor.groupId,
+        role: b.role ?? anchor.role,
+        type: b.type,
+        content: b.content,
+        metadata: b.metadata,
+        replyTo: b.replyTo,
+        timestamp: ts,
+      });
+      ids.push(id);
+    }
+    return ids;
+  },
+
   deleteMessage: async (id: number): Promise<void> => {
     const { preserveContentFavoritesBeforeMessageDeletion } = await import('./contentFavorites');
     await preserveContentFavoritesBeforeMessageDeletion({ ids: [id] });

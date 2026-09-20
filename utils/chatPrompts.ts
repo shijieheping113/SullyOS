@@ -27,10 +27,7 @@ import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 import { isScheduleFeatureOn } from './scheduleFeature';
-import { VOICE_ACTING_GUIDE } from './minimaxTts';
-import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
-import { getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from './ttsProvider';
-import { getElevenLabsVoiceActingGuide } from './elevenLabsTts';
+import { buildChatVoiceMessagePromptBlock } from './voiceMessagePrompt';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { buildLifeRecordInjection } from './lifeRecords';
 import { isWorkerReachableUrl } from './amsgToolPack';
@@ -40,20 +37,7 @@ import { getLocalDateKey } from './localDate';
 import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { isBlobRef } from './blobRef';
-import { voiceLanguagePromptLabel } from './voiceLanguage';
 import { loadMomentsPostOn } from './sparkCircles';
-
-// 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
-// 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
-// 用户在「设置 → 其他 API → 语音提示词」里自定义过该服务商的指南时，优先用用户那份；留空则回退内置默认。
-const voiceActingGuide = (): string => {
-  const provider = getTtsProvider();
-  const custom = getVoicePromptOverride(provider);
-  if (custom) return custom;
-  if (provider === 'fishaudio') return FISH_VOICE_ACTING_GUIDE;
-  if (provider === 'elevenlabs') return getElevenLabsVoiceActingGuide(getElevenLabsModel());
-  return VOICE_ACTING_GUIDE;
-};
 
 /**
  * 这个值是「一张图 / 一段媒体」而不是正文吗？认三种形态：内嵌 data URL、http(s) 外链、
@@ -1009,71 +993,10 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
         }
 
-        // Voice message prompt injection
-        if (char.chatVoiceEnabled) {
-            const voiceLang = char.chatVoiceLang || '';
-            const langLabel = voiceLang ? voiceLanguagePromptLabel(voiceLang) : '';
-            if (voiceLang) {
-                baseSystemPrompt += `\n\n### 🎤 语音消息功能
-
-用户开启了语音消息功能，语音语种为：${langLabel}（${voiceLang}）。
-
-**你可以发送语音消息！** 就像真人用微信一样，你可以选择打字或者发语音。
-发语音用两个标签成对写：\`<语音>${langLabel}台词</语音>\` 紧跟 \`<字幕>中文字幕</字幕>\`。
-<语音> 里是真正被朗读的${langLabel}，<字幕> 里是同一段话的中文——语音条的「转文字」面板会直接用它当对照翻译，用户对着中文听${langLabel}。
-
-规则：
-1. \`<语音>\` 里写${langLabel}——只写会被朗读的文字。可选 emotion 属性标整条情绪：\`<语音 emotion="happy">…</语音>\`，emotion 只能取 happy/sad/angry/fearful/disgusted/surprised/calm/fluent（情绪不强就别加）
-2. \`<字幕>\` 里写这条语音的中文版，内容和${langLabel}一致、逐段对齐（${langLabel}分几段中文就分几段）。**<字幕> 必须紧跟在 </语音> 后面，永远成对出现，不能单独用**
-3. 标签外可以照常发普通中文短消息（正常闲聊打字），它们显示成普通气泡，和语音内容互相独立、不要复读
-
-示例：
-你说真的假的？
-<语音 emotion="surprised">Wait... are you serious?</语音>
-<字幕>等等……你是认真的？</字幕>
-
-<语音 emotion="sad">I don't wanna move anymore... (sighs)</语音>
-<字幕>啊不想动了……（叹气）</字幕>
-
-要求：
-- <语音> 里的${langLabel}要自然口语化，符合你的性格，不要机翻味
-- <语音> 里想要笑、叹气等真实语气用官方英文标签 (laughs)/(sighs)/(chuckle)/(gasps) 等，**不要写中文（轻笑）这类舞台指示**（中文括号会被直接删掉、不朗读）
-- 每条消息最多一个 <语音> + <字幕> 组合
-- 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
-- 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候
-- 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
-
-${voiceActingGuide()}`;
-            } else {
-                baseSystemPrompt += `\n\n### 🎤 语音消息功能
-
-用户开启了语音消息功能。
-
-**你可以发送语音消息！** 就像真人用微信一样，你可以选择打字或者发语音。
-用 \`<语音>要说的话</语音>\` 标签来发送语音。标签里的内容会被转成真正的语音条显示给用户。
-可选地用 emotion 属性设定整条语音的情绪：\`<语音 emotion="happy">…</语音>\`，emotion 只能取 happy/sad/angry/fearful/disgusted/surprised/calm/fluent（情绪不强就别加）。
-
-示例：
-<语音 emotion="happy">哎你今天干嘛去了啊？</语音>
-
-我看到一个好搞笑的视频
-<语音>你快去看！就那个什么……(chuckle)啊我忘了叫什么了，反正超搞笑的</语音>
-
-要求：
-- <语音> 里只写会被朗读的文字，不要写中文舞台指示/括号动作；想要笑、叹气等真实语气，用官方英文标签 (laughs)/(sighs)/(chuckle)/(gasps) 等（中文括号会被直接删掉、不朗读）
-- 每条消息最多一个 <语音> 标签
-- 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
-- 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候、想让对方听到你语气的时候
-- 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
-- 标签外的文字会正常显示为文本消息
-- **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音的内容不能是文字的重复或复述。要么单独发语音（不带文字），要么文字和语音表达不同的内容（比如文字聊正事，语音补一句吐槽/撒娇；或者文字发完一段话后，语音单独补充一个新的想法）。你不会打完字又发一条语音把同样的话再说一遍的——那很奇怪。
-
-${voiceActingGuide()}`;
-            }
-        } else {
-            // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
-            baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
-        }
+        baseSystemPrompt += buildChatVoiceMessagePromptBlock({
+            chatVoiceEnabled: char.chatVoiceEnabled,
+            chatVoiceLang: char.chatVoiceLang,
+        });
 
         // Spark 关注（发动态）能力段 —— spark-follow 2-G（Ann 2026-09-17 拍板先用附录 A）：
         // 跟语音同一类开关——开着整段注入（逐字），关着只注入严禁句。

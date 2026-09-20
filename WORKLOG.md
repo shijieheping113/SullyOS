@@ -1,5 +1,131 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-20 猫儿：AI 修格式保存后三键栏 + 重新编辑续聊
+
+保存并渲染后顶栏左→右：撤销、重新编辑（带回猫儿对话历史）、保存（收起）。`sullyAiRepairSession` 存会话。未 commit。
+
+## 2026-09-20 猫儿：语音开标签规范对齐主聊天
+
+`chatVoiceTagFormat.ts` 统一 `<语音 emotion="…">` 模板；修格式提示词注入开标签规则；`normalizeVoiceTags` 认 `<语音=calm>` 简写。未 commit。
+
+## 2026-09-20 猫儿：修格式预览「查看原文」+ 语音规范读 apiConfig
+
+语音/翻译预览不再套聊天语音条，改为点「查看原文」显示带标注源码；`resolveVoiceActingGuideFromApiConfig` 从设置 voicePrompts 注入副 API。未 commit。
+
+## 2026-09-20 猫儿：修格式预览可点转文字/翻译 + 提示词禁乱塞表情
+
+预览区去掉 `pointer-events-none`，接翻译切换；提示词强调不多做不少做，表情库仅用户要求加表情时注入。未 commit。
+
+## 2026-09-20 猫儿：副 API 流式 80s + AI 修格式上下加泡
+
+`secondaryLlmCall` 默认 `stream:true`、超时 80s；修格式弹窗显示「正在连…/连上了」。协议增 `INSERT_ABOVE`/`INSERT_BELOW` + 表情库注入；保存走 `saveAiRepairOutcome` 合并撤销。未 commit。
+
+## 2026-09-20 猫儿：修格式注入主聊天语音规范
+
+抽出 `voiceMessagePrompt.ts`（`buildChatVoiceMessagePromptBlock` + `getVoiceActingGuideForPrompt`），`chatPrompts` 与猫儿修格式共用。涉及语音稿 / 用户目标含「语音」时注入整段标签规则 + 当前 TTS 语气指南（含设置里自定义语音提示词）。传角色 `chatVoiceEnabled`/`chatVoiceLang`。未 commit。
+
+## 2026-09-20 猫儿：预览改 MessageItem + 回退语音意图识别
+
+去掉「转成语音」等用户意图猜测；`stripRepairLeakageTags` 仅 HTML 卡路径。预览用与聊天相同的 MessageItem。未 commit。
+
+## 2026-09-20 猫儿：AI 修格式弹窗输入被 useEffect 秒清
+
+`sourceMessages = []` 默认参每次渲染是新数组，effect 依赖它 → 每键入一字就被 `setInput('')`。改为稳定空数组 + `pickIdsKey` 依赖。未 commit。
+
+## 2026-09-20 猫儿：修格式保存误占 formatEditorMessage 堵输入
+
+AI 保存时曾 `setFormatEditorMessage` 共用 saving，失败未清导致底栏变多选、聊天输入框不能打字。改为独立 `sullyAiRepairSaving`。未 commit。
+
+## 2026-09-20 猫儿：HTML 自定义段对齐 + 修格式预览区
+
+`htmlModeCustomPrompt` 与主聊天同用 `appendHtmlUserCustomPrompt`（## 用户自定义补充）。`SullyRepairPreviewPane` 居中 300px、灰底衬 HTML 白卡。未 commit。
+
+## 2026-09-20 猫儿：修格式助手注入 htmlPrompt 设计规范
+
+原先只给空 `[html]<div></div>[/html]` 骨架。现从 `htmlPrompt.ts` 导出 `HTML_CARD_DESIGN_SPEC`/`buildHtmlCardRepairPromptBlock`，修 HTML 稿时注入与主聊天同源的约束+审美+示例，并带上角色 `htmlModeCustomPrompt`。未 commit。
+
+## 2026-09-20 猫儿：多选合并撤销 + AI 修格式防污染
+
+多条合并保存新增 `multi-replace` 撤销（还原锚点 + 全部被删泡）。AI 回传不像 HTML 卡时不覆盖预览；剥 `<字幕>`；「不改 html」走只修格式。未 commit。
+
+## 2026-09-20 猫儿：AI 修格式走小助手选泡条（同理顺）
+
+不再动聊天多选底栏/浮动钮。点猫儿 → `ai-repair` 选泡模式（顶栏 `SullyFormatPickBar`，与「把气泡理顺」同层）；可多选，确认后合并进一次 AI 任务，保存锚最早 id。理顺选泡也改为 `Set` 多选 + 合并保存。未 commit。
+
+## 2026-09-20 猫儿：HTML 卡片长按（回退透明层 → 侧栏+底栏）【已再回退】
+
+透明层与侧栏方案均已撤；HTML 长按仍靠多选或单条菜单进助手。见上条。
+
+## 2026-09-20 猫儿：修格式 — HTML 置顶/设置里自定义规则/只修格式
+
+重渲染气泡顺序对齐主管线（html→表情→文字）；源码层 `reorderHtmlBlockBeforeTrailingText`；用户说只修格式走 `minimalHtmlFormatRepair`；设置「辅助 API」下可填自定义格式规则（与聊天小规矩同 localStorage）；AI 修弹窗顶栏「修格式的小规矩」入口。未 commit。
+
+## 2026-09-20 猫儿：AI 修 HTML — 预览打碎 + 提示词锚点
+
+预览对已是 `[html]…[/html]` 的稿跳过 `sullyFormatTidy` 全量；`stripHtmlPromptLeaks`/`wrapBareHtmlDiv` 先保护 html 块；后处理去双层 width、卡片内字面量 [html]；用户包注入「可见文字锚点」+ HTML 重做规则。未 commit。
+
+## 2026-09-20 猫儿：红屏 HTML卡片 is not defined
+
+`sullyRepairPrompt.ts` 模板字符串里误用反引号包住 [HTML卡片]，运行时当变量引用。已改成纯文字。未 commit。
+
+## 2026-09-20 猫儿：HTML 修格式 — 提示词尾巴 + [HTML卡片] 占位
+
+后处理不再「整行含占位就删光」；`stripInlineHtmlPromptGarbage` 剥「包裹真正的 HTML」/ `[HTML卡片]`；`extractDivRegion` 从第一个 `<div` 到最后 `</div>` 收成一张卡。未 commit。
+
+## 2026-09-20 猫儿：AI 修格式 — 反馈第二轮（关闭钮/HTML 叠标）
+
+小助手相关弹窗去掉顶栏重复关闭（理顺编辑器/加泡/修格式偏好底栏「先不改」）；AI 修格式去掉手改/规则理顺入口；等待态「爪爪忙起来了」+ 爪印动画；`normalizeSingleHtmlCard` 把多层 [html] 收成一对，不再走会重复包的 `sullyFormatTidy(html)`。未 commit。
+
+## 2026-09-20 猫儿：AI 修格式 — 用户反馈七条
+
+小助手浮动提示移到猫头顶；修格式弹窗去掉右上角「先不修」（只留底栏「先不保存」）；「打开源码编辑器手改」「本地规则理顺（不调模型）」文案说明；修格式中 loading 气泡样式；`priorTurns` 只存短 reply、解析失败不把全文当 reply；`sullyRepairPostProcess` 落库/预览前剥占位与格式标签、REPLY 净化；prompt 加强 HTML 严格修。未 commit。
+
+## 2026-09-20 猫儿：AI 修格式 + 全局辅助 API
+
+回滚上轮 HTML 启发式修补。设置页「辅助 API」仅连接；修格式温度/自定义规则在小助手 `SullyRepairPrefsSheet`。点小助手猫儿形象 → `SullyAiRepairModal`（副 API、`sullyRepairPrompt` 剥离协议、预览/保存/撤销）。未 commit。
+
+## 2026-09-20 猫儿：理顺 HTML — 未闭合 [html] + 无括号系统占位（已回滚）
+
+`closeUnclosedHtmlBlocks` / 加强 `stripHtmlPromptLeaks`；`extractHtmlBlocks` 与一键理顺先补 `[/html]` 再剥占位。未 commit。
+
+## 2026-09-20 猫儿：加减气泡副标题语气 + 合并压成一条 + 加泡表情按分组
+
+「在旁边加减气泡」副标题改猫儿语气；合并走 `mergeNeighborMessagesToBubbles`（文字直连 / `mergeAsSingle`）；加泡表情与输入栏同分组 tab。未 commit。
+
+## 2026-09-20 猫儿：小助手文案/合并/加泡模板（用户反馈四条）
+
+第一项改回「把气泡理顺」+ 副标题式软语气；理顺编辑器顶「关闭」底「先不保存」。合并邻泡改为直接并泡落库（不进理顺编辑器）；加泡模板 `buildQuickComposeTemplates(translationEnabled)`，表情网格选具体图。未 commit。
+
+## 2026-09-20 猫儿：小助手双功能（编辑重渲染 / 加减气泡）
+
+入口拆两项；加泡 `insertMessagesRelative`、快速模板+普通文字；合并邻泡进编辑器；撤销 replace/insert/merge；软语气文案集中 `sullyAssistantCopy`。未 commit。
+
+## 2026-09-20 猫儿：理顺 — 撤销条「就这样」+ 编辑器格式片段/上下加泡
+
+琥珀条可关掉撤销机会（clear localStorage）；`SullyFormatEditorModal` 插模板片段、光标行上下加空行拆泡。未 commit。
+
+## 2026-09-20 猫儿：理顺保存 — splitResponse 认 [表情：] + 真 emoji 泡
+
+落库前对齐主聊天管线（normalizeAssistantActionFormatting）；`splitResponse` 拆 `[表情：名]`；保存时库无名 toast。未 commit。
+
+## 2026-09-20 猫儿：理顺 —「发送了表情」括号形 + 模式钮反馈
+
+识别 `（猫儿发送了表情：名）`（无「包」）；助手/编辑器 portal 到 body、z500；分模式理顺无变化时琥珀提示。未 commit。
+
+## 2026-09-20 猫儿：进聊天红屏 — 删掉无效 re-export
+
+`SullyFormatEditorModal` 末尾 `export { SULLY_FORMAT_UNDO_STEP }` 未 import，Vite 报 `Export is not defined`、Chat 懒加载整包挂。已删该行（文案仍在 `sullyAssistantCopy`）。未 commit。
+
+## 2026-09-20 猫儿：理顺气泡第二版（关键字/拆泡/原位/称呼）
+
+表情/HTML/语音按关键字诊断；`normalizeStickerForRepair`（含「我刚才发送了表情包」）、`stripHtmlPromptLeaks`；混排拆泡；`replaceMessageWithRendered` 首条保留 id + timestamp 槽；Chat `sortChatMessages`；助手用 `userProfile.name`。未 commit。
+
+## 2026-09-20 猫儿：猫儿小助手（首期理顺气泡）
+
+私聊长按 → 消息操作 → **猫儿小助手**（Q 版 Sully：`resolveSullyAssistantChibi`，彼方 vr 槽优先）→ 选「把气泡理顺」→ 点选 text/html_card/emoji → 全屏编辑器（诊断/一键理顺/预览）→ `replaceMessageWithRendered` 拆泡落库 + `localStorage` 一轮撤销条。`utils/sullyMessageFormat` / `reprocessChatMessage` + vitest。未 commit。
+
+**手测**：长按进助手；预填长按那条；html_card 改 `htmlSource` 保存；坏语音 tidy；撤销条恢复。
+
 ## 2026-09-20 猫儿：私聊心里话 — 底部胶囊点一次 + 去列表闪屏
 
 连点/整屏 pointer 监听已删；`ChatInnerStatePeekEntry` 滑到底淡灰字点一次打开；浮层小巧、查手机闸门 `innerStatePeek`。
