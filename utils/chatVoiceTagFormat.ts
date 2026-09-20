@@ -1,7 +1,21 @@
+import { VALID_EMOTIONS } from './minimaxTts';
+
 /** 与主聊天 / minimaxTts.parseVoiceOutput / chatPrompts 一致的语音开标签 */
 
 export const CHAT_VOICE_EMOTION_VALUES =
     'happy、sad、angry、fearful、disgusted、surprised、calm、fluent';
+
+/** 从口白里的方括号记号认作者那 8 个情绪；excited 当成 happy。认不到就空。 */
+export function inferChatVoiceEmotionFromSpoken(text: string): string | undefined {
+    const re = /\[([^\[\]]{1,40})\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text || ''))) {
+        const raw = (m[1] || '').trim().toLowerCase();
+        const mapped = raw === 'excited' ? 'happy' : raw;
+        if (VALID_EMOTIONS.has(mapped)) return mapped;
+    }
+    return undefined;
+}
 
 /** 规范开标签：`<语音 emotion="calm">`；无情绪时用 `<语音>` */
 export function formatChatVoiceOpenTag(emotion?: string): string {
@@ -14,6 +28,17 @@ export const CHAT_VOICE_SNIPPET_MONO = `${formatChatVoiceOpenTag('calm')}\n</语
 
 export const CHAT_VOICE_SNIPPET_WITH_SUBTITLE =
     `${formatChatVoiceOpenTag('calm')}\n</语音>\n<字幕></字幕>`;
+
+/** 长按外语语音：模型只出口语，中文原文由程序当字幕。与作者 AI 语音泡同一对标签。 */
+export function wrapSpokenWithOriginalChinese(
+    spoken: string,
+    chinese: string,
+    emotion?: string,
+): string {
+    const inner = (spoken || '').trim();
+    const subtitle = (chinese || '').trim();
+    return `${formatChatVoiceOpenTag(emotion)}${inner}</语音>\n<字幕>${subtitle}</字幕>`;
+}
 
 /** 猫儿修格式 / 手改模板注入：与 chatPrompts 语音段同一套开标签规则 */
 export const CHAT_VOICE_TAG_FORMAT_RULES = `

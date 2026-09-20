@@ -3,11 +3,6 @@ import type { APIConfig, ApiPreset } from '../../types';
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '../../utils/apiConfigNormalize';
 import { secondaryLlmConfigFromPreset } from '../../utils/secondaryLlmApi';
 import { extractContent, safeResponseJson } from '../../utils/safeApi';
-import {
-    loadSullyUserFormatRules,
-    saveSullyUserFormatRules,
-} from '../../utils/sullyRepairPrefs';
-import { SULLY_AI_REPAIR_PREFS_CUSTOM } from '../../utils/sullyAssistantCopy';
 
 type Props = {
     apiConfig: APIConfig;
@@ -25,11 +20,6 @@ const SecondaryLlmSettings: React.FC<Props> = ({ apiConfig, apiPresets, updateAp
     const [status, setStatus] = useState('');
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<string | null>(null);
-    const [formatRules, setFormatRules] = useState('');
-
-    useEffect(() => {
-        setFormatRules(loadSullyUserFormatRules());
-    }, []);
 
     useEffect(() => {
         setEnabled(apiConfig.secondaryLlm?.enabled === true);
@@ -223,29 +213,6 @@ const SecondaryLlmSettings: React.FC<Props> = ({ apiConfig, apiPresets, updateAp
                     {testResult}
                 </p>
             )}
-
-            <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-3.5 space-y-2">
-                <label className="text-xs font-bold text-slate-600 block">{SULLY_AI_REPAIR_PREFS_CUSTOM}</label>
-                <p className="text-[10px] text-slate-400 leading-relaxed">
-                    只给猫儿 AI 修格式用；聊天里点小助手也能进「修格式的小规矩」，两边是同一份。
-                </p>
-                <textarea
-                    value={formatRules}
-                    onChange={e => setFormatRules(e.target.value)}
-                    className="w-full min-h-[88px] px-3 py-2 rounded-xl border border-slate-200 text-sm leading-relaxed bg-white"
-                    placeholder="例如：我家角色会用 [[NOTE:…]] 做旁白……"
-                />
-                <button
-                    type="button"
-                    onClick={() => {
-                        saveSullyUserFormatRules(formatRules);
-                        addToast('修格式自定义规则已保存', 'success');
-                    }}
-                    className="w-full py-2 rounded-xl border border-violet-200 text-violet-700 text-sm font-medium"
-                >
-                    保存自定义格式规则
-                </button>
-            </div>
         </div>
     );
 };

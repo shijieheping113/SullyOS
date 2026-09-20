@@ -120,7 +120,13 @@ import {
     synthesizeSpeechDetailed,
 } from '../utils/ttsRouter';
 import { playVoiceAudio, primeVoiceAudio, stopVoiceAudio, voicePlaybackErrorMessage, shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
-import { voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
+import { voiceLanguageAnalyticsValue } from '../utils/voiceLanguage';
+import {
+    applyLongpressTranslateResult,
+    buildVoiceLangTranslateSystemPrompt,
+    translateVoiceLangText,
+} from '../utils/voiceLangTranslate';
+import { inferChatVoiceEmotionFromSpoken, wrapSpokenWithOriginalChinese } from '../utils/chatVoiceTagFormat';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { CollaborationStore } from '../features/collaboration/store';
 import { resolveTtsProvider } from '../utils/ttsProvider';
@@ -704,7 +710,7 @@ const Chat: React.FC = () => {
         const ttsProvider = resolveTtsProvider(apiConfig);
         const preserveRawMarkup = providerUsesRawVoiceMarkup(apiConfig);
         const voiceTagContent = parsedVoice.hasVoiceTag ? (preserveRawMarkup ? parsedVoice.rawSpeech : parsedVoice.speech) : '';
-        const voiceEmotion = parsedVoice.emotion;
+        let voiceEmotion = parsedVoice.emotion;
 
         // Auto-TTS: only generate voice when AI explicitly used <语音> tag
         if (autoTriggered && !parsedVoice.hasVoiceTag) return null;
@@ -777,9 +783,37 @@ const Chat: React.FC = () => {
                     if (!spokenText || spokenText.length < 2) return null;
                     originalText = stripTtsMarkupForDisplay(spokenText, apiConfig) || spokenText;
                     if (voiceLang) {
-                        const langLabel = voiceLanguagePromptLabel(voiceLang);
-                        const translated = await llmTranslate(`Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.`, originalText);
-                        if (translated) spokenText = translated;
+                        const translated = await translateVoiceLangText({
+                            apiConfig,
+                            systemPrompt: buildVoiceLangTranslateSystemPrompt(voiceLang, { apiConfig }),
+                            text: originalText,
+                            purpose: 'chat-manual-voice-translate',
+                            charId: char?.id,
+                            retryMainOnce: true,
+                        });
+                        if (translated) {
+                            const applied = applyLongpressTranslateResult(translated, { preserveRawMarkup });
+                            if (applied.spokenText) {
+                                spokenText = applied.spokenText;
+                                const tagEmotion = applied.voiceEmotion
+                                    || inferChatVoiceEmotionFromSpoken(spokenText);
+                                if (tagEmotion) voiceEmotion = tagEmotion;
+                                if (!sarVoiceSurface && spokenText.length >= 2) {
+                                    const source = wrapSpokenWithOriginalChinese(
+                                        spokenText,
+                                        originalText,
+                                        tagEmotion,
+                                    );
+                                    try {
+                                        await DB.updateMessage(msg.id, source);
+                                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: source } : m));
+                                        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                                    } catch (e) {
+                                        console.warn('[Chat] persist longpress voice source failed', e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

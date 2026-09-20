@@ -28,6 +28,8 @@ export type SecondaryLlmCallOpts = {
     featureOpts?: { temperature?: number };
     charId?: string;
     streamHooks?: StreamHooks;
+    /** 缺省仍用修格式 80 秒；长按外语翻译等可传入更短超时。 */
+    timeoutMs?: number;
 };
 
 export async function secondaryLlmCall(opts: SecondaryLlmCallOpts): Promise<string> {
@@ -37,6 +39,9 @@ export async function secondaryLlmCall(opts: SecondaryLlmCallOpts): Promise<stri
     }
     const baseUrl = config.baseUrl.replace(/\/+$/, '');
     const url = `${baseUrl}/chat/completions`;
+    const timeoutMs = typeof opts.timeoutMs === 'number' && opts.timeoutMs > 0
+        ? opts.timeoutMs
+        : SECONDARY_LLM_TIMEOUT_MS;
 
     const attempt = async (includeTemperature: boolean) => {
         const body: Record<string, unknown> = {
@@ -58,7 +63,7 @@ export async function secondaryLlmCall(opts: SecondaryLlmCallOpts): Promise<stri
                 body: JSON.stringify(body),
             },
             1,
-            SECONDARY_LLM_TIMEOUT_MS,
+            timeoutMs,
             { appId: 'chat', charId, purpose },
             streamHooks,
         );
