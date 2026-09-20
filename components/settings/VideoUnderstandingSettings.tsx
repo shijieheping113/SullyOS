@@ -35,6 +35,18 @@ const readStoredVideoModels = (): string[] => {
 
 const CUSTOM_PRESET_ID = 'custom';
 
+const clampFpsFromDraft = (raw: string, fallback: number): number => {
+  const n = parseInt(raw.trim(), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(VIDEO_API_MAX_FPS, Math.max(1, n));
+};
+
+const clampMaxFramesFromDraft = (raw: string, fallback: number): number => {
+  const n = parseInt(raw.trim(), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(VIDEO_API_MAX_FRAMES, Math.max(1, n));
+};
+
 interface Props {
   apiConfig: APIConfig;
   apiPresets: ApiPreset[];
@@ -51,6 +63,8 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
   const [detail, setDetail] = useState<VideoApiDetail>(saved.detail);
   const [fps, setFps] = useState(saved.fps);
   const [maxFrames, setMaxFrames] = useState(saved.maxFrames);
+  const [fpsDraft, setFpsDraft] = useState(() => String(saved.fps));
+  const [maxFramesDraft, setMaxFramesDraft] = useState(() => String(saved.maxFrames));
   const [maxDurationSec, setMaxDurationSec] = useState(saved.maxDurationSec);
   const [maxSizeMB, setMaxSizeMB] = useState(saved.maxSizeMB);
   const [statusMsg, setStatusMsg] = useState('');
@@ -71,19 +85,24 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
     setDetail(cfg.detail);
     setFps(cfg.fps);
     setMaxFrames(cfg.maxFrames);
+    setFpsDraft(String(cfg.fps));
+    setMaxFramesDraft(String(cfg.maxFrames));
     setMaxDurationSec(cfg.maxDurationSec);
     setMaxSizeMB(cfg.maxSizeMB);
     setSelectedPresetId(matchVideoPresetId(cfg) ?? CUSTOM_PRESET_ID);
   }, [apiConfig.videoApi]);
 
-  const buildDraft = (enabledOverride = enabled) => normalizeVideoApiConfig({
+  const buildDraft = (
+    enabledOverride = enabled,
+    samplingOverride?: { fps: number; maxFrames: number },
+  ) => normalizeVideoApiConfig({
     enabled: enabledOverride,
     baseUrl: url,
     apiKey: key,
     model,
     detail,
-    fps,
-    maxFrames,
+    fps: samplingOverride?.fps ?? fps,
+    maxFrames: samplingOverride?.maxFrames ?? maxFrames,
     maxDurationSec,
     maxSizeMB,
   });
@@ -109,10 +128,22 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
     return !!creds.baseUrl && !!creds.model && !!creds.apiKey;
   }, [apiConfig, enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB]);
 
+  const commitSamplingDrafts = () => {
+    const nextFps = clampFpsFromDraft(fpsDraft, fps);
+    const nextMax = clampMaxFramesFromDraft(maxFramesDraft, maxFrames);
+    setFps(nextFps);
+    setMaxFrames(nextMax);
+    setFpsDraft(String(nextFps));
+    setMaxFramesDraft(String(nextMax));
+    return { fps: nextFps, maxFrames: nextMax };
+  };
+
   const applyPreset = (preset: typeof VIDEO_API_PRESETS[number]) => {
     setDetail(preset.detail);
     setFps(preset.fps);
     setMaxFrames(preset.maxFrames);
+    setFpsDraft(String(preset.fps));
+    setMaxFramesDraft(String(preset.maxFrames));
     setSelectedPresetId(preset.id);
     setTestResult(null);
   };
@@ -143,7 +174,8 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
   };
 
   const handleSave = (enabledOverride = enabled) => {
-    const next = buildDraft(enabledOverride);
+    const sampling = commitSamplingDrafts();
+    const next = buildDraft(enabledOverride, sampling);
     if (next.enabled && (!next.baseUrl || !next.model)) {
       addToast('开启视频理解前，请至少填写 URL 和 Model', 'error');
       return;
@@ -206,7 +238,8 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
   };
 
   const handleTestVideoApi = async () => {
-    const draft: APIConfig = { ...apiConfig, videoApi: buildDraft(true) };
+    const sampling = commitSamplingDrafts();
+    const draft: APIConfig = { ...apiConfig, videoApi: buildDraft(true, sampling) };
     const creds = resolveCredentials(draft);
     if (!creds.baseUrl) {
       setTestResult('❌ 请先填写 URL');
@@ -324,13 +357,17 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
               <div>
                 <label className="text-[9px] font-bold text-slate-400 mb-0.5 block">fps（1～{VIDEO_API_MAX_FPS}）</label>
                 <input
-                  type="number"
-                  min={1}
-                  max={VIDEO_API_MAX_FPS}
-                  value={fps}
+                  type="text"
+                  inputMode="numeric"
+                  value={fpsDraft}
                   onChange={(e) => {
-                    setFps(Math.min(VIDEO_API_MAX_FPS, Math.max(1, Number(e.target.value) || 2)));
                     selectCustomMode();
+                    setFpsDraft(e.target.value.replace(/[^\d]/g, ''));
+                  }}
+                  onBlur={() => {
+                    const next = clampFpsFromDraft(fpsDraft, fps);
+                    setFps(next);
+                    setFpsDraft(String(next));
                   }}
                   className="w-full bg-white border border-slate-200/60 rounded-lg px-3 py-2 text-sm font-mono"
                 />
@@ -338,13 +375,17 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
               <div>
                 <label className="text-[9px] font-bold text-slate-400 mb-0.5 block">最多帧（≤{VIDEO_API_MAX_FRAMES}）</label>
                 <input
-                  type="number"
-                  min={1}
-                  max={VIDEO_API_MAX_FRAMES}
-                  value={maxFrames}
+                  type="text"
+                  inputMode="numeric"
+                  value={maxFramesDraft}
                   onChange={(e) => {
-                    setMaxFrames(Math.min(VIDEO_API_MAX_FRAMES, Math.max(1, Number(e.target.value) || 16)));
                     selectCustomMode();
+                    setMaxFramesDraft(e.target.value.replace(/[^\d]/g, ''));
+                  }}
+                  onBlur={() => {
+                    const next = clampMaxFramesFromDraft(maxFramesDraft, maxFrames);
+                    setMaxFrames(next);
+                    setMaxFramesDraft(String(next));
                   }}
                   className="w-full bg-white border border-slate-200/60 rounded-lg px-3 py-2 text-sm font-mono"
                 />

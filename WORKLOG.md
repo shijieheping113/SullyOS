@@ -1,5 +1,9 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-20 猫儿：视频设置 fps/最多帧可删空再输入
+
+自定义抽帧改用草稿字符串 + 失焦/保存时再 clamp，避免 `Number('')||2` 导致删不掉 2 改 3。未 commit。
+
 ## 2026-09-20 凌晨 猫儿：25s 识别不全（括号总结收尾）
 
 根因：25s+看全/更密仍可能 max_tokens=2500 截断【画面过程】→ 片段3 后括号总结。改 pickVideoDescriptionMaxTokens 按送帧 4k/6k/8k/10k；截断检测+顶满 tokens 自动加长重试；提示词禁括号代写结尾；50507 降档 toast+metadata；max_frames 顶 256；新增「半分钟快剪」预设。vitest 含 Ann 坏例。未 commit。
