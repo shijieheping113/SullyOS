@@ -2090,7 +2090,8 @@ const MessageItem = React.memo(({
                     <div className="w-[72%] max-w-[72%]">{thinkingChainNode}</div>
                 </div>
             )}
-            <div className={[
+            <div
+                className={[
                 'sully-chat-message',
                 isUser
                     ? 'sully-chat-message-user justify-end'
@@ -2103,7 +2104,7 @@ const MessageItem = React.memo(({
             ].filter(Boolean).join(' ')}
             style={{ '--sully-chat-message-avatar-size': `${avatarSizePx}px` } as React.CSSProperties}>
                 {selectionMode && (
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                    <div data-no-inner-peek="" className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
                             {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
                         </div>
@@ -2122,7 +2123,7 @@ const MessageItem = React.memo(({
 
                 {/* HTML / 音乐卡片是独立模块，不继承普通消息外壳的角色头像。卡片内部自己的头像不受影响。 */}
                 {!isUser && !isModuleCard && (
-                    <div className={`sully-chat-message-avatar-slot absolute bottom-0 z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-[left] duration-300`}>
+                    <div data-no-inner-peek="" className={`sully-chat-message-avatar-slot absolute bottom-0 z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-[left] duration-300`}>
                         {renderAvatar(charAvatar, { className: 'sully-chat-message-avatar' })}
                     </div>
                 )}
@@ -2132,7 +2133,7 @@ const MessageItem = React.memo(({
                     Added min-w-0 to prevent flexbox overflow issues.
                     Added explicit margins to clear absolute avatars.
                 */}
-                <div className={`sully-chat-message-content relative min-w-0 ${isModuleCard && centerModules ? 'w-fit max-w-full mx-auto' : `max-w-[72%] ${!isUser ? 'ml-12' : 'mr-12'}`} ${isModuleCard ? 'sully-html-wrap' : ''}`}>
+                <div data-chat-message="" className={`sully-chat-message-content relative min-w-0 ${isModuleCard && centerModules ? 'w-fit max-w-full mx-auto' : `max-w-[72%] ${!isUser ? 'ml-12' : 'mr-12'}`} ${isModuleCard ? 'sully-html-wrap' : ''}`}>
                     <div
                         aria-hidden="true"
                         className={`absolute -right-10 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center pointer-events-none transition-all duration-150 ${isReplyReady ? 'bg-indigo-500 text-white shadow-md shadow-indigo-200' : 'bg-white/90 text-slate-400 shadow-sm'}`}
@@ -2170,7 +2171,7 @@ const MessageItem = React.memo(({
 
                 {/* 用户侧若存在导入/历史模块卡，也保持同一条“卡片不带消息外侧头像”规则。 */}
                 {isUser && !isModuleCard && (
-                    <div className={`sully-chat-message-avatar-slot absolute right-3 bottom-0 z-0 transition-[left] duration-300`}>
+                    <div data-no-inner-peek="" className={`sully-chat-message-avatar-slot absolute right-3 bottom-0 z-0 transition-[left] duration-300`}>
                         {renderAvatar(userAvatar, { className: 'sully-chat-message-avatar' })}
                     </div>
                 )}

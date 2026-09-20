@@ -127,9 +127,13 @@ import {
     validateInstallableArtifact,
 } from '../features/collaboration/makers';
 import { upsertMountedWorldbooks } from '../utils/worldbook';
+import ChatInnerStatePeek from '../components/chat/ChatInnerStatePeek';
+import ChatInnerStatePeekEntry from '../components/chat/ChatInnerStatePeekEntry';
+import { getInnerStateDisplayText } from '../utils/innerStatePeek';
 
 const CollaborationWindow = React.lazy(() => import('../features/collaboration/CollaborationWindow'));
 
+const CHAT_INNERSTATE_HINT_SEEN_KEY = 'chat_innerstate_hint_seen';
 const HISTORY_WINDOW_RADIUS = 25;
 const HISTORY_WINDOW_BATCH_SIZE = 30;
 
@@ -307,6 +311,13 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    const [innerStateOpen, setInnerStateOpen] = useState(false);
+    const [innerStateTick, setInnerStateTick] = useState(0);
+    const innerStateText = useMemo(
+        () => (char ? getInnerStateDisplayText(char) : ''),
+        [char, innerStateTick],
+    );
+    const canPeekInnerState = innerStateText.length > 0;
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -339,6 +350,35 @@ const Chat: React.FC = () => {
     }, [messages]);
     const charDateKey = useLocalDateKey(resolveCharTimeZone(char));
     charRef.current = char; // Keep ref in sync for async callbacks
+
+    useEffect(() => {
+        const onInner = (e: Event) => {
+            const d = (e as CustomEvent<{ charId?: string }>).detail;
+            if (d?.charId && d.charId === activeCharacterId) setInnerStateTick(t => t + 1);
+        };
+        window.addEventListener('emotion-innerstate-updated', onInner);
+        return () => window.removeEventListener('emotion-innerstate-updated', onInner);
+    }, [activeCharacterId]);
+
+    useEffect(() => {
+        if (innerStateOpen && !canPeekInnerState) setInnerStateOpen(false);
+    }, [innerStateOpen, canPeekInnerState]);
+
+    useEffect(() => {
+        setInnerStateOpen(false);
+    }, [activeCharacterId]);
+
+    const openInnerStatePeek = useCallback(() => {
+        if (!canPeekInnerState) return;
+        setInnerStateOpen(true);
+        try {
+            if (!localStorage.getItem(CHAT_INNERSTATE_HINT_SEEN_KEY)) {
+                localStorage.setItem(CHAT_INNERSTATE_HINT_SEEN_KEY, '1');
+                addToast('滑到消息列表底部，点「心里话」可查看', 'info');
+            }
+        } catch { /* storage unavailable */ }
+    }, [canPeekInnerState, addToast]);
+
     const historyContextRange = useMemo(() => {
         if (!char) return undefined;
         return computeContextRangeSnapshot(
@@ -4362,7 +4402,13 @@ const Chat: React.FC = () => {
                 );
             })()}
 
-            <div ref={scrollRef} onScroll={handleChatScroll} onClick={() => { if (inputPreferences.autoReply) setShowPanel('none'); }} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+            <div
+                ref={scrollRef}
+                onScroll={handleChatScroll}
+                onClick={() => { if (inputPreferences.autoReply) setShowPanel('none'); }}
+                className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar"
+                style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}
+            >
                 {windowedFocusMsgId !== null && (
                     <div className="sticky top-0 z-20 flex justify-center pb-2 pointer-events-none">
                         <button onClick={handleBackToCurrent} className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5">
@@ -4495,7 +4541,7 @@ const Chat: React.FC = () => {
 
                 {/* 渠道确实发送 reasoning 增量时，先用正式心象卡实时展示；落库后同帧交给正式消息。 */}
                 {streamingThinking && !selectionMode && (
-                    <div className="group flex items-end justify-start relative px-3 mb-1.5 animate-fade-in">
+                    <div className="group flex items-end justify-start relative px-3 mb-1.5 animate-fade-in" data-chat-message="">
                         <div className="relative max-w-[72%] min-w-0 ml-12">
                             <ThinkingChainBlock
                                 chain={streamingThinking}
@@ -4548,7 +4594,7 @@ const Chat: React.FC = () => {
                 )}
                 {/* instantChatPending：这一轮在云端跑，本机可以关页面，指示灯靠落盘记录活着。 */}
                 {(isTyping || instantChatPending || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
-                    <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
+                    <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in" data-chat-message="">
                         <TokenImg value={char.avatar} className={chatPendingAvatarClass} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
                             {isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
@@ -4576,6 +4622,9 @@ const Chat: React.FC = () => {
                             )}
                         </div>
                     </div>
+                )}
+                {canPeekInnerState && (
+                    <ChatInnerStatePeekEntry onOpen={openInnerStatePeek} />
                 )}
             </div>
 
@@ -4951,6 +5000,13 @@ const Chat: React.FC = () => {
                 onClose={() => setShowLuckinHelp(false)}
             />
 
+
+            <ChatInnerStatePeek
+                open={innerStateOpen && canPeekInnerState}
+                onClose={() => setInnerStateOpen(false)}
+                text={innerStateText}
+                charName={char?.name}
+            />
 
             {/* Forward Modal */}
             <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>

@@ -16,7 +16,7 @@ import {
 } from '../utils/relationshipChat';
 import PersonaSim, { LifeLog, generatePersonaScript } from './PersonaSim';
 import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
-import { getLastInnerState } from '../utils/emotionApply';
+import { getInnerStateDisplayText } from '../utils/innerStatePeek';
 import { trackEvent } from '../utils/analytics';
 import { buildPhoneEvidenceChatCard, normalizePhoneEvidence, phoneFieldToText } from '../utils/phoneEvidence';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -345,6 +345,10 @@ const CheckPhone: React.FC = () => {
     // 人格模拟：演出脚本在全局 store 后台生成，生成期间用户可离开查手机/切到别的 OS App
     const sim = usePersonaSim();
     const [showInner, setShowInner] = useState(false);
+
+    useEffect(() => {
+        if (showInner && !getInnerStateDisplayText(targetChar)) setShowInner(false);
+    }, [showInner, targetChar?.id, targetChar?.emotionConfig?.enabled, targetChar?.scheduleFeatureEnabled]);
 
     // 二次确认弹窗：所有删除/移除/清空都先走这里
     const [confirmState, setConfirmState] = useState<{
@@ -2005,7 +2009,6 @@ ${olderText}
     const socialRecords = records.filter(r => r.type === 'social');
     const simLogCount = targetChar?.phoneState?.simLogs?.length || 0;
     const sendToChat = targetChar?.phoneState?.sendToChat !== false; // 默认开
-    const lastInner = targetChar ? getLastInnerState(targetChar.id) : '';
     const lastTs = allSorted[0]?.timestamp;
 
     const appLabel = (type: string): string => {
@@ -2109,7 +2112,7 @@ ${olderText}
     const clockNow = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     const dateNow = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     const fallbackQuote = targetChar?.socialProfile?.bio || '“有些话，隔着屏幕，反而更接近真实。”';
-    const innerQuote = lastInner.trim();
+    const innerQuote = getInnerStateDisplayText(targetChar);
 
     // ============================================================
     //  SUB-APPS
@@ -3764,18 +3767,15 @@ ${olderText}
                 </>
             )}
 
-            {/* InnerState 全文 —— 「此刻内心」专属卡片 */}
             {showInner && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-fade-in">
                     <div className="absolute inset-0 bg-black/40" onClick={() => setShowInner(false)} />
                     <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl overflow-hidden animate-slide-up">
-                        {/* 标题 + 星点 */}
                         <div className="px-6 pt-7 pb-3 flex items-center justify-center gap-2.5">
                             <span className="flex items-end gap-0.5 text-[#b3c2f6]"><span className="w-1 h-1 rounded-full bg-current" /><span className="w-1.5 h-1.5 rounded-full bg-current" /><span className="w-1 h-1 rounded-full bg-current mb-1" /></span>
                             <h3 className="text-lg font-bold text-slate-800">TA 此刻的内心</h3>
                             <span className="flex items-end gap-0.5 text-[#b3c2f6]"><span className="w-1 h-1 rounded-full bg-current mb-1" /><span className="w-1.5 h-1.5 rounded-full bg-current" /><span className="w-1 h-1 rounded-full bg-current" /></span>
                         </div>
-                        {/* 引文面板 */}
                         <div className="px-6 pb-2">
                             <div className="relative bg-slate-50 rounded-3xl px-5 pt-7 pb-5 max-h-[52vh] overflow-y-auto no-scrollbar">
                                 <span className="absolute top-2 left-4 text-[42px] leading-none font-black select-none pointer-events-none" style={{ color: '#5f82ef' }}>“</span>
@@ -3785,7 +3785,6 @@ ${olderText}
                                 <span className="block text-right text-[42px] leading-none font-black select-none pointer-events-none pr-2" style={{ color: '#5f82ef' }}>”</span>
                             </div>
                         </div>
-                        {/* 关闭 */}
                         <div className="px-6 pb-6 pt-3">
                             <button onClick={() => setShowInner(false)}
                                 className="w-full py-3.5 rounded-2xl text-white font-bold active:scale-[0.99] transition"

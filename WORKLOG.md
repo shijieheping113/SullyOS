@@ -1,5 +1,9 @@
 # 工作日志（给猫儿和未来的自己看）
 
+## 2026-09-20 猫儿：私聊心里话 — 底部胶囊点一次 + 去列表闪屏
+
+连点/整屏 pointer 监听已删；`ChatInnerStatePeekEntry` 滑到底淡灰字点一次打开；浮层小巧、查手机闸门 `innerStatePeek`。
+
 ## 2026-09-20 猫儿：语音+字幕不再套双层文字泡
 
 `<语音>+<字幕>` 时 stripJunk 把字幕当正文、hasVoiceTag 仍真 → 开翻译后常见「文字泡里包语音条」。MessageItem 认 isPairedVoiceSubtitleMsg，顶部不重复字幕、走纯语音条布局。未 commit。
