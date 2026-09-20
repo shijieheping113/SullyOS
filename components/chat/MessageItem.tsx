@@ -3875,14 +3875,19 @@ const MessageItem = React.memo(({
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
-    // Voice-only messages (no display text, only voice bar): skip bubble styling
-    const isVoiceOnlyMsg = isUserVoiceMsg || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
-
     // 外语语音消息：语音条展开区（转文字）本身就完整呈现「口播原文 + 中文翻译」两行，
     // 顶部气泡再渲染一遍 displayContent 就成了重复——翻译模式下顶部是中文、语音条翻译行
     // 也是中文，用户看到两份一样的翻译。这类消息把双语文字统一收进语音条，
     // 顶部不再重复渲染正文，也不再显示（此时已无意义的）译/原文切换按钮。
     const isForeignVoiceMsg = !isUser && m.type === 'text' && !!voiceData?.url && !!voiceData?.lang && !!cleanVoiceText(voiceData?.spokenText);
+    // <语音>…</语音> + <字幕>…</字幕>：stripJunk 会把字幕剥成正文，但 hasVoiceTag 仍为真 →
+    // 顶部文字泡 + 底部语音条重复（开翻译后尤其明显）。字幕收进语音条「转文字」，顶部不重复。
+    const isPairedVoiceSubtitleMsg = !isUser && m.type === 'text' && hasVoiceTag && !!voiceSubtitleText;
+    const suppressVoiceDupTextBubble = isForeignVoiceMsg || isPairedVoiceSubtitleMsg;
+
+    // Voice-only messages (no display text, only voice bar): skip bubble styling
+    const isVoiceOnlyMsg = isUserVoiceMsg || isPairedVoiceSubtitleMsg
+        || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
 
     return commonLayout(
         <div className={isVoiceOnlyMsg
@@ -3927,7 +3932,7 @@ const MessageItem = React.memo(({
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文；
                 用户语音消息同样把文字收进语音条「转文字」，顶部不重复 */}
-            {displayContent && !isForeignVoiceMsg && !isUserVoiceMsg && (
+            {displayContent && !isUserVoiceMsg && !suppressVoiceDupTextBubble && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
                 {showExpandedTranslation && (
@@ -3955,7 +3960,7 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 5: 双语「翻译/原文」切换 —— 气泡内右下角，细分隔线压层级，小灰字克制易找 */}
-            {showTranslateButton && displayContent && !isForeignVoiceMsg && (
+            {showTranslateButton && displayContent && !suppressVoiceDupTextBubble && (
                 <div
                     className="relative z-10 mt-2 pt-1.5 flex justify-end"
                     style={{ borderTop: '1px solid rgba(127, 127, 127, 0.16)' }}
