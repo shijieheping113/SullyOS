@@ -108,6 +108,9 @@ import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal'
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
 import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
 import { useChatAI } from '../hooks/useChatAI';
+import { MIAOMIAO_RECORD_EVENT, useMiaomiaoBox } from '../context/MiaomiaoBoxContext';
+import { MiaomiaoBoxCat } from '../apps/miaomiaoBox/MiaomiaoBoxCat';
+import '../apps/miaomiaoBox/miaomiao-box.css';
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
@@ -194,6 +197,7 @@ const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
 const Chat: React.FC = () => {
     const { activeApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, proactiveComposingChars, openDateWithChar, registerBackHandler } = useOS();
+    const miaomiao = useMiaomiaoBox();
     const osTheme = useMemo(()=>resolveDecorationTheme(baseOsTheme,characters.find(c=>c.id===activeCharacterId)||characters[0]),[baseOsTheme,characters,activeCharacterId]);
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
@@ -1363,6 +1367,15 @@ const Chat: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clearUnread is stable (useCallback with []), omit to prevent stale-dep lint noise
     }, [lastMsgTimestamp, activeCharacterId, char?.hideSystemLogs, reloadMessages, clearUnread]);
 
+    useEffect(() => {
+        const onRecord = (e: Event) => {
+            const charId = (e as CustomEvent).detail?.charId;
+            if (charId && charId === activeCharIdRef.current) reloadMessages(visibleCountRef.current);
+        };
+        window.addEventListener(MIAOMIAO_RECORD_EVENT, onRecord as EventListener);
+        return () => window.removeEventListener(MIAOMIAO_RECORD_EVENT, onRecord as EventListener);
+    }, [reloadMessages]);
+
     // 即时对话待收记录的跨标签页补听。同一聊天开两个标签页时，回复推送到达后 SW 把
     // 广播发给所有 client，后台标签页的 flush 可能先抢到并落库——销账的 CustomEvent
     // 只在它自己那边派发，这边收不到，「正在输入…」就会无限常亮、回复也不上屏。
@@ -2056,7 +2069,7 @@ const Chat: React.FC = () => {
         if ([
             'transfer', 'archive', 'settings', 'chrome-css', 'chrome-sound', 'fine-tune',
             'meetup', 'proactive', 'active-msg-2', 'schedule', 'mcd-request', 'luckin-request',
-            'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'favorites', 'collaboration',
+            'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'favorites', 'collaboration', 'miaomiao-box',
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
             // send-emoji / select-category 这些是「挑哪一个」，不进名单。
             'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end',
@@ -2064,6 +2077,7 @@ const Chat: React.FC = () => {
             trackEvent('打开聊天功能面板项', { action: type });
         }
         switch (type) {
+            case 'miaomiao-box': setShowPanel('none'); if (char) void miaomiao.openForChar(char.id); break;
             case 'collaboration': setShowPanel('none'); setCollaborationOpen(true); break;
             case 'memory-link': setShowPanel('none'); setMemoryRepairOpen(true); break;
             case 'favorites': setShowPanel('none'); setFavoritesOpen(true); break;
@@ -5214,6 +5228,16 @@ const Chat: React.FC = () => {
                 )}
 
                 {/* 开关写着「已开启」、这一轮却在本地生成时，把原因说给用户听 */}
+                {miaomiao.playingForChar(activeCharacterId) && (
+                    <div className="miaomiao-root px-3 pb-2" data-theme={baseOsTheme?.darkMode ? 'dark' : 'light'}>
+                        <div className="livebar">
+                            <span className="bx"><MiaomiaoBoxCat lid="behind" tail="out" cls="mini" /></span>
+                            <div className="lb"><b>猫儿正在箱子里玩</b><span>{miaomiao.session?.title || '喵喵盒'} · 还没收工</span></div>
+                            <button className="go" onClick={() => { miaomiao.expandFloat(); miaomiao.setPage('play'); }}>回去 ▸</button>
+                        </div>
+                    </div>
+                )}
+
                 <InstantChatRouteNotice charId={activeCharacterId} />
 
                 <ChatInputArea

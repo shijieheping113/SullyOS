@@ -30,7 +30,8 @@ const DB_NAME = 'AetherOS_Data';
 // v69：见面·剧情条目与糯米机原生预设。正文继续复用 messages 表，避免再造会话存储。
 // v70：剧场面具箱（原创人物面具）；角色面具仍只存 characterId，不复制神经链接资料。
 // v71：角色小红书伪主页；发帖归属与可删除的自由活动日志分离。
-const DB_VERSION = 71;
+// v72：喵喵盒独立会话（玩的过程不写 messages）。
+const DB_VERSION = 72;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -483,6 +484,18 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains('pixel_home_layouts')) {
           const phlStore = db.createObjectStore('pixel_home_layouts', { keyPath: ['charId', 'roomId'] });
           phlStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('miaomiao_sessions')) {
+          const msStore = db.createObjectStore('miaomiao_sessions', { keyPath: 'id' });
+          msStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('miaomiao_messages')) {
+          const mmStore = db.createObjectStore('miaomiao_messages', { keyPath: 'id' });
+          mmStore.createIndex('sessionId', 'sessionId', { unique: false });
+          mmStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('miaomiao_settings')) {
+          db.createObjectStore('miaomiao_settings', { keyPath: 'charId' });
       }
     };
   });

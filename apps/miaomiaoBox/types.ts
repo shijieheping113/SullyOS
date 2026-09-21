@@ -1,0 +1,77 @@
+export const MIAOMIAO_FOLD_N_DEFAULT = 20;
+
+export type MiaomiaoStarter =
+  | 'box'
+  | 'story'
+  | 'claw'
+  | 'walk'
+  | 'dream'
+  | 'random';
+
+export type MiaomiaoSessionStatus = 'playing' | 'paused' | 'closed' | 'forgotten';
+
+export type MiaomiaoArchiveMode = 'remember' | 'raw' | 'forget' | 'paused';
+
+export type MiaomiaoMsgRole = 'user' | 'assistant' | 'summary';
+
+export interface MiaomiaoWorldRule {
+  id: string;
+  title: string;
+  body: string;
+  enabled: boolean;
+}
+
+export interface MiaomiaoSettings {
+  charId: string;
+  foldN: number;
+  ttsAutoPlay: boolean;
+  worldRules: MiaomiaoWorldRule[];
+}
+
+export interface MiaomiaoSession {
+  id: string;
+  charId: string;
+  title: string;
+  starter: MiaomiaoStarter;
+  status: MiaomiaoSessionStatus;
+  foldN: number;
+  foldCount: number;
+  foldedRoundCount: number;
+  ttsAutoPlay: boolean;
+  continuesMessageId?: number;
+  createdAt: number;
+  updatedAt: number;
+  worldRules: MiaomiaoWorldRule[];
+}
+
+export interface MiaomiaoMessage {
+  id: string;
+  sessionId: string;
+  charId: string;
+  role: MiaomiaoMsgRole;
+  content: string;
+  timestamp: number;
+  folded?: boolean;
+  htmlSource?: string;
+  htmlTextPreview?: string;
+  summaryRange?: { fromRound: number; toRound: number };
+  originalSummary?: string;
+}
+
+export const STARTER_LABEL: Record<MiaomiaoStarter, string> = {
+  box: '钻箱子',
+  story: '讲个故事',
+  claw: '抓娃娃',
+  walk: '出门逛逛',
+  dream: '做小梦',
+  random: '爪爪扒拉',
+};
+
+export const STARTER_HINT: Record<MiaomiaoStarter, string> = {
+  box: '钻进来了…里面比外面大得多…',
+  story: '唔…是什么故事呀…猫儿蹲好了…',
+  claw: '好多条条…爪爪想扒拉…',
+  walk: '外面好大…呜呜…想去又有点怕…',
+  dream: '嘘…猫儿睡着了…梦里的都不算数…',
+  random: '不知道会是什么…猫儿先探头看看…',
+};

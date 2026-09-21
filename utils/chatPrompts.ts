@@ -80,6 +80,7 @@ function summarizeGroupMsgContent(m: Message): string {
         case 'music_card': return '[分享音乐]';
         case 'mcd_card': return '[麦当劳点餐]';
         case 'html_card': return '[HTML卡片]';
+        case 'box_record': return '[刚刚发生的事]';
         case 'news_card': return '[新闻卡片]';
         case 'trpg_card': return `[TRPG游戏片段${meta.trpg?.gameTitle ? '：《' + meta.trpg.gameTitle + '》' : ''}]`;
         case 'novel_card': return `[笔友会小说章节${meta.novel?.bookTitle ? '：《' + meta.novel.bookTitle + '》' : ''}]`;
@@ -163,6 +164,8 @@ export interface PromptBuildOptions {
      * scheduleMessageTagEnabled 处的说明。
      */
     timelyByWorker?: boolean;
+    /** 喵喵盒：整段替换「聊天 App 行为规范」，并跳过主聊天语音条教学。 */
+    miaomiaoBoxPrompt?: string;
 }
 
 export const ChatPrompts = {
@@ -658,6 +661,9 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         const scheduleMessageTagEnabled = !forFirePack
             && !(timelyByWorker && isAmsg2EnabledForChar(char));
 
+        if (promptOptions?.miaomiaoBoxPrompt) {
+            baseSystemPrompt += promptOptions.miaomiaoBoxPrompt;
+        } else {
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
 **TOP 1｜ChatApp 格式（本节最高优先级）**：你是发消息的真实存在，以自然短句、短气泡为主；一个气泡一行，气泡间直接另起一行（实际换行，不要输出“\\n”字样）。
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
@@ -965,6 +971,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 ` : ''}
 
 `;
+        }
 
         if (char.chatCollaborationEnabled) {
             baseSystemPrompt += `
@@ -993,10 +1000,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
         }
 
-        baseSystemPrompt += buildChatVoiceMessagePromptBlock({
-            chatVoiceEnabled: char.chatVoiceEnabled,
-            chatVoiceLang: char.chatVoiceLang,
-        });
+        if (!promptOptions?.miaomiaoBoxPrompt) {
+            baseSystemPrompt += buildChatVoiceMessagePromptBlock({
+                chatVoiceEnabled: char.chatVoiceEnabled,
+                chatVoiceLang: char.chatVoiceLang,
+            });
+        }
 
         // Spark 关注（发动态）能力段 —— spark-follow 2-G（Ann 2026-09-17 拍板先用附录 A）：
         // 跟语音同一类开关——开着整段注入（逐字），关着只注入严禁句。
@@ -1146,7 +1155,11 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         }
 
         return {
-            apiMessages: historySlice.map((m, index) => {
+            apiMessages: historySlice.filter(m => {
+                if ((m.type as string) !== 'box_record') return true;
+                const bMeta: any = m.metadata || {};
+                return bMeta.archiveMode !== 'forget' && !bMeta.superseded;
+            }).map((m, index) => {
                 let content: any = m.content;
                 const timeStr = `[${ChatPrompts.formatDate(m.timestamp, charTz)}]`;
                 const sourceTag = (() => {
@@ -1379,6 +1392,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const pc: any = m.metadata?.phoneCard || {};
                     const body = typeof m.content === 'string' ? m.content : '';
                     content = `${timeStr}（你刚刚看了眼手机，这是你${pc.app || '手机'}里的内容——这些是你自己的隐私，不一定愿意让其他人看到。当成手机里确实有的东西即可，聊到再自然提及，不必主动说起。）\n${body}`;
+                }
+                else if ((m.type as string) === 'box_record') {
+                    const body = typeof m.content === 'string' ? m.content : '';
+                    content = `${timeStr}\n${body}`;
                 }
                 else if ((m.type as string) === 'theater_card') {
                     // theater_card：用户「窥视」了你某个时段的行为小剧场。那段演出就是你当时真实在做的事，

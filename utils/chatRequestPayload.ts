@@ -115,6 +115,8 @@ export interface BuildChatPayloadInput {
      * 出现两个钟、两份热搜、两套工具名。
      */
     timelyByWorker?: boolean;
+    /** 喵喵盒：替换线上聊天规范，并跳过语音条教学 */
+    miaomiaoBoxPrompt?: string;
 }
 
 export interface BuildChatPayloadResult {
@@ -335,9 +337,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
-        (input.timelyByWorker || returningFromMode) ? {
+        (input.timelyByWorker || returningFromMode || input.miaomiaoBoxPrompt) ? {
             timelyByWorker: input.timelyByWorker === true,
             returningFromMode: returningFromMode || undefined,
+            miaomiaoBoxPrompt: input.miaomiaoBoxPrompt,
         } : undefined,
     );
     let systemPrompt = parts.stable;

@@ -26,6 +26,7 @@ import './blockCards.css';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
+import { BoxRecordCard } from '../../apps/miaomiaoBox/BoxRecordCard';
 import LuckinCard from './LuckinCard';
 import LuckinCheckoutCard from './LuckinCheckoutCard';
 import QixiEventCardView from './QixiEventCard';
@@ -2889,6 +2890,18 @@ const MessageItem = React.memo(({
                     </div>
                 </div>
             </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'box_record') {
+        const card = (
+            <BoxRecordCard
+                title={m.metadata?.title}
+                content={m.content}
+                archiveMode={m.metadata?.archiveMode}
+                timestamp={m.timestamp}
+            />
         );
         return commonLayout(card);
     }

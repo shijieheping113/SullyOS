@@ -2,6 +2,7 @@
 import React from 'react';
 import { OSProvider } from './context/OSContext';
 import { MusicProvider } from './context/MusicContext';
+import { MiaomiaoBoxProvider } from './context/MiaomiaoBoxContext';
 import PhoneShell from './components/PhoneShell';
 import BuildBadge from './components/BuildBadge';
 import DevDebugPanel from './components/DevDebugPanel';
@@ -38,7 +39,9 @@ const App: React.FC = () => {
         >
           <OSProvider>
             <MusicProvider>
-              <PhoneShell />
+              <MiaomiaoBoxProvider>
+                <PhoneShell />
+              </MiaomiaoBoxProvider>
             </MusicProvider>
             {/* 挂在 Provider 里面才能直接读 characters（省掉轮询 IndexedDB），
                 面板自身用 portal 渲染到 body，绕开上面那层 transform 对 fixed 定位的影响。 */}

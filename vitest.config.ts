@@ -13,6 +13,7 @@ export default defineConfig({
     setupFiles: ['./test-setup.ts'],
     include: [
       'utils/**/*.test.ts',
+      'apps/miaomiaoBox/**/*.test.ts',
       'worker/**/*.test.ts',
       'scripts/**/*.test.ts',
     ],
