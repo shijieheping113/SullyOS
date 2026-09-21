@@ -22,6 +22,8 @@ const defaultSettings = (charId: string): MiaomiaoSettings => ({
   charId,
   foldN: MIAOMIAO_FOLD_N_DEFAULT,
   ttsAutoPlay: true,
+  ttsEnabled: true,
+  voiceQuoteStyle: 'corner',
   worldRules: [],
 });
 

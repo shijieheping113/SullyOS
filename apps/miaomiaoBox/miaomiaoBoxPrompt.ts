@@ -3,7 +3,7 @@ import { getElevenLabsVoiceActingGuide } from '../../utils/elevenLabsTts';
 import { VOICE_ACTING_GUIDE } from '../../utils/minimaxTts';
 import { getVoicePromptOverride, resolveTtsProvider } from '../../utils/ttsProvider';
 import type { APIConfig, TtsProvider } from '../../types';
-import type { MiaomiaoStarter, MiaomiaoWorldRule } from './types';
+import type { MiaomiaoQuoteStyle, MiaomiaoStarter, MiaomiaoWorldRule } from './types';
 
 export const BOX_PLAY_PROMPT_CORE = `【你现在在“喵喵盒”里】
 
@@ -56,6 +56,12 @@ export const BOX_PLAY_PROMPT_CORE = `【你现在在“喵喵盒”里】
 口气用主聊天那套语音标签来标（不是发语音条，屏幕仍是普通字，标签显示时会去掉）：
 用一对 <语音> 和 </语音> 包住要读的那句台词。
 不要写见面那种 [v:xxx]。不要写 <字幕>。不要把整条回复扮成一条语音消息。旁白留在标签外面。
+
+【排版】
+正文按段落写：一段两三句，段与段之间空一行。不要把整场戏挤成一块。
+角色开口时单独起一行，写成 <语音>要念的字</语音>。一句开口一块标签。两句开口就两块，每块各占一行。
+<语音> 里面只放嘴里说的字，不要再套一层引号，不要写 [breathy] [sad] [whispering] [groaning] [crying loudly] 这种方括号。
+叙述里不要出现 <语音> 标签，也不要出现方括号语气词。
 `;
 
 const MINIMAX_VOICE_BLOCK = `可选 emotion，写在开标签上：<语音 emotion="happy">…</语音>
@@ -128,10 +134,21 @@ ${extra}`;
   return MINIMAX_VOICE_BLOCK;
 }
 
+function quoteStyleHint(style?: MiaomiaoQuoteStyle): string {
+  if (style === 'corner-paren') {
+    return `开口写成「文本1（文本2）」：文本1是要念的话，文本2是括注不念。语气标记只写在文本1上，不要写在文本2上。`;
+  }
+  if (style === 'dq-ascii') return `开口用英文直引号 "文本" 包住要念的话。`;
+  if (style === 'dq-curly') return `开口用弯引号 “文本” 包住要念的话。`;
+  if (style === 'custom') return '';
+  return `开口用「文本」包住要念的话。`;
+}
+
 export function buildMiaomiaoPlayPrompt(opts: {
   apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel'> | null;
   worldRules: MiaomiaoWorldRule[];
   starter: MiaomiaoStarter;
+  quoteStyle?: MiaomiaoQuoteStyle;
 }): string {
   const provider = resolveTtsProvider(opts.apiConfig);
   const custom = getVoicePromptOverride(provider) || (opts.apiConfig?.voicePrompts?.[provider] || '').trim();
@@ -147,6 +164,7 @@ ${rules.map((r, i) => `${i + 1}. ${r.title}${r.body ? `：${r.body}` : ''}`).joi
     acting,
     LINE_NO_CHAT_SHAPE,
     ruleBlock,
+    quoteStyleHint(opts.quoteStyle),
     STARTER_PROMPTS[opts.starter],
   ].filter(Boolean).join('\n\n');
 }

@@ -1,20 +1,40 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ArrowsClockwise, CaretLeft, Clock, FloppyDisk, GearSix, House, Moon, PaperPlaneTilt, PencilSimple, Plus, SpeakerHigh, Sun, Trash,
+  ArrowsClockwise, CaretLeft, Clock, CopySimple, DownloadSimple, GearSix, House, Moon, PaperPlaneTilt, PencilSimple, Plus, SpeakerHigh, Sun, Trash,
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { AppID } from '../../types';
 import { useMiaomiaoBox } from '../../context/MiaomiaoBoxContext';
 import { MiaomiaoBoxCat } from './MiaomiaoBoxCat';
 import HtmlCard from '../../components/chat/HtmlCard';
-import { MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoStarter } from './types';
+import { MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
 import { countUnfoldedRounds } from './foldSession';
-import { displayTextForBoxReply } from './speakQuoted';
+import { displayTextForBoxReply, splitIntoBubbles } from './speakQuoted';
 import { MiaomiaoBoxDB } from './miaomiaoBoxDb';
+import TokenImg from '../../components/os/TokenImg';
 import { IcoMinus, STARTER_ICO } from './miaoIcons';
 import './miaomiao-box.css';
 
 const STARTERS: MiaomiaoStarter[] = ['box', 'story', 'claw', 'walk', 'dream', 'random'];
+
+function visualRows(m: MiaomiaoMessage): { key: string; kind: 'text' | 'voice' | 'html'; content: string; htmlSource?: string }[] {
+  if (m.kind === 'html') return [{ key: m.id, kind: 'html', content: '', htmlSource: m.htmlSource }];
+  if (m.kind === 'voice') return [{ key: m.id, kind: 'voice', content: m.content }];
+  if (m.kind === 'text') return [{ key: m.id, kind: 'text', content: m.content, htmlSource: m.htmlSource }];
+  const segs = splitIntoBubbles(m.content || '');
+  if (!segs.length) {
+    if (m.htmlSource) return [{ key: m.id, kind: 'html', content: '', htmlSource: m.htmlSource }];
+    return m.content ? [{ key: m.id, kind: 'text', content: m.content }] : [];
+  }
+  const rows = segs.map((s, i) => ({
+    key: `${m.id}-${i}`,
+    kind: s.kind as 'text' | 'voice',
+    content: s.content,
+    htmlSource: undefined as string | undefined,
+  }));
+  if (m.htmlSource) rows.push({ key: `${m.id}-html`, kind: 'html', content: '', htmlSource: m.htmlSource });
+  return rows;
+}
 const THEME_KEY = 'miaomiao-box-theme';
 const POS_KEY = 'miaomiao-box-pos';
 
@@ -56,13 +76,23 @@ const MiaomiaoBoxHost: React.FC = () => {
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const holdTimer = useRef<number | null>(null);
+  const [lpPos, setLpPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [openAnim, setOpenAnim] = useState(false);
+  const [rerollOpen, setRerollOpen] = useState(false);
 
   useEffect(() => {
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
   }, [theme]);
 
-  const showFloat = box.shell === 'float' && os.activeApp === AppID.Chat;
+  const showFloat = box.shell === 'float' && os.activeApp === AppID.Chat && (!box.session || box.session.charId === os.activeCharacterId);
   const showWidget = box.shell === 'widget';
+  const hasShow = !!(box.session && (box.session.status === 'playing' || box.session.status === 'paused') && box.messages.length > 0);
+  useEffect(() => {
+    if (!showFloat || !hasShow) return;
+    setOpenAnim(true);
+    const t = window.setTimeout(() => setOpenAnim(false), 700);
+    return () => window.clearTimeout(t);
+  }, [showFloat, hasShow]);
   if (!showFloat && !showWidget) return null;
 
   const sub = box.session
@@ -113,7 +143,19 @@ const MiaomiaoBoxHost: React.FC = () => {
     if (!d.moved) box.expandFloat();
   };
 
-  const startHold = (id: string) => {
+  const startHold = (id: string, e?: React.PointerEvent) => {
+    if (e) {
+      const boxEl = floatRef.current;
+      const r = boxEl ? boxEl.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      const pad = 8;
+      let x = e.clientX - r.left;
+      let y = e.clientY - r.top;
+      if (x + 196 > r.width - pad) x = Math.max(pad, r.width - 196 - pad);
+      if (y + 180 > r.height - pad) y = Math.max(pad, r.height - 180 - pad);
+      if (x < pad) x = pad;
+      if (y < pad) y = pad;
+      setLpPos({ x, y });
+    }
     if (holdTimer.current) window.clearTimeout(holdTimer.current);
     holdTimer.current = window.setTimeout(() => setLpId(id), 420);
   };
@@ -143,7 +185,7 @@ const MiaomiaoBoxHost: React.FC = () => {
             <button className="iconbtn" aria-label={box.page === 'home' ? '返回聊天' : '返回主页面'} onClick={onHomeLeft}>
               {box.page === 'home' ? <CaretLeft size={18} /> : <House size={18} />}
             </button>
-            <span className="boxmark"><MiaomiaoBoxCat lid={box.session?.status === 'playing' ? 'behind' : 'on'} tail={box.session?.status === 'playing' ? 'out' : 'in'} cls="mini" /></span>
+            <span className="boxmark"><MiaomiaoBoxCat lid={hasShow ? (openAnim ? 'open' : 'behind') : 'on'} tail={hasShow ? 'out' : 'in'} cls={`mini${openAnim ? ' hop pop' : ''}`} /></span>
             <div className="titles">
               <h2>{box.page === 'settings' ? '盒子设置' : box.page === 'history' ? '历史原文' : '喵喵盒'}</h2>
               <p>{box.page === 'settings' ? '只影响盒子里' : sub}</p>
@@ -157,6 +199,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                   {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
                 </button>
               )}
+              <button className="iconbtn" type="button" aria-label="收成挂件" onClick={box.collapseToWidget}><IcoMinus /></button>
               {box.page !== 'settings' && box.page !== 'history' && (
                 <button className="pill" onClick={() => setSheet(true)}>合上箱盖</button>
               )}
@@ -168,7 +211,7 @@ const MiaomiaoBoxHost: React.FC = () => {
               <div className="hero">
                 <span className="sp" style={{ left: 12, top: 10 }}>✦</span>
                 <span className="sp" style={{ right: 16, top: 14, opacity: 0.8 }}>✦</span>
-                <span className="bigbox"><MiaomiaoBoxCat lid="on" tail="in" /></span>
+                <span className="bigbox"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} /></span>
                 <div className="txt">
                   <h3>喵喵盒</h3>
                   <p>猫看见箱子就想钻进去，<br />钻进去就是另一个世界🐾</p>
@@ -176,7 +219,11 @@ const MiaomiaoBoxHost: React.FC = () => {
               </div>
               {box.session && (box.session.status === 'playing' || box.session.status === 'paused') && box.messages.length > 0 && (
                 <div className="contcard">
-                  <div className="mini"><MiaomiaoBoxCat lid="behind" tail="out" cls="mini" /></div>
+                  <div className="mini">{(() => {
+                    const ch = os.characters.find(c => c.id === box.session?.charId);
+                    const img = ch?.vrState?.chibi?.img || ch?.avatar;
+                    return img ? <TokenImg value={img} alt="" /> : <MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" />;
+                  })()}</div>
                   <div className="t"><b>{box.session.title}</b><span>{STARTER_LABEL[box.session.starter]} · 接着演</span></div>
                   <button className="go" onClick={() => box.setPage('play')}>接着 ▸</button>
                 </div>
@@ -212,44 +259,43 @@ const MiaomiaoBoxHost: React.FC = () => {
                     <div className="sft"><span>摘要 · 原文留着，随时能翻</span></div>
                   </div>
                 ) : (
-                  <React.Fragment key={m.id}>
+                  visualRows(m).map(row => (
+                  <React.Fragment key={row.key}>
+                    {row.kind !== 'html' && (
                     <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
-                      {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid="behind" tail="out" cls="mini" /></span>}
+                      {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>}
                       {editId === m.id ? (
-                        <textarea className="bub" style={{ minHeight: 64 }} value={editDraft} onChange={e => setEditDraft(e.target.value)} />
+                        <div className="editpane" onClick={e => e.stopPropagation()}>
+                          <textarea value={editDraft} onChange={e => setEditDraft(e.target.value)} />
+                          <button type="button" className="savebtn" onClick={() => { void box.editMessage(m.id, editDraft); setEditId(null); }}>保存</button>
+                        </div>
                       ) : (
-                        displayTextForBoxReply(m.content) && (
                           <div
-                            className={`bub ${lpId === m.id ? 'press' : ''}`}
-                            onPointerDown={() => startHold(m.id)}
+                            className={`bub ${row.kind === 'voice' ? 'voice' : ''} ${lpId === m.id ? 'press' : ''}`}
+                            onPointerDown={e => startHold(m.id, e)}
                             onPointerUp={cancelHold}
                             onPointerCancel={cancelHold}
                             onPointerMove={cancelHold}
-                          >{displayTextForBoxReply(m.content)}</div>
-                        )
-                      )}
-                      {lpId === m.id && (
-                        <div className="lpmenu" style={{ bottom: 'auto', top: '100%' }} onClick={e => e.stopPropagation()}>
-                          <button type="button" onClick={() => { setEditId(m.id); setEditDraft(m.content); setLpId(null); }}><PencilSimple size={15} />编辑</button>
-                          <button type="button" onClick={() => { setLpId(null); void box.rerollMessage(m.id); }}><ArrowsClockwise size={15} />重roll</button>
-                          <button type="button" onClick={() => { if (editId === m.id) void box.editMessage(m.id, editDraft); setEditId(null); setLpId(null); }}><FloppyDisk size={15} />保存</button>
-                          <button type="button" onClick={() => { setLpId(null); void box.playBoxVoice(m.id); }}><SpeakerHigh size={15} />播放语音</button>
-                          <button type="button" className="danger full" onClick={() => { setLpId(null); void box.deleteBoxMessage(m.id); }}><Trash size={15} />删除</button>
-                        </div>
+                            onClick={() => { if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
+                          >
+                            <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{row.content}</span>
+                          </div>
                       )}
                     </div>
-                    {m.htmlSource && (
+                    )}
+                    {row.htmlSource && (
                       <div
                         className="htmlcard"
-                        onPointerDown={() => startHold(m.id)}
+                        onPointerDown={e => { e.stopPropagation(); startHold(m.id, e); }}
                         onPointerUp={cancelHold}
                         onPointerCancel={cancelHold}
-                      ><HtmlCard html={m.htmlSource} /></div>
+                      ><HtmlCard html={row.htmlSource} /></div>
                     )}
                   </React.Fragment>
+                  ))
                 ))}
                 {box.typing && (
-                  <div className="row"><span className="av"><MiaomiaoBoxCat lid="behind" tail="out" cls="mini" /></span>
+                  <div className="row"><span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>
                     <div className="bub"><span className="typing"><i /><i /><i /></span></div>
                   </div>
                 )}
@@ -269,13 +315,30 @@ const MiaomiaoBoxHost: React.FC = () => {
                     ><Ico /></button>
                   );
                 })}
-                <button className="minichip gearchip" aria-label="盒子设置" onClick={() => box.setPage('settings')}><GearSix size={17} /></button>
+                <div className="gearwrap">
+                  {rerollOpen && (
+                    <button
+                      type="button"
+                      className="minichip rerollpop"
+                      aria-label="重roll"
+                      onClick={() => { setRerollOpen(false); void box.rerollLastTurn(); }}
+                    ><ArrowsClockwise size={17} /></button>
+                  )}
+                  <button className="minichip gearchip" aria-label="盒子设置" aria-pressed={rerollOpen} onClick={() => {
+                    if (rerollOpen) {
+                      setRerollOpen(false);
+                      box.setPage('settings');
+                    } else {
+                      setRerollOpen(true);
+                    }
+                  }}><GearSix size={17} /></button>
+                </div>
               </div>
             </>
           )}
 
           {box.page === 'settings' && box.settings && (
-            <div className="home">
+            <div className="home setpage">
               <div className="setsec">
                 <div className="sh"><b>世界规则</b><span>默认折叠 · 点编辑才展开</span></div>
                 {box.settings.worldRules.map(rule => (
@@ -324,11 +387,40 @@ const MiaomiaoBoxHost: React.FC = () => {
                 <div className="meta">总结过 {box.session?.foldCount || 0} 次 · 卷起 {box.session?.foldedRoundCount || 0} 轮 · 原文全部留着，随时能翻</div>
               </div>
               <div className="setsec">
-                <div className="sh"><b>语音</b><span>跟主聊天同一套</span></div>
-                <div className="setrow" style={{ padding: 0, background: 'transparent', border: 0 }}>
-                  <span className="l" style={{ fontSize: 12.5 }}>猫儿的话自动读出来</span>
-                  <button className="switch" aria-checked={box.settings.ttsAutoPlay} onClick={() => box.saveSettings({ ...box.settings!, ttsAutoPlay: !box.settings!.ttsAutoPlay })}><i /></button>
+                <div className="sh"><b>语音</b><span>开启后只生成，要点才播</span></div>
+                <div className="ruleitem">
+                  <div className="r1">
+                    <b>语音是否开启</b>
+                    <button className="switch" aria-checked={box.settings.ttsEnabled !== false} onClick={() => box.saveSettings({ ...box.settings!, ttsEnabled: box.settings!.ttsEnabled === false, ttsAutoPlay: box.settings!.ttsEnabled === false })}><i /></button>
+                  </div>
                 </div>
+              </div>
+              <div className="setsec">
+                <div className="sh"><b>语音识别规范</b><span>只读引号里要念的那一段</span></div>
+                {([
+                  ['dq-ascii', '" "'],
+                  ['dq-curly', '“ ”'],
+                  ['corner', '「」'],
+                  ['corner-paren', '「文本1（文本2）」'],
+                  ['custom', '自定义'],
+                ] as [MiaomiaoQuoteStyle, string][]).map(([id, lab]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className="qopt"
+                    aria-pressed={(box.settings!.voiceQuoteStyle || 'corner') === id}
+                    onClick={() => box.saveSettings({ ...box.settings!, voiceQuoteStyle: id })}
+                  >{lab}</button>
+                ))}
+                {box.settings.voiceQuoteStyle === 'custom' && (
+                  <input
+                    className="tinput"
+                    style={{ marginTop: 8, width: '100%' }}
+                    placeholder="自定义成对符号，比如 『』"
+                    value={box.settings.voiceQuoteCustom || ''}
+                    onChange={e => box.saveSettings({ ...box.settings!, voiceQuoteCustom: e.target.value })}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -365,14 +457,33 @@ const MiaomiaoBoxHost: React.FC = () => {
                   <button className="sendbtn" aria-label="发送" onClick={() => {
                     const t = draft.trim();
                     if (!t) return;
-                    if (box.page === 'home') box.startPlay(box.session?.starter || 'box', t);
-                    else box.sendPlay(t);
+                    if (box.page === 'play' || (hasShow && box.session)) void box.sendPlay(t);
+                    else void box.startPlay(box.session?.starter || 'box', t);
                     setDraft('');
                   }}><PaperPlaneTilt size={18} weight="fill" /></button>
                 </div>
               </div>
             </div>
           )}
+
+          {lpId && (() => {
+            const lpMsg = box.messages.find(x => x.id === lpId);
+            const isHtml = lpMsg?.kind === 'html';
+            const isUser = lpMsg?.role === 'user';
+            const isVoice = !isUser && !isHtml && (lpMsg?.kind === 'voice' || !!lpMsg?.voiceSourceText || /<[语語]音/.test(lpMsg?.content || '') || !lpMsg?.kind);
+            return (
+            <div className="lpmenu fixed" style={{ left: lpPos.x, top: lpPos.y }} onClick={e => e.stopPropagation()}>
+              {!isHtml && <button type="button" onClick={() => { if (lpMsg) { setEditId(lpMsg.id); setEditDraft(lpMsg.content); } setLpId(null); }}><PencilSimple size={15} />编辑</button>}
+              {!isHtml && <button type="button" onClick={() => {
+                if (lpMsg) void navigator.clipboard.writeText(lpMsg.content);
+                setLpId(null);
+              }}><CopySimple size={15} />复制</button>}
+              {isVoice && !isUser && <button type="button" onClick={() => { const id = lpId; setLpId(null); if (id) void box.playBoxVoice(id); }}><SpeakerHigh size={15} />播放语音</button>}
+              {isVoice && !isUser && <button type="button" onClick={() => { const id = lpId; setLpId(null); if (id) void box.downloadBoxVoice(id); }}><DownloadSimple size={15} />语音下载</button>}
+              <button type="button" className="danger full" onClick={() => { const id = lpId; setLpId(null); if (id) void box.deleteBoxMessage(id); }}><Trash size={15} />删除</button>
+            </div>
+            );
+          })()}
 
           {sheet && (
             <div className="sheetmask" onClick={() => setSheet(false)}>
@@ -381,6 +492,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                   <span className="bx"><MiaomiaoBoxCat lid="behind" tail="out" cls="mini" /></span>
                   <div><h3>要把这一段收进哪里？</h3><p>合上箱盖之前，先挑一个</p></div>
                 </div>
+                {box.error ? <p className="sub">{box.error}</p> : null}
                 {([
                   ['remember', '记在心里', '猫儿把这事记成一段真实发生的事，以后聊天里想得起来。'],
                   ['raw', '原样收进', '不做大总结，把摘要和话原样收进聊天，也一样记得住。'],
@@ -408,7 +520,7 @@ const MiaomiaoBoxHost: React.FC = () => {
           onPointerCancel={onWidgetUp}
           aria-label="回到喵喵盒"
         >
-          <MiaomiaoBoxCat lid="behind" tail="out" cls="mini" />
+          <MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" />
           {box.unread && <span className="dot">✦</span>}
         </div>
       )}

@@ -109,8 +109,7 @@ import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettings
 import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
 import { useChatAI } from '../hooks/useChatAI';
 import { MIAOMIAO_RECORD_EVENT, useMiaomiaoBox } from '../context/MiaomiaoBoxContext';
-import { MiaomiaoBoxCat } from '../apps/miaomiaoBox/MiaomiaoBoxCat';
-import '../apps/miaomiaoBox/miaomiao-box.css';
+
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
@@ -5228,16 +5227,6 @@ const Chat: React.FC = () => {
                 )}
 
                 {/* 开关写着「已开启」、这一轮却在本地生成时，把原因说给用户听 */}
-                {miaomiao.playingForChar(activeCharacterId) && (
-                    <div className="miaomiao-root px-3 pb-2" data-theme={baseOsTheme?.darkMode ? 'dark' : 'light'}>
-                        <div className="livebar">
-                            <span className="bx"><MiaomiaoBoxCat lid="behind" tail="out" cls="mini" /></span>
-                            <div className="lb"><b>猫儿正在箱子里玩</b><span>{miaomiao.session?.title || '喵喵盒'} · 还没收工</span></div>
-                            <button className="go" onClick={() => { miaomiao.expandFloat(); miaomiao.setPage('play'); }}>回去 ▸</button>
-                        </div>
-                    </div>
-                )}
-
                 <InstantChatRouteNotice charId={activeCharacterId} />
 
                 <ChatInputArea

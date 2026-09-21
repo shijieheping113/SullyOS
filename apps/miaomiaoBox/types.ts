@@ -21,10 +21,15 @@ export interface MiaomiaoWorldRule {
   enabled: boolean;
 }
 
+export type MiaomiaoQuoteStyle = 'dq-ascii' | 'dq-curly' | 'corner' | 'corner-paren' | 'custom';
+
 export interface MiaomiaoSettings {
   charId: string;
   foldN: number;
   ttsAutoPlay: boolean;
+  ttsEnabled?: boolean;
+  voiceQuoteStyle?: MiaomiaoQuoteStyle;
+  voiceQuoteCustom?: string;
   worldRules: MiaomiaoWorldRule[];
 }
 
@@ -56,6 +61,10 @@ export interface MiaomiaoMessage {
   htmlTextPreview?: string;
   summaryRange?: { fromRound: number; toRound: number };
   originalSummary?: string;
+  kind?: 'text' | 'voice' | 'html';
+  voiceSourceText?: string;
+  voiceUrl?: string;
+  voiceSynthText?: string;
 }
 
 export const STARTER_LABEL: Record<MiaomiaoStarter, string> = {

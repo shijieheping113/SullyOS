@@ -27,7 +27,7 @@ import {
   buildMiaomiaoPlayPrompt,
 } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
 import { callMainChatLlm, callSecondaryLlm } from '../apps/miaomiaoBox/boxLlm';
-import { displayTextForBoxReply, spokenTextForBoxReply } from '../apps/miaomiaoBox/speakQuoted';
+import { applyQuoteStyle, cleanShown, displayTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
 
 export type MiaomiaoShell = 'hidden' | 'float' | 'widget';
 export type MiaomiaoPage = 'home' | 'play' | 'settings' | 'history';
@@ -56,7 +56,9 @@ type Ctx = {
   editMessage: (id: string, content: string) => Promise<void>;
   deleteBoxMessage: (id: string) => Promise<void>;
   rerollMessage: (id: string) => Promise<void>;
+  rerollLastTurn: () => Promise<void>;
   playBoxVoice: (id: string) => Promise<void>;
+  downloadBoxVoice: (id: string) => Promise<void>;
 };
 
 const MiaomiaoBoxContext = createContext<Ctx | null>(null);
@@ -91,13 +93,63 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setSession(next);
   };
 
+  const explodeCombinedAssistant = async (msgs: MiaomiaoMessage[]): Promise<MiaomiaoMessage[]> => {
+    const out: MiaomiaoMessage[] = [];
+    for (const m of msgs) {
+      if (m.role !== 'assistant' || m.kind) {
+        out.push(m);
+        continue;
+      }
+      const segs = splitIntoBubbles(m.content || '');
+      const needSplit = segs.length > 1 || !!m.htmlSource;
+      if (!needSplit) {
+        out.push({ ...m, kind: segs[0]?.kind || 'text' });
+        continue;
+      }
+      await MiaomiaoBoxDB.deleteMessage(m.id);
+      let ts = m.timestamp;
+      for (const seg of segs) {
+        const row: MiaomiaoMessage = {
+          id: MiaomiaoBoxDB.newId('a'),
+          sessionId: m.sessionId,
+          charId: m.charId,
+          role: 'assistant',
+          kind: seg.kind,
+          content: seg.content,
+          voiceSourceText: seg.voiceSourceText,
+          timestamp: ts++,
+          folded: m.folded,
+        };
+        await MiaomiaoBoxDB.saveMessage(row);
+        out.push(row);
+      }
+      if (m.htmlSource) {
+        const htmlRow: MiaomiaoMessage = {
+          id: MiaomiaoBoxDB.newId('a'),
+          sessionId: m.sessionId,
+          charId: m.charId,
+          role: 'assistant',
+          kind: 'html',
+          content: m.htmlTextPreview || '',
+          htmlSource: m.htmlSource,
+          htmlTextPreview: m.htmlTextPreview,
+          timestamp: ts++,
+          folded: m.folded,
+        };
+        await MiaomiaoBoxDB.saveMessage(htmlRow);
+        out.push(htmlRow);
+      }
+    }
+    return out;
+  };
+
   const loadSessionBundle = async (s: MiaomiaoSession) => {
     const [msgs, st] = await Promise.all([
       MiaomiaoBoxDB.listMessages(s.id),
       MiaomiaoBoxDB.getSettings(s.charId),
     ]);
     setSession(s);
-    setMessages(msgs);
+    setMessages(await explodeCombinedAssistant(msgs));
     setSettings(st);
   };
 
@@ -123,14 +175,22 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (shell === 'float' && os.activeApp !== AppID.Chat) setShell('widget');
   }, [os.activeApp, shell]);
 
+  useEffect(() => {
+    const s = sessionRef.current;
+    if (shell === 'float' && s && os.activeCharacterId && s.charId !== os.activeCharacterId) {
+      setShell('widget');
+    }
+  }, [os.activeCharacterId, shell, session?.charId]);
+
   const collapseToWidget = () => {
     if (session) setShell('widget');
     else setShell('hidden');
   };
 
   const expandFloat = () => {
-    if (!session) return;
-    os.setActiveCharacterId(session.charId);
+    const s = sessionRef.current;
+    if (!s) return;
+    os.setActiveCharacterId(s.charId);
     os.openApp(AppID.Chat);
     setUnread(false);
     setShell('float');
@@ -208,23 +268,39 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  const speakIfNeeded = async (s: MiaomiaoSession, raw: string) => {
-    if (!s.ttsAutoPlay) return;
+  const ttsOn = () => {
+    const st = settings;
+    if (st?.ttsEnabled !== undefined) return st.ttsEnabled;
+    return st?.ttsAutoPlay !== false;
+  };
+
+  const speakTextOf = (m: MiaomiaoMessage) => {
+    const st = settings;
+    const src = m.voiceSourceText || m.content;
+    return applyQuoteStyle(src, st?.voiceQuoteStyle || 'corner', st?.voiceQuoteCustom).trim();
+  };
+
+  const synthToMessage = async (s: MiaomiaoSession, m: MiaomiaoMessage, play: boolean) => {
     const char = os.characters.find(c => c.id === s.charId);
-    if (!char) return;
-    const { spoken, emotion } = spokenTextForBoxReply(raw);
-    if (!spoken) return;
-    try {
-      const url = await synthesizeSpeech(spoken, char, os.apiConfig, { emotion });
-      if (!audioRef.current) audioRef.current = new Audio();
-      await playVoiceAudio(audioRef.current, url, {
-        onPlaying: () => undefined,
-        onStopped: () => undefined,
-        onError: () => undefined,
-      });
-    } catch (e) {
-      console.warn('[miaomiao] tts', e);
+    if (!char) return m;
+    const text = speakTextOf(m);
+    if (!text) return m;
+    if (m.voiceUrl && m.voiceSynthText === text) {
+      if (play) {
+        if (!audioRef.current) audioRef.current = new Audio();
+        await playVoiceAudio(audioRef.current, m.voiceUrl, { onPlaying: () => undefined, onStopped: () => undefined, onError: () => undefined });
+      }
+      return m;
     }
+    const url = await synthesizeSpeech(text, char, os.apiConfig);
+    const next = { ...m, voiceUrl: url, voiceSynthText: text };
+    await MiaomiaoBoxDB.saveMessage(next);
+    setMessages(prev => prev.map(x => x.id === m.id ? next : x));
+    if (play) {
+      if (!audioRef.current) audioRef.current = new Audio();
+      await playVoiceAudio(audioRef.current, url, { onPlaying: () => undefined, onStopped: () => undefined, onError: () => undefined });
+    }
+    return next;
   };
 
   const runTurn = async (s: MiaomiaoSession, userText: string, persistUser = true) => {
@@ -247,6 +323,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       apiConfig: os.apiConfig,
       worldRules: s.worldRules,
       starter: s.starter,
+      quoteStyle: settings?.voiceQuoteStyle,
     });
     const payload = await buildChatRequestPayload({
       char,
@@ -280,29 +357,52 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
     const { blocks, cleanedContent } = extractHtmlBlocks(raw);
     const html = blocks[0];
-    const assistant: MiaomiaoMessage = {
-      id: MiaomiaoBoxDB.newId('a'),
-      sessionId: s.id,
-      charId: s.charId,
-      role: 'assistant',
-      content: cleanedContent || displayTextForBoxReply(raw) || raw,
-      timestamp: Date.now(),
-      htmlSource: html?.html,
-      htmlTextPreview: html?.textPreview,
-    };
-    await MiaomiaoBoxDB.saveMessage(assistant);
+    const segs = splitIntoBubbles(cleanedContent || raw);
+    const created: MiaomiaoMessage[] = [];
+    let ts = Date.now();
+    for (const seg of segs) {
+      const row: MiaomiaoMessage = {
+        id: MiaomiaoBoxDB.newId('a'),
+        sessionId: s.id,
+        charId: s.charId,
+        role: 'assistant',
+        kind: seg.kind,
+        content: seg.content,
+        voiceSourceText: seg.voiceSourceText,
+        timestamp: ts++,
+      };
+      created.push(row);
+    }
+    if (html) {
+      created.push({
+        id: MiaomiaoBoxDB.newId('a'),
+        sessionId: s.id,
+        charId: s.charId,
+        role: 'assistant',
+        kind: 'html',
+        content: html.textPreview || '',
+        htmlSource: html.html,
+        htmlTextPreview: html.textPreview,
+        timestamp: ts++,
+      });
+    }
+    for (const row of created) await MiaomiaoBoxDB.saveMessage(row);
     let nextMsgs = persistUser && userText
-      ? [...boxMsgs.filter(m => m.id !== userMsg.id), userMsg, assistant]
-      : [...boxMsgs, assistant];
+      ? [...boxMsgs.filter(m => m.id !== userMsg.id), userMsg, ...created]
+      : [...boxMsgs, ...created];
     try {
       nextMsgs = await maybeFold(s, nextMsgs);
     } catch (e: any) {
-      setError(e?.message || '摘要没做成，这轮先不折');
+      console.warn('[miaomiao] fold skipped this round', e);
     }
     setMessages(nextMsgs);
     await persistSession({ ...s, status: 'playing', updatedAt: Date.now(), title: s.title || STARTER_LABEL[s.starter] });
     if (shell === 'widget') setUnread(true);
-    await speakIfNeeded(s, raw);
+    if (ttsOn()) {
+      for (const row of created.filter(r => r.kind === 'voice')) {
+        try { await synthToMessage(s, row, false); } catch (e) { console.warn('[miaomiao] tts', e); }
+      }
+    }
   };
 
   const startPlay = async (starter: MiaomiaoStarter, text?: string) => {
@@ -362,9 +462,11 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const continues = s.continuesMessageId;
     if (continues) {
       const old = await DB.getMessageById(continues);
-      if (old) await DB.updateMessage(continues, old.content);
-      await DB.updateMessageMetadata(continues, (prev: any) => ({ ...(prev || {}), superseded: true }));
+      if (old) {
+        await DB.updateMessageMetadata(continues, (prev: any) => ({ ...(prev || {}), superseded: true }));
+      }
     }
+    const boxMsgs = await MiaomiaoBoxDB.listMessages(s.id);
     const id = await DB.saveMessage({
       charId: s.charId,
       role: 'assistant',
@@ -377,7 +479,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         sessionId: s.id,
         continuesId: continues,
         foldCount: s.foldCount,
-        roundCount: countUnfoldedRounds(messages) + s.foldedRoundCount,
+        roundCount: countUnfoldedRounds(boxMsgs) + s.foldedRoundCount,
       },
     });
     if (mode === 'paused') {
@@ -389,7 +491,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const closeLid = async (mode: MiaomiaoArchiveMode) => {
     const s = sessionRef.current;
-    if (!s) return;
+    if (!s) {
+      setError('箱子里还没有这场戏');
+      return;
+    }
     setError('');
     const msgs = await MiaomiaoBoxDB.listMessages(s.id);
     try {
@@ -427,7 +532,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const list = messagesRef.current;
     const m = list.find(x => x.id === id);
     if (!m) return;
-    const next = { ...m, content };
+    const next = { ...m, content, voiceSourceText: m.kind === 'voice' ? content : m.voiceSourceText };
     await MiaomiaoBoxDB.saveMessage(next);
     setMessages(list.map(x => x.id === id ? next : x));
   };
@@ -447,13 +552,22 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const removeIds: string[] = [];
     let userText = '';
     if (target.role === 'assistant') {
-      removeIds.push(target.id);
-      const prev = [...list.slice(0, idx)].reverse().find(m => m.role === 'user');
-      userText = prev?.content || '';
+      let prevUserIdx = -1;
+      for (let i = idx - 1; i >= 0; i--) {
+        if (list[i].role === 'user') { prevUserIdx = i; break; }
+      }
+      userText = prevUserIdx >= 0 ? list[prevUserIdx].content : '';
+      const from = prevUserIdx + 1;
+      for (let i = from; i < list.length; i++) {
+        if (list[i].role === 'user') break;
+        if (list[i].role === 'assistant') removeIds.push(list[i].id);
+      }
     } else {
       userText = target.content;
-      const nextA = list.slice(idx + 1).find(m => m.role === 'assistant');
-      if (nextA) removeIds.push(nextA.id);
+      for (let i = idx + 1; i < list.length; i++) {
+        if (list[i].role === 'user') break;
+        if (list[i].role === 'assistant') removeIds.push(list[i].id);
+      }
     }
     for (const rid of removeIds) await MiaomiaoBoxDB.deleteMessage(rid);
     setMessages(list.filter(m => !removeIds.includes(m.id)));
@@ -468,11 +582,45 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
+  const rerollLastTurn = async () => {
+    const list = messagesRef.current;
+    const lastUser = [...list].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    await rerollMessage(lastUser.id);
+  };
+
   const playBoxVoice = async (id: string) => {
     const s = sessionRef.current;
     const m = messagesRef.current.find(x => x.id === id);
     if (!s || !m) return;
-    await speakIfNeeded(s, m.content);
+    if (m.role === 'user' || m.kind === 'html') return;
+    if (m.kind === 'text' && !m.voiceSourceText && !/<[语語]音/.test(m.content || '')) return;
+    try {
+      await synthToMessage(s, m, true);
+    } catch (e) {
+      console.warn('[miaomiao] play', e);
+    }
+  };
+
+  const downloadBoxVoice = async (id: string) => {
+    const s = sessionRef.current;
+    const m = messagesRef.current.find(x => x.id === id);
+    if (!s || !m) return;
+    if (m.kind && m.kind !== 'voice') return;
+    try {
+      const next = await synthToMessage(s, m, false);
+      const url = next.voiceUrl;
+      if (!url) return;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'miaomiao-voice.mp3';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      console.warn('[miaomiao] download', e);
+    }
   };
 
   const saveSettings = async (next: MiaomiaoSettings) => {
@@ -482,7 +630,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       await persistSession({
         ...session,
         foldN: next.foldN,
-        ttsAutoPlay: next.ttsAutoPlay,
+        ttsAutoPlay: next.ttsEnabled !== false,
         worldRules: next.worldRules,
         updatedAt: Date.now(),
       });
@@ -492,7 +640,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const value = useMemo<Ctx>(() => ({
     shell, page, session, messages, settings, typing, error, unread, foldBusy,
     openForChar, collapseToWidget, expandFloat, setPage, startPlay, switchMode, sendPlay, leaveToChat, closeLid, saveSettings, playingForChar,
-    editMessage, deleteBoxMessage, rerollMessage, playBoxVoice,
+    editMessage, deleteBoxMessage, rerollMessage, rerollLastTurn, playBoxVoice, downloadBoxVoice,
   }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar]);
 
   return <MiaomiaoBoxContext.Provider value={value}>{children}</MiaomiaoBoxContext.Provider>;
