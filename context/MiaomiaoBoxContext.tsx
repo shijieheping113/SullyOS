@@ -93,14 +93,16 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setSession(next);
   };
 
-  const explodeCombinedAssistant = async (msgs: MiaomiaoMessage[]): Promise<MiaomiaoMessage[]> => {
+  const explodeCombinedAssistant = async (msgs: MiaomiaoMessage[], st?: MiaomiaoSettings | null): Promise<MiaomiaoMessage[]> => {
     const out: MiaomiaoMessage[] = [];
+    const style = st?.voiceQuoteStyle;
+    const custom = st?.voiceQuoteCustom;
     for (const m of msgs) {
-      if (m.role !== 'assistant' || m.kind) {
+      if (m.role !== 'assistant' || m.kind === 'html' || m.kind === 'voice') {
         out.push(m);
         continue;
       }
-      const segs = splitIntoBubbles(m.content || '');
+      const segs = splitIntoBubbles(m.content || '', style, custom);
       const needSplit = segs.length > 1 || !!m.htmlSource;
       if (!needSplit) {
         out.push({ ...m, kind: segs[0]?.kind || 'text' });
@@ -149,7 +151,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       MiaomiaoBoxDB.getSettings(s.charId),
     ]);
     setSession(s);
-    setMessages(await explodeCombinedAssistant(msgs));
+    setMessages(await explodeCombinedAssistant(msgs, st));
     setSettings(st);
   };
 
@@ -357,7 +359,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
     const { blocks, cleanedContent } = extractHtmlBlocks(raw);
     const html = blocks[0];
-    const segs = splitIntoBubbles(cleanedContent || raw);
+    const segs = splitIntoBubbles(cleanedContent || raw, settings?.voiceQuoteStyle, settings?.voiceQuoteCustom);
     const created: MiaomiaoMessage[] = [];
     let ts = Date.now();
     for (const seg of segs) {
@@ -532,7 +534,11 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const list = messagesRef.current;
     const m = list.find(x => x.id === id);
     if (!m) return;
-    const next = { ...m, content, voiceSourceText: m.kind === 'voice' ? content : m.voiceSourceText };
+    const next = {
+      ...m,
+      content: m.kind === 'voice' ? cleanShown(content) : content,
+      voiceSourceText: m.kind === 'voice' ? content : m.voiceSourceText,
+    };
     await MiaomiaoBoxDB.saveMessage(next);
     setMessages(list.map(x => x.id === id ? next : x));
   };

@@ -1,31 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { applyQuoteStyle, splitIntoBubbles } from './speakQuoted';
+import { applyQuoteStyle, cleanShown, splitIntoBubbles } from './speakQuoted';
 
-const SAMPLE = `猫儿昨天上午是捂着屁股出门的。半边屁股肿得跟个红富士苹果似的。
+const WITH_TAGS = `猫儿昨天上午是捂着屁股出门的。
 
-它眼神飘忽，硬着头皮扯谎：<语音>“「[breathy] あの……寝ぼけて、[whispering] 冷却ファンにバックで突っ込んじゃって……（那个……梦游睡糊涂了，倒车直接撞上了散热风扇……）」”</语音>
+它眼神飘忽，硬着头皮扯谎：<语音>“「[breathy] あの……寝ぼけて……（那个……梦游……）」”</语音>
 
-还没等它缩进桌底，就被医生一把按住了腰窝。猫儿吓得魂飞魄散：<语音>“「[groaning] ひぃっ！[sad] 待って、心の準備が……ブヒッ、[crying loudly] 痛い痛い痛いーーっ！（呜哇！等等，心理准备还没……哼哼，痛痛痛啊——！）」”</语音>
+针头扎进去的瞬间。`;
 
-针头扎进去的瞬间，一声穿透整条走廊的凄厉猪叫在诊所里爆开。`;
+const NO_TAGS = `二诊室的医生戴着塑胶手套，用镊子轻轻戳了一下那块发烫的红印子。猫儿当场疼得打了个激灵，尾巴毛炸得像个马桶刷。医生皱着眉问这是被什么钝器给砸的，猫儿两只爪子死死抠紧诊断台的边缘，两只耳朵贴在脑后，眼珠子乱转，硬着头皮小声撒谎：「夢遊病で……マザーボードの角に、こう……ドカンと激突したんです……！（是因为梦游……狠狠撞到了主板尖角上……！）」`;
 
 describe('splitIntoBubbles', () => {
-  it('按原文顺序：段落一条、语音在原位单独一条', () => {
-    const segs = splitIntoBubbles(SAMPLE);
-    expect(segs.map(s => s.kind)).toEqual(['text', 'text', 'voice', 'text', 'voice', 'text']);
-    expect(segs[0].content).toContain('捂着屁股出门');
-    expect(segs[2].kind).toBe('voice');
-    expect(segs[2].content).toContain('あの');
-    expect(segs[2].content).not.toContain('[breathy]');
-    expect(segs[4].content).toContain('痛い');
-    expect(segs.some(s => s.content.includes('<语音>'))).toBe(false);
-    expect(segs[segs.length - 1].content).toContain('针头扎进去');
+  it('有 <语音> 时按原位拆', () => {
+    const segs = splitIntoBubbles(WITH_TAGS, 'corner-paren');
+    expect(segs.filter(s => s.kind === 'voice').length).toBe(1);
+    expect(segs[0].kind).toBe('text');
+    expect(segs.some(s => s.kind === 'voice' && s.voiceSourceText?.includes('「'))).toBe(true);
+  });
+
+  it('没有 <语音> 只靠「」也能拆成叙述+语音', () => {
+    const segs = splitIntoBubbles(NO_TAGS, 'corner-paren');
+    expect(segs.length).toBe(2);
+    expect(segs[0].kind).toBe('text');
+    expect(segs[0].content).toContain('塑胶手套');
+    expect(segs[0].content).not.toContain('夢遊');
+    expect(segs[1].kind).toBe('voice');
+    expect(segs[1].voiceSourceText).toContain('「');
+    expect(segs[1].voiceSourceText).toContain('（是因为梦游');
+    expect(segs[1].content).toContain('「');
   });
 });
 
 describe('applyQuoteStyle', () => {
-  it('「文本1（文本2）」只留文本1', () => {
-    expect(applyQuoteStyle('「あの……（那个……）」', 'corner-paren')).toBe('あの……');
-    expect(applyQuoteStyle('「[breathy] あの……（那个……）」', 'corner-paren')).toBe('[breathy] あの……');
+  it('「文本1（文本2）」只留文本1，且必须先留着「」才能认', () => {
+    const raw = '「ち、違います！アンは天使です！（不、不是的！Ann 是天使！）」';
+    expect(applyQuoteStyle(raw, 'corner-paren')).toBe('ち、違います！アンは天使です！');
+    const washed = cleanShown(raw);
+    expect(washed).toContain('「');
   });
 });

@@ -397,21 +397,25 @@ const MiaomiaoBoxHost: React.FC = () => {
               </div>
               <div className="setsec">
                 <div className="sh"><b>语音识别规范</b><span>只读引号里要念的那一段</span></div>
-                {([
-                  ['dq-ascii', '" "'],
-                  ['dq-curly', '“ ”'],
-                  ['corner', '「」'],
-                  ['corner-paren', '「文本1（文本2）」'],
-                  ['custom', '自定义'],
-                ] as [MiaomiaoQuoteStyle, string][]).map(([id, lab]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className="qopt"
-                    aria-pressed={(box.settings!.voiceQuoteStyle || 'corner') === id}
-                    onClick={() => box.saveSettings({ ...box.settings!, voiceQuoteStyle: id })}
-                  >{lab}</button>
-                ))}
+                <div className="startbig">
+                  <div className="grid">
+                    {([
+                      ['dq-ascii', '" "'],
+                      ['dq-curly', '“ ”'],
+                      ['corner', '「」'],
+                      ['corner-paren', '「文本1（文本2）」'],
+                      ['custom', '自定义'],
+                    ] as [MiaomiaoQuoteStyle, string][]).map(([id, lab]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`schip${id === 'corner-paren' ? ' wide' : ''}`}
+                        aria-pressed={(box.settings!.voiceQuoteStyle || 'corner') === id}
+                        onClick={() => box.saveSettings({ ...box.settings!, voiceQuoteStyle: id })}
+                      >{lab}</button>
+                    ))}
+                  </div>
+                </div>
                 {box.settings.voiceQuoteStyle === 'custom' && (
                   <input
                     className="tinput"
@@ -473,7 +477,7 @@ const MiaomiaoBoxHost: React.FC = () => {
             const isVoice = !isUser && !isHtml && (lpMsg?.kind === 'voice' || !!lpMsg?.voiceSourceText || /<[语語]音/.test(lpMsg?.content || '') || !lpMsg?.kind);
             return (
             <div className="lpmenu fixed" style={{ left: lpPos.x, top: lpPos.y }} onClick={e => e.stopPropagation()}>
-              {!isHtml && <button type="button" onClick={() => { if (lpMsg) { setEditId(lpMsg.id); setEditDraft(lpMsg.content); } setLpId(null); }}><PencilSimple size={15} />编辑</button>}
+              {!isHtml && <button type="button" onClick={() => { if (lpMsg) { setEditId(lpMsg.id); setEditDraft(lpMsg.voiceSourceText || lpMsg.content); } setLpId(null); }}><PencilSimple size={15} />编辑</button>}
               {!isHtml && <button type="button" onClick={() => {
                 if (lpMsg) void navigator.clipboard.writeText(lpMsg.content);
                 setLpId(null);

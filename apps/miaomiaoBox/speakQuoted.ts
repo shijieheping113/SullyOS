@@ -12,14 +12,26 @@ export function extractQuotedDialogue(text: string): string {
   return '';
 }
 
-const VOICE_BLOCK_RE = /<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/g;
+export type QuoteDelims = { open: string; close: string };
 
+export function quoteDelims(style?: MiaomiaoQuoteStyle, custom?: string): QuoteDelims | null {
+  if (style === 'dq-ascii') return { open: '"', close: '"' };
+  if (style === 'dq-curly') return { open: '\u201C', close: '\u201D' };
+  if (style === 'corner' || style === 'corner-paren' || !style) return { open: '「', close: '」' };
+  if (style === 'custom') {
+    const pair = (custom || '').trim();
+    if (pair.length >= 2) return { open: pair[0], close: pair[pair.length - 1] };
+    return null;
+  }
+  return { open: '「', close: '」' };
+}
+
+/** 给人看：去掉 XML 语音标签和方括号 cue，保留「」和（文本2）。 */
 export function cleanShown(text: string): string {
   return stripFishCuesForDisplay(cleanVoiceMarkupForDisplay(stripEmotionTags(text || '')))
     .replace(/<\/?[语語]音[^>]*>/g, '')
     .replace(/<\/?字幕>/g, '')
     .replace(/\[[^\]]{1,40}\]/g, '')
-    .replace(/^[「」""\u201C\u201D]+|[「」""\u201C\u201D]+$/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -33,12 +45,32 @@ export interface BoxBubbleSeg {
   voiceSourceText?: string;
 }
 
-/** 按原文顺序切成气泡：一段一条；<语音>在原位拆成单独一条。 */
-export function splitIntoBubbles(raw: string): BoxBubbleSeg[] {
-  const segs: BoxBubbleSeg[] = [];
+function nextVoiceTag(raw: string, from: number): { start: number; end: number; inner: string; full: string } | null {
   const re = /<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
+  re.lastIndex = from;
+  const m = re.exec(raw);
+  if (!m || m.index < from) return null;
+  return { start: m.index, end: m.index + m[0].length, inner: m[1] || '', full: m[0] };
+}
+
+function nextQuote(raw: string, from: number, delims: QuoteDelims): { start: number; end: number; full: string } | null {
+  const start = raw.indexOf(delims.open, from);
+  if (start < 0) return null;
+  const closeAt = raw.indexOf(delims.close, start + delims.open.length);
+  if (closeAt < 0) return { start, end: raw.length, full: raw.slice(start) };
+  const end = closeAt + delims.close.length;
+  return { start, end, full: raw.slice(start, end) };
+}
+
+/** 按原文顺序切成气泡：<语音> 或规范引号都在原位拆成语音条。 */
+export function splitIntoBubbles(
+  raw: string,
+  style?: MiaomiaoQuoteStyle,
+  custom?: string,
+): BoxBubbleSeg[] {
+  const segs: BoxBubbleSeg[] = [];
+  const src = raw || '';
+  const delims = quoteDelims(style, custom);
   const pushText = (chunk: string) => {
     const parts = chunk.split(/\n\s*\n/);
     for (const p of parts) {
@@ -47,22 +79,54 @@ export function splitIntoBubbles(raw: string): BoxBubbleSeg[] {
       segs.push({ kind: 'text', content: cleanShown(t), raw: t });
     }
   };
-  while ((m = re.exec(raw || ''))) {
-    pushText((raw || '').slice(last, m.index));
-    const inner = m[1] || '';
-    const shown = cleanShown(inner);
-    if (shown) {
-      segs.push({ kind: 'voice', content: shown, raw: m[0], voiceSourceText: inner });
+  let i = 0;
+  while (i < src.length) {
+    const voice = nextVoiceTag(src, i);
+    const quote = delims ? nextQuote(src, i, delims) : null;
+    let pick: 'voice' | 'quote' | null = null;
+    if (voice && quote) pick = voice.start <= quote.start ? 'voice' : 'quote';
+    else if (voice) pick = 'voice';
+    else if (quote) pick = 'quote';
+    if (!pick) {
+      pushText(src.slice(i));
+      break;
     }
-    last = m.index + m[0].length;
+    if (pick === 'voice' && voice) {
+      pushText(src.slice(i, voice.start));
+      const shown = cleanShown(voice.inner) || cleanShown(voice.full);
+      if (shown) {
+        segs.push({
+          kind: 'voice',
+          content: shown,
+          raw: voice.full,
+          voiceSourceText: voice.inner || voice.full,
+        });
+      }
+      i = voice.end;
+      continue;
+    }
+    if (pick === 'quote' && quote) {
+      pushText(src.slice(i, quote.start));
+      const shown = cleanShown(quote.full);
+      if (shown) {
+        segs.push({
+          kind: 'voice',
+          content: shown,
+          raw: quote.full,
+          voiceSourceText: quote.full,
+        });
+      }
+      i = quote.end;
+      continue;
+    }
+    break;
   }
-  pushText((raw || '').slice(last));
   return segs;
 }
 
-export function spokenTextForBoxReply(raw: string): { spoken: string; emotion?: string } {
-  const segs = splitIntoBubbles(raw || '');
-  const spoken = segs.filter(s => s.kind === 'voice').map(s => s.content).join('\n');
+export function spokenTextForBoxReply(raw: string, style?: MiaomiaoQuoteStyle, custom?: string): { spoken: string; emotion?: string } {
+  const segs = splitIntoBubbles(raw || '', style, custom);
+  const spoken = segs.filter(s => s.kind === 'voice').map(s => applyQuoteStyle(s.voiceSourceText || s.raw, style || 'corner', custom)).filter(Boolean).join('\n');
   if (spoken) {
     const parsed = parseVoiceOutput(raw || '');
     return { spoken, emotion: parsed.emotion };
@@ -71,12 +135,12 @@ export function spokenTextForBoxReply(raw: string): { spoken: string; emotion?: 
   return { spoken: quoted || cleanVoiceMarkupForDisplay(raw) };
 }
 
-export function displayTextForBoxReply(raw: string): string {
-  return splitIntoBubbles(raw || '').map(s => s.content).filter(Boolean).join('\n');
+export function displayTextForBoxReply(raw: string, style?: MiaomiaoQuoteStyle, custom?: string): string {
+  return splitIntoBubbles(raw || '', style, custom).map(s => s.content).filter(Boolean).join('\n');
 }
 
-export function splitBoxDisplay(raw: string): { narrative: string; spokenLines: string[] } {
-  const segs = splitIntoBubbles(raw || '');
+export function splitBoxDisplay(raw: string, style?: MiaomiaoQuoteStyle, custom?: string): { narrative: string; spokenLines: string[] } {
+  const segs = splitIntoBubbles(raw || '', style, custom);
   return {
     narrative: segs.filter(s => s.kind === 'text').map(s => s.content).join('\n\n'),
     spokenLines: segs.filter(s => s.kind === 'voice').map(s => s.content),
