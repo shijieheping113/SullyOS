@@ -7,20 +7,34 @@ export function countUnfoldedRounds(messages: MiaomiaoMessage[]): number {
 }
 
 export function messagesForModel(messages: MiaomiaoMessage[]): MiaomiaoMessage[] {
-  return messages.filter(m => m.role === 'summary' || !m.folded);
+  return messages.filter(m => !m.folded);
+}
+
+/** 已经攒够 every 条还没被大总结合并的滚动总结时，返回最前面的那 every 条。 */
+export function planBigFold(messages: MiaomiaoMessage[], every: number): MiaomiaoMessage[] {
+  const n = Math.floor(every);
+  if (n < 1) return [];
+  const smalls = messages
+    .filter(m => m.role === 'summary' && !m.folded && m.summaryKind !== 'big')
+    .sort((a, b) => a.timestamp - b.timestamp);
+  if (smalls.length < n) return [];
+  return smalls.slice(0, n);
 }
 
 /**
- * 未折轮次超过 N 时，把最前面的 N 轮标成 folded，并指出该收成摘要的原文。
- * 原文不删，只是不发给模型。
+ * 未折轮次凑满「总结 N 轮 + 保留 K 轮」时，把最前面的 N 轮标成 folded。
+ * 后 K 轮留着不总结，原文不删，只是不发给模型。
+ * 例：N=8、K=3，要到 11 轮才折，折前 8 轮，留下后 3 轮。
  */
 export function planFold(
   messages: MiaomiaoMessage[],
   foldN: number,
+  foldKeep: number,
 ): { shouldFold: boolean; foldFromRound: number; foldToRound: number; toFold: MiaomiaoMessage[] } {
   const n = Math.max(1, Math.floor(foldN) || 1);
+  const keep = Math.max(1, Math.floor(foldKeep) || 1);
   const unfoldedUsers = messages.filter(m => m.role === 'user' && !m.folded);
-  if (unfoldedUsers.length <= n) {
+  if (unfoldedUsers.length < n + keep) {
     return { shouldFold: false, foldFromRound: 0, foldToRound: 0, toFold: [] };
   }
   const alreadyFoldedRounds = messages.filter(m => m.role === 'user' && m.folded).length;
@@ -66,13 +80,77 @@ export function applyFold(
   return next;
 }
 
+/** 把已经写好的几条滚动总结标成 folded，并插入一条大总结。原文摘要还在库里，只是不再发给模型。 */
+export function applyBigFold(
+  messages: MiaomiaoMessage[],
+  compressedIds: Set<string>,
+  summary: MiaomiaoMessage,
+): MiaomiaoMessage[] {
+  const next = messages.map(m => (compressedIds.has(m.id) ? { ...m, folded: true } : m));
+  const lastTs = Math.max(0, ...[...compressedIds].map(id => messages.find(m => m.id === id)?.timestamp || 0));
+  const row = { ...summary, timestamp: lastTs + 1 };
+  const insertAt = next.findIndex(m => m.timestamp > row.timestamp);
+  if (insertAt < 0) next.push(row);
+  else next.splice(insertAt, 0, row);
+  return next;
+}
+
+/**
+ * 解散一条总结：删掉这张摘要卡，把这段轮次里的原文取消折叠。
+ * 原文还在原来的时间上，所以会回到这张卡所在的位置，并重新算进未折轮次。
+ */
+export function dissolveSummary(
+  messages: MiaomiaoMessage[],
+  summaryId: string,
+): { messages: MiaomiaoMessage[]; restored: MiaomiaoMessage[]; removedId: string | null; restoredRounds: number; undoneFolds: number } {
+  const summary = messages.find(m => m.id === summaryId && m.role === 'summary');
+  if (!summary?.summaryRange) {
+    return { messages, restored: [], removedId: null, restoredRounds: 0, undoneFolds: 0 };
+  }
+  const users = messages.filter(m => m.role === 'user').sort((a, b) => a.timestamp - b.timestamp);
+  const start = users[summary.summaryRange.fromRound - 1];
+  if (!start) {
+    return { messages, restored: [], removedId: null, restoredRounds: 0, undoneFolds: 0 };
+  }
+  const end = users[summary.summaryRange.toRound];
+  const covered = messages.filter(m =>
+    m.role !== 'summary'
+    && m.folded
+    && m.timestamp >= start.timestamp
+    && (end ? m.timestamp < end.timestamp : true),
+  );
+  const restoreIds = new Set(covered.map(m => m.id));
+  const restoredRounds = covered.filter(m => m.role === 'user').length;
+  const { fromRound, toRound } = summary.summaryRange;
+  const undoneFolds = summary.summaryKind === 'big'
+    ? messages.filter(m =>
+      m.id !== summary.id
+      && m.role === 'summary'
+      && m.summaryKind !== 'big'
+      && m.summaryRange
+      && m.summaryRange.fromRound >= fromRound
+      && m.summaryRange.toRound <= toRound,
+    ).length
+    : 1;
+  const next = messages
+    .filter(m => m.id !== summaryId)
+    .map(m => (restoreIds.has(m.id) ? { ...m, folded: false } : m));
+  return {
+    messages: next,
+    restored: next.filter(m => restoreIds.has(m.id)),
+    removedId: summaryId,
+    restoredRounds,
+    undoneFolds,
+  };
+}
+
 export function formatBoxHistoryForModel(messages: MiaomiaoMessage[]): { role: 'user' | 'assistant'; content: string }[] {
   const out: { role: 'user' | 'assistant'; content: string }[] = [];
   for (const m of messagesForModel(messages)) {
     if (m.role === 'summary') {
       out.push({
         role: 'assistant',
-        content: `（箱子里的前情，第 ${m.summaryRange?.fromRound ?? '?'}–${m.summaryRange?.toRound ?? '?'} 轮：${m.content}）`,
+        content: `（${m.summaryKind === 'big' ? '箱子里的大前情' : '箱子里的前情'}，第 ${m.summaryRange?.fromRound ?? '?'}–${m.summaryRange?.toRound ?? '?'} 轮：${m.content}）`,
       });
       continue;
     }

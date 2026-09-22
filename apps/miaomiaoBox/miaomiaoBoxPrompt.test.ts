@@ -89,11 +89,12 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
 
   it('禁止事项和折叠要求按约定写', () => {
     expect(BOX_TURN_BAN).toContain(`【禁止】
-角色本人开口时，引号里要有语气标记，方括号放在引号里面。旁白不用标。
+角色本人开口时，要说的话放进引号，引号里要有语气标记，方括号放在引号里面。旁白不用标。
 禁止停在同一个场景里打转，这一轮要有新的动作、信息或状况。
 禁止 OOC：角色说的话要像这个人。`);
-    expect(BOX_TURN_BAN).toContain('不要把所有内容挤成一大段');
-    expect(BOX_TURN_BAN).toContain('不要为了分行把一句语音拆成好几条');
+    expect(BOX_TURN_BAN).toContain('要说的话放进引号，引号里要有语气标记');
+    expect(BOX_TURN_BAN).toContain('旁白单独一行，开口的引号另起一行');
+    expect(BOX_TURN_BAN).toContain('不要把同一条语音拆开');
     expect(BOX_TURN_BAN).not.toContain('每一句都要自成一行');
     expect(BOX_FOLD_PROMPT).toContain('只写这次新折进来的那一截');
     expect(BOX_FOLD_PROMPT).toContain('不要把已有摘要再写一遍');
@@ -105,12 +106,12 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
     expect(p).toContain('不要用「门开了」「电话响了」「有人敲门」这类空钩子收尾');
     expect(p).toContain('不要老把镜头往用户那边推');
     expect(p).toContain('事情不能一直顺，也不能一直走坏');
+    expect(p).toContain('最外层 div 必须写上 width:100% 和 min-height:160px');
   });
 
-  it('自定义思考引导完全覆盖默认；留空才用默认', () => {
-    expect(buildBoxThinkingPrompt()).toContain('这一轮要往哪走');
-    const custom = buildBoxThinkingPrompt('先想猫的反应，再想她在哪');
-    expect(custom).toBe('先想猫的反应，再想她在哪');
-    expect(custom).not.toContain('这一轮要往哪走');
+  it('思考引导只认自定义，留空就不写', () => {
+    expect(buildBoxThinkingPrompt()).toBe('');
+    expect(buildBoxThinkingPrompt('   ')).toBe('');
+    expect(buildBoxThinkingPrompt('先想猫的反应，再想她在哪')).toBe('先想猫的反应，再想她在哪');
   });
 });

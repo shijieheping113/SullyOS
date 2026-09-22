@@ -9,6 +9,8 @@ import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { MiaomiaoBoxDB } from '../apps/miaomiaoBox/miaomiaoBoxDb';
 import {
+  MIAOMIAO_BIG_FOLD_DEFAULT,
+  MIAOMIAO_FOLD_KEEP_DEFAULT,
   MIAOMIAO_FOLD_N_DEFAULT,
   STARTER_LABEL,
   type MiaomiaoArchive,
@@ -20,10 +22,12 @@ import {
   type MiaomiaoStarter,
   type MiaomiaoWorldRule,
 } from '../apps/miaomiaoBox/types';
-import { applyFold, countUnfoldedRounds, formatBoxHistoryForModel, planFold, relocateSummaries } from '../apps/miaomiaoBox/foldSession';
+import { applyBigFold, applyFold, countUnfoldedRounds, dissolveSummary as dissolveSummaryCard, formatBoxHistoryForModel, planBigFold, planFold, relocateSummaries } from '../apps/miaomiaoBox/foldSession';
 import { materialsForArchive, packRawArchive, withPerspective, wrapArchiveBody } from '../apps/miaomiaoBox/archiveRewrite';
 import {
+  BOX_BIG_FOLD_PROMPT,
   BOX_FOLD_PROMPT,
+  BOX_THEME_PROMPT,
   BOX_FOLD_TEMPERATURE,
   BOX_NOW_GUIDE,
   BOX_PAST_GUIDE,
@@ -62,6 +66,7 @@ type Ctx = {
   playingForChar: (charId: string) => MiaomiaoSession | null;
   editMessage: (id: string, content: string) => Promise<void>;
   deleteBoxMessage: (id: string) => Promise<void>;
+  dissolveSummary: (id: string) => Promise<void>;
   rerollMessage: (id: string) => Promise<void>;
   rerollLastTurn: () => Promise<void>;
   playingVoiceId: string | null;
@@ -75,9 +80,12 @@ type Ctx = {
   cancelPending: () => void;
   openLive: (id: string) => Promise<void>;
   deleteHistory: (id: string) => Promise<void>;
+  renameTheme: (theme: string) => Promise<void>;
   liveText: string;
   liveThinking: string;
   paramNote: string;
+  foldNote: string;
+  dismissError: () => void;
 };
 
 const toArchiveLines = (msgs: MiaomiaoMessage[]): MiaomiaoArchiveLine[] => {
@@ -115,6 +123,16 @@ export const useMiaomiaoBox = (): Ctx => {
 
 export const MIAOMIAO_RECORD_EVENT = 'miaomiao-box-record';
 
+function tidyBoxTheme(raw: string): string {
+  const line = (raw || '').split('\n').map(s => s.trim()).filter(Boolean)[0] || '';
+  return line
+    .replace(/^第[0-9０-９一二三四五六七八九十百千]+[章节回部]\s*/, '')
+    .replace(/[「」"'“”《》#]/g, '')
+    .replace(/[。！？.!?\s]+$/g, '')
+    .trim()
+    .slice(0, 20);
+}
+
 export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const os = useOS();
   const [shell, setShell] = useState<MiaomiaoShell>('hidden');
@@ -134,6 +152,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [liveText, setLiveText] = useState('');
   const [liveThinking, setLiveThinking] = useState('');
   const [paramNote, setParamNote] = useState('');
+  const [foldNote, setFoldNote] = useState('');
   const pendingRef = useRef<MiaomiaoStarter | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const voiceMem = useRef(new Map<string, { voiceUrl: string; voiceSynthText?: string }>());
@@ -329,6 +348,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       starter,
       status: 'playing',
       foldN: st.foldN || MIAOMIAO_FOLD_N_DEFAULT,
+      foldKeep: st.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT,
+      bigFoldEvery: st.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT,
       foldCount: 0,
       foldedRoundCount: 0,
       ttsAutoPlay: st.ttsAutoPlay,
@@ -341,43 +362,126 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return s;
   };
 
-  const maybeFold = async (s: MiaomiaoSession, msgs: MiaomiaoMessage[]): Promise<MiaomiaoMessage[]> => {
-    const plan = planFold(msgs, s.foldN || MIAOMIAO_FOLD_N_DEFAULT);
-    if (!plan.shouldFold) return msgs;
+  const maybeFold = async (s: MiaomiaoSession, msgs: MiaomiaoMessage[]): Promise<{ messages: MiaomiaoMessage[]; session: MiaomiaoSession; note: string }> => {
+    const foldN = s.foldN || MIAOMIAO_FOLD_N_DEFAULT;
+    const foldKeep = s.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT;
+    const bigEvery = s.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT;
+    const plan = planFold(msgs, foldN, foldKeep);
+    if (!plan.shouldFold) return { messages: msgs, session: s, note: '' };
     setFoldBusy(true);
+    const notes: string[] = [];
+    let curMsgs = msgs;
+    let curSession = s;
     try {
-      const existing = msgs.filter(m => m.role === 'summary').map(m => m.content).join('\n');
-      const fresh = plan.toFold.map(m => displayTextForBoxReply(m.content)).join('\n');
-      const body = await callSecondaryLlm({
-        memoryPalaceConfig: os.memoryPalaceConfig,
-        system: BOX_FOLD_PROMPT,
-        user: `已有的摘要：\n${existing || '（空）'}\n\n这次要折进来的新内容：\n${fresh}`,
-        temperature: BOX_FOLD_TEMPERATURE,
-        purpose: '盒子滚动摘要',
-      });
-      const summary: MiaomiaoMessage = {
-        id: MiaomiaoBoxDB.newId('sum'),
-        sessionId: s.id,
-        charId: s.charId,
-        role: 'summary',
-        content: body,
-        timestamp: Date.now(),
-        summaryRange: { fromRound: plan.foldFromRound, toRound: plan.foldToRound },
-        originalSummary: body,
-      };
-      const next = applyFold(msgs, new Set(plan.toFold.map(m => m.id)), summary);
-      const placed = next.find(m => m.id === summary.id) || summary;
-      for (const row of plan.toFold) await MiaomiaoBoxDB.saveMessage({ ...row, folded: true });
-      await MiaomiaoBoxDB.saveMessage(placed);
-      await persistSession({
-        ...s,
-        foldCount: s.foldCount + 1,
-        foldedRoundCount: s.foldedRoundCount + (plan.foldToRound - plan.foldFromRound + 1),
-        updatedAt: Date.now(),
-      });
-      return next;
+      const batch = planBigFold(curMsgs, bigEvery);
+      if (batch.length) {
+        try {
+          const packed = batch.map(m => `第 ${m.summaryRange?.fromRound ?? '?'}–${m.summaryRange?.toRound ?? '?'} 轮：\n${m.content}`).join('\n\n');
+          const body = (await callSecondaryLlm({
+            memoryPalaceConfig: os.memoryPalaceConfig,
+            system: BOX_BIG_FOLD_PROMPT,
+            user: packed,
+            temperature: BOX_FOLD_TEMPERATURE,
+            purpose: '盒子滚动大总结',
+          })).trim();
+          if (!body) throw new Error('大总结是空的');
+          const first = batch[0];
+          const last = batch[batch.length - 1];
+          const big: MiaomiaoMessage = {
+            id: MiaomiaoBoxDB.newId('big'),
+            sessionId: s.id,
+            charId: s.charId,
+            role: 'summary',
+            summaryKind: 'big',
+            content: body,
+            timestamp: Date.now(),
+            summaryRange: {
+              fromRound: first.summaryRange?.fromRound ?? 1,
+              toRound: last.summaryRange?.toRound ?? first.summaryRange?.fromRound ?? 1,
+            },
+            originalSummary: body,
+          };
+          curMsgs = applyBigFold(curMsgs, new Set(batch.map(m => m.id)), big);
+          const placedBig = curMsgs.find(m => m.id === big.id) || big;
+          for (const row of batch) await MiaomiaoBoxDB.saveMessage({ ...row, folded: true });
+          await MiaomiaoBoxDB.saveMessage(placedBig);
+        } catch (e) {
+          notes.push('滚动大总结没做成，原来的几条前情先留着');
+          console.warn('[miaomiao] big fold skipped', e);
+        }
+      }
+      const planNow = planFold(curMsgs, foldN, foldKeep);
+      if (!planNow.shouldFold) return { messages: curMsgs, session: curSession, note: notes.join(' · ') };
+      try {
+        const existing = curMsgs.filter(m => m.role === 'summary' && !m.folded).map(m => m.content).join('\n');
+        const fresh = planNow.toFold.map(m => displayTextForBoxReply(m.content)).join('\n');
+        const body = (await callSecondaryLlm({
+          memoryPalaceConfig: os.memoryPalaceConfig,
+          system: BOX_FOLD_PROMPT,
+          user: `已有的摘要：\n${existing || '（空）'}\n\n这次要折进来的新内容：\n${fresh}`,
+          temperature: BOX_FOLD_TEMPERATURE,
+          purpose: '盒子滚动摘要',
+        })).trim();
+        if (!body) throw new Error('滚动总结是空的');
+        const summary: MiaomiaoMessage = {
+          id: MiaomiaoBoxDB.newId('sum'),
+          sessionId: s.id,
+          charId: s.charId,
+          role: 'summary',
+          summaryKind: 'roll',
+          content: body,
+          timestamp: Date.now(),
+          summaryRange: { fromRound: planNow.foldFromRound, toRound: planNow.foldToRound },
+          originalSummary: body,
+        };
+        curMsgs = applyFold(curMsgs, new Set(planNow.toFold.map(m => m.id)), summary);
+        const placed = curMsgs.find(m => m.id === summary.id) || summary;
+        for (const row of planNow.toFold) await MiaomiaoBoxDB.saveMessage({ ...row, folded: true });
+        await MiaomiaoBoxDB.saveMessage(placed);
+        curSession = {
+          ...curSession,
+          foldCount: curSession.foldCount + 1,
+          foldedRoundCount: curSession.foldedRoundCount + (planNow.foldToRound - planNow.foldFromRound + 1),
+          updatedAt: Date.now(),
+        };
+        await persistSession(curSession);
+      } catch (e) {
+        notes.push('这一轮滚动总结没做成，这几轮原文先留着');
+        console.warn('[miaomiao] fold skipped', e);
+      }
+      return { messages: curMsgs, session: curSession, note: notes.join(' · ') };
     } finally {
       setFoldBusy(false);
+    }
+  };
+
+  const ensureTheme = async (s: MiaomiaoSession, msgs: MiaomiaoMessage[]): Promise<{ session: MiaomiaoSession; note: string }> => {
+    if ((s.theme || '').trim()) return { session: s, note: '' };
+    const sample = msgs
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && !m.folded)
+      .slice(-8)
+      .map(m => displayTextForBoxReply(m.content))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (!sample) return { session: s, note: '' };
+    try {
+      const raw = await callSecondaryLlm({
+        memoryPalaceConfig: os.memoryPalaceConfig,
+        system: BOX_THEME_PROMPT,
+        user: sample.slice(0, 2000),
+        temperature: 0.7,
+        purpose: '盒子章节名',
+      });
+      const theme = tidyBoxTheme(raw);
+      if (!theme) throw new Error('章节名是空的');
+      const next = { ...s, theme, updatedAt: Date.now() };
+      await persistSession(next);
+      await refreshLists(next.charId);
+      return { session: next, note: '' };
+    } catch (e) {
+      console.warn('[miaomiao] theme skipped', e);
+      return { session: s, note: '章节名没起成，下次再试' };
     }
   };
 
@@ -501,7 +605,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       apiMessages.push({ role: 'system', content: cut });
     }
     if (settings?.thinking === true) {
-      apiMessages.push({ role: 'system', content: buildBoxThinkingPrompt(settings.thinkingGuide) });
+      const guide = buildBoxThinkingPrompt(settings.thinkingGuide);
+      if (guide) apiMessages.push({ role: 'system', content: guide });
     }
     apiMessages.push({ role: 'system', content: BOX_TURN_BAN });
     let streamedReasoning = '';
@@ -565,27 +670,44 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         timestamp: ts++,
       });
     }
-    if (reply.thinking && created[0]) created[0].thinkingText = reply.thinking;
+    if (reply.thinking?.trim() && created[0]) created[0].thinkingText = reply.thinking.trim();
     for (const row of created) await MiaomiaoBoxDB.saveMessage(row);
-    setLiveText('');
-    setLiveThinking('');
     let nextMsgs = persistUser && userText
       ? [...boxMsgs.filter(m => m.id !== userMsg.id), userMsg, ...created]
       : [...boxMsgs, ...created];
+    setMessages(keepVoices(nextMsgs));
+    setLiveText('');
+    setLiveThinking('');
+    setTyping(false);
+    let cur = s;
+    const foldNotes: string[] = [];
     try {
-      nextMsgs = await maybeFold(s, nextMsgs);
+      const folded = await maybeFold(cur, nextMsgs);
+      nextMsgs = folded.messages;
+      cur = folded.session;
+      if (folded.note) foldNotes.push(folded.note);
     } catch (e: any) {
       console.warn('[miaomiao] fold skipped this round', e);
+      foldNotes.push('这一轮滚动总结没做成，这几轮原文先留着');
     }
+    try {
+      const named = await ensureTheme(cur, nextMsgs);
+      cur = named.session;
+      if (named.note) foldNotes.push(named.note);
+    } catch (e: any) {
+      console.warn('[miaomiao] theme skipped', e);
+      foldNotes.push('章节名没起成，下次再试');
+    }
+    setFoldNote(foldNotes.join(' · '));
     setMessages(keepVoices(nextMsgs));
-    const continued = s.archive
-      ? { ...s.archive, lines: toArchiveLines(nextMsgs), savedAt: Date.now() }
+    const continued = cur.archive
+      ? { ...cur.archive, lines: toArchiveLines(nextMsgs), savedAt: Date.now() }
       : undefined;
     await persistSession({
-      ...s,
+      ...cur,
       status: 'playing',
       updatedAt: Date.now(),
-      title: s.title || STARTER_LABEL[s.starter],
+      title: cur.title || STARTER_LABEL[cur.starter],
       ...(continued ? { archive: continued } : {}),
     });
     if (continued) await refreshLists(s.charId);
@@ -673,6 +795,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       starter,
       status: 'playing',
       foldN: st.foldN || MIAOMIAO_FOLD_N_DEFAULT,
+      foldKeep: st.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT,
+      bigFoldEvery: st.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT,
       foldCount: 0,
       foldedRoundCount: 0,
       ttsAutoPlay: st.ttsAutoPlay,
@@ -868,6 +992,24 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setMessages(messagesRef.current.filter(x => x.id !== id));
   };
 
+  const dissolveSummary = async (id: string) => {
+    const s = sessionRef.current;
+    if (!s) return;
+    const list = messagesRef.current;
+    const undone = dissolveSummaryCard(list, id);
+    if (!undone.removedId) return;
+    for (const row of undone.restored) await MiaomiaoBoxDB.saveMessage(row);
+    await MiaomiaoBoxDB.deleteMessage(undone.removedId);
+    const nextSession = {
+      ...s,
+      foldCount: Math.max(0, (s.foldCount || 0) - undone.undoneFolds),
+      foldedRoundCount: Math.max(0, (s.foldedRoundCount || 0) - undone.restoredRounds),
+      updatedAt: Date.now(),
+    };
+    await persistSession(nextSession);
+    setMessages(keepVoices(undone.messages));
+  };
+
   const rerollMessage = async (id: string) => {
     const s = sessionRef.current;
     const list = messagesRef.current;
@@ -958,6 +1100,16 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
+  const dismissError = () => setError('');
+
+  const renameTheme = async (theme: string) => {
+    const s = sessionRef.current;
+    if (!s) return;
+    const next = { ...s, theme: theme.replace(/\s+/g, ' ').trim().slice(0, 24), updatedAt: Date.now() };
+    await persistSession(next);
+    await refreshLists(s.charId);
+  };
+
   const saveSettings = async (next: MiaomiaoSettings) => {
     await MiaomiaoBoxDB.saveSettings(next);
     setSettings(next);
@@ -965,6 +1117,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       await persistSession({
         ...session,
         foldN: next.foldN,
+        foldKeep: next.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT,
+        bigFoldEvery: next.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT,
         ttsAutoPlay: next.ttsEnabled !== false,
         worldRules: next.worldRules,
         updatedAt: Date.now(),
@@ -975,10 +1129,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const value = useMemo<Ctx>(() => ({
     shell, page, session, messages, settings, typing, error, unread, foldBusy,
     openForChar, collapseToWidget, expandFloat, setPage, startPlay, switchMode, sendPlay, leaveToChat, closeLid, saveSettings, playingForChar,
-    editMessage, deleteBoxMessage, rerollMessage, rerollLastTurn, playingVoiceId, voiceLoadingId, playBoxVoice, downloadBoxVoice,
-    pendingStarter, liveSessions, historySessions, pickHomeStarter, cancelPending, openLive, deleteHistory,
-    liveText, liveThinking, paramNote,
-  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId, liveText, liveThinking, paramNote]);
+    editMessage, deleteBoxMessage, dissolveSummary, rerollMessage, rerollLastTurn, playingVoiceId, voiceLoadingId, playBoxVoice, downloadBoxVoice,
+    pendingStarter, liveSessions, historySessions, pickHomeStarter, cancelPending, openLive, deleteHistory, renameTheme,
+    liveText, liveThinking, paramNote, foldNote, dismissError,
+  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId, liveText, liveThinking, paramNote, foldNote]);
 
   return <MiaomiaoBoxContext.Provider value={value}>{children}</MiaomiaoBoxContext.Provider>;
 };

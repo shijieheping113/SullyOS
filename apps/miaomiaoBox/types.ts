@@ -1,4 +1,6 @@
 export const MIAOMIAO_FOLD_N_DEFAULT = 20;
+export const MIAOMIAO_FOLD_KEEP_DEFAULT = 3;
+export const MIAOMIAO_BIG_FOLD_DEFAULT = 10;
 
 export type MiaomiaoStarter =
   | 'box'
@@ -26,6 +28,10 @@ export type MiaomiaoQuoteStyle = 'dq-ascii' | 'dq-curly' | 'corner' | 'corner-pa
 export interface MiaomiaoSettings {
   charId: string;
   foldN: number;
+  /** 总结时留下、不折进摘要的最近轮数。 */
+  foldKeep?: number;
+  /** 攒够多少条滚动总结后，下一次滚动总结触发时先把它们压成一条大总结。0 表示不做。 */
+  bigFoldEvery?: number;
   ttsAutoPlay: boolean;
   ttsEnabled?: boolean;
   voiceQuoteStyle?: MiaomiaoQuoteStyle;
@@ -65,6 +71,10 @@ export interface MiaomiaoSession {
   starter: MiaomiaoStarter;
   status: MiaomiaoSessionStatus;
   foldN: number;
+  foldKeep?: number;
+  bigFoldEvery?: number;
+  /** 这一场的章节名。只给界面区分用，不发给模型。 */
+  theme?: string;
   foldCount: number;
   foldedRoundCount: number;
   ttsAutoPlay: boolean;
@@ -86,6 +96,8 @@ export interface MiaomiaoMessage {
   htmlSource?: string;
   htmlTextPreview?: string;
   summaryRange?: { fromRound: number; toRound: number };
+  /** big = 把好几条滚动总结合并成的大前情。缺省是普通滚动总结。 */
+  summaryKind?: 'roll' | 'big';
   originalSummary?: string;
   kind?: 'text' | 'voice' | 'html';
   voiceSourceText?: string;

@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ArrowsClockwise, CaretLeft, Clock, CopySimple, DownloadSimple, GearSix, House, Moon, PaperPlaneTilt, PencilSimple, Plus, SpeakerHigh, Sun, Trash,
+  ArrowsClockwise, ArrowsCounterClockwise, CaretLeft, Clock, CopySimple, DownloadSimple, GearSix, House, Moon, PaperPlaneTilt, PencilSimple, Plus, SpeakerHigh, Sun, Trash,
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { AppID } from '../../types';
 import { useMiaomiaoBox } from '../../context/MiaomiaoBoxContext';
 import { MiaomiaoBoxCat } from './MiaomiaoBoxCat';
 import HtmlCard from '../../components/chat/HtmlCard';
-import { MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
+import { MIAOMIAO_BIG_FOLD_DEFAULT, MIAOMIAO_FOLD_KEEP_DEFAULT, MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
+import { getChibi } from '../../utils/vrWorld/chibi';
 import { countUnfoldedRounds, relocateSummaries } from './foldSession';
-import { BOX_THINKING_PROMPT_CORE } from './miaomiaoBoxPrompt';
 import { splitIntoBubbles } from './speakQuoted';
 import { MiaomiaoBoxDB } from './miaomiaoBoxDb';
 import TokenImg from '../../components/os/TokenImg';
@@ -24,6 +24,17 @@ function ThinkFold({ text, open }: { text: string; open?: boolean }) {
     </details>
   );
 }
+function DialogueAvatar({ charId }: { charId?: string }) {
+  const os = useOS();
+  const ch = os.characters.find(c => c.id === charId);
+  const img = ch ? getChibi(ch).img : '';
+  return (
+    <span className="av">
+      {img ? <TokenImg value={img} alt="" /> : <MiaomiaoBoxCat lid="open" tail="out" cls="mini" />}
+    </span>
+  );
+}
+
 function fitTextarea(el: HTMLTextAreaElement | null, min: number) {
   if (!el) return;
   const max = Math.round(window.innerHeight * 0.45);
@@ -166,6 +177,9 @@ const MiaomiaoBoxHost: React.FC = () => {
   const [rerollOpen, setRerollOpen] = useState(false);
   const [readId, setReadId] = useState<string | null>(null);
   const lpOpenedAt = useRef(0);
+  const [themeEdit, setThemeEdit] = useState(false);
+  const [themeDraft, setThemeDraft] = useState('');
+  const themeHold = useRef<number | null>(null);
 
   useEffect(() => {
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
@@ -332,7 +346,31 @@ const MiaomiaoBoxHost: React.FC = () => {
             </button>
             <span className="boxmark"><MiaomiaoBoxCat lid={hasShow ? (openAnim ? 'open' : 'behind') : 'on'} tail={hasShow ? 'out' : 'in'} cls={`mini${openAnim ? ' hop pop' : ''}`} /></span>
             <div className="titles">
-              <h2>{box.page === 'settings' ? '盒子设置' : box.page === 'history' ? '历史原文' : '喵喵盒'}</h2>
+              {themeEdit && box.page === 'play' ? (
+                <input
+                  className="themein"
+                  value={themeDraft}
+                  autoFocus
+                  aria-label="修改章节名"
+                  onChange={e => setThemeDraft(e.target.value)}
+                  onBlur={() => { void box.renameTheme(themeDraft); setThemeEdit(false); }}
+                  onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                />
+              ) : (
+                <h2
+                  onPointerDown={() => {
+                    if (box.page !== 'play' || !box.session) return;
+                    if (themeHold.current) window.clearTimeout(themeHold.current);
+                    themeHold.current = window.setTimeout(() => {
+                      setThemeDraft((box.session?.theme || '').trim());
+                      setThemeEdit(true);
+                    }, 550);
+                  }}
+                  onPointerUp={() => { if (themeHold.current) window.clearTimeout(themeHold.current); }}
+                  onPointerCancel={() => { if (themeHold.current) window.clearTimeout(themeHold.current); }}
+                  onPointerLeave={() => { if (themeHold.current) window.clearTimeout(themeHold.current); }}
+                >{box.page === 'settings' ? '盒子设置' : box.page === 'history' ? '历史原文' : box.page === 'play' ? ((box.session?.theme || '').trim() || '喵喵盒') : '喵喵盒'}</h2>
+              )}
               <p>{box.page === 'settings' ? '只影响盒子里' : sub}</p>
             </div>
             <div className="acts">
@@ -369,13 +407,13 @@ const MiaomiaoBoxHost: React.FC = () => {
                     const img = ch?.vrState?.chibi?.img || ch?.avatar;
                     return img ? <TokenImg value={img} alt="" /> : <MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" />;
                   })()}</div>
-                  <div className="t"><b>{box.session.title}</b><span>{STARTER_LABEL[box.session.starter]} · 接着演</span></div>
+                  <div className="t"><b>{box.session.title}</b><span>{(box.session.theme || '').trim() || STARTER_LABEL[box.session.starter]} · 接着演</span></div>
                   <button className="go" onClick={() => { box.cancelPending(); box.setPage('play'); }}>接着 ▸</button>
                   {others.length > 0 && (
                     <div className="contmore">
                       {others.map(s => (
                         <button key={s.id} type="button" className="otherchip" onClick={() => void box.openLive(s.id)}>
-                          {STARTER_LABEL[s.starter]} {new Date(s.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                          {(s.theme || '').trim() || STARTER_LABEL[s.starter]} {new Date(s.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                         </button>
                       ))}
                     </div>
@@ -415,10 +453,10 @@ const MiaomiaoBoxHost: React.FC = () => {
                 onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}
               >
                 {box.pendingStarter && <div className="daysep">新的一场 · {STARTER_LABEL[box.pendingStarter]}</div>}
-                {(box.pendingStarter ? [] : relocateSummaries(box.messages).messages.filter(m => m.role === 'summary' || !m.folded)).map(m => m.role === 'summary' ? (
+                {(box.pendingStarter ? [] : relocateSummaries(box.messages).messages.filter(m => !m.folded)).map(m => m.role === 'summary' ? (
                   editId === m.id ? (
                     <div key={m.id} className="sumcard editing" onClick={e => e.stopPropagation()}>
-                      <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
+                      <div className="shd"><b>{m.summaryKind === 'big' ? '箱子里的大前情' : '箱子里的前情'}</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
                       <textarea className="sarea" value={editDraft} onChange={e => setEditDraft(e.target.value)} />
                       <div className="sbtns">
                         <button type="button" className="ok" onClick={() => { void box.editMessage(m.id, editDraft); setEditId(null); }}>保存</button>
@@ -433,14 +471,22 @@ const MiaomiaoBoxHost: React.FC = () => {
                       onPointerCancel={cancelHold}
                       onPointerMove={cancelHold}
                     >
-                      <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
+                      <div className="shd"><b>{m.summaryKind === 'big' ? '箱子里的大前情' : '箱子里的前情'}</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
                       <div className="sbd">{m.content}</div>
-                      <div className="sft"><span>摘要 · 原文留着，随时能翻</span></div>
+                      <div className="sft">
+                        <span>摘要 · 原文留着，随时能翻</span>
+                        <button
+                          type="button"
+                          className="sflink"
+                          onPointerDown={e => e.stopPropagation()}
+                          onClick={e => { e.stopPropagation(); void box.dissolveSummary(m.id); }}
+                        >解散</button>
+                      </div>
                     </div>
                   )
                 ) : editId === m.id ? (
                   <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
-                    {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>}
+                    {m.role !== 'user' && <DialogueAvatar charId={m.charId} />}
                     <div className="editpane" onClick={e => e.stopPropagation()}>
                       <textarea value={editDraft} onChange={e => setEditDraft(e.target.value)} />
                       <span className="splithint">回车另起一条。有引号的是要念的，旁边的字单独一行。</span>
@@ -449,48 +495,58 @@ const MiaomiaoBoxHost: React.FC = () => {
                   </div>
                 ) : (
                   <React.Fragment key={m.id}>
-                  {m.thinkingText ? <ThinkFold text={m.thinkingText} /> : null}
-                  {visualRows(m).map(row => (
+                  {visualRows(m).map((row, idx) => (
                   <React.Fragment key={row.key}>
                     {row.kind !== 'html' && (
                     <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
-                      {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>}
-                      <div
-                        className={`bub ${row.kind === 'voice' ? 'voice' : ''} ${lpId === m.id ? 'press' : ''}`}
-                        onPointerDown={e => startHold(m.id, e)}
-                        onPointerUp={cancelHold}
-                        onPointerCancel={cancelHold}
-                        onPointerMove={cancelHold}
-                        onClick={() => { if (justOpenedMenu()) return; if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
-                      >
-                        <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{renderBoxText(row.content)}</span>
-                        {row.kind === 'voice' && (
-                          <span className={
-                            box.voiceLoadingId === m.id ? 'vmark load'
-                            : box.playingVoiceId === m.id ? 'vmark on' : 'vmark'
-                          } aria-hidden>
-                            {box.voiceLoadingId === m.id ? <span className="vdots">…</span> : <><i /><i /><i /></>}
-                          </span>
-                        )}
+                      {m.role !== 'user' && <DialogueAvatar charId={m.charId} />}
+                      <div className="bcol">
+                        {idx === 0 && m.thinkingText?.trim() ? <ThinkFold text={m.thinkingText} /> : null}
+                        <div
+                          className={`bub ${row.kind === 'voice' ? 'voice' : ''} ${lpId === m.id ? 'press' : ''}`}
+                          onPointerDown={e => startHold(m.id, e)}
+                          onPointerUp={cancelHold}
+                          onPointerCancel={cancelHold}
+                          onPointerMove={cancelHold}
+                          onClick={() => { if (justOpenedMenu()) return; if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
+                        >
+                          <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{renderBoxText(row.content)}</span>
+                          {row.kind === 'voice' && (
+                            <span className={
+                              box.voiceLoadingId === m.id ? 'vmark load'
+                              : box.playingVoiceId === m.id ? 'vmark on' : 'vmark'
+                            } aria-hidden>
+                              {box.voiceLoadingId === m.id ? <span className="vdots">…</span> : <><i /><i /><i /></>}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     )}
                     {row.htmlSource && (
-                      <div
-                        className="htmlcard"
-                        onPointerDown={e => { e.stopPropagation(); startHold(m.id, e); }}
-                        onPointerUp={cancelHold}
-                        onPointerCancel={cancelHold}
-                      ><HtmlCard wide allowScripts html={row.htmlSource} onOptionText={text => setDraft(prev => prev ? `${prev}${text}` : text)} /></div>
+                      <>
+                        {row.kind === 'html' && m.thinkingText?.trim() ? (
+                          <div className="row">
+                            <DialogueAvatar charId={m.charId} />
+                            <div className="bcol"><ThinkFold text={m.thinkingText} /></div>
+                          </div>
+                        ) : null}
+                        <div
+                          className="htmlcard"
+                          onPointerDown={e => { e.stopPropagation(); startHold(m.id, e); }}
+                          onPointerUp={cancelHold}
+                          onPointerCancel={cancelHold}
+                        ><HtmlCard wide allowScripts html={row.htmlSource} onOptionText={text => setDraft(prev => prev ? `${prev}${text}` : text)} /></div>
+                      </>
                     )}
                   </React.Fragment>
                   ))}
                   </React.Fragment>
                 ))}
                 {box.typing && (
-                  <div className="row"><span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>
+                  <div className="row"><DialogueAvatar charId={box.session?.charId} />
                     <div className="livecol">
-                      {box.liveThinking ? <ThinkFold text={box.liveThinking} /> : null}
+                      {box.liveThinking?.trim() ? <ThinkFold text={box.liveThinking} /> : null}
                       {box.liveText
                         ? <div className="bub"><span className="narr-block">{box.liveText}</span></div>
                         : <div className="bub"><span className="typing"><i /><i /><i /></span></div>}
@@ -498,7 +554,13 @@ const MiaomiaoBoxHost: React.FC = () => {
                   </div>
                 )}
                 {box.paramNote && <div className="daysep">{box.paramNote}</div>}
-                {box.error && <div className="daysep">{box.error}</div>}
+                {box.foldNote && <div className="daysep">{box.foldNote}</div>}
+                {box.error && (
+                  <div className="daysep errnote">
+                    <span>{box.error}</span>
+                    <button type="button" className="errx" aria-label="关掉这条报错" onClick={() => box.dismissError()}>×</button>
+                  </div>
+                )}
               </div>
               <div className="minichips">
                 {STARTERS.map(id => {
@@ -578,9 +640,22 @@ const MiaomiaoBoxHost: React.FC = () => {
                   <button onClick={() => box.saveSettings({ ...box.settings!, foldN: Math.max(1, (box.settings!.foldN || MIAOMIAO_FOLD_N_DEFAULT) - 1) })}>−</button>
                   <span className="val">{box.settings.foldN || MIAOMIAO_FOLD_N_DEFAULT}</span>
                   <button onClick={() => box.saveSettings({ ...box.settings!, foldN: (box.settings!.foldN || MIAOMIAO_FOLD_N_DEFAULT) + 1 })}>+</button>
-                  <span className="unit">轮之后，把前面的卷成摘要</span>
+                  <span className="unit">轮收成一条滚动总结</span>
                 </div>
-                <div className="meta">总结过 {box.session?.foldCount || 0} 次 · 卷起 {box.session?.foldedRoundCount || 0} 轮 · 原文全部留着，随时能翻</div>
+                <div className="stepper">
+                  <button onClick={() => box.saveSettings({ ...box.settings!, foldKeep: Math.max(1, (box.settings!.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT) - 1) })}>−</button>
+                  <span className="val">{box.settings.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT}</span>
+                  <button onClick={() => box.saveSettings({ ...box.settings!, foldKeep: (box.settings!.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT) + 1 })}>+</button>
+                  <span className="unit">轮留着不总结</span>
+                </div>
+                <div className="meta">凑满 {(box.settings.foldN || MIAOMIAO_FOLD_N_DEFAULT) + (box.settings.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT)} 轮才总结一次：收前 {box.settings.foldN || MIAOMIAO_FOLD_N_DEFAULT} 轮，留下后 {box.settings.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT} 轮。</div>
+                <div className="stepper">
+                  <button onClick={() => box.saveSettings({ ...box.settings!, bigFoldEvery: Math.max(0, (box.settings!.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT) - 1) })}>−</button>
+                  <span className="val">{box.settings.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT}</span>
+                  <button onClick={() => box.saveSettings({ ...box.settings!, bigFoldEvery: (box.settings!.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT) + 1 })}>+</button>
+                  <span className="unit">条滚动总结后，下一次触发时压成一条大总结</span>
+                </div>
+                <div className="meta">0 表示不做大总结。总结过 {box.session?.foldCount || 0} 次 · 卷起 {box.session?.foldedRoundCount || 0} 轮 · 原文全部留着，随时能翻</div>
               </div>
               <div className="setsec">
                 <div className="sh"><b>对话</b><span>只改这一盒怎么说，总结不动</span></div>
@@ -625,15 +700,10 @@ const MiaomiaoBoxHost: React.FC = () => {
                     <textarea
                       className="tarea"
                       value={box.settings.thinkingGuide || ''}
-                      placeholder="留空用默认那份。填了这里，就完全按这里写的思考，默认不再附上。"
+                      placeholder="留空就不写思考引导。填了就只按这里写的来。"
                       onChange={e => box.saveSettings({ ...box.settings!, thinkingGuide: e.target.value })}
                     />
-                    <span className="hintline">填了会完全盖掉默认的思考步骤，只在这一盒生效。想改默认，先导入再改。</span>
-                    <button
-                      type="button"
-                      className="impbtn"
-                      onClick={() => box.saveSettings({ ...box.settings!, thinkingGuide: BOX_THINKING_PROMPT_CORE })}
-                    >导入默认模板</button>
+                    <span className="hintline">没填的时候，不另加思考步骤。填了才发给模型，只在这一盒生效。</span>
                   </div>
                 )}
               </div>
@@ -686,7 +756,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                 <div className="read">
                   <button type="button" className="readback" onClick={() => setReadId(null)}>‹ 返回列表</button>
                   <div className="readhd">
-                    <b>{reading.title || STARTER_LABEL[reading.starter]}</b>
+                    <b>{(reading.theme || '').trim() || reading.title || STARTER_LABEL[reading.starter]}</b>
                     <span>{(reading.status === 'playing' ? '进行中' : reading.status === 'paused' ? '暂停' : ARCHIVE_LABEL[reading.archive.mode])} · {reading.archive.lines.length} 条原文</span>
                   </div>
                   {reading.archive.lines.map(line => {
@@ -711,7 +781,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                   {box.historySessions.map(s => (
                     <div key={s.id} className="hrow" onClick={() => setReadId(s.id)}>
                       <div className="hmain">
-                        <b>{s.title || STARTER_LABEL[s.starter]}</b>
+                        <b>{(s.theme || '').trim() || s.title || STARTER_LABEL[s.starter]}</b>
                         <span>{(s.status === 'playing' ? '进行中' : s.status === 'paused' ? '暂停' : (s.archive ? ARCHIVE_LABEL[s.archive.mode] : ''))} · {s.archive?.lines.length || 0} 条 · {new Date(s.archive?.savedAt || s.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                       <button type="button" className="mini danger" aria-label="删除这场原文" onClick={e => { e.stopPropagation(); void box.deleteHistory(s.id); }}><Trash size={15} /></button>
@@ -762,6 +832,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                 if (lpMsg) void navigator.clipboard.writeText(lpMsg.content);
                 setLpId(null);
               }}><CopySimple size={15} />复制</button>}
+              {isSummary && <button type="button" onClick={() => { const id = lpId; setLpId(null); if (id) void box.dissolveSummary(id); }}><ArrowsCounterClockwise size={15} />解散</button>}
               {isVoice && !isUser && <button type="button" onClick={() => { const id = lpId; setLpId(null); if (id) void box.playBoxVoice(id); }}><SpeakerHigh size={15} />播放语音</button>}
               {isVoice && !isUser && <button type="button" onClick={() => { const id = lpId; setLpId(null); if (id) void box.downloadBoxVoice(id); }}><DownloadSimple size={15} />语音下载</button>}
               <button type="button" className="danger full" onClick={() => { const id = lpId; setLpId(null); if (id) void box.deleteBoxMessage(id); }}><Trash size={15} />删除</button>

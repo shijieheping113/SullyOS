@@ -1,5 +1,7 @@
 import { openDB } from '../../utils/db';
 import {
+  MIAOMIAO_BIG_FOLD_DEFAULT,
+  MIAOMIAO_FOLD_KEEP_DEFAULT,
   MIAOMIAO_FOLD_N_DEFAULT,
   type MiaomiaoMessage,
   type MiaomiaoSession,
@@ -21,6 +23,8 @@ const waitTx = (tx: IDBTransaction): Promise<void> =>
 const defaultSettings = (charId: string): MiaomiaoSettings => ({
   charId,
   foldN: MIAOMIAO_FOLD_N_DEFAULT,
+  foldKeep: MIAOMIAO_FOLD_KEEP_DEFAULT,
+  bigFoldEvery: MIAOMIAO_BIG_FOLD_DEFAULT,
   ttsAutoPlay: true,
   ttsEnabled: true,
   voiceQuoteStyle: 'corner',
@@ -42,6 +46,8 @@ const withDialogueDefaults = (row: MiaomiaoSettings): MiaomiaoSettings => ({
   presencePenalty: typeof row.presencePenalty === 'number' ? row.presencePenalty : 0,
   stream: row.stream === true,
   thinking: row.thinking === true,
+  foldKeep: typeof row.foldKeep === 'number' ? row.foldKeep : MIAOMIAO_FOLD_KEEP_DEFAULT,
+  bigFoldEvery: typeof row.bigFoldEvery === 'number' ? row.bigFoldEvery : MIAOMIAO_BIG_FOLD_DEFAULT,
 });
 
 export const MiaomiaoBoxDB = {
