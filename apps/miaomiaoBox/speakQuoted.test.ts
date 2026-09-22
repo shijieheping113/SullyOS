@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyQuoteStyle, cleanShown, splitIntoBubbles } from './speakQuoted';
+import { applyQuoteStyle, cleanShown, splitIntoBubbles, spokenTextForBoxReply } from './speakQuoted';
 
 const WITH_TAGS = `猫儿昨天上午是捂着屁股出门的。
 
@@ -17,16 +17,19 @@ describe('splitIntoBubbles', () => {
     expect(segs.some(s => s.kind === 'voice' && s.voiceSourceText?.includes('「'))).toBe(true);
   });
 
-  it('没有 <语音> 只靠「」也能拆成叙述+语音', () => {
+  it('同一行里的引号不拆走，换行才是下一条', () => {
     const segs = splitIntoBubbles(NO_TAGS, 'corner-paren');
-    expect(segs.length).toBe(2);
-    expect(segs[0].kind).toBe('text');
+    expect(segs).toHaveLength(1);
+    expect(segs[0].kind).toBe('voice');
     expect(segs[0].content).toContain('塑胶手套');
-    expect(segs[0].content).not.toContain('夢遊');
-    expect(segs[1].kind).toBe('voice');
-    expect(segs[1].voiceSourceText).toContain('「');
-    expect(segs[1].voiceSourceText).toContain('（是因为梦游');
-    expect(segs[1].content).toContain('「');
+    expect(segs[0].content).toContain('夢遊');
+    expect(segs[0].voiceSourceText).toContain('「');
+  });
+
+  it('换行分成多条，没有引号的行不朗读', () => {
+    const segs = splitIntoBubbles('猫儿把盒子推过来。\n「草莓的。」\n\n她吸了吸鼻子。', 'corner');
+    expect(segs.map(s => s.kind)).toEqual(['text', 'voice', 'text']);
+    expect(segs[1].content).toContain('草莓的');
   });
 });
 
@@ -43,7 +46,14 @@ describe('英文语音标签', () => {
     expect(segs.some(s => /<voice|<subtitles|语音|字幕/.test(s.content))).toBe(false);
     expect(segs.filter(s => s.kind === 'voice')).toHaveLength(1);
     expect(segs.find(s => s.kind === 'voice')?.content).toContain('卡住');
-    expect(segs.find(s => s.kind === 'text')?.content).toContain('Ann');
+    expect(segs.some(s => s.kind === 'text' && s.content.includes('Ann'))).toBe(true);
+  });
+});
+
+describe('spokenTextForBoxReply', () => {
+  it('同一行里的两处引号都会念，叙述不念', () => {
+    const { spoken } = spokenTextForBoxReply('猫儿把盒子推过来。「草莓的。」又补了一句。「你的。」', 'corner');
+    expect(spoken).toBe('草莓的。\n你的。');
   });
 });
 

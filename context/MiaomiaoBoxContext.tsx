@@ -19,7 +19,7 @@ import {
   type MiaomiaoStarter,
   type MiaomiaoWorldRule,
 } from '../apps/miaomiaoBox/types';
-import { applyFold, countUnfoldedRounds, formatBoxHistoryForModel, planFold } from '../apps/miaomiaoBox/foldSession';
+import { applyFold, countUnfoldedRounds, formatBoxHistoryForModel, planFold, relocateSummaries } from '../apps/miaomiaoBox/foldSession';
 import { materialsForArchive, packRawArchive, withPerspective, wrapArchiveBody } from '../apps/miaomiaoBox/archiveRewrite';
 import {
   BOX_FOLD_PROMPT,
@@ -190,7 +190,13 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         out.push(m);
         continue;
       }
-      const segs = splitIntoBubbles(m.content || '', style, custom);
+      const raw = m.content || '';
+      const looksCombined = !!m.htmlSource || /<[语語]音|<voice\b|<字幕>|\[html\]/i.test(raw);
+      if (!looksCombined) {
+        out.push({ ...m, kind: m.kind || 'text' });
+        continue;
+      }
+      const segs = splitIntoBubbles(raw, style, custom);
       const needSplit = segs.length > 1 || !!m.htmlSource;
       if (!needSplit) {
         out.push({ ...m, kind: segs[0]?.kind || 'text' });
@@ -234,12 +240,14 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const loadSessionBundle = async (s: MiaomiaoSession) => {
-    const [msgs, st] = await Promise.all([
+    const [listed, st] = await Promise.all([
       MiaomiaoBoxDB.listMessages(s.id),
       MiaomiaoBoxDB.getSettings(s.charId),
     ]);
+    const relocated = relocateSummaries(listed);
+    for (const row of relocated.moved) await MiaomiaoBoxDB.saveMessage(row);
     setSession(s);
-    setMessages(keepVoices(await explodeCombinedAssistant(msgs, st)));
+    setMessages(keepVoices(await explodeCombinedAssistant(relocated.messages, st)));
     setSettings(st);
   };
 
@@ -346,9 +354,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         summaryRange: { fromRound: plan.foldFromRound, toRound: plan.foldToRound },
         originalSummary: body,
       };
-      for (const row of plan.toFold) await MiaomiaoBoxDB.saveMessage({ ...row, folded: true });
-      await MiaomiaoBoxDB.saveMessage(summary);
       const next = applyFold(msgs, new Set(plan.toFold.map(m => m.id)), summary);
+      const placed = next.find(m => m.id === summary.id) || summary;
+      for (const row of plan.toFold) await MiaomiaoBoxDB.saveMessage({ ...row, folded: true });
+      await MiaomiaoBoxDB.saveMessage(placed);
       await persistSession({
         ...s,
         foldCount: s.foldCount + 1,
@@ -456,7 +465,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       miaomiaoBoxPrompt: prompt,
       htmlMode: { enabled: false },
     } as any);
-    const boxMsgs = await MiaomiaoBoxDB.listMessages(s.id);
+    const listed = await MiaomiaoBoxDB.listMessages(s.id);
+    const relocated = relocateSummaries(listed);
+    for (const row of relocated.moved) await MiaomiaoBoxDB.saveMessage(row);
+    const boxMsgs = relocated.messages;
     const extra = formatBoxHistoryForModel(boxMsgs);
     const last = extra[extra.length - 1];
     if (userText && (!last || last.role !== 'user' || last.content !== userText)) {

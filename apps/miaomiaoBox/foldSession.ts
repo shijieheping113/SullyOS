@@ -25,16 +25,30 @@ export function planFold(
   const alreadyFoldedRounds = messages.filter(m => m.role === 'user' && m.folded).length;
   const foldFromRound = alreadyFoldedRounds + 1;
   const foldToRound = alreadyFoldedRounds + n;
-  const cutoffTs = unfoldedUsers[n - 1]?.timestamp ?? 0;
-  const lastFoldedUser = unfoldedUsers[n - 1];
-  const after = messages.find(m =>
-    m.role === 'assistant' && !m.folded && m.timestamp >= (lastFoldedUser?.timestamp ?? 0),
-  );
-  const endTs = after?.timestamp ?? cutoffTs;
+  // 第 n+1 条还没折的用户消息是下一轮的开头。它自己和它后面的回复都留着。
+  // 它前面的整轮（含同一轮里拆开的多条回复）都折进去。
+  const boundary = unfoldedUsers[n];
+  const boundaryTs = boundary?.timestamp ?? Number.POSITIVE_INFINITY;
   const toFold = messages.filter(m =>
-    !m.folded && m.role !== 'summary' && m.timestamp <= endTs,
+    !m.folded && m.role !== 'summary' && m.timestamp < boundaryTs,
   );
   return { shouldFold: true, foldFromRound, foldToRound, toFold };
+}
+
+/** 旧数据里摘要的时间戳可能落在下一轮后面。按轮次把它挪回下一轮用户消息之前。 */
+export function relocateSummaries(messages: MiaomiaoMessage[]): { messages: MiaomiaoMessage[]; moved: MiaomiaoMessage[] } {
+  const users = messages.filter(m => m.role === 'user').sort((a, b) => a.timestamp - b.timestamp);
+  const moved: MiaomiaoMessage[] = [];
+  const next = messages.map(m => {
+    if (m.role !== 'summary' || !m.summaryRange) return m;
+    const boundary = users[m.summaryRange.toRound];
+    if (!boundary || m.timestamp < boundary.timestamp) return m;
+    const fixed = { ...m, timestamp: boundary.timestamp - 1 };
+    moved.push(fixed);
+    return fixed;
+  });
+  next.sort((a, b) => a.timestamp - b.timestamp || (a.role === 'summary' ? -1 : 1));
+  return { messages: next, moved };
 }
 
 export function applyFold(

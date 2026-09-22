@@ -55,89 +55,70 @@ export interface BoxBubbleSeg {
   voiceSourceText?: string;
 }
 
-function nextVoiceTag(raw: string, from: number): { start: number; end: number; inner: string; full: string } | null {
-  const re = /<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/g;
-  re.lastIndex = from;
-  const m = re.exec(raw);
-  if (!m || m.index < from) return null;
-  return { start: m.index, end: m.index + m[0].length, inner: m[1] || '', full: m[0] };
+function unwrapVoiceTags(chunk: string): string {
+  return chunk.replace(/<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/g, '$1');
 }
 
-function nextQuote(raw: string, from: number, delims: QuoteDelims): { start: number; end: number; full: string } | null {
-  const start = raw.indexOf(delims.open, from);
-  if (start < 0) return null;
-  const closeAt = raw.indexOf(delims.close, start + delims.open.length);
-  if (closeAt < 0) return { start, end: raw.length, full: raw.slice(start) };
-  const end = closeAt + delims.close.length;
-  return { start, end, full: raw.slice(start, end) };
+/** 一行一个气泡。行里有规范引号才朗读，引号不从这行里拆走。字幕整行只显示。 */
+function linesToSegs(chunk: string, delims: QuoteDelims | null, forceText: boolean): BoxBubbleSeg[] {
+  const segs: BoxBubbleSeg[] = [];
+  for (const line of unwrapVoiceTags(chunk).split(/\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const shown = cleanShown(t);
+    if (!shown) continue;
+    const spoken = !forceText && !!delims && t.includes(delims.open);
+    if (spoken) {
+      segs.push({ kind: 'voice', content: shown, raw: t, voiceSourceText: t });
+    } else {
+      segs.push({ kind: 'text', content: shown, raw: t });
+    }
+  }
+  return segs;
 }
 
-/** 按原文顺序切成气泡：<语音> 或规范引号都在原位拆成语音条。 */
+/** 按换行切气泡。空行跳过。`<语音>` 只剥标签，不单独成条。`<字幕>` 只显示。 */
 export function splitIntoBubbles(
   raw: string,
   style?: MiaomiaoQuoteStyle,
   custom?: string,
 ): BoxBubbleSeg[] {
-  const segs: BoxBubbleSeg[] = [];
   const src = normalizeBoxVoiceMarkup(raw || '');
   const delims = quoteDelims(style, custom);
-  const pushText = (chunk: string) => {
-    const parts = chunk.split(/\n\s*\n/);
-    for (const p of parts) {
-      const t = p.replace(/^\n+|\n+$/g, '').trim();
-      if (!t) continue;
-      segs.push({ kind: 'text', content: cleanShown(t), raw: t });
-    }
-  };
+  const segs: BoxBubbleSeg[] = [];
+  const re = /<字幕>([\s\S]*?)<\/字幕>/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    segs.push(...linesToSegs(src.slice(last, m.index), delims, false));
+    segs.push(...linesToSegs(m[1] || '', delims, true));
+    last = m.index + m[0].length;
+  }
+  segs.push(...linesToSegs(src.slice(last), delims, false));
+  return segs;
+}
+
+function spokenFromLine(src: string, style?: MiaomiaoQuoteStyle, custom?: string): string {
+  const delims = quoteDelims(style, custom);
+  if (!delims) return applyQuoteStyle(src, style || 'corner', custom);
+  const parts: string[] = [];
   let i = 0;
   while (i < src.length) {
-    const voice = nextVoiceTag(src, i);
-    const quote = delims ? nextQuote(src, i, delims) : null;
-    let pick: 'voice' | 'quote' | null = null;
-    if (voice && quote) pick = voice.start <= quote.start ? 'voice' : 'quote';
-    else if (voice) pick = 'voice';
-    else if (quote) pick = 'quote';
-    if (!pick) {
-      pushText(src.slice(i));
-      break;
-    }
-    if (pick === 'voice' && voice) {
-      pushText(src.slice(i, voice.start));
-      const shown = cleanShown(voice.inner) || cleanShown(voice.full);
-      if (shown) {
-        segs.push({
-          kind: 'voice',
-          content: shown,
-          raw: voice.full,
-          voiceSourceText: voice.inner || voice.full,
-        });
-      }
-      i = voice.end;
-      continue;
-    }
-    if (pick === 'quote' && quote) {
-      pushText(src.slice(i, quote.start));
-      const shown = cleanShown(quote.full);
-      if (shown) {
-        segs.push({
-          kind: 'voice',
-          content: shown,
-          raw: quote.full,
-          voiceSourceText: quote.full,
-        });
-      }
-      i = quote.end;
-      continue;
-    }
-    break;
+    const openAt = src.indexOf(delims.open, i);
+    if (openAt < 0) break;
+    const closeAt = src.indexOf(delims.close, openAt + delims.open.length);
+    if (closeAt < 0) break;
+    parts.push(src.slice(openAt, closeAt + delims.close.length));
+    i = closeAt + delims.close.length;
   }
-  return segs;
+  if (!parts.length) return applyQuoteStyle(src, style || 'corner', custom);
+  return parts.map(p => applyQuoteStyle(p, style || 'corner', custom)).filter(Boolean).join('\n');
 }
 
 export function spokenTextForBoxReply(raw: string, style?: MiaomiaoQuoteStyle, custom?: string): { spoken: string; emotion?: string } {
   const normalized = normalizeBoxVoiceMarkup(raw || '');
   const segs = splitIntoBubbles(normalized, style, custom);
-  const spoken = segs.filter(s => s.kind === 'voice').map(s => applyQuoteStyle(s.voiceSourceText || s.raw, style || 'corner', custom)).filter(Boolean).join('\n');
+  const spoken = segs.filter(s => s.kind === 'voice').map(s => spokenFromLine(s.voiceSourceText || s.raw, style, custom)).filter(Boolean).join('\n');
   if (spoken) {
     const parsed = parseVoiceOutput(normalized);
     return { spoken, emotion: parsed.emotion };

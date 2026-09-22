@@ -62,24 +62,33 @@ export const BOX_PLAY_PROMPT_CORE = `【你现在在“喵喵盒”里】
 聊天记录里如果出现过语音条和中文字幕，那是以前在主聊天里的格式，这一盒不要学。
 
 【排版】
-正文按段落写：一段两三句，段与段之间空一行。不要把整场戏挤成一块。
-角色开口用引号包住，可以跟在叙述后面。两句开口就两段引号。
+一个气泡一行。换行就是下一条气泡。空行只是隔开，不会多出一个空气泡。
+想让两三句待在同一个气泡里，就写在同一行，不要中途换行。
+要念的话用引号包住，可以跟在这一行叙述后面。引号留在这一行里，不要为了朗读再拆开。
+没有引号的行只显示，不念。
+不要用 <语音> 把整场或整段包起来。不要写 <字幕>。
+不要用 markdown。不要用星号包字，不要用反引号，不要用代码块。旁白写成（这样）。
+诊断单、证明、票、菜单、海报用 HTML 卡片，不要用代码块或横线画出来。
 `;
 
-const MINIMAX_VOICE_BLOCK = `可选 emotion，写在开标签上：<语音 emotion="happy">…</语音>
-emotion 只能是 happy、sad、angry、fearful、disgusted、surprised、calm、fluent。情绪不强就写 <语音>，不要硬加。
+const BOX_LINE_RULE = `【这一盒怎么用上面的记号】
+不要加 <语音>、<voice>、<字幕>。一换行就是一个新气泡。
+记号写在引号里面，这一行才会被念到。引号外面的字只显示。
+笑和叹气用这一家认的记号，不要写（轻笑）（叹气）。`;
 
-<语音> 里只写会被朗读的文字。想要笑、叹气，用 (laughs) (sighs) (chuckle) (gasps)。不要写（轻笑）（叹气），中文括号会被删掉、也不会读。
+const MINIMAX_VOICE_BLOCK = `${VOICE_ACTING_GUIDE}
 
-${VOICE_ACTING_GUIDE}
-
+${BOX_LINE_RULE}
+MiniMax 的 (laughs) (sighs) (chuckle) (gasps) 和 <#秒#> 写在引号里。
 例子：
-猫儿把冰激凌盒子往前一推。<语音 emotion="happy">「你的，草莓的。」</语音>
-她吸了一下鼻子。<语音 emotion="calm">「外面风有点大。」(sighs)</语音>`;
+猫儿把冰激凌盒子往前一推。
+「你的，草莓的。(laughs)」
+她吸了一下鼻子。「外面风有点大。(sighs)」`;
 
-const FISH_VOICE_BLOCK = `仍用 <语音>…</语音> 包住要读的台词（不是语音条）。不要写 emotion 属性，鱼声不认。
+const FISH_VOICE_BLOCK = `${FISH_VOICE_ACTING_GUIDE}
 
-${FISH_VOICE_ACTING_GUIDE}`;
+${BOX_LINE_RULE}
+鱼声方括号写在引号里面，例如：「[excited] 你终于回了」。不要写 emotion 属性。`;
 
 const LINE_NO_CHAT_SHAPE = `【这里不要出现线上聊天的样子】
 1. 不要把回复摆成“语音条”“表情包”“戳一戳”“转账”“定时消息”“引用气泡”这类线上聊天的样式，也不要用线上聊天才有的状态话术。
@@ -123,20 +132,15 @@ export const STARTER_PROMPTS: Record<MiaomiaoStarter, string> = {
 function voiceBlockForProvider(provider: TtsProvider, elevenLabsModel?: string, custom?: string): string {
   const extra = (custom || '').trim();
   if (provider === 'fishaudio') {
-    return extra ? `仍用 <语音>…</语音> 包住要读的台词（不是语音条）。不要写 emotion 属性。\n\n${extra}` : FISH_VOICE_BLOCK;
+    return extra ? `${extra}\n\n${BOX_LINE_RULE}` : FISH_VOICE_BLOCK;
   }
   if (provider === 'elevenlabs') {
-    return extra
-      ? `仍用 <语音>…</语音> 包住要读的台词。\n\n${extra}`
-      : `仍用 <语音>…</语音> 包住要读的台词。\n\n${getElevenLabsVoiceActingGuide(elevenLabsModel)}`;
+    const guide = extra || getElevenLabsVoiceActingGuide(elevenLabsModel);
+    return `${guide}\n\n${BOX_LINE_RULE}`;
   }
   if (extra) {
-    return `可选 emotion，写在开标签上：<语音 emotion="happy">…</语音>
-emotion 只能是 happy、sad、angry、fearful、disgusted、surprised、calm、fluent。情绪不强就写 <语音>，不要硬加。
-
-<语音> 里只写会被朗读的文字。想要笑、叹气，用 (laughs) (sighs) (chuckle) (gasps)。不要写（轻笑）（叹气）。
-
-${extra}`;
+    return `${extra}\n\n${BOX_LINE_RULE}
+MiniMax 的 (laughs) (sighs) (chuckle) (gasps) 和 <#秒#> 写在引号里。`;
   }
   return MINIMAX_VOICE_BLOCK;
 }
@@ -162,17 +166,18 @@ export function buildMiaomiaoPlayPrompt(opts: {
   const acting = voiceBlockForProvider(provider, opts.apiConfig?.elevenLabsModel, custom);
   const rules = (opts.worldRules || []).filter(r => r.enabled && (r.body || r.title).trim());
   const ruleBlock = rules.length
-    ? `【世界规则】
-以下是她自己定的，与上面的演出规则冲突时，以这里为准：
+    ? `【世界规则｜硬性，高于上面一切】
+下面是她为这一盒定的规矩。写了就必须遵守，不能跳过，不能忘掉，不能用起手式、语气说明或临场发挥盖过去。
+和上面任何一条冲突时，以这里为准。没有写进这里的，才按上面的演出方式来。
 ${rules.map((r, i) => `${i + 1}. ${r.title}${r.body ? `：${r.body}` : ''}`).join('\n')}`
     : '';
   return [
     BOX_PLAY_PROMPT_CORE,
     acting,
     LINE_NO_CHAT_SHAPE,
-    ruleBlock,
     quoteStyleHint(opts.quoteStyle),
     STARTER_PROMPTS[opts.starter],
+    ruleBlock,
   ].filter(Boolean).join('\n\n');
 }
 

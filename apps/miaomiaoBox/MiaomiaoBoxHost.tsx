@@ -8,7 +8,7 @@ import { useMiaomiaoBox } from '../../context/MiaomiaoBoxContext';
 import { MiaomiaoBoxCat } from './MiaomiaoBoxCat';
 import HtmlCard from '../../components/chat/HtmlCard';
 import { MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
-import { countUnfoldedRounds } from './foldSession';
+import { countUnfoldedRounds, relocateSummaries } from './foldSession';
 import { splitIntoBubbles } from './speakQuoted';
 import { MiaomiaoBoxDB } from './miaomiaoBoxDb';
 import TokenImg from '../../components/os/TokenImg';
@@ -53,22 +53,31 @@ const ARCHIVE_LABEL: Record<MiaomiaoArchiveMode, string> = {
   paused: '暂停',
 };
 
+function tidyBoxDisplay(text: string): string {
+  return (text || '')
+    .replace(/```[a-zA-Z0-9_-]*[ \t]*\n?/g, '')
+    .replace(/^\s*[*_`-]{2,}\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function renderBoxText(text: string): React.ReactNode {
-  const cleaned = (text || '')
+  const cleaned = tidyBoxDisplay(text)
     .replace(/!\(https?:\/\/[^)\s]+\)_?\d*/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/<\s*\/?\s*voice\b[^>]*>/gi, '')
     .replace(/<\s*\/?\s*subtitles?\b[^>]*>/gi, '')
     .replace(/<\/?[语語]音[^>]*>/g, '')
     .replace(/<\/?字幕>/g, '');
-  const re = /（[^）]*）|\([^)]*\)|\*\*([^*]+)\*\*/g;
+  const re = /\*\(([^)]*)\)\*|\*\*([^*]+)\*\*|\*([^*\n]+)\*|（[^）]*）|\([^)]*\)/g;
   const parts: React.ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
   let k = 0;
   while ((m = re.exec(cleaned))) {
     if (m.index > last) parts.push(cleaned.slice(last, m.index));
-    parts.push(<span key={k++} className="narr">{m[1] != null ? m[1] : m[0]}</span>);
+    const inner = m[1] != null ? `（${m[1]}）` : m[2] != null ? m[2] : m[3] != null ? m[3] : m[0];
+    parts.push(<span key={k++} className="narr">{inner}</span>);
     last = m.index + m[0].length;
   }
   if (last < cleaned.length) parts.push(cleaned.slice(last));
@@ -77,19 +86,27 @@ function renderBoxText(text: string): React.ReactNode {
 
 function visualRows(m: MiaomiaoMessage): { key: string; kind: 'text' | 'voice' | 'html'; content: string; htmlSource?: string }[] {
   if (m.kind === 'html') return [{ key: m.id, kind: 'html', content: '', htmlSource: m.htmlSource }];
-  if (m.kind === 'voice') return [{ key: m.id, kind: 'voice', content: m.content }];
-  if (m.kind === 'text') return [{ key: m.id, kind: 'text', content: m.content, htmlSource: m.htmlSource }];
+  if (m.kind === 'voice') {
+    const content = tidyBoxDisplay(m.content);
+    return content ? [{ key: m.id, kind: 'voice', content }] : [];
+  }
+  if (m.kind === 'text') {
+    const content = tidyBoxDisplay(m.content);
+    if (!content && m.htmlSource) return [{ key: m.id, kind: 'html', content: '', htmlSource: m.htmlSource }];
+    return content ? [{ key: m.id, kind: 'text', content, htmlSource: m.htmlSource }] : [];
+  }
   const segs = splitIntoBubbles(m.content || '');
   if (!segs.length) {
     if (m.htmlSource) return [{ key: m.id, kind: 'html', content: '', htmlSource: m.htmlSource }];
-    return m.content ? [{ key: m.id, kind: 'text', content: m.content }] : [];
+    const content = tidyBoxDisplay(m.content);
+    return content ? [{ key: m.id, kind: 'text', content }] : [];
   }
   const rows = segs.map((s, i) => ({
     key: `${m.id}-${i}`,
     kind: s.kind as 'text' | 'voice',
-    content: s.content,
+    content: tidyBoxDisplay(s.content),
     htmlSource: undefined as string | undefined,
-  }));
+  })).filter(r => r.content);
   if (m.htmlSource) rows.push({ key: `${m.id}-html`, kind: 'html', content: '', htmlSource: m.htmlSource });
   return rows;
 }
@@ -343,7 +360,7 @@ const MiaomiaoBoxHost: React.FC = () => {
             <>
               <div className="stage" onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}>
                 {box.pendingStarter && <div className="daysep">新的一场 · {STARTER_LABEL[box.pendingStarter]}</div>}
-                {(box.pendingStarter ? [] : box.messages).map(m => m.role === 'summary' ? (
+                {(box.pendingStarter ? [] : relocateSummaries(box.messages).messages.filter(m => m.role === 'summary' || !m.folded)).map(m => m.role === 'summary' ? (
                   <div key={m.id} className="sumcard">
                     <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
                     <div className="sbd">{m.content}</div>

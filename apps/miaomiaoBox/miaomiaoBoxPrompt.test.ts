@@ -41,6 +41,16 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
     expect(std).not.toContain(ELEVENLABS_V3_VOICE_ACTING_GUIDE);
   });
 
+  it('有世界规则时，这段放在整份提示词最后', () => {
+    const p = buildMiaomiaoPlayPrompt({
+      apiConfig: { ttsProvider: 'minimax' },
+      worldRules: [{ id: 'r', title: '不许看病', body: '这一盒里不能出现医院', enabled: true }],
+      starter: 'box',
+    });
+    expect(p.endsWith('1. 不许看病：这一盒里不能出现医院')).toBe(true);
+    expect(p).toContain('写了就必须遵守');
+  });
+
   it('填了自定义指南就不再附带内置那份', () => {
     const p = buildMiaomiaoPlayPrompt({
       apiConfig: { ttsProvider: 'fishaudio', voicePrompts: { fishaudio: 'ONLY_FISH_CUSTOM' } },
