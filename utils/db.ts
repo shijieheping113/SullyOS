@@ -3653,7 +3653,8 @@ export const DB = {
           STORE_WORLDS, STORE_WORLD_EPISODES,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
           'room_plates', 'digest_reports',
-          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
+          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts',
+          'miaomiao_sessions', 'miaomiao_messages', 'miaomiao_settings',
       ].filter(name => db.objectStoreNames.contains(name));
 
       const hasStore = (storeName: string) => availableStores.includes(storeName);
@@ -3754,6 +3755,10 @@ export const DB = {
           (data as any).mcdLocal !== undefined,
           data.pixelHomeAssets !== undefined,
           data.pixelHomeLayouts !== undefined,
+          data.miaomiaoSessions !== undefined,
+          data.miaomiaoMessages !== undefined,
+          data.miaomiaoSettings !== undefined,
+          data.forkSparkAssets !== undefined,
           data.userProfile !== undefined,
           data.bankState !== undefined || data.bankDollhouse !== undefined,
       ];
@@ -4241,6 +4246,23 @@ export const DB = {
           await clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts, '像素小屋布局', false);
           data.pixelHomeLayouts = undefined as any;
       }, data.pixelHomeLayouts?.length || 0);
+
+      await runSection('喵喵盒会话', data.miaomiaoSessions !== undefined, async () => {
+          await clearAndAdd('miaomiao_sessions', data.miaomiaoSessions, '喵喵盒会话', false);
+          data.miaomiaoSessions = undefined as any;
+      }, data.miaomiaoSessions?.length || 0);
+      await runSection('喵喵盒消息', data.miaomiaoMessages !== undefined, async () => {
+          await clearAndAdd('miaomiao_messages', data.miaomiaoMessages, '喵喵盒消息', false);
+          data.miaomiaoMessages = undefined as any;
+      }, data.miaomiaoMessages?.length || 0);
+      await runSection('喵喵盒设置', data.miaomiaoSettings !== undefined, async () => {
+          await clearAndAdd('miaomiao_settings', data.miaomiaoSettings, '喵喵盒设置', false);
+          data.miaomiaoSettings = undefined as any;
+      }, data.miaomiaoSettings?.length || 0);
+      await runSection('Spark 发帖图', data.forkSparkAssets !== undefined, async () => {
+          await mergeStore(STORE_ASSETS, data.forkSparkAssets, 'Spark 发帖图', true);
+          data.forkSparkAssets = undefined as any;
+      }, data.forkSparkAssets?.length || 0);
 
       await runSection('用户资料', data.userProfile !== undefined, async () => {
           if (!hasStore(STORE_USER)) return;

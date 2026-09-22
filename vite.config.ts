@@ -53,6 +53,11 @@ let showBuildBadge = false; // Ann 2026-09-16：永久关闭右下角测试版�
 if (process.env.VITE_HIDE_BUILD_BADGE === '1') showBuildBadge = false;
 if (process.env.VITE_SHOW_BUILD_BADGE === '1') showBuildBadge = true;
 
+// 二改全量备份 UI：非 main/master 默认开；VITE_FORK_BACKUP_UI=0 可关（合作者主线时树摇）
+let forkBackupUiVisible = process.env.VITE_FORK_BACKUP_UI === '1';
+if (process.env.VITE_FORK_BACKUP_UI === '0') forkBackupUiVisible = false;
+else if (!isReleaseBranch) forkBackupUiVisible = true;
+
 // 开发环境出站代理（可选）：某些网络（如公司内网）直连不了外网 TTS/语音 API，
 // 设 DEV_OUTBOUND_PROXY=http://127.0.0.1:7890 后，下面的 dev proxy 转发改走该代理。
 // 不设置时行为与原来完全一致（直连）。
@@ -140,6 +145,7 @@ export default defineConfig({
     __BUILD_COMMIT__: JSON.stringify(gitInfo.commit),
     __BUILD_TIME__: JSON.stringify(buildTime),
     __BUILD_BADGE_VISIBLE__: JSON.stringify(showBuildBadge),
+    __FORK_BACKUP_UI_VISIBLE__: JSON.stringify(forkBackupUiVisible),
   },
   // GitHub Pages 发布时使用相对路径，避免仓库子路径导致资源 404
   base: process.env.GITHUB_PAGES ? './' : '/',

@@ -4156,6 +4156,20 @@ export interface FullBackupData {
         size: number;
         createdAt: number;
     }[];
+
+    /** 二改全量备份标记（ann-lily fork）；作者主线导入口会拒绝含此标记的包 */
+    customFork?: string;
+    forkBackupVersion?: number;
+    /** 喵喵盒 IndexedDB */
+    miaomiaoSessions?: import('./apps/miaomiaoBox/types').MiaomiaoSession[];
+    miaomiaoMessages?: import('./apps/miaomiaoBox/types').MiaomiaoMessage[];
+    miaomiaoSettings?: import('./apps/miaomiaoBox/types').MiaomiaoSettings[];
+    /** Spark 二改 localStorage（圈子/追踪/开关等，键见 utils/forkBackup.ts） */
+    forkSparkLocal?: Record<string, string>;
+    /** 喵喵盒本机 UI 偏好 localStorage */
+    forkMiaomiaoLocal?: Record<string, string>;
+    /** Spark 发帖图片（assets 里 spark_img_*，作者备份故意排除） */
+    forkSparkAssets?: { id: string; data: string }[];
 }
 
 // --- CLOUD BACKUP TYPES ---
