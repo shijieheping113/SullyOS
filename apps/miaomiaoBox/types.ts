@@ -33,6 +33,24 @@ export interface MiaomiaoSettings {
   worldRules: MiaomiaoWorldRule[];
 }
 
+/** 合盖时另存的一份原文。不压缩，不进模型上下文，只给历史页看。 */
+export interface MiaomiaoArchiveLine {
+  id: string;
+  role: 'user' | 'assistant';
+  kind?: 'text' | 'voice' | 'html';
+  content: string;
+  voiceSourceText?: string;
+  htmlSource?: string;
+  htmlTextPreview?: string;
+  timestamp: number;
+}
+
+export interface MiaomiaoArchive {
+  savedAt: number;
+  mode: MiaomiaoArchiveMode;
+  lines: MiaomiaoArchiveLine[];
+}
+
 export interface MiaomiaoSession {
   id: string;
   charId: string;
@@ -47,6 +65,7 @@ export interface MiaomiaoSession {
   createdAt: number;
   updatedAt: number;
   worldRules: MiaomiaoWorldRule[];
+  archive?: MiaomiaoArchive;
 }
 
 export interface MiaomiaoMessage {

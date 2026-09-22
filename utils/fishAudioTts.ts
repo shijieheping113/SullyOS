@@ -427,7 +427,7 @@ export async function synthesizeSpeechFishDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string },
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean },
 ): Promise<TtsResult> {
   const apiKey = resolveFishAudioApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少鱼声 Fish Audio API Key');
@@ -486,13 +486,15 @@ export async function synthesizeSpeechFishDetailed(
     latency: payload.latency,
     repetition_penalty: payload.repetition_penalty,
   });
-  const cached = await getCachedTts(cacheKey);
-  if (cached) {
-    return { url: URL.createObjectURL(cached), blob: cached };
+  if (!options?.skipCache) {
+    const cached = await getCachedTts(cacheKey);
+    if (cached) {
+      return { url: URL.createObjectURL(cached), blob: cached };
+    }
   }
 
   const blob = await fishFetchAudio(payload, apiKey, model);
-  saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });
+  if (!options?.skipCache) saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });
   return { url: URL.createObjectURL(blob), blob };
 }
 

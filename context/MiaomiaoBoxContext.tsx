@@ -10,6 +10,8 @@ import { MiaomiaoBoxDB } from '../apps/miaomiaoBox/miaomiaoBoxDb';
 import {
   MIAOMIAO_FOLD_N_DEFAULT,
   STARTER_LABEL,
+  type MiaomiaoArchive,
+  type MiaomiaoArchiveLine,
   type MiaomiaoArchiveMode,
   type MiaomiaoMessage,
   type MiaomiaoSession,
@@ -18,7 +20,7 @@ import {
   type MiaomiaoWorldRule,
 } from '../apps/miaomiaoBox/types';
 import { applyFold, countUnfoldedRounds, formatBoxHistoryForModel, planFold } from '../apps/miaomiaoBox/foldSession';
-import { materialsForArchive, packRawArchive, wrapArchiveBody } from '../apps/miaomiaoBox/archiveRewrite';
+import { materialsForArchive, packRawArchive, withPerspective, wrapArchiveBody } from '../apps/miaomiaoBox/archiveRewrite';
 import {
   BOX_FOLD_PROMPT,
   BOX_FOLD_TEMPERATURE,
@@ -27,7 +29,7 @@ import {
   buildMiaomiaoPlayPrompt,
 } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
 import { callMainChatLlm, callSecondaryLlm } from '../apps/miaomiaoBox/boxLlm';
-import { applyQuoteStyle, cleanShown, displayTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
+import { applyQuoteStyle, cleanShown, displayTextForBoxReply, spokenTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
 
 export type MiaomiaoShell = 'hidden' | 'float' | 'widget';
 export type MiaomiaoPage = 'home' | 'play' | 'settings' | 'history';
@@ -57,9 +59,43 @@ type Ctx = {
   deleteBoxMessage: (id: string) => Promise<void>;
   rerollMessage: (id: string) => Promise<void>;
   rerollLastTurn: () => Promise<void>;
+  playingVoiceId: string | null;
+  voiceLoadingId: string | null;
   playBoxVoice: (id: string) => Promise<void>;
   downloadBoxVoice: (id: string) => Promise<void>;
+  pendingStarter: MiaomiaoStarter | null;
+  liveSessions: MiaomiaoSession[];
+  historySessions: MiaomiaoSession[];
+  pickHomeStarter: (starter: MiaomiaoStarter) => Promise<void>;
+  cancelPending: () => void;
+  openLive: (id: string) => Promise<void>;
+  deleteHistory: (id: string) => Promise<void>;
 };
+
+const toArchiveLines = (msgs: MiaomiaoMessage[]): MiaomiaoArchiveLine[] => {
+  const lines: MiaomiaoArchiveLine[] = [];
+  for (const m of msgs) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue;
+    lines.push({
+      id: m.id,
+      role: m.role,
+      kind: m.kind,
+      content: m.content || '',
+      voiceSourceText: m.voiceSourceText,
+      htmlSource: m.htmlSource,
+      htmlTextPreview: m.htmlTextPreview,
+      timestamp: m.timestamp,
+    });
+  }
+  lines.sort((a, b) => a.timestamp - b.timestamp);
+  return lines;
+};
+
+const archiveOf = (mode: MiaomiaoArchiveMode, msgs: MiaomiaoMessage[], savedAt = Date.now()): MiaomiaoArchive => ({
+  savedAt,
+  mode,
+  lines: toArchiveLines(msgs),
+});
 
 const MiaomiaoBoxContext = createContext<Ctx | null>(null);
 
@@ -82,11 +118,63 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [error, setError] = useState('');
   const [unread, setUnread] = useState(false);
   const [foldBusy, setFoldBusy] = useState(false);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [voiceLoadingId, setVoiceLoadingId] = useState<string | null>(null);
+  const [pendingStarter, setPendingStarter] = useState<MiaomiaoStarter | null>(null);
+  const [liveSessions, setLiveSessions] = useState<MiaomiaoSession[]>([]);
+  const [historySessions, setHistorySessions] = useState<MiaomiaoSession[]>([]);
+  const pendingRef = useRef<MiaomiaoStarter | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceMem = useRef(new Map<string, { voiceUrl: string; voiceSynthText?: string }>());
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  const setPending = (starter: MiaomiaoStarter | null) => {
+    pendingRef.current = starter;
+    setPendingStarter(starter);
+  };
+
+  const sessionHasLines = async (id: string) => {
+    if (sessionRef.current?.id === id) {
+      return messagesRef.current.some(m => m.role === 'user' || m.role === 'assistant');
+    }
+    const msgs = await MiaomiaoBoxDB.listMessages(id);
+    return msgs.some(m => m.role === 'user' || m.role === 'assistant');
+  };
+
+  const refreshLists = async (charId: string) => {
+    const list = await MiaomiaoBoxDB.listSessionsByChar(charId);
+    const hist: MiaomiaoSession[] = [];
+    const merged: MiaomiaoSession[] = [];
+    for (const row of list) {
+      if (row.archive?.lines?.length) {
+        hist.push(row);
+        merged.push(row);
+        continue;
+      }
+      if (row.status === 'playing') {
+        merged.push(row);
+        continue;
+      }
+      const msgs = await MiaomiaoBoxDB.listMessages(row.id);
+      const lines = toArchiveLines(msgs);
+      if (!lines.length) {
+        merged.push(row);
+        continue;
+      }
+      const mode: MiaomiaoArchiveMode = row.status === 'paused' ? 'paused' : row.status === 'forgotten' ? 'forget' : 'raw';
+      const saved: MiaomiaoSession = { ...row, archive: { savedAt: row.updatedAt, mode, lines } };
+      await MiaomiaoBoxDB.saveSession(saved);
+      if (sessionRef.current?.id === saved.id) setSession(saved);
+      hist.push(saved);
+      merged.push(saved);
+    }
+    hist.sort((a, b) => (b.archive?.savedAt || 0) - (a.archive?.savedAt || 0));
+    setHistorySessions(hist);
+    setLiveSessions(merged.filter(s => s.status === 'playing' || s.status === 'paused'));
+  };
 
   const persistSession = async (next: MiaomiaoSession) => {
     await MiaomiaoBoxDB.saveSession(next);
@@ -151,13 +239,14 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       MiaomiaoBoxDB.getSettings(s.charId),
     ]);
     setSession(s);
-    setMessages(await explodeCombinedAssistant(msgs, st));
+    setMessages(keepVoices(await explodeCombinedAssistant(msgs, st)));
     setSettings(st);
   };
 
   const openForChar = useCallback(async (charId: string) => {
     const st = await MiaomiaoBoxDB.getSettings(charId);
     setSettings(st);
+    await refreshLists(charId);
     const list = await MiaomiaoBoxDB.listSessionsByChar(charId);
     const live = list.find(s => s.status === 'playing' || s.status === 'paused');
     if (live) {
@@ -180,11 +269,13 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   useEffect(() => {
     const s = sessionRef.current;
     if (shell === 'float' && s && os.activeCharacterId && s.charId !== os.activeCharacterId) {
+      setPending(null);
       setShell('widget');
     }
   }, [os.activeCharacterId, shell, session?.charId]);
 
   const collapseToWidget = () => {
+    setPending(null);
     if (session) setShell('widget');
     else setShell('hidden');
   };
@@ -276,33 +367,59 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return st?.ttsAutoPlay !== false;
   };
 
-  const speakTextOf = (m: MiaomiaoMessage) => {
+  const keepVoices = (rows: MiaomiaoMessage[]) => rows.map(m => {
+    const live = voiceMem.current.get(m.id);
+    if (!live) return { ...m, voiceUrl: undefined, voiceSynthText: undefined };
+    return { ...m, voiceUrl: live.voiceUrl, voiceSynthText: live.voiceSynthText };
+  });
+
+  const playSavedUrl = async (id: string, url: string) => {
+    if (!audioRef.current) audioRef.current = new Audio();
+    setPlayingVoiceId(id);
+    await playVoiceAudio(audioRef.current, url, {
+      onPlaying: () => setPlayingVoiceId(id),
+      onStopped: () => setPlayingVoiceId(cur => cur === id ? null : cur),
+      onError: () => setPlayingVoiceId(cur => cur === id ? null : cur),
+    });
+  };
+
+  const ttsPayloadOf = (m: MiaomiaoMessage) => {
     const st = settings;
-    const src = m.voiceSourceText || m.content;
-    return applyQuoteStyle(src, st?.voiceQuoteStyle || 'corner', st?.voiceQuoteCustom).trim();
+    const raw = (m.voiceSourceText || m.content || '').trim();
+    const { spoken, emotion } = spokenTextForBoxReply(raw, st?.voiceQuoteStyle, st?.voiceQuoteCustom);
+    const text = (spoken || cleanShown(raw)).trim();
+    return { text, emotion };
   };
 
   const synthToMessage = async (s: MiaomiaoSession, m: MiaomiaoMessage, play: boolean) => {
     const char = os.characters.find(c => c.id === s.charId);
     if (!char) return m;
-    const text = speakTextOf(m);
+    const { text, emotion } = ttsPayloadOf(m);
     if (!text) return m;
-    if (m.voiceUrl && m.voiceSynthText === text) {
-      if (play) {
-        if (!audioRef.current) audioRef.current = new Audio();
-        await playVoiceAudio(audioRef.current, m.voiceUrl, { onPlaying: () => undefined, onStopped: () => undefined, onError: () => undefined });
-      }
-      return m;
+    const cached = voiceMem.current.get(m.id);
+    if (cached?.voiceUrl && cached.voiceSynthText === text) {
+      const live = { ...m, voiceUrl: cached.voiceUrl, voiceSynthText: cached.voiceSynthText };
+      setMessages(prev => prev.map(x => x.id === m.id ? live : x));
+      if (play) await playSavedUrl(m.id, cached.voiceUrl);
+      return live;
     }
-    const url = await synthesizeSpeech(text, char, os.apiConfig);
-    const next = { ...m, voiceUrl: url, voiceSynthText: text };
-    await MiaomiaoBoxDB.saveMessage(next);
-    setMessages(prev => prev.map(x => x.id === m.id ? next : x));
-    if (play) {
-      if (!audioRef.current) audioRef.current = new Audio();
-      await playVoiceAudio(audioRef.current, url, { onPlaying: () => undefined, onStopped: () => undefined, onError: () => undefined });
+    setVoiceLoadingId(m.id);
+    try {
+      const url = await synthesizeSpeech(text, char, os.apiConfig, {
+        emotion,
+        languageBoost: char.chatVoiceLang || undefined,
+        groupId: os.apiConfig.minimaxGroupId || undefined,
+        skipCache: true,
+      });
+      const next = { ...m, voiceUrl: url, voiceSynthText: text };
+      voiceMem.current.set(m.id, { voiceUrl: url, voiceSynthText: text });
+      await MiaomiaoBoxDB.saveMessage(next);
+      setMessages(prev => prev.map(x => x.id === m.id ? next : x));
+      if (play) await playSavedUrl(m.id, url);
+      return next;
+    } finally {
+      setVoiceLoadingId(cur => cur === m.id ? null : cur);
     }
-    return next;
   };
 
   const runTurn = async (s: MiaomiaoSession, userText: string, persistUser = true) => {
@@ -345,11 +462,20 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (userText && (!last || last.role !== 'user' || last.content !== userText)) {
       extra.push({ role: 'user', content: userText });
     }
-    const apiMessages = [
+    const apiMessages: { role: string; content: string }[] = [
       { role: 'system', content: payload.systemPrompt },
       ...payload.cleanedApiMessages,
       ...extra,
     ];
+    const firstCut: Partial<Record<MiaomiaoStarter, string>> = {
+      claw: '【本场切断】抓娃娃从这一句起，上文正在演的场景暂停。不要顺着刚才的聊天往下写，不要用角色本人的身份开场。按抓娃娃起手式，改成卖货。',
+      walk: '【本场切断】出门逛逛从这一句起，上文正在演的场景暂停。不要顺着刚才的聊天往下写，不要用角色本人的身份开场。按出门逛逛起手式，改成出门。',
+      random: '【本场切断】爪爪扒拉从这一句起，上文正在演的场景暂停。不要顺着刚才的聊天往下写，不要用角色本人的身份开场。另起一个场面。',
+    };
+    const cut = firstCut[s.starter];
+    if (cut && !boxMsgs.some(m => m.role === 'assistant')) {
+      apiMessages.push({ role: 'system', content: cut });
+    }
     const raw = await callMainChatLlm({
       apiConfig: os.apiConfig,
       messages: apiMessages,
@@ -397,8 +523,18 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     } catch (e: any) {
       console.warn('[miaomiao] fold skipped this round', e);
     }
-    setMessages(nextMsgs);
-    await persistSession({ ...s, status: 'playing', updatedAt: Date.now(), title: s.title || STARTER_LABEL[s.starter] });
+    setMessages(keepVoices(nextMsgs));
+    const continued = s.archive
+      ? { ...s.archive, lines: toArchiveLines(nextMsgs), savedAt: Date.now() }
+      : undefined;
+    await persistSession({
+      ...s,
+      status: 'playing',
+      updatedAt: Date.now(),
+      title: s.title || STARTER_LABEL[s.starter],
+      ...(continued ? { archive: continued } : {}),
+    });
+    if (continued) await refreshLists(s.charId);
     if (shell === 'widget') setUnread(true);
     if (ttsOn()) {
       for (const row of created.filter(r => r.kind === 'voice')) {
@@ -430,6 +566,11 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const switchMode = async (starter: MiaomiaoStarter) => {
+    if (pendingRef.current) {
+      setPending(starter);
+      setPage('play');
+      return;
+    }
     const cur = sessionRef.current;
     if (!cur) {
       await startPlay(starter);
@@ -437,6 +578,73 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
     await persistSession({ ...cur, starter, title: STARTER_LABEL[starter], updatedAt: Date.now() });
     setPage('play');
+    await refreshLists(cur.charId);
+  };
+
+  const cancelPending = () => setPending(null);
+
+  const pickHomeStarter = async (starter: MiaomiaoStarter) => {
+    const charId = os.activeCharacterId;
+    if (!charId) return;
+    const list = await MiaomiaoBoxDB.listSessionsByChar(charId);
+    let exists = false;
+    for (const row of list) {
+      if (row.status !== 'playing' && row.status !== 'paused') continue;
+      if (await sessionHasLines(row.id)) { exists = true; break; }
+    }
+    if (!exists) {
+      setPending(null);
+      await startPlay(starter);
+      return;
+    }
+    setPending(starter);
+    setError('');
+    setPage('play');
+  };
+
+  const commitPending = async (text: string) => {
+    const starter = pendingRef.current;
+    const charId = os.activeCharacterId;
+    const t = text.trim();
+    if (!starter || !charId || !t) return;
+    setPending(null);
+    setError('');
+    const st = settings || await MiaomiaoBoxDB.getSettings(charId);
+    const s: MiaomiaoSession = {
+      id: MiaomiaoBoxDB.newId('box'),
+      charId,
+      title: STARTER_LABEL[starter],
+      starter,
+      status: 'playing',
+      foldN: st.foldN || MIAOMIAO_FOLD_N_DEFAULT,
+      foldCount: 0,
+      foldedRoundCount: 0,
+      ttsAutoPlay: st.ttsAutoPlay,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      worldRules: st.worldRules || [],
+    };
+    await persistSession(s);
+    setMessages([]);
+    setPage('play');
+    setTyping(true);
+    try {
+      await runTurn(s, t, true);
+      await refreshLists(charId);
+    } catch (e: any) {
+      setError(e?.message || '这一轮没演成');
+    } finally {
+      setTyping(false);
+    }
+  };
+
+  const openLive = async (id: string) => {
+    setPending(null);
+    const s = await MiaomiaoBoxDB.getSession(id);
+    if (!s) return;
+    await loadSessionBundle(s);
+    setPage('play');
+    setError('');
   };
 
   const leaveToChat = () => {
@@ -447,6 +655,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const sendPlay = async (text: string) => {
+    if (pendingRef.current) {
+      await commitPending(text);
+      return;
+    }
     const s = sessionRef.current;
     if (!s || !text.trim()) return;
     setError('');
@@ -473,7 +685,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       charId: s.charId,
       role: 'assistant',
       type: 'box_record',
-      content: body,
+      content: mode === 'forget' ? body : withPerspective(body),
       metadata: {
         title: s.title || STARTER_LABEL[s.starter],
         archiveMode: mode,
@@ -499,6 +711,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
     setError('');
     const msgs = await MiaomiaoBoxDB.listMessages(s.id);
+    const base: MiaomiaoSession = { ...s, archive: archiveOf(mode, msgs) };
     try {
       if (mode === 'remember') {
         const { summaries, remainder } = materialsForArchive(msgs);
@@ -509,19 +722,21 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
           temperature: BOX_REMEMBER_TEMPERATURE,
           purpose: '盒子记在心里',
         });
-        await writeBoxRecord(s, mode, body.includes('【刚刚发生的事】') ? body : wrapArchiveBody(body, mode));
-        await persistSession({ ...s, status: 'closed', updatedAt: Date.now() });
+        await writeBoxRecord(base, mode, body.includes('【刚刚发生的事】') ? body : wrapArchiveBody(body, mode));
+        await persistSession({ ...base, status: 'closed', updatedAt: Date.now() });
       } else if (mode === 'raw' || mode === 'paused') {
-        await writeBoxRecord(s, mode, packRawArchive(msgs, mode));
-        if (mode === 'raw') await persistSession({ ...s, status: 'closed', updatedAt: Date.now() });
+        await writeBoxRecord(base, mode, packRawArchive(msgs, mode));
+        if (mode === 'raw') await persistSession({ ...base, status: 'closed', updatedAt: Date.now() });
       } else {
-        await writeBoxRecord(s, 'forget', packRawArchive(msgs, 'forget'));
-        await persistSession({ ...s, status: 'forgotten', updatedAt: Date.now() });
+        await writeBoxRecord(base, 'forget', packRawArchive(msgs, 'forget'));
+        await persistSession({ ...base, status: 'forgotten', updatedAt: Date.now() });
       }
     } catch (e: any) {
       setError(e?.message || '合盖没做成');
       return;
     }
+    setPending(null);
+    await refreshLists(s.charId);
     setShell('hidden');
     setPage('home');
     if (mode !== 'paused') {
@@ -530,17 +745,32 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
+  const deleteHistory = async (id: string) => {
+    const row = historySessions.find(s => s.id === id) || await MiaomiaoBoxDB.getSession(id);
+    const charId = row?.charId || sessionRef.current?.charId || os.activeCharacterId;
+    await MiaomiaoBoxDB.deleteSessionBundle(id);
+    if (sessionRef.current?.id === id) {
+      setSession(null);
+      setMessages([]);
+      setPage('home');
+    }
+    if (charId) await refreshLists(charId);
+  };
+
   const editMessage = async (id: string, content: string) => {
     const list = messagesRef.current;
     const m = list.find(x => x.id === id);
     if (!m) return;
+    voiceMem.current.delete(id);
     const next = {
       ...m,
       content: m.kind === 'voice' ? cleanShown(content) : content,
       voiceSourceText: m.kind === 'voice' ? content : m.voiceSourceText,
+      voiceUrl: undefined,
+      voiceSynthText: undefined,
     };
     await MiaomiaoBoxDB.saveMessage(next);
-    setMessages(list.map(x => x.id === id ? next : x));
+    setMessages(keepVoices(list.map(x => x.id === id ? next : x)));
   };
 
   const deleteBoxMessage = async (id: string) => {
@@ -619,7 +849,14 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (!url) return;
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'miaomiao-voice.mp3';
+      const charName = (os.characters.find(c => c.id === s.charId)?.name || '角色').replace(/[\\/:*?"<>|]/g, '').trim() || '角色';
+      let n = 1;
+      try {
+        n = Number(localStorage.getItem('miaomiao-voice-seq') || '0') + 1;
+        if (!Number.isFinite(n) || n < 1) n = 1;
+        localStorage.setItem('miaomiao-voice-seq', String(n));
+      } catch { /* ignore */ }
+      a.download = `${charName}-${String(n).padStart(3, '0')}.mp3`;
       a.rel = 'noopener';
       document.body.appendChild(a);
       a.click();
@@ -646,8 +883,9 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const value = useMemo<Ctx>(() => ({
     shell, page, session, messages, settings, typing, error, unread, foldBusy,
     openForChar, collapseToWidget, expandFloat, setPage, startPlay, switchMode, sendPlay, leaveToChat, closeLid, saveSettings, playingForChar,
-    editMessage, deleteBoxMessage, rerollMessage, rerollLastTurn, playBoxVoice, downloadBoxVoice,
-  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar]);
+    editMessage, deleteBoxMessage, rerollMessage, rerollLastTurn, playingVoiceId, voiceLoadingId, playBoxVoice, downloadBoxVoice,
+    pendingStarter, liveSessions, historySessions, pickHomeStarter, cancelPending, openLive, deleteHistory,
+  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId]);
 
   return <MiaomiaoBoxContext.Provider value={value}>{children}</MiaomiaoBoxContext.Provider>;
 };

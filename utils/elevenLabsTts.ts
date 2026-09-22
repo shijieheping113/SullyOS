@@ -269,7 +269,7 @@ export async function synthesizeSpeechElevenLabsDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string },
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean },
 ): Promise<TtsResult> {
   const apiKey = resolveElevenLabsApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 ElevenLabs API Key');
@@ -285,8 +285,10 @@ export async function synthesizeSpeechElevenLabsDetailed(
     output_format: ELEVENLABS_OUTPUT_FORMAT,
     ...payload,
   });
-  const cached = await getCachedTts(cacheKey);
-  if (cached) return { url: URL.createObjectURL(cached), blob: cached };
+  if (!options?.skipCache) {
+    const cached = await getCachedTts(cacheKey);
+    if (cached) return { url: URL.createObjectURL(cached), blob: cached };
+  }
 
   console.log('[elevenlabs] TTS', {
     model: payload.model_id,
@@ -295,7 +297,7 @@ export async function synthesizeSpeechElevenLabsDetailed(
     language_code: payload.language_code || 'auto',
   });
   const blob = await elevenLabsFetchAudio(voiceId, apiKey, payload);
-  saveCachedTts(cacheKey, blob).catch(() => { /* cache failure must not block playback */ });
+  if (!options?.skipCache) saveCachedTts(cacheKey, blob).catch(() => { /* cache failure must not block playback */ });
   return { url: URL.createObjectURL(blob), blob };
 }
 

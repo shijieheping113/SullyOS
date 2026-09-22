@@ -26,9 +26,19 @@ export function quoteDelims(style?: MiaomiaoQuoteStyle, custom?: string): QuoteD
   return { open: '「', close: '」' };
 }
 
+/** 模型有时把主聊天的标签写成英文。先折回盒子认得的 <语音> / <字幕>。 */
+export function normalizeBoxVoiceMarkup(raw: string): string {
+  return (raw || '')
+    .replace(/<\s*voice\b([^>]*)>/gi, '<语音$1>')
+    .replace(/<\s*\/\s*voice\s*>/gi, '</语音>')
+    .replace(/<\s*subtitles?\b[^>]*>/gi, '<字幕>')
+    .replace(/<\s*\/\s*subtitles?\s*>/gi, '</字幕>');
+}
+
 /** 给人看：去掉 XML 语音标签和方括号 cue，保留「」和（文本2）。 */
 export function cleanShown(text: string): string {
-  return stripFishCuesForDisplay(cleanVoiceMarkupForDisplay(stripEmotionTags(text || '')))
+  const src = normalizeBoxVoiceMarkup(text || '');
+  return stripFishCuesForDisplay(cleanVoiceMarkupForDisplay(stripEmotionTags(src)))
     .replace(/<\/?[语語]音[^>]*>/g, '')
     .replace(/<\/?字幕>/g, '')
     .replace(/\[[^\]]{1,40}\]/g, '')
@@ -69,7 +79,7 @@ export function splitIntoBubbles(
   custom?: string,
 ): BoxBubbleSeg[] {
   const segs: BoxBubbleSeg[] = [];
-  const src = raw || '';
+  const src = normalizeBoxVoiceMarkup(raw || '');
   const delims = quoteDelims(style, custom);
   const pushText = (chunk: string) => {
     const parts = chunk.split(/\n\s*\n/);
@@ -125,14 +135,15 @@ export function splitIntoBubbles(
 }
 
 export function spokenTextForBoxReply(raw: string, style?: MiaomiaoQuoteStyle, custom?: string): { spoken: string; emotion?: string } {
-  const segs = splitIntoBubbles(raw || '', style, custom);
+  const normalized = normalizeBoxVoiceMarkup(raw || '');
+  const segs = splitIntoBubbles(normalized, style, custom);
   const spoken = segs.filter(s => s.kind === 'voice').map(s => applyQuoteStyle(s.voiceSourceText || s.raw, style || 'corner', custom)).filter(Boolean).join('\n');
   if (spoken) {
-    const parsed = parseVoiceOutput(raw || '');
+    const parsed = parseVoiceOutput(normalized);
     return { spoken, emotion: parsed.emotion };
   }
-  const quoted = extractQuotedDialogue(raw);
-  return { spoken: quoted || cleanVoiceMarkupForDisplay(raw) };
+  const quoted = extractQuotedDialogue(normalized);
+  return { spoken: quoted || cleanVoiceMarkupForDisplay(normalized) };
 }
 
 export function displayTextForBoxReply(raw: string, style?: MiaomiaoQuoteStyle, custom?: string): string {

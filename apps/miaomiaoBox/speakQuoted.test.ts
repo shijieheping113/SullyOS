@@ -30,6 +30,23 @@ describe('splitIntoBubbles', () => {
   });
 });
 
+describe('英文语音标签', () => {
+  it('<voice> 整段当一条语音，<subtitles> 当正文，标签不露出来', () => {
+    const raw = `<voice emotion="shock">
+うわあああん！
+「卡住」
+</voice>
+<subtitles>
+呜哇——！Ann，不对！
+</subtitles>`;
+    const segs = splitIntoBubbles(raw, 'corner');
+    expect(segs.some(s => /<voice|<subtitles|语音|字幕/.test(s.content))).toBe(false);
+    expect(segs.filter(s => s.kind === 'voice')).toHaveLength(1);
+    expect(segs.find(s => s.kind === 'voice')?.content).toContain('卡住');
+    expect(segs.find(s => s.kind === 'text')?.content).toContain('Ann');
+  });
+});
+
 describe('applyQuoteStyle', () => {
   it('「文本1（文本2）」只留文本1，且必须先留着「」才能认', () => {
     const raw = '「ち、違います！アンは天使です！（不、不是的！Ann 是天使！）」';

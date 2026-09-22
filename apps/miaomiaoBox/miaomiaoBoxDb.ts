@@ -81,7 +81,8 @@ export const MiaomiaoBoxDB = {
   async saveMessage(msg: MiaomiaoMessage): Promise<void> {
     const db = await openDB();
     const tx = db.transaction(STORE_MIAOMIAO_MESSAGES, 'readwrite');
-    tx.objectStore(STORE_MIAOMIAO_MESSAGES).put(msg);
+    const stored: MiaomiaoMessage = { ...msg, voiceUrl: undefined, voiceSynthText: undefined };
+    tx.objectStore(STORE_MIAOMIAO_MESSAGES).put(stored);
     return waitTx(tx);
   },
 
@@ -105,6 +106,17 @@ export const MiaomiaoBoxDB = {
     const db = await openDB();
     const tx = db.transaction(STORE_MIAOMIAO_MESSAGES, 'readwrite');
     tx.objectStore(STORE_MIAOMIAO_MESSAGES).delete(id);
+    return waitTx(tx);
+  },
+
+  /** 只删盒子里这场的会话和原文。不碰主聊天。 */
+  async deleteSessionBundle(id: string): Promise<void> {
+    const msgs = await this.listMessages(id);
+    const db = await openDB();
+    const tx = db.transaction([STORE_MIAOMIAO_MESSAGES, STORE_MIAOMIAO_SESSIONS], 'readwrite');
+    const msgStore = tx.objectStore(STORE_MIAOMIAO_MESSAGES);
+    for (const m of msgs) msgStore.delete(m.id);
+    tx.objectStore(STORE_MIAOMIAO_SESSIONS).delete(id);
     return waitTx(tx);
   },
 

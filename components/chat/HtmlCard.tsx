@@ -10,11 +10,17 @@ import { CaretDown, Check, CopySimple } from '@phosphor-icons/react';
  * 假边框"贴在卡片周围 —— 聊天里卡片约定是直接贴在聊天背景上、无背景无边框,
  * 这里在渲染端兜底 (对已落库的旧卡片同样生效), 提示词端同步不再教模型加外层阴影。
  */
-const HtmlCard: React.FC<{ html: string }> = ({ html }) => {
+const HtmlCard: React.FC<{ html: string; wide?: boolean; allowScripts?: boolean; onOptionText?: (text: string) => void }> = ({ html, wide, allowScripts, onOptionText }) => {
+    const onOptionRef = useRef(onOptionText);
+    onOptionRef.current = onOptionText;
     const [sourceExpanded, setSourceExpanded] = useState(false);
     const [copyState, setCopyState] = useState<'idle' | 'ok' | 'error'>('idle');
     const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;}body{display:flex;justify-content:center;padding:0;}*{box-sizing:border-box;}img{max-width:100%;}body>*{box-shadow:none!important;filter:none!important;}</style></head><body>${html}</body></html>`;
+    const optionCss = onOptionText ? '[data-miao-option]{cursor:pointer;}' : '';
+    const wideCss = wide
+        ? 'html,body{scrollbar-width:none;-ms-overflow-style:none;}body::-webkit-scrollbar,html::-webkit-scrollbar{width:0;height:0;display:none;}body>*{background:transparent!important;}'
+        : '';
+    const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;}body{display:flex;justify-content:center;padding:0;}*{box-sizing:border-box;}img{max-width:100%;}body>*{box-shadow:none!important;filter:none!important;}${wideCss}${optionCss}</style></head><body>${html}</body></html>`;
 
     useEffect(() => () => {
         if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
@@ -59,34 +65,56 @@ const HtmlCard: React.FC<{ html: string }> = ({ html }) => {
     };
 
     return (
-        <div className="w-[280px] max-w-full rounded-[18px] overflow-hidden bg-transparent">
+        <div className={wide ? 'w-full max-w-full rounded-[18px] overflow-hidden bg-transparent' : 'w-[280px] max-w-full rounded-[18px] overflow-hidden bg-transparent'}>
             <iframe
                 title="html-card"
                 srcDoc={srcDoc}
                 // allow-same-origin: 让父页面能读 contentDocument 自动调高度
                 // 故意不给 allow-scripts / allow-forms / allow-popups —
                 // AI 输出里的 <script> 不会执行, 表单 / 弹窗 / 顶层跳转 也都被拦。
-                sandbox="allow-same-origin"
+                sandbox={allowScripts ? 'allow-same-origin allow-scripts' : 'allow-same-origin'}
                 referrerPolicy="no-referrer"
-                className="block w-full min-h-[120px] border-0 bg-transparent"
-                style={{ height: 200 }}
+                className={wide ? 'block w-full border-0 bg-transparent' : 'block w-full min-h-[120px] border-0 bg-transparent'}
+                style={{ height: wide ? 48 : 200 }}
                 onLoad={(e) => {
                     try {
                         const f = e.currentTarget as HTMLIFrameElement & { __htmlCardRO?: ResizeObserver };
                         const doc = f.contentDocument;
                         if (!doc || !doc.body) return;
+                        if (onOptionRef.current && !(f as HTMLIFrameElement & { __miaoOpt?: boolean }).__miaoOpt) {
+                            (f as HTMLIFrameElement & { __miaoOpt?: boolean }).__miaoOpt = true;
+                            doc.body.addEventListener('click', (ev) => {
+                                const target = ev.target as HTMLElement | null;
+                                const el = target?.closest?.('[data-miao-option]');
+                                if (!el) return;
+                                const text = (el.getAttribute('data-miao-option') || '').trim();
+                                if (!text) return;
+                                ev.preventDefault();
+                                onOptionRef.current?.(text);
+                            });
+                        }
                         // 量内容真实高度并把 iframe 调成等高，避免内部滚动。
                         // 上限放宽到 2400，足够长卡片完整展开；真正超长的才会兜底滚动。
                         const fit = () => {
                             try {
                                 const root = doc.documentElement;
                                 const body = doc.body;
-                                const natural = Math.max(
-                                    body.scrollHeight, body.offsetHeight,
-                                    root ? root.scrollHeight : 0,
-                                );
-                                const h = Math.min(2400, Math.max(60, natural + 4));
-                                f.style.height = h + 'px';
+                                const child = body.firstElementChild as HTMLElement | null;
+                                const natural = wide && child
+                                    ? Math.max(child.offsetHeight, child.scrollHeight)
+                                    : Math.max(
+                                        body.scrollHeight, body.offsetHeight,
+                                        root ? root.scrollHeight : 0,
+                                    );
+                                const cap = wide ? 640 : 2400;
+                                const need = Math.max(wide ? 36 : 60, natural + 4);
+                                if (wide && need > cap) {
+                                    body.style.overflowY = 'auto';
+                                    f.style.height = cap + 'px';
+                                } else {
+                                    body.style.overflowY = 'hidden';
+                                    f.style.height = Math.min(cap, need) + 'px';
+                                }
                             } catch { /* 同源读不到时静默 */ }
                         };
                         fit();

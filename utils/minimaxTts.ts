@@ -474,7 +474,7 @@ export async function synthesizeSpeechDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string }
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean }
 ): Promise<TtsResult> {
   const apiKey = resolveMiniMaxApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 MiniMax API Key');
@@ -493,9 +493,11 @@ export async function synthesizeSpeechDetailed(
   // build the same payload get the same hash and reuse whichever one synthesized
   // the audio first — across sessions, across apps.
   const cacheKey = buildMiniMaxTtsCacheKey(payload, paramVersion);
-  const cached = await getCachedTts(cacheKey);
-  if (cached) {
-    return { url: URL.createObjectURL(cached), blob: cached };
+  if (!options?.skipCache) {
+    const cached = await getCachedTts(cacheKey);
+    if (cached) {
+      return { url: URL.createObjectURL(cached), blob: cached };
+    }
   }
 
   const headers: Record<string, string> = {
@@ -541,7 +543,7 @@ export async function synthesizeSpeechDetailed(
   }
   // Persist to the shared cache in the background — the next identical request
   // (same text + voice settings) will be served locally.
-  saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });
+  if (!options?.skipCache) saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });
   return { url: URL.createObjectURL(blob), blob };
 }
 

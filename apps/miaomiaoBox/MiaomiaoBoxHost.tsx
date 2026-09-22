@@ -9,13 +9,71 @@ import { MiaomiaoBoxCat } from './MiaomiaoBoxCat';
 import HtmlCard from '../../components/chat/HtmlCard';
 import { MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
 import { countUnfoldedRounds } from './foldSession';
-import { displayTextForBoxReply, splitIntoBubbles } from './speakQuoted';
+import { splitIntoBubbles } from './speakQuoted';
 import { MiaomiaoBoxDB } from './miaomiaoBoxDb';
 import TokenImg from '../../components/os/TokenImg';
 import { IcoMinus, STARTER_ICO } from './miaoIcons';
 import './miaomiao-box.css';
 
+function fitTextarea(el: HTMLTextAreaElement | null, min: number) {
+  if (!el) return;
+  const max = Math.round(window.innerHeight * 0.45);
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  el.style.height = 'auto';
+  el.style.height = Math.min(Math.max(el.scrollHeight, min), max) + 'px';
+  if (document.activeElement === el) {
+    try { el.setSelectionRange(start, end); } catch { /* ignore */ }
+  }
+}
+
+function RuleFields({ title, body, onCommit }: { title: string; body: string; onCommit: (title: string, body: string) => void }) {
+  const [t, setT] = useState(title);
+  const [b, setB] = useState(body);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => { fitTextarea(bodyRef.current, 72); }, [b]);
+  return (
+    <div className="editbig" onBlur={e => {
+      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+      onCommit(t, b);
+    }}>
+      <div className="ti">标题</div>
+      <input className="tinput" value={t} onChange={e => setT(e.target.value)} />
+      <div className="ti" style={{ marginTop: 6 }}>正文</div>
+      <textarea ref={bodyRef} className="tarea" value={b} onChange={e => { setB(e.target.value); fitTextarea(e.target, 72); }} />
+    </div>
+  );
+}
+
 const STARTERS: MiaomiaoStarter[] = ['box', 'story', 'claw', 'walk', 'dream', 'random'];
+const ARCHIVE_LABEL: Record<MiaomiaoArchiveMode, string> = {
+  remember: '记在心里',
+  raw: '原样收进',
+  forget: '抖抖毛，忘掉',
+  paused: '暂停',
+};
+
+function renderBoxText(text: string): React.ReactNode {
+  const cleaned = (text || '')
+    .replace(/!\(https?:\/\/[^)\s]+\)_?\d*/g, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/<\s*\/?\s*voice\b[^>]*>/gi, '')
+    .replace(/<\s*\/?\s*subtitles?\b[^>]*>/gi, '')
+    .replace(/<\/?[语語]音[^>]*>/g, '')
+    .replace(/<\/?字幕>/g, '');
+  const re = /（[^）]*）|\([^)]*\)|\*\*([^*]+)\*\*/g;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(cleaned))) {
+    if (m.index > last) parts.push(cleaned.slice(last, m.index));
+    parts.push(<span key={k++} className="narr">{m[1] != null ? m[1] : m[0]}</span>);
+    last = m.index + m[0].length;
+  }
+  if (last < cleaned.length) parts.push(cleaned.slice(last));
+  return parts.length ? parts : cleaned;
+}
 
 function visualRows(m: MiaomiaoMessage): { key: string; kind: 'text' | 'voice' | 'html'; content: string; htmlSource?: string }[] {
   if (m.kind === 'html') return [{ key: m.id, kind: 'html', content: '', htmlSource: m.htmlSource }];
@@ -42,6 +100,7 @@ const MiaomiaoBoxHost: React.FC = () => {
   const os = useOS();
   const box = useMiaomiaoBox();
   const [draft, setDraft] = useState('');
+  const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const [sheet, setSheet] = useState(false);
   const [editingRule, setEditingRule] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -79,10 +138,18 @@ const MiaomiaoBoxHost: React.FC = () => {
   const [lpPos, setLpPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [openAnim, setOpenAnim] = useState(false);
   const [rerollOpen, setRerollOpen] = useState(false);
+  const [readId, setReadId] = useState<string | null>(null);
+  const lpOpenedAt = useRef(0);
 
   useEffect(() => {
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
   }, [theme]);
+
+  useEffect(() => {
+    const el = draftRef.current;
+    if (!el) return;
+    fitTextarea(el, 56);
+  }, [draft]);
 
   const showFloat = box.shell === 'float' && os.activeApp === AppID.Chat && (!box.session || box.session.charId === os.activeCharacterId);
   const showWidget = box.shell === 'widget';
@@ -95,9 +162,11 @@ const MiaomiaoBoxHost: React.FC = () => {
   }, [showFloat, hasShow]);
   if (!showFloat && !showWidget) return null;
 
-  const sub = box.session
-    ? (box.session.status === 'playing' ? `开演中 · 第 ${Math.max(0, countUnfoldedRounds(box.messages) + (box.session.foldedRoundCount || 0))} 轮` : '还没开演')
-    : '还没开演';
+  const sub = box.pendingStarter
+    ? `新的一场 · ${STARTER_LABEL[box.pendingStarter]}`
+    : box.session
+      ? (box.session.status === 'playing' ? `开演中 · 第 ${Math.max(0, countUnfoldedRounds(box.messages) + (box.session.foldedRoundCount || 0))} 轮` : '还没开演')
+      : '还没开演';
 
   const onGrabDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
@@ -148,16 +217,19 @@ const MiaomiaoBoxHost: React.FC = () => {
       const boxEl = floatRef.current;
       const r = boxEl ? boxEl.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
       const pad = 8;
+      const menuH = 40;
       let x = e.clientX - r.left;
-      let y = e.clientY - r.top;
-      if (x + 196 > r.width - pad) x = Math.max(pad, r.width - 196 - pad);
-      if (y + 180 > r.height - pad) y = Math.max(pad, r.height - 180 - pad);
+      let y = (e.clientY - r.top) - menuH - 10;
+      if (x + 220 > r.width - pad) x = Math.max(pad, r.width - 220 - pad);
       if (x < pad) x = pad;
-      if (y < pad) y = pad;
+      if (y < pad) y = Math.min(r.height - menuH - pad, (e.clientY - r.top) + 22);
       setLpPos({ x, y });
     }
     if (holdTimer.current) window.clearTimeout(holdTimer.current);
-    holdTimer.current = window.setTimeout(() => setLpId(id), 420);
+    holdTimer.current = window.setTimeout(() => {
+      lpOpenedAt.current = Date.now();
+      setLpId(id);
+    }, 420);
   };
   const cancelHold = () => {
     if (holdTimer.current) window.clearTimeout(holdTimer.current);
@@ -165,9 +237,18 @@ const MiaomiaoBoxHost: React.FC = () => {
   };
 
   const onHomeLeft = () => {
+    if (box.page === 'history' && readId) {
+      setReadId(null);
+      return;
+    }
+    if (box.pendingStarter) box.cancelPending();
     if (box.page === 'home') box.leaveToChat();
     else box.setPage('home');
   };
+
+  const justOpenedMenu = () => Date.now() - lpOpenedAt.current < 500;
+  const others = box.liveSessions.filter(s => s.id !== box.session?.id && (s.status === 'playing' || s.status === 'paused'));
+  const reading = box.historySessions.find(s => s.id === readId) || null;
 
   return (
     <div className="miaomiao-root" data-theme={theme} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 80 }}>
@@ -192,7 +273,7 @@ const MiaomiaoBoxHost: React.FC = () => {
             </div>
             <div className="acts">
               {box.page === 'home' && (
-                <button className="iconbtn" aria-label="看历史原文" onClick={() => box.setPage('history')}><Clock size={18} /></button>
+                <button className="iconbtn" aria-label="看历史原文" onClick={() => { setReadId(null); box.setPage('history'); }}><Clock size={18} /></button>
               )}
               {box.page === 'settings' && (
                 <button className="iconbtn" aria-label="切换亮暗" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>
@@ -218,14 +299,23 @@ const MiaomiaoBoxHost: React.FC = () => {
                 </div>
               </div>
               {box.session && (box.session.status === 'playing' || box.session.status === 'paused') && box.messages.length > 0 && (
-                <div className="contcard">
+                <div className={others.length ? 'contcard multi' : 'contcard'}>
                   <div className="mini">{(() => {
                     const ch = os.characters.find(c => c.id === box.session?.charId);
                     const img = ch?.vrState?.chibi?.img || ch?.avatar;
                     return img ? <TokenImg value={img} alt="" /> : <MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" />;
                   })()}</div>
                   <div className="t"><b>{box.session.title}</b><span>{STARTER_LABEL[box.session.starter]} · 接着演</span></div>
-                  <button className="go" onClick={() => box.setPage('play')}>接着 ▸</button>
+                  <button className="go" onClick={() => { box.cancelPending(); box.setPage('play'); }}>接着 ▸</button>
+                  {others.length > 0 && (
+                    <div className="contmore">
+                      {others.map(s => (
+                        <button key={s.id} type="button" className="otherchip" onClick={() => void box.openLive(s.id)}>
+                          {STARTER_LABEL[s.starter]} {new Date(s.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="startbig">
@@ -234,7 +324,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                   {STARTERS.map(id => {
                     const Ico = STARTER_ICO[id];
                     return (
-                      <button key={id} className="schip" onClick={() => box.startPlay(id)}>
+                      <button key={id} className="schip" onClick={() => void box.pickHomeStarter(id)}>
                         <Ico />
                         <span className="lab"><b>{STARTER_LABEL[id]}</b><i>{STARTER_HINT[id]}</i></span>
                       </button>
@@ -251,8 +341,9 @@ const MiaomiaoBoxHost: React.FC = () => {
 
           {box.page === 'play' && (
             <>
-              <div className="stage" onClick={() => setLpId(null)}>
-                {box.messages.map(m => m.role === 'summary' ? (
+              <div className="stage" onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}>
+                {box.pendingStarter && <div className="daysep">新的一场 · {STARTER_LABEL[box.pendingStarter]}</div>}
+                {(box.pendingStarter ? [] : box.messages).map(m => m.role === 'summary' ? (
                   <div key={m.id} className="sumcard">
                     <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
                     <div className="sbd">{m.content}</div>
@@ -276,9 +367,17 @@ const MiaomiaoBoxHost: React.FC = () => {
                             onPointerUp={cancelHold}
                             onPointerCancel={cancelHold}
                             onPointerMove={cancelHold}
-                            onClick={() => { if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
+                            onClick={() => { if (justOpenedMenu()) return; if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
                           >
-                            <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{row.content}</span>
+                            <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{renderBoxText(row.content)}</span>
+                            {row.kind === 'voice' && (
+                              <span className={
+                                box.voiceLoadingId === m.id ? 'vmark load'
+                                : box.playingVoiceId === m.id ? 'vmark on' : 'vmark'
+                              } aria-hidden>
+                                {box.voiceLoadingId === m.id ? <span className="vdots">…</span> : <><i /><i /><i /></>}
+                              </span>
+                            )}
                           </div>
                       )}
                     </div>
@@ -289,7 +388,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                         onPointerDown={e => { e.stopPropagation(); startHold(m.id, e); }}
                         onPointerUp={cancelHold}
                         onPointerCancel={cancelHold}
-                      ><HtmlCard html={row.htmlSource} /></div>
+                      ><HtmlCard wide allowScripts html={row.htmlSource} onOptionText={text => setDraft(prev => prev ? `${prev}${text}` : text)} /></div>
                     )}
                   </React.Fragment>
                   ))
@@ -310,7 +409,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                       className="minichip"
                       aria-label={STARTER_LABEL[id]}
                       title={STARTER_LABEL[id]}
-                      aria-pressed={box.session?.starter === id}
+                      aria-pressed={(box.pendingStarter || box.session?.starter) === id}
                       onClick={() => box.switchMode(id)}
                     ><Ico /></button>
                   );
@@ -356,18 +455,15 @@ const MiaomiaoBoxHost: React.FC = () => {
                       })}><Trash size={15} /></button>
                     </div>
                     {editingRule === rule.id && (
-                      <div className="editbig">
-                        <div className="ti">标题</div>
-                        <input className="tinput" value={rule.title} onChange={e => box.saveSettings({
+                      <RuleFields
+                        key={rule.id}
+                        title={rule.title}
+                        body={rule.body}
+                        onCommit={(title, body) => box.saveSettings({
                           ...box.settings!,
-                          worldRules: box.settings!.worldRules.map(r => r.id === rule.id ? { ...r, title: e.target.value } : r),
-                        })} />
-                        <div className="ti" style={{ marginTop: 6 }}>正文</div>
-                        <textarea className="tarea" value={rule.body} onChange={e => box.saveSettings({
-                          ...box.settings!,
-                          worldRules: box.settings!.worldRules.map(r => r.id === rule.id ? { ...r, body: e.target.value } : r),
-                        })} />
-                      </div>
+                          worldRules: box.settings!.worldRules.map(r => r.id === rule.id ? { ...r, title, body } : r),
+                        })}
+                      />
                     )}
                   </div>
                 ))}
@@ -430,22 +526,44 @@ const MiaomiaoBoxHost: React.FC = () => {
           )}
 
           {box.page === 'history' && (
-            <div className="home">
-              <div className="hhint">总结只是把话卷起来省地方，原文一直留着，随时能翻。</div>
-              {box.messages.filter(m => m.role === 'summary').map(sum => (
-                <div key={sum.id} className="hcard">
-                  <div className="hsum"><span className="htag">摘要</span>{sum.content}</div>
-                  <div className="hsep"><span>原文</span></div>
-                  <div className="hraw">
-                    {box.messages.filter(m => m.folded && m.role !== 'summary').slice(0, 6).map(m => (
-                      <div key={m.id} className={m.role === 'user' ? 'hrrow me' : 'hrrow'}>
-                        <div className="hrbub">{displayTextForBoxReply(m.content)}</div>
-                      </div>
-                    ))}
+            <div className="home histpage">
+              {reading?.archive ? (
+                <div className="read">
+                  <button type="button" className="readback" onClick={() => setReadId(null)}>‹ 返回列表</button>
+                  <div className="readhd">
+                    <b>{reading.title || STARTER_LABEL[reading.starter]}</b>
+                    <span>{(reading.status === 'playing' ? '进行中' : reading.status === 'paused' ? '暂停' : ARCHIVE_LABEL[reading.archive.mode])} · {reading.archive.lines.length} 条原文</span>
                   </div>
-                  <div className="hft"><span>原文只读，改不了</span></div>
+                  {reading.archive.lines.map(line => {
+                    const raw = line.kind === 'html'
+                      ? (line.htmlTextPreview || line.content || '（一张画面卡）')
+                      : (line.kind === 'voice' ? (line.voiceSourceText || line.content) : (line.content || line.voiceSourceText || ''));
+                    const text = line.kind === 'html'
+                      ? (raw.split('\n').map(s => s.trim()).filter(Boolean).join('\n') || '（一张画面卡）')
+                      : raw;
+                    return (
+                      <div key={line.id} className={line.role === 'user' ? 'readrow me' : 'readrow'}>
+                        <div className="who">{line.role === 'user' ? '你' : (os.characters.find(c => c.id === reading.charId)?.name || 'Ta')}</div>
+                        <div className="readbub">{line.kind === 'html' ? text : renderBoxText(text)}</div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              ) : (
+                <>
+                  <div className="hhint">保存或暂停过的原文会留在这里。不压缩，也不拿去接着演。</div>
+                  {box.historySessions.length === 0 && <div className="hhint">还没有。</div>}
+                  {box.historySessions.map(s => (
+                    <div key={s.id} className="hrow" onClick={() => setReadId(s.id)}>
+                      <div className="hmain">
+                        <b>{s.title || STARTER_LABEL[s.starter]}</b>
+                        <span>{(s.status === 'playing' ? '进行中' : s.status === 'paused' ? '暂停' : (s.archive ? ARCHIVE_LABEL[s.archive.mode] : ''))} · {s.archive?.lines.length || 0} 条 · {new Date(s.archive?.savedAt || s.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <button type="button" className="mini danger" aria-label="删除这场原文" onClick={e => { e.stopPropagation(); void box.deleteHistory(s.id); }}><Trash size={15} /></button>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )}
 
@@ -453,9 +571,10 @@ const MiaomiaoBoxHost: React.FC = () => {
             <div className="composer">
               <div className="editbox">
                 <textarea
-                  placeholder={box.page === 'home' ? '想让猫儿演什么？直接说——' : '接着往下演，或者点上面的小图标换个起手式…'}
+                  ref={draftRef}
+                  placeholder={box.pendingStarter ? '这场是新的，先说一句…' : box.page === 'home' ? '想让猫儿演什么？直接说——' : '接着往下演，或者点上面的小图标换个起手式…'}
                   value={draft}
-                  onChange={e => setDraft(e.target.value)}
+                  onChange={e => { setDraft(e.target.value); fitTextarea(e.target, 56); }}
                 />
                 <div className="side">
                   <button className="sendbtn" aria-label="发送" onClick={() => {
@@ -476,7 +595,12 @@ const MiaomiaoBoxHost: React.FC = () => {
             const isUser = lpMsg?.role === 'user';
             const isVoice = !isUser && !isHtml && (lpMsg?.kind === 'voice' || !!lpMsg?.voiceSourceText || /<[语語]音/.test(lpMsg?.content || '') || !lpMsg?.kind);
             return (
-            <div className="lpmenu fixed" style={{ left: lpPos.x, top: lpPos.y }} onClick={e => e.stopPropagation()}>
+            <div
+              className="lpmenu fixed"
+              style={{ left: lpPos.x, top: lpPos.y }}
+              onClick={e => e.stopPropagation()}
+              onClickCapture={e => { if (justOpenedMenu()) { e.preventDefault(); e.stopPropagation(); } }}
+            >
               {!isHtml && <button type="button" onClick={() => { if (lpMsg) { setEditId(lpMsg.id); setEditDraft(lpMsg.voiceSourceText || lpMsg.content); } setLpId(null); }}><PencilSimple size={15} />编辑</button>}
               {!isHtml && <button type="button" onClick={() => {
                 if (lpMsg) void navigator.clipboard.writeText(lpMsg.content);

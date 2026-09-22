@@ -4,6 +4,13 @@ import type { MiaomiaoArchiveMode, MiaomiaoMessage } from './types';
 export const ARCHIVE_FRAME_OPEN = '【刚刚发生的事】';
 export const ARCHIVE_FRAME_CLOSE = '——以上是真实发生的事情，之后聊天时记得。';
 export const PAUSE_FRAME_CLOSE = '——以上是真实发生的事情，这件事还没完，之后聊天时记得，接着往下走。';
+export const PERSPECTIVE_LINE = '这段里的信息要遵守认知隔离壁垒，不要默认角色是全知视角，只有当时在场的人，或者写明已经知道的人，才算知道。不在场、也没被写明知情的人，之后不许当成自己知道。模型读到了，不等于角色知道。';
+
+export function withPerspective(body: string): string {
+  const text = (body || '').trim();
+  if (!text || text.includes('认知隔离壁垒')) return text;
+  return `${text}\n\n${PERSPECTIVE_LINE}`;
+}
 
 export function stripHtmlFromBoxText(text: string): string {
   if (!text) return '';
