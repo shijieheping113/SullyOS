@@ -16,11 +16,28 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
     expect(p).not.toContain('必须紧跟在 </语音> 后面');
   });
 
-  it('鱼声只带鱼声', () => {
+  it('鱼声只带鱼声，记号按当前开口方式举例', () => {
     const p = buildMiaomiaoPlayPrompt({ apiConfig: { ttsProvider: 'fishaudio' }, worldRules: rules, starter: 'box' });
     expect(p).toContain(FISH_VOICE_ACTING_GUIDE);
+    expect(p).toContain('平静的句子可以不标');
+    expect(p).toContain('「[soft] 诊断单在这里。」');
+    expect(p).not.toContain('每句开口都要有');
     expect(p).not.toContain(VOICE_ACTING_GUIDE);
-    expect(p).not.toContain(ELEVENLABS_V3_VOICE_ACTING_GUIDE);
+    const paren = buildMiaomiaoPlayPrompt({
+      apiConfig: { ttsProvider: 'fishaudio' },
+      worldRules: rules,
+      starter: 'box',
+      quoteStyle: 'corner-paren',
+    });
+    expect(paren).toContain('「[soft] し、診断書');
+    const ascii = buildMiaomiaoPlayPrompt({
+      apiConfig: { ttsProvider: 'fishaudio' },
+      worldRules: rules,
+      starter: 'box',
+      quoteStyle: 'dq-ascii',
+    });
+    expect(ascii).toContain('"[soft] The slip is here."');
+    expect(ascii).not.toContain('「[soft] 诊断单在这里。」');
   });
 
   it('ElevenLabs 按模型只带对应一份', () => {
@@ -60,5 +77,7 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
     expect(p).toContain('ONLY_FISH_CUSTOM');
     expect(p).not.toContain(FISH_VOICE_ACTING_GUIDE);
     expect(p).not.toContain(VOICE_ACTING_GUIDE);
+    expect(p).not.toContain('【鱼声记号】');
+    expect(p).not.toContain('这一盒怎么用上面的记号');
   });
 });

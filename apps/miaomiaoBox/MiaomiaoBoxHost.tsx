@@ -366,37 +366,39 @@ const MiaomiaoBoxHost: React.FC = () => {
                     <div className="sbd">{m.content}</div>
                     <div className="sft"><span>摘要 · 原文留着，随时能翻</span></div>
                   </div>
+                ) : editId === m.id ? (
+                  <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
+                    {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>}
+                    <div className="editpane" onClick={e => e.stopPropagation()}>
+                      <textarea value={editDraft} onChange={e => setEditDraft(e.target.value)} />
+                      <span className="splithint">回车另起一条。有引号的是要念的，旁边的字单独一行。</span>
+                      <button type="button" className="savebtn" onClick={() => { void box.editMessage(m.id, editDraft); setEditId(null); }}>保存</button>
+                    </div>
+                  </div>
                 ) : (
                   visualRows(m).map(row => (
                   <React.Fragment key={row.key}>
                     {row.kind !== 'html' && (
                     <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
                       {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>}
-                      {editId === m.id ? (
-                        <div className="editpane" onClick={e => e.stopPropagation()}>
-                          <textarea value={editDraft} onChange={e => setEditDraft(e.target.value)} />
-                          <button type="button" className="savebtn" onClick={() => { void box.editMessage(m.id, editDraft); setEditId(null); }}>保存</button>
-                        </div>
-                      ) : (
-                          <div
-                            className={`bub ${row.kind === 'voice' ? 'voice' : ''} ${lpId === m.id ? 'press' : ''}`}
-                            onPointerDown={e => startHold(m.id, e)}
-                            onPointerUp={cancelHold}
-                            onPointerCancel={cancelHold}
-                            onPointerMove={cancelHold}
-                            onClick={() => { if (justOpenedMenu()) return; if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
-                          >
-                            <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{renderBoxText(row.content)}</span>
-                            {row.kind === 'voice' && (
-                              <span className={
-                                box.voiceLoadingId === m.id ? 'vmark load'
-                                : box.playingVoiceId === m.id ? 'vmark on' : 'vmark'
-                              } aria-hidden>
-                                {box.voiceLoadingId === m.id ? <span className="vdots">…</span> : <><i /><i /><i /></>}
-                              </span>
-                            )}
-                          </div>
-                      )}
+                      <div
+                        className={`bub ${row.kind === 'voice' ? 'voice' : ''} ${lpId === m.id ? 'press' : ''}`}
+                        onPointerDown={e => startHold(m.id, e)}
+                        onPointerUp={cancelHold}
+                        onPointerCancel={cancelHold}
+                        onPointerMove={cancelHold}
+                        onClick={() => { if (justOpenedMenu()) return; if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
+                      >
+                        <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{renderBoxText(row.content)}</span>
+                        {row.kind === 'voice' && (
+                          <span className={
+                            box.voiceLoadingId === m.id ? 'vmark load'
+                            : box.playingVoiceId === m.id ? 'vmark on' : 'vmark'
+                          } aria-hidden>
+                            {box.voiceLoadingId === m.id ? <span className="vdots">…</span> : <><i /><i /><i /></>}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     )}
                     {row.htmlSource && (

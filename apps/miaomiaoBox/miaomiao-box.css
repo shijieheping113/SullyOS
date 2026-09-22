@@ -307,6 +307,7 @@
   font-size:13px;line-height:1.7;padding:10px;outline:none;resize:vertical;
   white-space:pre-wrap;
 }
+.miaomiao-root .editpane .splithint { font-size:10.5px; line-height:1.45; color:var(--miao-lilac); font-family:'Noto Sans SC',sans-serif; }
 .miaomiao-root .editpane .savebtn {
   height:var(--h-btn);border-radius:13px;border:0;cursor:pointer;
   background:linear-gradient(135deg,var(--miao-pink),var(--miao-hot));color:#fff;

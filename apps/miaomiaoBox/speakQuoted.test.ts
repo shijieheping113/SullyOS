@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyQuoteStyle, cleanShown, splitIntoBubbles, spokenTextForBoxReply } from './speakQuoted';
+import { applyQuoteStyle, cleanShown, normalizeEditBreaks, splitIntoBubbles, spokenTextForBoxReply } from './speakQuoted';
 
 const WITH_TAGS = `猫儿昨天上午是捂着屁股出门的。
 
@@ -47,6 +47,13 @@ describe('英文语音标签', () => {
     expect(segs.filter(s => s.kind === 'voice')).toHaveLength(1);
     expect(segs.find(s => s.kind === 'voice')?.content).toContain('卡住');
     expect(segs.some(s => s.kind === 'text' && s.content.includes('Ann'))).toBe(true);
+  });
+});
+
+describe('normalizeEditBreaks', () => {
+  it('写成 \\\\n 的也会拆开', () => {
+    const segs = splitIntoBubbles(normalizeEditBreaks('「第一句。」\\n猫儿把单子推过来。\\n「第二句。」'), 'corner');
+    expect(segs.map(s => s.kind)).toEqual(['voice', 'text', 'voice']);
   });
 });
 

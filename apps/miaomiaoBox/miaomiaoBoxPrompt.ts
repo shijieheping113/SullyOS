@@ -64,7 +64,7 @@ export const BOX_PLAY_PROMPT_CORE = `【你现在在“喵喵盒”里】
 【排版】
 一个气泡一行。换行就是下一条气泡。空行只是隔开，不会多出一个空气泡。
 想让两三句待在同一个气泡里，就写在同一行，不要中途换行。
-要念的话用引号包住，可以跟在这一行叙述后面。引号留在这一行里，不要为了朗读再拆开。
+旁白单独一行。要念的引号单独一行。不要把旁白和引号写在同一行。
 没有引号的行只显示，不念。
 不要用 <语音> 把整场或整段包起来。不要写 <字幕>。
 不要用 markdown。不要用星号包字，不要用反引号，不要用代码块。旁白写成（这样）。
@@ -131,23 +131,50 @@ export const STARTER_PROMPTS: Record<MiaomiaoStarter, string> = {
 
 function voiceBlockForProvider(provider: TtsProvider, elevenLabsModel?: string, custom?: string): string {
   const extra = (custom || '').trim();
-  if (provider === 'fishaudio') {
-    return extra ? `${extra}\n\n${BOX_LINE_RULE}` : FISH_VOICE_BLOCK;
-  }
+  if (extra) return extra;
+  if (provider === 'fishaudio') return FISH_VOICE_BLOCK;
   if (provider === 'elevenlabs') {
-    const guide = extra || getElevenLabsVoiceActingGuide(elevenLabsModel);
-    return `${guide}\n\n${BOX_LINE_RULE}`;
-  }
-  if (extra) {
-    return `${extra}\n\n${BOX_LINE_RULE}
-MiniMax 的 (laughs) (sighs) (chuckle) (gasps) 和 <#秒#> 写在引号里。`;
+    return `${getElevenLabsVoiceActingGuide(elevenLabsModel)}\n\n${BOX_LINE_RULE}`;
   }
   return MINIMAX_VOICE_BLOCK;
 }
 
+function fishCueBlock(style?: MiaomiaoQuoteStyle): string {
+  const head = `【鱼声记号】
+这一盒用鱼声朗读。情绪有变化时，在要念的话最前面标一个最接近的方括号：[excited] [angry] [sad] [embarrassed] [soft] [whispering] [sighing] [laughing] [chuckling]。
+平静的句子可以不标。不要每句都塞。不要用 (sighs) 这种圆括号，鱼声不认。
+旁白单独一行，不要和引号写在同一行。`;
+  if (style === 'corner-paren') {
+    return `${head}
+例：
+猫儿把诊断单往前推了推。
+「[soft] し、診断書……これ……。（诊、诊断单……在这里……。）」`;
+  }
+  if (style === 'dq-ascii') {
+    return `${head}
+例：
+猫儿把诊断单往前推了推。
+"[soft] The slip is here."`;
+  }
+  if (style === 'dq-curly') {
+    return `${head}
+例：
+猫儿把诊断单往前推了推。
+“[soft] 诊断单在这里。”`;
+  }
+  if (style === 'custom') {
+    return `${head}
+方括号放在你设定的那对引号里面、要念的话的最前面。`;
+  }
+  return `${head}
+例：
+猫儿把诊断单往前推了推。
+「[soft] 诊断单在这里。」`;
+}
+
 function quoteStyleHint(style?: MiaomiaoQuoteStyle): string {
   if (style === 'corner-paren') {
-    return `开口写成「文本1（文本2）」：文本1是要念的话，文本2是括注不念。语气标记只写在文本1上，不要写在文本2上。叙述和开口仍按段落排；开口可以紧跟在叙述后面。`;
+    return `开口写成「文本1（文本2）」：文本1是要念的话，文本2是括注不念。语气标记只写在文本1上，不要写在文本2上。旁白单独一行，开口单独一行。`;
   }
   if (style === 'dq-ascii') return `开口用英文直引号 "文本" 包住要念的话。`;
   if (style === 'dq-curly') return `开口用弯引号 “文本” 包住要念的话。`;
@@ -164,6 +191,7 @@ export function buildMiaomiaoPlayPrompt(opts: {
   const provider = resolveTtsProvider(opts.apiConfig);
   const custom = getVoicePromptOverride(provider) || (opts.apiConfig?.voicePrompts?.[provider] || '').trim();
   const acting = voiceBlockForProvider(provider, opts.apiConfig?.elevenLabsModel, custom);
+  const fishMust = provider === 'fishaudio' && !custom ? fishCueBlock(opts.quoteStyle) : '';
   const rules = (opts.worldRules || []).filter(r => r.enabled && (r.body || r.title).trim());
   const ruleBlock = rules.length
     ? `【世界规则｜硬性，高于上面一切】
@@ -177,6 +205,7 @@ ${rules.map((r, i) => `${i + 1}. ${r.title}${r.body ? `：${r.body}` : ''}`).joi
     LINE_NO_CHAT_SHAPE,
     quoteStyleHint(opts.quoteStyle),
     STARTER_PROMPTS[opts.starter],
+    fishMust,
     ruleBlock,
   ].filter(Boolean).join('\n\n');
 }

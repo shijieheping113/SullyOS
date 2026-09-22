@@ -29,7 +29,7 @@ import {
   buildMiaomiaoPlayPrompt,
 } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
 import { callMainChatLlm, callSecondaryLlm } from '../apps/miaomiaoBox/boxLlm';
-import { applyQuoteStyle, cleanShown, displayTextForBoxReply, spokenTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
+import { applyQuoteStyle, cleanShown, displayTextForBoxReply, normalizeEditBreaks, spokenTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
 
 export type MiaomiaoShell = 'hidden' | 'float' | 'widget';
 export type MiaomiaoPage = 'home' | 'play' | 'settings' | 'history';
@@ -771,18 +771,42 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const editMessage = async (id: string, content: string) => {
     const list = messagesRef.current;
-    const m = list.find(x => x.id === id);
-    if (!m) return;
+    const idx = list.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    const m = list[idx];
     voiceMem.current.delete(id);
-    const next = {
+    const segs = splitIntoBubbles(normalizeEditBreaks(content), settings?.voiceQuoteStyle, settings?.voiceQuoteCustom);
+    const toRows = (raw: string, kind: 'text' | 'voice' | undefined, ts: number, keepId?: string): MiaomiaoMessage => ({
       ...m,
-      content: m.kind === 'voice' ? cleanShown(content) : content,
-      voiceSourceText: m.kind === 'voice' ? content : m.voiceSourceText,
+      id: keepId || MiaomiaoBoxDB.newId(m.role === 'user' ? 'u' : 'a'),
+      kind: m.role === 'user' ? m.kind : kind,
+      content: kind === 'voice' && m.role !== 'user' ? cleanShown(raw) : raw,
+      voiceSourceText: kind === 'voice' && m.role !== 'user' ? raw : undefined,
+      timestamp: ts,
       voiceUrl: undefined,
       voiceSynthText: undefined,
-    };
-    await MiaomiaoBoxDB.saveMessage(next);
-    setMessages(keepVoices(list.map(x => x.id === id ? next : x)));
+      htmlSource: keepId ? m.htmlSource : undefined,
+      htmlTextPreview: keepId ? m.htmlTextPreview : undefined,
+    });
+    if (segs.length <= 1) {
+      const raw = (segs[0]?.raw || normalizeEditBreaks(content)).trim();
+      const kind = m.role === 'user' ? undefined : (segs[0]?.kind || 'text');
+      const next = toRows(kind === 'voice' ? raw : (segs[0]?.content || raw), kind === 'voice' ? 'voice' : 'text', m.timestamp, m.id);
+      await MiaomiaoBoxDB.saveMessage(next);
+      setMessages(keepVoices(list.map(x => x.id === id ? next : x)));
+      return;
+    }
+    const shift = segs.length - 1;
+    const after = list.slice(idx + 1).map(x => ({ ...x, timestamp: x.timestamp + shift }));
+    const created = segs.map((seg, i) => toRows(
+      m.role === 'user' ? seg.content : (seg.kind === 'voice' ? seg.raw : seg.content),
+      m.role === 'user' ? 'text' : seg.kind,
+      m.timestamp + i,
+      i === 0 ? m.id : undefined,
+    ));
+    for (const row of after) await MiaomiaoBoxDB.saveMessage(row);
+    for (const row of created) await MiaomiaoBoxDB.saveMessage(row);
+    setMessages(keepVoices([...list.slice(0, idx), ...created, ...after]));
   };
 
   const deleteBoxMessage = async (id: string) => {

@@ -77,6 +77,11 @@ function linesToSegs(chunk: string, delims: QuoteDelims | null, forceText: boole
   return segs;
 }
 
+/** 编辑框里打出的 \\n 也当成换行。 */
+export function normalizeEditBreaks(text: string): string {
+  return (text || '').replace(/\\n/g, '\n').replace(/\r\n/g, '\n');
+}
+
 /** 按换行切气泡。空行跳过。`<语音>` 只剥标签，不单独成条。`<字幕>` 只显示。 */
 export function splitIntoBubbles(
   raw: string,
