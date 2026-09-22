@@ -31,6 +31,12 @@ export interface MiaomiaoSettings {
   voiceQuoteStyle?: MiaomiaoQuoteStyle;
   voiceQuoteCustom?: string;
   worldRules: MiaomiaoWorldRule[];
+  temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  stream?: boolean;
+  thinking?: boolean;
 }
 
 /** 合盖时另存的一份原文。不压缩，不进模型上下文，只给历史页看。 */
@@ -84,6 +90,7 @@ export interface MiaomiaoMessage {
   voiceSourceText?: string;
   voiceUrl?: string;
   voiceSynthText?: string;
+  thinkingText?: string;
 }
 
 export const STARTER_LABEL: Record<MiaomiaoStarter, string> = {

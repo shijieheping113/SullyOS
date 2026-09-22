@@ -15,6 +15,15 @@ import TokenImg from '../../components/os/TokenImg';
 import { IcoMinus, STARTER_ICO } from './miaoIcons';
 import './miaomiao-box.css';
 
+function ThinkFold({ text, open }: { text: string; open?: boolean }) {
+  return (
+    <details className="thinkfold" open={open}>
+      <summary>思维链</summary>
+      <pre>{text}</pre>
+    </details>
+  );
+}
+
 function fitTextarea(el: HTMLTextAreaElement | null, min: number) {
   if (!el) return;
   const max = Math.round(window.innerHeight * 0.45);
@@ -350,7 +359,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                 </div>
               </div>
               <div className="setrow" onClick={() => box.setPage('settings')}>
-                <span className="l"><GearSix size={18} />盒子设置<span style={{ fontSize: 10.5, color: 'var(--miao-lilac)' }}>世界规则 · 总结设置 · 语音</span></span>
+                <span className="l"><GearSix size={18} />盒子设置<span style={{ fontSize: 10.5, color: 'var(--miao-lilac)' }}>世界规则 · 总结设置 · 对话 · 语音</span></span>
                 <span className="chev">›</span>
               </div>
             </div>
@@ -361,11 +370,28 @@ const MiaomiaoBoxHost: React.FC = () => {
               <div className="stage" onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}>
                 {box.pendingStarter && <div className="daysep">新的一场 · {STARTER_LABEL[box.pendingStarter]}</div>}
                 {(box.pendingStarter ? [] : relocateSummaries(box.messages).messages.filter(m => m.role === 'summary' || !m.folded)).map(m => m.role === 'summary' ? (
-                  <div key={m.id} className="sumcard">
-                    <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
-                    <div className="sbd">{m.content}</div>
-                    <div className="sft"><span>摘要 · 原文留着，随时能翻</span></div>
-                  </div>
+                  editId === m.id ? (
+                    <div key={m.id} className="sumcard editing" onClick={e => e.stopPropagation()}>
+                      <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
+                      <textarea className="sarea" value={editDraft} onChange={e => setEditDraft(e.target.value)} />
+                      <div className="sbtns">
+                        <button type="button" className="ok" onClick={() => { void box.editMessage(m.id, editDraft); setEditId(null); }}>保存</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      key={m.id}
+                      className="sumcard"
+                      onPointerDown={e => startHold(m.id, e)}
+                      onPointerUp={cancelHold}
+                      onPointerCancel={cancelHold}
+                      onPointerMove={cancelHold}
+                    >
+                      <div className="shd"><b>箱子里的前情</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
+                      <div className="sbd">{m.content}</div>
+                      <div className="sft"><span>摘要 · 原文留着，随时能翻</span></div>
+                    </div>
+                  )
                 ) : editId === m.id ? (
                   <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
                     {m.role !== 'user' && <span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>}
@@ -376,7 +402,9 @@ const MiaomiaoBoxHost: React.FC = () => {
                     </div>
                   </div>
                 ) : (
-                  visualRows(m).map(row => (
+                  <React.Fragment key={m.id}>
+                  {m.thinkingText ? <ThinkFold text={m.thinkingText} /> : null}
+                  {visualRows(m).map(row => (
                   <React.Fragment key={row.key}>
                     {row.kind !== 'html' && (
                     <div className={m.role === 'user' ? 'row me' : 'row'} style={{ position: 'relative' }}>
@@ -410,11 +438,17 @@ const MiaomiaoBoxHost: React.FC = () => {
                       ><HtmlCard wide allowScripts html={row.htmlSource} onOptionText={text => setDraft(prev => prev ? `${prev}${text}` : text)} /></div>
                     )}
                   </React.Fragment>
-                  ))
+                  ))}
+                  </React.Fragment>
                 ))}
                 {box.typing && (
                   <div className="row"><span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>
-                    <div className="bub"><span className="typing"><i /><i /><i /></span></div>
+                    <div className="livecol">
+                      {box.liveThinking ? <ThinkFold text={box.liveThinking} open /> : null}
+                      {box.liveText
+                        ? <div className="bub"><span className="narr-block">{box.liveText}</span></div>
+                        : <div className="bub"><span className="typing"><i /><i /><i /></span></div>}
+                    </div>
                   </div>
                 )}
                 {box.error && <div className="daysep">{box.error}</div>}
@@ -500,6 +534,44 @@ const MiaomiaoBoxHost: React.FC = () => {
                   <span className="unit">轮之后，把前面的卷成摘要</span>
                 </div>
                 <div className="meta">总结过 {box.session?.foldCount || 0} 次 · 卷起 {box.session?.foldedRoundCount || 0} 轮 · 原文全部留着，随时能翻</div>
+              </div>
+              <div className="setsec">
+                <div className="sh"><b>对话</b><span>只改这一盒怎么说，总结不动</span></div>
+                {([
+                  ['温度', 'temperature', box.settings.temperature ?? 1, 0, 2, 0.05],
+                  ['候选范围', 'topP', box.settings.topP ?? 1, 0, 1, 0.01],
+                  ['重复惩罚', 'frequencyPenalty', box.settings.frequencyPenalty ?? 0, -2, 2, 0.05],
+                  ['话题惩罚', 'presencePenalty', box.settings.presencePenalty ?? 0, -2, 2, 0.05],
+                ] as [string, 'temperature' | 'topP' | 'frequencyPenalty' | 'presencePenalty', number, number, number, number][]).map(([label, key, value, min, max, step]) => (
+                  <label key={key} className="dlgfield">
+                    <span>{label}</span>
+                    <input
+                      className="tinput"
+                      type="number"
+                      min={min}
+                      max={max}
+                      step={step}
+                      value={value}
+                      onChange={e => {
+                        const n = Number(e.target.value);
+                        if (!Number.isFinite(n)) return;
+                        box.saveSettings({ ...box.settings!, [key]: Math.min(max, Math.max(min, n)) });
+                      }}
+                    />
+                  </label>
+                ))}
+                <div className="ruleitem">
+                  <div className="r1">
+                    <b>流式</b>
+                    <button className="switch" aria-checked={box.settings.stream === true} onClick={() => box.saveSettings({ ...box.settings!, stream: box.settings!.stream !== true })}><i /></button>
+                  </div>
+                </div>
+                <div className="ruleitem">
+                  <div className="r1">
+                    <b>思考</b>
+                    <button className="switch" aria-checked={box.settings.thinking === true} onClick={() => box.saveSettings({ ...box.settings!, thinking: box.settings!.thinking !== true })}><i /></button>
+                  </div>
+                </div>
               </div>
               <div className="setsec">
                 <div className="sh"><b>语音</b><span>开启后只生成，要点才播</span></div>
@@ -612,7 +684,8 @@ const MiaomiaoBoxHost: React.FC = () => {
             const lpMsg = box.messages.find(x => x.id === lpId);
             const isHtml = lpMsg?.kind === 'html';
             const isUser = lpMsg?.role === 'user';
-            const isVoice = !isUser && !isHtml && (lpMsg?.kind === 'voice' || !!lpMsg?.voiceSourceText || /<[语語]音/.test(lpMsg?.content || '') || !lpMsg?.kind);
+            const isSummary = lpMsg?.role === 'summary';
+            const isVoice = !isSummary && !isUser && !isHtml && (lpMsg?.kind === 'voice' || !!lpMsg?.voiceSourceText || /<[语語]音/.test(lpMsg?.content || '') || !lpMsg?.kind);
             return (
             <div
               className="lpmenu fixed"

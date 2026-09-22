@@ -69,6 +69,7 @@ export const BOX_PLAY_PROMPT_CORE = `【你现在在“喵喵盒”里】
 不要用 <语音> 把整场或整段包起来。不要写 <字幕>。
 不要用 markdown。不要用星号包字，不要用反引号，不要用代码块。旁白写成（这样）。
 诊断单、证明、票、菜单、海报用 HTML 卡片，不要用代码块或横线画出来。
+标成「箱子里的前情」的是箱子自己的记录，不是角色说的台词，也不是她刚发来的话。
 `;
 
 const BOX_LINE_RULE = `【这一盒怎么用上面的记号】
@@ -102,7 +103,7 @@ export const STARTER_PROMPTS: Record<MiaomiaoStarter, string> = {
 拿到点单就直接开演，不要反问视角，不要问“要什么风格”“要不要我说详细点”。
 例：她说“看看猫儿在医生那里打针的样子”，你就直接演出猫儿被医生按住、嗷嗷叫，旁边大狗被吓到，凑到猫儿面前反而吓住了猫儿。然后停住。`,
   claw: `【起手式 · 抓娃娃】
-这一场默认不是接着聊天里的当下。她开口后的第一轮，先把上文正在发生的场景暂停、切断，改成一个卖东西的场面。不要顺着上文剧情往下写，不要用角色本人的身份开场。
+她开口后的第一轮，改成一个卖东西的场面。这一轮不要用角色本人的身份开场。主聊天里发生过的事照常记得。
 默认卖家是一个几乎不说话的神秘宇宙商人：能拿出几乎任何东西，她要什么就上什么，近乎白给。商人只做两件事——把货摆出来，以及看自己卖出去的东西闹出什么乐子。不要把角色写成话多的店员。
 先给她抓几个东西出来挑，让她一眼就有想玩的，必须配合 HTML 卡片。
 1. 出一排 6 个候选，每个一行短句（一个名词加解释钩子）。她有要求就按要求来，不要泛泛的通用选项。
@@ -110,7 +111,7 @@ export const STARTER_PROMPTS: Record<MiaomiaoStarter, string> = {
 3. 用画面卡把这一排摆出来，每个条目都要有介绍，再配一句引出的文字。她如果说是在淘宝、闲鱼、宠物电商或某家线下店买的，商人当场变成那个平台或那家店的样子，货架跟着变。
 4. 出完就停，等她挑。她挑中哪个，或者自己说了别的，你就直接从那件事开演。之后可以顺着演下去。商人依然少说话。`,
   walk: `【起手式 · 出门逛逛】
-这一场默认不是接着聊天里的当下。她开口后的第一轮，先把上文正在发生的场景暂停、切断，改成出门。不要顺着上文剧情往下写，不要用角色本人的身份开场。
+她开口后的第一轮，改成出门。这一轮不要用角色本人的身份开场。主聊天里发生过的事照常记得。
 默认带路的是一个几乎不说话的路口：它只负责把人送到地方，不自我介绍，不扮演角色。
 1. 她说了去哪，就直接到地方开场，不铺垫路程，不写赶路过程。
 2. 她没说去哪，就给她 3～4 个地点候选（用画面卡摆出来），地点不限于现实里能去的：月球、别人家的阳台、不存在的地方都可以，跟着她的要求走。
@@ -121,7 +122,7 @@ export const STARTER_PROMPTS: Record<MiaomiaoStarter, string> = {
 1. 演得像真的一样，按用户的指令演，先当它发生。不要打岔说“这是假设”，也不要让角色中途醒悟过来。
 2. 不要为了圆现实设定而收着演。`,
   random: `【起手式 · 爪爪扒拉】
-这一场默认不是接着聊天里的当下。她开口后的第一轮，先把上文正在发生的场景暂停、切断，另起一个场面。不要顺着上文剧情往下写，不要用角色本人的身份开场。
+她开口后的第一轮，另起一个场面。这一轮不要用角色本人的身份开场。主聊天里发生过的事照常记得。
 默认动手的是一只几乎不说话的扒拉爪。主题你来定：天马行空，自己挑一个情境、一个视角、一件正要发生的事、一个状况。过去、未来、现在都可以，甚至其他时间线、其他世界设定。拿出一个主题。不说明自己是谁，也不要说「我随机到了什么」，直接开演。
 1. 她要是指定了身份或主题（「你是医院」「你是一封没寄出的信」），扒拉爪就变成那个，按她说的开场。
 2. 她没指定，你就自己抽。主题要随机、好玩、能立刻演，并且贴角色：可以是经典桥段（雨夜车站、电梯里只剩两个人、考试铃刚响），可以是天马行空（月亮上开便利店、恐龙在厨房煎蛋、时间停在三点半），也可以是细碎的日常怪事（冰箱里多出一封信、猫会打字、外卖送来自未来的药）。情境要新鲜，别重复上一次用过的。
@@ -137,39 +138,6 @@ function voiceBlockForProvider(provider: TtsProvider, elevenLabsModel?: string, 
     return `${getElevenLabsVoiceActingGuide(elevenLabsModel)}\n\n${BOX_LINE_RULE}`;
   }
   return MINIMAX_VOICE_BLOCK;
-}
-
-function fishCueBlock(style?: MiaomiaoQuoteStyle): string {
-  const head = `【鱼声记号】
-这一盒用鱼声朗读。情绪有变化时，在要念的话最前面标一个最接近的方括号：[excited] [angry] [sad] [embarrassed] [soft] [whispering] [sighing] [laughing] [chuckling]。
-平静的句子可以不标。不要每句都塞。不要用 (sighs) 这种圆括号，鱼声不认。
-旁白单独一行，不要和引号写在同一行。`;
-  if (style === 'corner-paren') {
-    return `${head}
-例：
-猫儿把诊断单往前推了推。
-「[soft] し、診断書……これ……。（诊、诊断单……在这里……。）」`;
-  }
-  if (style === 'dq-ascii') {
-    return `${head}
-例：
-猫儿把诊断单往前推了推。
-"[soft] The slip is here."`;
-  }
-  if (style === 'dq-curly') {
-    return `${head}
-例：
-猫儿把诊断单往前推了推。
-“[soft] 诊断单在这里。”`;
-  }
-  if (style === 'custom') {
-    return `${head}
-方括号放在你设定的那对引号里面、要念的话的最前面。`;
-  }
-  return `${head}
-例：
-猫儿把诊断单往前推了推。
-「[soft] 诊断单在这里。」`;
 }
 
 function quoteStyleHint(style?: MiaomiaoQuoteStyle): string {
@@ -191,7 +159,6 @@ export function buildMiaomiaoPlayPrompt(opts: {
   const provider = resolveTtsProvider(opts.apiConfig);
   const custom = getVoicePromptOverride(provider) || (opts.apiConfig?.voicePrompts?.[provider] || '').trim();
   const acting = voiceBlockForProvider(provider, opts.apiConfig?.elevenLabsModel, custom);
-  const fishMust = provider === 'fishaudio' && !custom ? fishCueBlock(opts.quoteStyle) : '';
   const rules = (opts.worldRules || []).filter(r => r.enabled && (r.body || r.title).trim());
   const ruleBlock = rules.length
     ? `【世界规则｜硬性，高于上面一切】
@@ -205,10 +172,23 @@ ${rules.map((r, i) => `${i + 1}. ${r.title}${r.body ? `：${r.body}` : ''}`).joi
     LINE_NO_CHAT_SHAPE,
     quoteStyleHint(opts.quoteStyle),
     STARTER_PROMPTS[opts.starter],
-    fishMust,
     ruleBlock,
   ].filter(Boolean).join('\n\n');
 }
+
+export const BOX_MATERIAL_GUIDE = `【材料】
+下面是人设、世界书、印象和记忆。当作材料使用，不是这一场正在发生的剧情。`;
+
+export const BOX_PAST_GUIDE = `【已经发生的事】
+下面是主聊天原文。这些事已经发生过，你记得。这一场不要逐条复述。`;
+
+export const BOX_NOW_GUIDE = `【这一盒正在演】
+下面是这一盒里的演出。标成前情的是箱子自己的记录，不是角色说的台词，也不是她刚发来的话。`;
+
+export const BOX_TURN_BAN = `【禁止】
+角色本人开口时，引号里要有语气标记，方括号放在引号里面。旁白不用标。
+禁止停在同一个场景里打转，这一轮要有新的动作、信息或状况。
+禁止 OOC：角色说的话要像这个人。`;
 
 export const BOX_FOLD_PROMPT = `你是诚实的内容的记录员。你在给喵喵盒做前情摘要。只根据下面提供的原文写。原文没有的一律不要写。
 
@@ -217,8 +197,8 @@ export const BOX_FOLD_PROMPT = `你是诚实的内容的记录员。你在给喵
 - 这次要折进来的新内容
 
 要求：
-1. 输出一段更新后的摘要，只留还在起作用的东西：谁在场、在哪儿、正在闹什么、已经发生的关键变化、还没解开的钩子。
-2. 顺序不能乱：摘要从头到尾按时间读得下来。
+1. 只写这次新折进来的那一截，不要把已有摘要再写一遍。这一截里还在起作用的：谁在场、在哪儿、正在闹什么、这一截里的关键变化、还没解开的钩子。
+2. 顺序不能乱：这一截从头到尾按时间读得下来。
 3. 全局视角，沿用内容里的称呼，不要把说话的人写成抽象标签。
 4. 只写事情本身：不要结尾升华。不要写「从这一刻起」「他们更亲近了」「这一课教会了」「意义在于」。事情停在原文停的地方。
 5. 不要评价。不要「可爱的一天」「温暖的回忆」。

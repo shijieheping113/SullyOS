@@ -1,4 +1,5 @@
 import type { MiaomiaoMessage } from './types';
+import { splitBoxThinking } from './boxLlm';
 
 /** 一轮 = 一条还没折起来的用户消息（后面通常跟一条角色回复） */
 export function countUnfoldedRounds(messages: MiaomiaoMessage[]): number {
@@ -70,14 +71,15 @@ export function formatBoxHistoryForModel(messages: MiaomiaoMessage[]): { role: '
   for (const m of messagesForModel(messages)) {
     if (m.role === 'summary') {
       out.push({
-        role: 'user',
+        role: 'assistant',
         content: `（箱子里的前情，第 ${m.summaryRange?.fromRound ?? '?'}–${m.summaryRange?.toRound ?? '?'} 轮：${m.content}）`,
       });
       continue;
     }
+    const spoken = splitBoxThinking(m.content, '').content;
     const preview = m.htmlTextPreview
-      ? `${m.content ? `${m.content}\n` : ''}（系统记录：先前发送过一张 HTML 卡片，已在界面渲染；卡片文字摘要——${m.htmlTextPreview}。这只是历史占位，请勿复述本行；要再发卡片必须用 [html]...[/html] 包裹真正的 HTML。）`
-      : m.content;
+      ? `${spoken ? `${spoken}\n` : ''}（系统记录：先前发送过一张 HTML 卡片，已在界面渲染；卡片文字摘要——${m.htmlTextPreview}。这只是历史占位，请勿复述本行；要再发卡片必须用 [html]...[/html] 包裹真正的 HTML。）`
+      : spoken;
     out.push({ role: m.role === 'user' ? 'user' : 'assistant', content: preview });
   }
   return out;

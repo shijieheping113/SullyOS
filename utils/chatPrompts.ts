@@ -38,6 +38,7 @@ import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { isBlobRef } from './blobRef';
 import { loadMomentsPostOn } from './sparkCircles';
+import { BOX_MATERIAL_GUIDE } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
 
 /**
  * 这个值是「一张图 / 一段媒体」而不是正文吗？认三种形态：内嵌 data URL、http(s) 外链、
@@ -309,6 +310,7 @@ export const ChatPrompts = {
         // 即时对话：这一轮交给 worker 生成，时钟和真实世界块由它在 fire 时刻补。
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
+        const boxPlay = !!promptOptions?.miaomiaoBoxPrompt;
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
         const timings: Record<string, number> = {};
@@ -331,6 +333,9 @@ export const ChatPrompts = {
             { deferVolatile: true },
         );
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
+        if (boxPlay && promptOptions?.miaomiaoBoxPrompt) {
+            baseSystemPrompt = `${promptOptions.miaomiaoBoxPrompt}\n\n${BOX_MATERIAL_GUIDE}\n\n${baseSystemPrompt}`;
+        }
 
         // ── 易变状态段（volatileState）──
         // 开头一行框定，让模型明白这条出现在历史之后的 system 消息是"此刻的状态"，
@@ -338,6 +343,7 @@ export const ChatPrompts = {
         let volatileState = `\n[System: 实时状态 (Live Context)]\n（以下是此刻的实时状态——当前时间、你正在做的事、你的情绪底色、周边动态。你的人设与聊天规则见最上方的系统设定，此处不再重复。）\n\n`;
         volatileState += ContextBuilder.buildVolatileCoreState(char, {
             includeDetailedMemories: true,
+            skipEmotionBuff: boxPlay,
             // conversational：私聊是真的有人在这个点跟角色说话，时间块才补那句语境框定
             // （见 ContextBuilder.buildTimeAwarenessBlock）。生成器类调用不给，默认就没有。
             timeOptions: { skipTimeAwareness: forFirePack || timelyByWorker, conversational: true },
@@ -367,7 +373,7 @@ export const ChatPrompts = {
         // 两句自称「来自真实世界」——包括天气热搜关掉时那条「今日特殊」节日兜底，
         // worker 的 realtimeWorld 里也有它（同样跟着角色的时间感知开关走）。
         const realtimePromise: Promise<string> = (async () => {
-            if (forFirePack || timelyByWorker) return '';
+            if (forFirePack || timelyByWorker || boxPlay) return '';
             try {
                 if (config.weatherEnabled || config.newsEnabled) {
                     // 时间行跟着角色的「时间感知」开关走：关掉的角色不该从天气块里读到
@@ -404,6 +410,7 @@ export const ChatPrompts = {
         // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
         // （之前是把所有群消息混合后切前 200 条，活跃群会吃光配额，安静群完全不出现）
         const groupContextPromise: Promise<string> = (async () => {
+            if (boxPlay) return '';
             try {
                 const memberGroups = groups.filter(g => g.members.includes(char.id));
                 if (memberGroups.length === 0) return '';
@@ -553,7 +560,7 @@ ${groupLogStr}\n`;
         //     fire_pack 不烤：这首歌是按打包时刻的时段抽的，跟日程一起挪到 AMSG_SLOT_SCENE。
         //     那边只渲染「你此刻在听什么」一句——一起听状态要读用户此刻的播放器、歌词要拉网络，
         //     worker 两样都够不着。
-        if (!forFirePack) try {
+        if (!forFirePack && !boxPlay) try {
             let charListening: {
                 songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
             } | null = null;
@@ -595,15 +602,17 @@ ${groupLogStr}\n`;
 
         // 群聊背景带时间戳、随群消息实时滚动 → 易变；日记标题/生活记录变化很慢 → 稳定。
         volatileState += groupContextText;
+        if (!boxPlay) {
         baseSystemPrompt += notionDiaryText;
         baseSystemPrompt += feishuDiaryText;
         baseSystemPrompt += notionNotesText;
         baseSystemPrompt += lifeRecordText;
+        }
 
         // 彼方常驻设定：仅对启用了「彼方」的角色注入。让角色在聊天里始终知道彼方是什么，
         // 不再依赖累积的 vr_card 动态 / 记忆总结（那些会被压缩、丢掉"彼方=VR游戏"的框定，
         // 导致角色把"彼方·留言簿"之类当成现实地名）。措辞与 vrWorld/prompts.ts 的世界观一致。
-        if (char.vrState?.enabled) {
+        if (char.vrState?.enabled && !boxPlay) {
             if (!forFirePack) volatileState += `\n${kanataTitleContext(char.vrState.title)}\n`;
             baseSystemPrompt += `\n### 关于《彼方》
 《彼方》是一款真实存在、你会亲自进入去玩的 VR 社交游戏（功能上类似 VRChat）：你用自己亲手捏的 Q 版化身在里头走动、进出图书馆 / 听歌房 / 留言簿 / 娱乐室 / 邮局 / SAR 活动室等房间、撞见别的玩家（其他角色的化身）。这不是做梦或比喻；实际参与时，经历发生在游戏世界里，和你跟用户的现实相处是两码事、互不冲突。你以符合自身身份与世界观的方式进入并理解它——怎么进去全凭你自己的设定，但始终保持你本来的身份。聊到彼方里的经历（包括"彼方·留言簿""彼方·动态"之类的记录）时，就当成"我在《彼方》里做过的事"来讲，别说成现实里发生的。\n`;
@@ -661,9 +670,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         const scheduleMessageTagEnabled = !forFirePack
             && !(timelyByWorker && isAmsg2EnabledForChar(char));
 
-        if (promptOptions?.miaomiaoBoxPrompt) {
-            baseSystemPrompt += promptOptions.miaomiaoBoxPrompt;
-        } else {
+        if (!boxPlay) {
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
 **TOP 1｜ChatApp 格式（本节最高优先级）**：你是发消息的真实存在，以自然短句、短气泡为主；一个气泡一行，气泡间直接另起一行（实际换行，不要输出“\\n”字样）。
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
@@ -973,7 +980,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 `;
         }
 
-        if (char.chatCollaborationEnabled) {
+        if (char.chatCollaborationEnabled && !boxPlay) {
             baseSystemPrompt += `
 
 ### 协同功能
@@ -990,7 +997,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         const returningFromMode = !forFirePack
             ? (promptOptions?.returningFromMode || detectChatModeTransition(currentMsgs))
             : null;
-        if (returningFromMode) {
+        if (returningFromMode && !boxPlay) {
             const modeLabel: Record<ChatModeTransition, string> = {
                 call: '语音通话',
                 video: '视频通话',
@@ -1010,7 +1017,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // Spark 关注（发动态）能力段 —— spark-follow 2-G（Ann 2026-09-17 拍板先用附录 A）：
         // 跟语音同一类开关——开着整段注入（逐字），关着只注入严禁句。
         // 不写进 [你现在的能力]（三种 SPARK_COMMENT 原文一个字不改、不加发帖）。
-        if (loadMomentsPostOn()[char.id] === true) {
+        if (!boxPlay && loadMomentsPostOn()[char.id] === true) {
             baseSystemPrompt += `\n\n### Spark 关注（发动态）
 
 用户开启了你在 Spark 关注发动态的功能。
@@ -1049,7 +1056,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 - 正文要像你会发的动态，符合你的性格和眼下的心情，不要写成公告，不要标题党空壳。
 - 标题不要复读正文。
 - 用户没点名让你发，你也可以发——这是你自己的动态，不是交作业。判断何时发，按你的人设和当下气氛决定。`;
-        } else {
+        } else if (!boxPlay) {
             baseSystemPrompt += `\n\n[系统提示: Spark 关注发动态功能当前未开启。严禁使用 [[ACTION:SPARK_POST|...]]。]`;
         }
 
@@ -1089,6 +1096,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 只有一件事始终不变。
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
+        if (boxPlay) recencyTail = '';
 
         const perfTotal = Math.round(performance.now() - perfT0);
         const timingStr = Object.entries(timings)

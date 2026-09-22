@@ -25,6 +25,22 @@ const defaultSettings = (charId: string): MiaomiaoSettings => ({
   ttsEnabled: true,
   voiceQuoteStyle: 'corner',
   worldRules: [],
+  temperature: 1,
+  topP: 1,
+  frequencyPenalty: 0,
+  presencePenalty: 0,
+  stream: false,
+  thinking: false,
+});
+
+const withDialogueDefaults = (row: MiaomiaoSettings): MiaomiaoSettings => ({
+  ...row,
+  temperature: typeof row.temperature === 'number' ? row.temperature : 1,
+  topP: typeof row.topP === 'number' ? row.topP : 1,
+  frequencyPenalty: typeof row.frequencyPenalty === 'number' ? row.frequencyPenalty : 0,
+  presencePenalty: typeof row.presencePenalty === 'number' ? row.presencePenalty : 0,
+  stream: row.stream === true,
+  thinking: row.thinking === true,
 });
 
 export const MiaomiaoBoxDB = {
@@ -33,7 +49,7 @@ export const MiaomiaoBoxDB = {
     const tx = db.transaction(STORE_MIAOMIAO_SETTINGS, 'readonly');
     const req = tx.objectStore(STORE_MIAOMIAO_SETTINGS).get(charId);
     return new Promise((resolve, reject) => {
-      req.onsuccess = () => resolve((req.result as MiaomiaoSettings) || defaultSettings(charId));
+      req.onsuccess = () => resolve(withDialogueDefaults((req.result as MiaomiaoSettings) || defaultSettings(charId)));
       req.onerror = () => reject(req.error);
     });
   },

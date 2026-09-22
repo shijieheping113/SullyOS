@@ -6,6 +6,7 @@ import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { synthesizeSpeech } from '../utils/ttsRouter';
 import { playVoiceAudio } from '../utils/voicePlayback';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { MiaomiaoBoxDB } from '../apps/miaomiaoBox/miaomiaoBoxDb';
 import {
   MIAOMIAO_FOLD_N_DEFAULT,
@@ -24,11 +25,14 @@ import { materialsForArchive, packRawArchive, withPerspective, wrapArchiveBody }
 import {
   BOX_FOLD_PROMPT,
   BOX_FOLD_TEMPERATURE,
+  BOX_NOW_GUIDE,
+  BOX_PAST_GUIDE,
   BOX_REMEMBER_PROMPT,
   BOX_REMEMBER_TEMPERATURE,
+  BOX_TURN_BAN,
   buildMiaomiaoPlayPrompt,
 } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
-import { callMainChatLlm, callSecondaryLlm } from '../apps/miaomiaoBox/boxLlm';
+import { callMainChatLlm, callSecondaryLlm, splitBoxThinking } from '../apps/miaomiaoBox/boxLlm';
 import { applyQuoteStyle, cleanShown, displayTextForBoxReply, normalizeEditBreaks, spokenTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
 
 export type MiaomiaoShell = 'hidden' | 'float' | 'widget';
@@ -70,6 +74,8 @@ type Ctx = {
   cancelPending: () => void;
   openLive: (id: string) => Promise<void>;
   deleteHistory: (id: string) => Promise<void>;
+  liveText: string;
+  liveThinking: string;
 };
 
 const toArchiveLines = (msgs: MiaomiaoMessage[]): MiaomiaoArchiveLine[] => {
@@ -123,6 +129,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [pendingStarter, setPendingStarter] = useState<MiaomiaoStarter | null>(null);
   const [liveSessions, setLiveSessions] = useState<MiaomiaoSession[]>([]);
   const [historySessions, setHistorySessions] = useState<MiaomiaoSession[]>([]);
+  const [liveText, setLiveText] = useState('');
+  const [liveThinking, setLiveThinking] = useState('');
   const pendingRef = useRef<MiaomiaoStarter | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const voiceMem = useRef(new Map<string, { voiceUrl: string; voiceSynthText?: string }>());
@@ -446,7 +454,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       await MiaomiaoBoxDB.saveMessage(userMsg);
       setMessages(prev => [...prev, userMsg]);
     }
-    const history = await DB.getRecentMessagesByCharId(char.id, 80);
+    const history = await loadCharacterContextMessages(char);
     const prompt = buildMiaomiaoPlayPrompt({
       apiConfig: os.apiConfig,
       worldRules: s.worldRules,
@@ -460,7 +468,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       emojis: [],
       categories: [],
       historyMsgs: history,
-      contextLimit: 40,
+      contextLimit: Math.max(1, history.length),
       realtimeConfig: os.realtimeConfig,
       miaomiaoBoxPrompt: prompt,
       htmlMode: { enabled: false },
@@ -475,26 +483,46 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       extra.push({ role: 'user', content: userText });
     }
     const apiMessages: { role: string; content: string }[] = [
-      { role: 'system', content: payload.systemPrompt },
+      { role: 'system', content: `${payload.systemPrompt}\n\n${BOX_PAST_GUIDE}` },
       ...payload.cleanedApiMessages,
+      { role: 'system', content: BOX_NOW_GUIDE },
       ...extra,
     ];
     const firstCut: Partial<Record<MiaomiaoStarter, string>> = {
-      claw: '【本场切断】抓娃娃从这一句起，上文正在演的场景暂停。不要顺着刚才的聊天往下写，不要用角色本人的身份开场。按抓娃娃起手式，改成卖货。',
-      walk: '【本场切断】出门逛逛从这一句起，上文正在演的场景暂停。不要顺着刚才的聊天往下写，不要用角色本人的身份开场。按出门逛逛起手式，改成出门。',
-      random: '【本场切断】爪爪扒拉从这一句起，上文正在演的场景暂停。不要顺着刚才的聊天往下写，不要用角色本人的身份开场。另起一个场面。',
+      claw: '【本场开口】抓娃娃这一轮按抓娃娃起手式开场，改成卖货。这一轮不要用角色本人的身份开场。主聊天里发生过的事照常记得。',
+      walk: '【本场开口】出门逛逛这一轮按出门逛逛起手式开场，改成出门。这一轮不要用角色本人的身份开场。主聊天里发生过的事照常记得。',
+      random: '【本场开口】爪爪扒拉这一轮按爪爪扒拉起手式开场，另起一个场面。这一轮不要用角色本人的身份开场。主聊天里发生过的事照常记得。',
     };
     const cut = firstCut[s.starter];
     if (cut && !boxMsgs.some(m => m.role === 'assistant')) {
       apiMessages.push({ role: 'system', content: cut });
     }
-    const raw = await callMainChatLlm({
+    apiMessages.push({ role: 'system', content: BOX_TURN_BAN });
+    let streamedReasoning = '';
+    setLiveText('');
+    setLiveThinking('');
+    const reply = await callMainChatLlm({
       apiConfig: os.apiConfig,
       messages: apiMessages,
-      temperature: os.apiConfig.temperature ?? 0.85,
+      temperature: settings?.temperature ?? 1,
+      topP: settings?.topP ?? 1,
+      frequencyPenalty: settings?.frequencyPenalty ?? 0,
+      presencePenalty: settings?.presencePenalty ?? 0,
+      stream: settings?.stream === true,
+      thinking: settings?.thinking === true,
       charId: char.id,
       charName: char.name,
+      onDelta: full => {
+        const split = splitBoxThinking(full, streamedReasoning);
+        setLiveText(split.content);
+        setLiveThinking(split.thinking);
+      },
+      onThinking: full => {
+        streamedReasoning = full;
+        setLiveThinking(full);
+      },
     });
+    const raw = reply.content;
     const { blocks, cleanedContent } = extractHtmlBlocks(raw);
     const html = blocks[0];
     const segs = splitIntoBubbles(cleanedContent || raw, settings?.voiceQuoteStyle, settings?.voiceQuoteCustom);
@@ -526,7 +554,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         timestamp: ts++,
       });
     }
+    if (reply.thinking && created[0]) created[0].thinkingText = reply.thinking;
     for (const row of created) await MiaomiaoBoxDB.saveMessage(row);
+    setLiveText('');
+    setLiveThinking('');
     let nextMsgs = persistUser && userText
       ? [...boxMsgs.filter(m => m.id !== userMsg.id), userMsg, ...created]
       : [...boxMsgs, ...created];
@@ -574,6 +605,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setError(e?.message || '这一轮没演成');
     } finally {
       setTyping(false);
+      setLiveText('');
+      setLiveThinking('');
     }
   };
 
@@ -647,6 +680,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setError(e?.message || '这一轮没演成');
     } finally {
       setTyping(false);
+      setLiveText('');
+      setLiveThinking('');
     }
   };
 
@@ -681,6 +716,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setError(e?.message || '这一轮没演成');
     } finally {
       setTyping(false);
+      setLiveText('');
+      setLiveThinking('');
     }
   };
 
@@ -774,6 +811,12 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const idx = list.findIndex(x => x.id === id);
     if (idx < 0) return;
     const m = list[idx];
+    if (m.role === 'summary') {
+      const next = { ...m, content };
+      await MiaomiaoBoxDB.saveMessage(next);
+      setMessages(keepVoices(list.map(x => x.id === id ? next : x)));
+      return;
+    }
     voiceMem.current.delete(id);
     const segs = splitIntoBubbles(normalizeEditBreaks(content), settings?.voiceQuoteStyle, settings?.voiceQuoteCustom);
     const toRows = (raw: string, kind: 'text' | 'voice' | undefined, ts: number, keepId?: string): MiaomiaoMessage => ({
@@ -851,6 +894,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setError(e?.message || '重roll 没做成');
     } finally {
       setTyping(false);
+      setLiveText('');
+      setLiveThinking('');
     }
   };
 
@@ -921,7 +966,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     openForChar, collapseToWidget, expandFloat, setPage, startPlay, switchMode, sendPlay, leaveToChat, closeLid, saveSettings, playingForChar,
     editMessage, deleteBoxMessage, rerollMessage, rerollLastTurn, playingVoiceId, voiceLoadingId, playBoxVoice, downloadBoxVoice,
     pendingStarter, liveSessions, historySessions, pickHomeStarter, cancelPending, openLive, deleteHistory,
-  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId]);
+    liveText, liveThinking,
+  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId, liveText, liveThinking]);
 
   return <MiaomiaoBoxContext.Provider value={value}>{children}</MiaomiaoBoxContext.Provider>;
 };
