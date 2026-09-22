@@ -37,6 +37,7 @@ export interface MiaomiaoSettings {
   presencePenalty?: number;
   stream?: boolean;
   thinking?: boolean;
+  thinkingGuide?: string;
 }
 
 /** 合盖时另存的一份原文。不压缩，不进模型上下文，只给历史页看。 */

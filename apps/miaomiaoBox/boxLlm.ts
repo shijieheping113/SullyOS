@@ -28,6 +28,11 @@ export function splitBoxThinking(contentRaw: unknown, reasoningRaw: unknown): { 
   return { content, thinking };
 }
 
+/**
+ * 参数被模型拒绝（400/422，含请求体问题）时，只回退一次：改回主 API 自己的设置
+ * （主设置的温度、主设置的流式，不带盒子的惩罚项和思考三件套），并把「回退了」回报给界面。
+ * 不做多次重试：按次计费的模型多试一次就多扣一次钱。
+ */
 export async function callMainChatLlm(opts: {
   apiConfig: APIConfig;
   messages: { role: string; content: string }[];
@@ -41,31 +46,39 @@ export async function callMainChatLlm(opts: {
   charName?: string;
   onDelta?: (fullText: string) => void;
   onThinking?: (fullThinking: string) => void;
-}): Promise<{ content: string; thinking: string }> {
+}): Promise<{ content: string; thinking: string; fellBack: boolean }> {
   const baseUrl = (opts.apiConfig.baseUrl || '').replace(/\/+$/, '');
-  let model = opts.apiConfig.model || '';
-  let temperature = opts.temperature;
-  const thinkingOn = opts.thinking === true;
-  if (thinkingOn && /^claude-/i.test(model) && !/-thinking$/i.test(model)) {
-    model = `${model}-thinking`;
-  }
-  if (thinkingOn && /^claude-/i.test(model)) temperature = 1;
-  const body: Record<string, unknown> = {
-    model,
-    messages: opts.messages,
-    temperature,
-    top_p: opts.topP,
-    frequency_penalty: opts.frequencyPenalty,
-    presence_penalty: opts.presencePenalty,
-    stream: opts.stream === true,
+  const buildBox = () => {
+    let model = opts.apiConfig.model || '';
+    const thinkingOn = opts.thinking === true;
+    if (thinkingOn && /^claude-/i.test(model) && !/-thinking$/i.test(model)) {
+      model = `${model}-thinking`;
+    }
+    const body: Record<string, unknown> = {
+      model,
+      messages: opts.messages,
+      temperature: thinkingOn && /^claude-/i.test(model) ? 1 : opts.temperature,
+      top_p: opts.topP,
+      frequency_penalty: opts.frequencyPenalty,
+      presence_penalty: opts.presencePenalty,
+      stream: opts.stream === true,
+    };
+    if (thinkingOn) {
+      const thinking = { type: 'enabled', budget_tokens: 4000 };
+      body.thinking = thinking;
+      body.reasoning_effort = 'medium';
+      body.extra_body = { thinking };
+    }
+    return body;
   };
-  if (thinkingOn) {
-    const thinking = { type: 'enabled', budget_tokens: 4000 };
-    body.thinking = thinking;
-    body.reasoning_effort = 'medium';
-    body.extra_body = { thinking };
-  }
-  const data = await safeFetchJson(
+  const buildFallback = () => ({
+    model: opts.apiConfig.model || '',
+    messages: opts.messages,
+    temperature: typeof opts.apiConfig.temperature === 'number' ? opts.apiConfig.temperature : 0.85,
+    stream: opts.apiConfig.stream === true,
+  });
+
+  const send = async (body: Record<string, unknown>, stream: boolean) => safeFetchJson(
     `${baseUrl}/chat/completions`,
     {
       method: 'POST',
@@ -78,13 +91,23 @@ export async function callMainChatLlm(opts: {
     2,
     0,
     { appName: '喵喵盒', charId: opts.charId, charName: opts.charName, purpose: '盒子演出' },
-    opts.stream ? {
+    stream ? {
       onDelta: (_delta, fullText) => opts.onDelta?.(fullText),
       onReasoningDelta: (_delta, fullReasoning) => opts.onThinking?.(fullReasoning),
     } : undefined,
   );
-  const msg = data?.choices?.[0]?.message;
-  return splitBoxThinking(msg?.content, msg?.reasoning_content ?? msg?.reasoning ?? msg?.thinking);
+  const readOut = (data: any, fellBack: boolean) => {
+    const msg = data?.choices?.[0]?.message;
+    return { ...splitBoxThinking(msg?.content, msg?.reasoning_content ?? msg?.reasoning ?? msg?.thinking), fellBack };
+  };
+
+  try {
+    return readOut(await send(buildBox(), opts.stream === true), false);
+  } catch (e) {
+    const text = String((e as Error)?.message || '');
+    if (!/API Error (400|422)/.test(text)) throw e;
+    return readOut(await send(buildFallback(), opts.apiConfig.stream === true), true);
+  }
 }
 
 export async function callSecondaryLlm(opts: {

@@ -801,7 +801,15 @@
   .miaomiao-root, .miaomiao-root * {animation:none !important;transition:none !important}
 }
 .miaomiao-root .livecol {display:flex;flex-direction:column;gap:6px;min-width:0;max-width:100%}
-.miaomiao-root .thinkfold {max-width:100%;font-size:11px;color:var(--miao-lilac);font-family:'Noto Sans SC',sans-serif}
-.miaomiao-root .thinkfold summary {cursor:pointer}
-.miaomiao-root .thinkfold pre {white-space:pre-wrap;margin:4px 0 0;font-family:inherit;font-size:12px;line-height:1.6;color:var(--miao-ink)}
+.miaomiao-root .thinkfold {max-width:100%;font-family:'Noto Sans SC',sans-serif}
+.miaomiao-root .thinkfold summary {display:inline-block;cursor:pointer;list-style:none;font-size:10px;letter-spacing:.08em;color:var(--miao-lilac);opacity:.66;padding:1px 0}
+.miaomiao-root .thinkfold summary::-webkit-details-marker {display:none}
+.miaomiao-root .thinkfold summary::before {content:'▸ 思考'}
+.miaomiao-root .thinkfold[open] summary::before {content:'▾ 思考'}
+.miaomiao-root .thinkfold pre {white-space:pre-wrap;margin:3px 0 0;font-family:inherit;font-size:11px;line-height:1.6;color:var(--miao-ink);opacity:.62;max-height:24vh;overflow-y:auto}
+.miaomiao-root .dlgfield .hintline {font-size:10.5px;line-height:1.55;color:var(--miao-lilac);font-family:'Noto Sans SC',sans-serif}
+.miaomiao-root .dlgfield .impbtn {align-self:flex-start;height:28px;padding:0 11px;border-radius:9px;cursor:pointer;
+  border:1.5px solid var(--miao-card-line);background:var(--miao-chip);color:var(--miao-grape);font:inherit;font-size:11px;font-family:'Noto Sans SC',sans-serif}
 .miaomiao-root .dlgfield {display:flex;flex-direction:column;gap:4px;margin:8px 0;font-size:12px;color:var(--miao-grape);font-family:'Noto Sans SC',sans-serif}
+.miaomiao-root .dlgfield .tarea {width:100%;min-height:64px;height:64px;border-radius:10px;border:1.5px solid var(--miao-card-line);background:var(--miao-tile);
+  color:var(--miao-ink);font:inherit;font-size:12px;line-height:1.6;padding:7px 9px;outline:none;resize:vertical;box-sizing:border-box}

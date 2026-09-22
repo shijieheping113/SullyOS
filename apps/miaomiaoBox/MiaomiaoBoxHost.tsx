@@ -9,6 +9,7 @@ import { MiaomiaoBoxCat } from './MiaomiaoBoxCat';
 import HtmlCard from '../../components/chat/HtmlCard';
 import { MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
 import { countUnfoldedRounds, relocateSummaries } from './foldSession';
+import { BOX_THINKING_PROMPT_CORE } from './miaomiaoBoxPrompt';
 import { splitIntoBubbles } from './speakQuoted';
 import { MiaomiaoBoxDB } from './miaomiaoBoxDb';
 import TokenImg from '../../components/os/TokenImg';
@@ -18,12 +19,11 @@ import './miaomiao-box.css';
 function ThinkFold({ text, open }: { text: string; open?: boolean }) {
   return (
     <details className="thinkfold" open={open}>
-      <summary>思维链</summary>
+      <summary />
       <pre>{text}</pre>
     </details>
   );
 }
-
 function fitTextarea(el: HTMLTextAreaElement | null, min: number) {
   if (!el) return;
   const max = Math.round(window.innerHeight * 0.45);
@@ -180,6 +180,44 @@ const MiaomiaoBoxHost: React.FC = () => {
   const showFloat = box.shell === 'float' && os.activeApp === AppID.Chat && (!box.session || box.session.charId === os.activeCharacterId);
   const showWidget = box.shell === 'widget';
   const hasShow = !!(box.session && (box.session.status === 'playing' || box.session.status === 'paused') && box.messages.length > 0);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottom = useRef(true);
+  const pinTimer = useRef<number | null>(null);
+
+  // 卡片 iframe 是加载完才撑高的，撑高会把最新那条顶下去。所以贴底不是一次性的，
+  // 要在一小段时间里持续追。用户自己往上翻（stickToBottom=false）就立刻停手。
+  const chaseBottom = (ms: number) => {
+    const el = stageRef.current;
+    if (!el) return;
+    if (pinTimer.current) window.clearInterval(pinTimer.current);
+    const pin = () => { if (stickToBottom.current) el.scrollTop = el.scrollHeight; };
+    pin();
+    let left = ms;
+    pinTimer.current = window.setInterval(() => {
+      pin();
+      left -= 120;
+      if (left <= 0 && pinTimer.current) {
+        window.clearInterval(pinTimer.current);
+        pinTimer.current = null;
+      }
+    }, 120);
+  };
+
+  // 进对话页：直接落到最新一条，不用自己往下滑。
+  useEffect(() => {
+    stickToBottom.current = true;
+    chaseBottom(1500);
+  }, [box.page, box.session?.id]);
+
+  // 新消息、出字、思维链：只要还贴着底就继续跟着走；往上翻了就不抢。
+  useEffect(() => {
+    if (box.page !== 'play') return;
+    chaseBottom(1200);
+  }, [box.messages, box.liveText, box.liveThinking, box.typing, box.page]);
+
+  useEffect(() => () => {
+    if (pinTimer.current) window.clearInterval(pinTimer.current);
+  }, []);
   useEffect(() => {
     if (!showFloat || !hasShow) return;
     setOpenAnim(true);
@@ -367,7 +405,15 @@ const MiaomiaoBoxHost: React.FC = () => {
 
           {box.page === 'play' && (
             <>
-              <div className="stage" onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}>
+              <div
+                className="stage"
+                ref={stageRef}
+                onScroll={e => {
+                  const el = e.currentTarget;
+                  stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+                }}
+                onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}
+              >
                 {box.pendingStarter && <div className="daysep">新的一场 · {STARTER_LABEL[box.pendingStarter]}</div>}
                 {(box.pendingStarter ? [] : relocateSummaries(box.messages).messages.filter(m => m.role === 'summary' || !m.folded)).map(m => m.role === 'summary' ? (
                   editId === m.id ? (
@@ -444,13 +490,14 @@ const MiaomiaoBoxHost: React.FC = () => {
                 {box.typing && (
                   <div className="row"><span className="av"><MiaomiaoBoxCat lid={hasShow ? 'open' : 'on'} tail={hasShow ? 'out' : 'in'} cls="mini" /></span>
                     <div className="livecol">
-                      {box.liveThinking ? <ThinkFold text={box.liveThinking} open /> : null}
+                      {box.liveThinking ? <ThinkFold text={box.liveThinking} /> : null}
                       {box.liveText
                         ? <div className="bub"><span className="narr-block">{box.liveText}</span></div>
                         : <div className="bub"><span className="typing"><i /><i /><i /></span></div>}
                     </div>
                   </div>
                 )}
+                {box.paramNote && <div className="daysep">{box.paramNote}</div>}
                 {box.error && <div className="daysep">{box.error}</div>}
               </div>
               <div className="minichips">
@@ -572,6 +619,23 @@ const MiaomiaoBoxHost: React.FC = () => {
                     <button className="switch" aria-checked={box.settings.thinking === true} onClick={() => box.saveSettings({ ...box.settings!, thinking: box.settings!.thinking !== true })}><i /></button>
                   </div>
                 </div>
+                {box.settings.thinking === true && (
+                  <div className="dlgfield">
+                    <span>思考方式（只在这一盒用）</span>
+                    <textarea
+                      className="tarea"
+                      value={box.settings.thinkingGuide || ''}
+                      placeholder="留空用默认那份。填了这里，就完全按这里写的思考，默认不再附上。"
+                      onChange={e => box.saveSettings({ ...box.settings!, thinkingGuide: e.target.value })}
+                    />
+                    <span className="hintline">填了会完全盖掉默认的思考步骤，只在这一盒生效。想改默认，先导入再改。</span>
+                    <button
+                      type="button"
+                      className="impbtn"
+                      onClick={() => box.saveSettings({ ...box.settings!, thinkingGuide: BOX_THINKING_PROMPT_CORE })}
+                    >导入默认模板</button>
+                  </div>
+                )}
               </div>
               <div className="setsec">
                 <div className="sh"><b>语音</b><span>开启后只生成，要点才播</span></div>

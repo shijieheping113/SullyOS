@@ -30,6 +30,7 @@ import {
   BOX_REMEMBER_PROMPT,
   BOX_REMEMBER_TEMPERATURE,
   BOX_TURN_BAN,
+  buildBoxThinkingPrompt,
   buildMiaomiaoPlayPrompt,
 } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
 import { callMainChatLlm, callSecondaryLlm, splitBoxThinking } from '../apps/miaomiaoBox/boxLlm';
@@ -76,6 +77,7 @@ type Ctx = {
   deleteHistory: (id: string) => Promise<void>;
   liveText: string;
   liveThinking: string;
+  paramNote: string;
 };
 
 const toArchiveLines = (msgs: MiaomiaoMessage[]): MiaomiaoArchiveLine[] => {
@@ -131,6 +133,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [historySessions, setHistorySessions] = useState<MiaomiaoSession[]>([]);
   const [liveText, setLiveText] = useState('');
   const [liveThinking, setLiveThinking] = useState('');
+  const [paramNote, setParamNote] = useState('');
   const pendingRef = useRef<MiaomiaoStarter | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const voiceMem = useRef(new Map<string, { voiceUrl: string; voiceSynthText?: string }>());
@@ -497,10 +500,14 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (cut && !boxMsgs.some(m => m.role === 'assistant')) {
       apiMessages.push({ role: 'system', content: cut });
     }
+    if (settings?.thinking === true) {
+      apiMessages.push({ role: 'system', content: buildBoxThinkingPrompt(settings.thinkingGuide) });
+    }
     apiMessages.push({ role: 'system', content: BOX_TURN_BAN });
     let streamedReasoning = '';
     setLiveText('');
     setLiveThinking('');
+    setParamNote('');
     const reply = await callMainChatLlm({
       apiConfig: os.apiConfig,
       messages: apiMessages,
@@ -523,6 +530,10 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       },
     });
     const raw = reply.content;
+    const notes: string[] = [];
+    if (reply.fellBack) notes.push('这一轮参数被模型拒绝了，已经回退到主 API 的设置重发');
+    if (settings?.thinking === true && !reply.fellBack && !reply.thinking) notes.push('开了思考，但这一轮模型没返回思维链');
+    setParamNote(notes.join(' · '));
     const { blocks, cleanedContent } = extractHtmlBlocks(raw);
     const html = blocks[0];
     const segs = splitIntoBubbles(cleanedContent || raw, settings?.voiceQuoteStyle, settings?.voiceQuoteCustom);
@@ -966,8 +977,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     openForChar, collapseToWidget, expandFloat, setPage, startPlay, switchMode, sendPlay, leaveToChat, closeLid, saveSettings, playingForChar,
     editMessage, deleteBoxMessage, rerollMessage, rerollLastTurn, playingVoiceId, voiceLoadingId, playBoxVoice, downloadBoxVoice,
     pendingStarter, liveSessions, historySessions, pickHomeStarter, cancelPending, openLive, deleteHistory,
-    liveText, liveThinking,
-  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId, liveText, liveThinking]);
+    liveText, liveThinking, paramNote,
+  }), [shell, page, session, messages, settings, typing, error, unread, foldBusy, openForChar, pendingStarter, liveSessions, historySessions, playingVoiceId, voiceLoadingId, liveText, liveThinking, paramNote]);
 
   return <MiaomiaoBoxContext.Provider value={value}>{children}</MiaomiaoBoxContext.Provider>;
 };

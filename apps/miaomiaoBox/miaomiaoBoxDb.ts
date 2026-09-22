@@ -31,6 +31,7 @@ const defaultSettings = (charId: string): MiaomiaoSettings => ({
   presencePenalty: 0,
   stream: false,
   thinking: false,
+  thinkingGuide: '',
 });
 
 const withDialogueDefaults = (row: MiaomiaoSettings): MiaomiaoSettings => ({

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FISH_VOICE_ACTING_GUIDE } from '../../utils/fishAudioTts';
 import { ELEVENLABS_STANDARD_VOICE_ACTING_GUIDE, ELEVENLABS_V3_VOICE_ACTING_GUIDE } from '../../utils/elevenLabsTts';
 import { VOICE_ACTING_GUIDE } from '../../utils/minimaxTts';
-import { BOX_FOLD_PROMPT, BOX_TURN_BAN, buildMiaomiaoPlayPrompt } from './miaomiaoBoxPrompt';
+import { BOX_FOLD_PROMPT, BOX_TURN_BAN, buildBoxThinkingPrompt, buildMiaomiaoPlayPrompt } from './miaomiaoBoxPrompt';
 
 const rules = [] as [];
 
@@ -88,11 +88,29 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
   });
 
   it('禁止事项和折叠要求按约定写', () => {
-    expect(BOX_TURN_BAN).toBe(`【禁止】
+    expect(BOX_TURN_BAN).toContain(`【禁止】
 角色本人开口时，引号里要有语气标记，方括号放在引号里面。旁白不用标。
 禁止停在同一个场景里打转，这一轮要有新的动作、信息或状况。
 禁止 OOC：角色说的话要像这个人。`);
+    expect(BOX_TURN_BAN).toContain('不要把所有内容挤成一大段');
+    expect(BOX_TURN_BAN).toContain('不要为了分行把一句语音拆成好几条');
+    expect(BOX_TURN_BAN).not.toContain('每一句都要自成一行');
     expect(BOX_FOLD_PROMPT).toContain('只写这次新折进来的那一截');
     expect(BOX_FOLD_PROMPT).toContain('不要把已有摘要再写一遍');
+  });
+
+  it('剧情节奏要求自己往前走，不靠空钩子等用户接', () => {
+    const p = buildMiaomiaoPlayPrompt({ apiConfig: { ttsProvider: 'minimax' }, worldRules: rules, starter: 'box' });
+    expect(p).toContain('这一盒可以自己往下走，不必等用户介入');
+    expect(p).toContain('不要用「门开了」「电话响了」「有人敲门」这类空钩子收尾');
+    expect(p).toContain('不要老把镜头往用户那边推');
+    expect(p).toContain('事情不能一直顺，也不能一直走坏');
+  });
+
+  it('自定义思考引导完全覆盖默认；留空才用默认', () => {
+    expect(buildBoxThinkingPrompt()).toContain('这一轮要往哪走');
+    const custom = buildBoxThinkingPrompt('先想猫的反应，再想她在哪');
+    expect(custom).toBe('先想猫的反应，再想她在哪');
+    expect(custom).not.toContain('这一轮要往哪走');
   });
 });
