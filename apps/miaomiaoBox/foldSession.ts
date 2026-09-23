@@ -96,8 +96,10 @@ export function applyBigFold(
 }
 
 /**
- * 解散一条总结：删掉这张摘要卡，把这段轮次里的原文取消折叠。
- * 原文还在原来的时间上，所以会回到这张卡所在的位置，并重新算进未折轮次。
+ * 解散一张总结卡。
+ * 滚动总结：删掉这张卡，把这段里折起的原文放回来，并退掉这一次折叠账。
+ * 大总结：只删掉这张大卡，把范围内折起的滚动总结重新亮出来。原文继续折着。
+ * 大总结不退折叠次数和卷起轮数，这批滚动总结继续算进下一次大总结。
  */
 export function dissolveSummary(
   messages: MiaomiaoMessage[],
@@ -106,6 +108,28 @@ export function dissolveSummary(
   const summary = messages.find(m => m.id === summaryId && m.role === 'summary');
   if (!summary?.summaryRange) {
     return { messages, restored: [], removedId: null, restoredRounds: 0, undoneFolds: 0 };
+  }
+  if (summary.summaryKind === 'big') {
+    const { fromRound, toRound } = summary.summaryRange;
+    const rollIds = new Set(messages.filter(m =>
+      m.id !== summary.id
+      && m.role === 'summary'
+      && m.summaryKind !== 'big'
+      && m.folded
+      && m.summaryRange
+      && m.summaryRange.fromRound >= fromRound
+      && m.summaryRange.toRound <= toRound,
+    ).map(m => m.id));
+    const next = messages
+      .filter(m => m.id !== summaryId)
+      .map(m => (rollIds.has(m.id) ? { ...m, folded: false } : m));
+    return {
+      messages: next,
+      restored: next.filter(m => rollIds.has(m.id)),
+      removedId: summaryId,
+      restoredRounds: 0,
+      undoneFolds: 0,
+    };
   }
   const users = messages.filter(m => m.role === 'user').sort((a, b) => a.timestamp - b.timestamp);
   const start = users[summary.summaryRange.fromRound - 1];
@@ -121,17 +145,6 @@ export function dissolveSummary(
   );
   const restoreIds = new Set(covered.map(m => m.id));
   const restoredRounds = covered.filter(m => m.role === 'user').length;
-  const { fromRound, toRound } = summary.summaryRange;
-  const undoneFolds = summary.summaryKind === 'big'
-    ? messages.filter(m =>
-      m.id !== summary.id
-      && m.role === 'summary'
-      && m.summaryKind !== 'big'
-      && m.summaryRange
-      && m.summaryRange.fromRound >= fromRound
-      && m.summaryRange.toRound <= toRound,
-    ).length
-    : 1;
   const next = messages
     .filter(m => m.id !== summaryId)
     .map(m => (restoreIds.has(m.id) ? { ...m, folded: false } : m));
@@ -140,7 +153,7 @@ export function dissolveSummary(
     restored: next.filter(m => restoreIds.has(m.id)),
     removedId: summaryId,
     restoredRounds,
-    undoneFolds,
+    undoneFolds: 1,
   };
 }
 

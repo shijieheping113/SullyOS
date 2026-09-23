@@ -150,7 +150,7 @@ describe('miaomiao fold', () => {
     expect(next.toFold.filter(m => m.role === 'user').map(m => m.id)).toEqual(['u0', 'u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'u7']);
   });
 
-  it('解散大总结时，这段轮次的原文放回来，小总结卡仍收着', () => {
+  it('解散大总结时，露出被压住的滚动总结，原文继续折着，计数不退', () => {
     const rows = [
       msg('u0', 'user', 1, { folded: true }),
       msg('a0', 'assistant', 2, { folded: true }),
@@ -158,16 +158,30 @@ describe('miaomiao fold', () => {
       msg('a1', 'assistant', 4, { folded: true }),
       msg('s0', 'summary', 5, { summaryKind: 'roll', folded: true, summaryRange: { fromRound: 1, toRound: 1 } }),
       msg('s1', 'summary', 6, { summaryKind: 'roll', folded: true, summaryRange: { fromRound: 2, toRound: 2 } }),
+      msg('sOut', 'summary', 9, { summaryKind: 'roll', folded: true, summaryRange: { fromRound: 4, toRound: 4 } }),
       msg('big', 'summary', 7, { summaryKind: 'big', summaryRange: { fromRound: 1, toRound: 2 }, content: '大前情' }),
       msg('u2', 'user', 8),
     ];
     const undone = dissolveSummary(rows, 'big');
     expect(undone.messages.some(m => m.id === 'big')).toBe(false);
-    expect(undone.messages.find(m => m.id === 'u0')?.folded).toBe(false);
-    expect(undone.messages.find(m => m.id === 'a1')?.folded).toBe(false);
-    expect(undone.messages.find(m => m.id === 's0')?.folded).toBe(true);
-    expect(undone.restoredRounds).toBe(2);
-    expect(undone.undoneFolds).toBe(2);
-    expect(messagesForModel(undone.messages).map(m => m.id)).toEqual(['u0', 'a0', 'u1', 'a1', 'u2']);
+    expect(undone.messages.find(m => m.id === 'u0')?.folded).toBe(true);
+    expect(undone.messages.find(m => m.id === 'a1')?.folded).toBe(true);
+    expect(undone.messages.find(m => m.id === 's0')?.folded).toBe(false);
+    expect(undone.messages.find(m => m.id === 's1')?.folded).toBe(false);
+    expect(undone.messages.find(m => m.id === 'sOut')?.folded).toBe(true);
+    expect(undone.restored.map(m => m.id)).toEqual(['s0', 's1']);
+    expect(undone.restoredRounds).toBe(0);
+    expect(undone.undoneFolds).toBe(0);
+    expect(messagesForModel(undone.messages).map(m => m.id)).toEqual(['s0', 's1', 'u2']);
+    expect(planBigFold(undone.messages, 2).map(m => m.id)).toEqual(['s0', 's1']);
+
+    const one = dissolveSummary(undone.messages, 's0');
+    expect(one.undoneFolds).toBe(1);
+    expect(one.restoredRounds).toBe(1);
+    expect(one.messages.find(m => m.id === 'u0')?.folded).toBe(false);
+    expect(one.messages.find(m => m.id === 'a0')?.folded).toBe(false);
+    expect(one.messages.find(m => m.id === 'u1')?.folded).toBe(true);
+    expect(one.messages.find(m => m.id === 's1')?.folded).toBe(false);
+    expect(messagesForModel(one.messages).map(m => m.id)).toEqual(['u0', 'a0', 's1', 'u2']);
   });
 });
