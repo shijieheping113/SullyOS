@@ -38,6 +38,7 @@ import StorageUsagePanel from '../components/settings/StorageUsagePanel';
 import McpConnectionConsole from '../components/settings/McpConnectionConsole';
 import { DB } from '../utils/db';
 import { getBackupReminderState, setBackupReminderIntervalDays, daysSinceLastBackup, BACKUP_REMINDER_MIN_DAYS, BACKUP_REMINDER_MAX_DAYS } from '../utils/backupReminder';
+import { isForkBackupUiVisible } from '../utils/forkBackupUiVisible';
 import {
     createAvatarModelBackup,
     getAvatarModelBackupInventory,
@@ -485,7 +486,8 @@ const Settings: React.FC = () => {
   const {
       apiConfig, updateApiConfig, closeApp, availableModels, setAvailableModels,
       theme, updateTheme, resetAppearance,
-      exportSystem, importSystem, addToast, showError, resetSystem, updateCharacter,
+      exportSystem, importSystem, exportForkFullBackup, importForkFullBackup,
+      addToast, showError, resetSystem, updateCharacter,
       apiPresets, addApiPreset, updateApiPreset, removeApiPreset,
       sysOperation, // Get progress state
       realtimeConfig, updateRealtimeConfig, // 实时感知配置
@@ -936,6 +938,8 @@ const Settings: React.FC = () => {
   const [testingApi, setTestingApi] = useState(false);
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const forkImportInputRef = useRef<HTMLInputElement>(null);
+  const [forkReplaceOnAuthorImport, setForkReplaceOnAuthorImport] = useState(false);
   const avatarModelBackupInputRef = useRef<HTMLInputElement>(null);
   const refreshAvatarModelInventory = useCallback(async () => {
       try {
@@ -1482,6 +1486,53 @@ const Settings: React.FC = () => {
           trackEvent('导出备份失败', { mode });
           addToast(e.message, 'error');
       }
+  };
+
+  const handleForkExport = async () => {
+      trackEvent('导出本地备份', { scope: 'full' });
+      try {
+          if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+              const msg = '二改全量备份含 API 密钥与喵喵盒/Spark 等二改数据，请勿发给他人。\n\n点「确定」继续导出。';
+              if (!window.confirm(msg)) return;
+          }
+          const blob = await exportForkFullBackup();
+          const fileName = `Sully_Fork_Full_${new Date().toISOString().slice(0, 10)}.zip`;
+          if (!Capacitor.isNativePlatform()) {
+              if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
+              const url = URL.createObjectURL(blob);
+              downloadUrlRef.current = url;
+              setDownloadUrl(url);
+              setDownloadFileName(fileName);
+              setShowExportModal(true);
+          }
+          const result = await shareOrDownloadBlob({
+              blob,
+              fileName,
+              shareTitle: 'Sully Fork Backup',
+              nativeChunked: true,
+          });
+          if (result === 'cancelled') return;
+      } catch (e: any) {
+          trackEvent('导出备份失败', { mode: 'full' });
+          addToast(e.message, 'error');
+      }
+  };
+
+  const handleForkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      importForkFullBackup(file, { replaceForkStoresOnAuthorPackage: forkReplaceOnAuthorImport }).catch(err => {
+          console.error(err);
+          const rawMessage = String(err?.message || '');
+          trackEvent('导入备份失败', {
+              source: file.name.toLowerCase().endsWith('.zip') ? 'zip' : 'json',
+              reason: 'other',
+          });
+          const details = err?.stack || err?.message || String(err || '未知错误');
+          showError('二改导入失败', details);
+          addToast('二改导入失败，错误信息已展开', 'error');
+      });
+      if (forkImportInputRef.current) forkImportInputRef.current.value = '';
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2172,6 +2223,38 @@ const Settings: React.FC = () => {
                 </div>
                 <input type="file" ref={importInputRef} className="hidden" accept=".json,.zip" onChange={handleImport} />
             </div>
+
+            {isForkBackupUiVisible() && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+                    <p className="text-[10px] font-bold text-amber-800 mb-2">二改全量备份（含喵喵盒 / Spark 等）</p>
+                    <button
+                        type="button"
+                        onClick={() => void handleForkExport()}
+                        className="w-full py-3 mb-2 bg-amber-500 border border-amber-400 rounded-xl text-xs font-bold text-white shadow-sm active:scale-95 transition-all"
+                    >
+                        导出二改全量备份
+                    </button>
+                    <div
+                        onClick={() => forkImportInputRef.current?.click()}
+                        className="py-3 bg-white border border-amber-200 rounded-xl text-xs font-bold text-amber-900 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1 cursor-pointer"
+                    >
+                        导入二改全量备份
+                    </div>
+                    <label className="mt-2 flex items-start gap-2 text-[10px] text-amber-900/90 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={forkReplaceOnAuthorImport}
+                            onChange={(e) => setForkReplaceOnAuthorImport(e.target.checked)}
+                        />
+                        <span>导入作者原版备份时，先清空本机二改库（喵喵盒 / Spark 发帖图等）</span>
+                    </label>
+                    <input type="file" ref={forkImportInputRef} className="hidden" accept=".json,.zip" onChange={handleForkImport} />
+                    <p className="text-[9px] text-amber-800/70 mt-2 leading-relaxed">
+                        作者版「导入备份」不会恢复二改段；二改包请走本入口。作者包可走本入口且默认保留现有二改数据。
+                    </p>
+                </div>
+            )}
 
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
                 • <b>整合导出</b>: 一次性导出文字与图片媒体；VRM / Live2D 模型请使用下方独立备份。<br/>

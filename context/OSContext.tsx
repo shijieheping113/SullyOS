@@ -98,6 +98,15 @@ import { exportMcdLocal } from '../utils/mcdMcpClient';
 import { exportMcpLocal } from '../utils/mcpClient';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
+import {
+    collectForkBackupLayer,
+    FORK_BACKUP_AUTHOR_IMPORT_HINT,
+    FORK_BACKUP_VERSION,
+    FORK_CUSTOM_ID,
+    isForkBackupData,
+    clearForkBackupStores,
+    restoreForkBackupLayer,
+} from '../utils/forkBackup';
 import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
 import { normalizeCharacterRoomAssetsInPlace } from '../utils/roomTemplateAssets';
 
@@ -433,8 +442,13 @@ interface OSContextType {
   listCloudBackups: () => Promise<CloudBackupFile[]>;
 
   // System
-  exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
-  importSystem: (fileOrJson: File | string) => Promise<void>; // Accept File or String
+  exportSystem: (mode: 'text_only' | 'media_only' | 'full', options?: { forkLayer?: boolean }) => Promise<Blob>;
+  importSystem: (fileOrJson: File | string, options?: {
+      forkImport?: boolean;
+      replaceForkStoresOnAuthorPackage?: boolean;
+  }) => Promise<void>;
+  exportForkFullBackup: () => Promise<Blob>;
+  importForkFullBackup: (fileOrJson: File | string, options?: { replaceForkStoresOnAuthorPackage?: boolean }) => Promise<void>;
   resetSystem: () => Promise<void>;
   sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
 
@@ -3827,7 +3841,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
-  const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
+  const exportSystem = async (
+      mode: 'text_only' | 'media_only' | 'full',
+      exportOptions: { forkLayer?: boolean } = {},
+  ): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
           
@@ -4635,6 +4652,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // text_only 用 level 6；媒体/全量仍用 level 9，具体见 generateAsync 配置。
           setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 70 });
 
+          if (exportOptions.forkLayer) {
+              Object.assign(backupData, await collectForkBackupLayer());
+          }
+
           // --- v2 分片序列化（替代老的单根 data.json）---
           // 不再把所有数据拼成一根 data.json：单根字符串逼近 ~512M 会确定性 RangeError。
           // 改成每个数组字段分片写进 stores/<field>.NNN.json、其余非数组字段进 metadata.json、
@@ -4652,6 +4673,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   prewrittenStores,
                   onYield: () => new Promise<void>(r => setTimeout(r, 0)),
                   onSerialized: collectSerialized,
+                  forkManifest: exportOptions.forkLayer
+                      ? { customFork: FORK_CUSTOM_ID, forkBackupVersion: FORK_BACKUP_VERSION }
+                      : undefined,
               },
           );
 
@@ -4723,7 +4747,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
-  const importSystem = async (fileOrJson: File | string): Promise<void> => {
+  const importSystem = async (
+      fileOrJson: File | string,
+      importOptions: { forkImport?: boolean; replaceForkStoresOnAuthorPackage?: boolean } = {},
+  ): Promise<void> => {
       const sourceName = typeof fileOrJson === 'string' ? 'json' : fileOrJson.name;
       const sourceSize = typeof fileOrJson === 'string'
           ? (typeof Blob !== 'undefined' ? new Blob([fileOrJson]).size : fileOrJson.length)
@@ -4844,6 +4871,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 必须发生在 restoreAssetsInPlace / DB.importFullData 之前：不受支持的第三方
           // 备份一旦命中特征就整包拒绝，不能出现“导入了一半才报错”的状态。
           assertSupportedSullyBackup(data);
+
+          if (isForkBackupData(data) && !importOptions.forkImport) {
+              throw new Error(FORK_BACKUP_AUTHOR_IMPORT_HINT);
+          }
 
           // 在 importFullData 为释放内存逐项清空 data 字段前冻结“这是否是主历史替换”。
           // 新版 media_only 明确不动 SAR；旧备份没有 mode 时，只要带 characters/messages
@@ -5006,6 +5037,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           showImportProgress('database', '正在写入数据库...', 50, { current: '准备写入数据库', currentFile: '' });
           suppressFeedbackInvitation();
+          const forkLayerBeforeImport = isForkBackupData(data);
+          if (
+              importOptions.forkImport
+              && importOptions.replaceForkStoresOnAuthorPackage
+              && !forkLayerBeforeImport
+          ) {
+              await clearForkBackupStores();
+          }
           await DB.importFullData(data, {
               beforeWrite: restoreAssetsInPlace,
               onProgress: progress => {
@@ -5024,6 +5063,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   });
               },
           });
+
+          if (importOptions.forkImport) {
+              const forkRestore = await restoreForkBackupLayer(data, {
+                  replaceForkStoresOnAuthorPackage: importOptions.replaceForkStoresOnAuthorPackage,
+              });
+              if (!forkLayerBeforeImport && forkRestore.skippedForkLayer) {
+                  addToast('作者备份已恢复；本机二改数据未覆盖（未勾选覆盖二改库）', 'info');
+              }
+          }
 
           const hasCollaborationBackup = data.collaborationSessions !== undefined
               || data.collaborationMessages !== undefined
@@ -5308,6 +5356,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
+  const exportForkFullBackup = () => exportSystem('full', { forkLayer: true });
+  const importForkFullBackup = (
+      fileOrJson: File | string,
+      options: { replaceForkStoresOnAuthorPackage?: boolean } = {},
+  ) => importSystem(fileOrJson, { forkImport: true, ...options });
+
   const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
@@ -5520,6 +5574,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     listCloudBackups,
     exportSystem,
     importSystem,
+    exportForkFullBackup,
+    importForkFullBackup,
     resetSystem,
     sysOperation,
     systemLogs,

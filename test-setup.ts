@@ -29,6 +29,7 @@ const BUILD_DEFINES: Record<string, string | boolean> = {
   __BUILD_COMMIT__: '0000000',
   __BUILD_TIME__: '1970-01-01 00:00',
   __BUILD_BADGE_VISIBLE__: false,
+  __FORK_BACKUP_UI_VISIBLE__: false,
 };
 for (const [name, value] of Object.entries(BUILD_DEFINES)) {
   if (typeof (globalThis as any)[name] === 'undefined') {

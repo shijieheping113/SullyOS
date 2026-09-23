@@ -54,6 +54,9 @@ export interface BackupManifest {
     formatVersion: number;
     mode?: string;
     createdAt?: number;
+    /** 二改全量备份标记（与 metadata.json 内 customFork 对齐） */
+    customFork?: string;
+    forkBackupVersion?: number;
     /** key = backupData 字段名（如 messages / galleryImages / memoryNodes），value = 分片数 + 总条数 */
     stores: Record<string, { parts: number; count: number }>;
     /** 向量走二进制旁路（memory_vectors.bin + .index.json），不进 stores。无向量时省略。 */
@@ -110,6 +113,8 @@ export interface WriteV2Options {
      * 序列化后逐字可见）。manifest / 向量 bin·index 不含用户字段值，不过钩。
      */
     onSerialized?: (json: string) => void;
+    /** 写入 manifest.json 的二改标记（仅二改全量导出传入） */
+    forkManifest?: { customFork: string; forkBackupVersion: number };
 }
 
 export interface V2ArrayFieldWriter {
@@ -261,6 +266,7 @@ export async function writeV2Backup(
         stores: manifestStores,
         vectors: vectorsMeta,
         assetCount: options.assetCount,
+        ...(options.forkManifest || {}),
     };
     zip.file('manifest.json', JSON.stringify(manifest));
     return manifest;
