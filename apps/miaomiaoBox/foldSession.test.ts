@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyBigFold, applyFold, countUnfoldedRounds, dissolveSummary, messagesForModel, planBigFold, planFold, relocateSummaries } from './foldSession';
+import { applyBigFold, applyFold, countUnfoldedRounds, dissolveSummary, messagesForModel, planAfterReply, planBigFold, planFold, relocateSummaries } from './foldSession';
 import type { MiaomiaoMessage } from './types';
 
 const msg = (
@@ -119,6 +119,51 @@ describe('miaomiao fold', () => {
     expect(messagesForModel(folded).some(m => m.id === 's0')).toBe(false);
     expect(messagesForModel(folded).some(m => m.id === 'big1')).toBe(true);
     expect(planBigFold([], 0)).toHaveLength(0);
+  });
+
+  it('两扇门分开：滚动条数满了就查大总结，不必这轮也做滚动', () => {
+    const rows: MiaomiaoMessage[] = [];
+    for (let i = 0; i < 2; i++) {
+      rows.push(msg(`u${i}`, 'user', i * 2, { folded: true }));
+      rows.push(msg(`a${i}`, 'assistant', i * 2 + 1, { folded: true }));
+      rows.push(msg(`s${i}`, 'summary', i * 2 + 2, { summaryKind: 'roll', summaryRange: { fromRound: i + 1, toRound: i + 1 } }));
+    }
+    rows.push(msg('u2', 'user', 20));
+    const onlyBig = planAfterReply(rows, 8, 3, 2);
+    expect(onlyBig.bigBatch.map(m => m.id)).toEqual(['s0', 's1']);
+    expect(onlyBig.roll.shouldFold).toBe(false);
+
+    const short = planAfterReply(rows.filter(m => m.id !== 's1'), 8, 3, 2);
+    expect(short.bigBatch).toHaveLength(0);
+    expect(short.roll.shouldFold).toBe(false);
+
+    const fresh: MiaomiaoMessage[] = [];
+    for (let i = 0; i < 11; i++) fresh.push(msg(`n${i}`, 'user', 100 + i));
+    const onlyRoll = planAfterReply(fresh, 8, 3, 2);
+    expect(onlyRoll.bigBatch).toHaveLength(0);
+    expect(onlyRoll.roll.shouldFold).toBe(true);
+
+    const bothRows = [...rows, ...fresh.map(m => ({ ...m, timestamp: m.timestamp }))];
+    const both = planAfterReply(bothRows, 8, 3, 2);
+    expect(both.bigBatch.map(m => m.id)).toEqual(['s0', 's1']);
+    expect(both.roll.shouldFold).toBe(true);
+    expect(both.roll.toFold.some(m => m.role === 'summary')).toBe(false);
+
+    const pressed = applyBigFold(bothRows, new Set(both.bigBatch.map(m => m.id)), msg('big', 'summary', 0, { summaryKind: 'big', content: '大前情' }));
+    const rollAfter = planFold(pressed, 8, 3);
+    expect(rollAfter.shouldFold).toBe(true);
+    expect(rollAfter.toFold.some(m => m.id === 's0' || m.id === 'big')).toBe(false);
+    const again = planAfterReply(pressed, 8, 3, 2);
+    expect(again.bigBatch).toHaveLength(0);
+
+    const piled: MiaomiaoMessage[] = [];
+    for (let i = 0; i < 12; i++) piled.push(msg(`p${i}`, 'summary', i, { summaryKind: 'roll' }));
+    const first = planAfterReply(piled, 8, 3, 6);
+    expect(first.bigBatch.map(m => m.id)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4', 'p5']);
+    expect(first.roll.shouldFold).toBe(false);
+    const left = applyBigFold(piled, new Set(first.bigBatch.map(m => m.id)), msg('big2', 'summary', 0, { summaryKind: 'big' }));
+    expect(planAfterReply(left, 8, 3, 6).bigBatch.map(m => m.id)).toEqual(['p6', 'p7', 'p8', 'p9', 'p10', 'p11']);
+    expect(planAfterReply(piled, 8, 3, 0).bigBatch).toHaveLength(0);
   });
 
   it('解散滚动总结后原文回到原位，并重新计入 X+X', () => {

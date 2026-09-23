@@ -30,7 +30,7 @@ export interface MiaomiaoSettings {
   foldN: number;
   /** 总结时留下、不折进摘要的最近轮数。 */
   foldKeep?: number;
-  /** 攒够多少条滚动总结后，下一次滚动总结触发时先把它们压成一条大总结。0 表示不做。 */
+  /** 攒够多少条还亮着的滚动总结，下一轮普通回复后压成一条大总结。不要求这一轮同时也做滚动总结。0 表示不做。 */
   bigFoldEvery?: number;
   ttsAutoPlay: boolean;
   ttsEnabled?: boolean;

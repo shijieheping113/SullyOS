@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FISH_VOICE_ACTING_GUIDE } from '../../utils/fishAudioTts';
 import { ELEVENLABS_STANDARD_VOICE_ACTING_GUIDE, ELEVENLABS_V3_VOICE_ACTING_GUIDE } from '../../utils/elevenLabsTts';
 import { VOICE_ACTING_GUIDE } from '../../utils/minimaxTts';
-import { BOX_FOLD_PROMPT, BOX_TURN_BAN, buildBoxThinkingPrompt, buildMiaomiaoPlayPrompt } from './miaomiaoBoxPrompt';
+import { BOX_BIG_FOLD_PROMPT, BOX_FOLD_PROMPT, BOX_TURN_BAN, buildBoxThinkingPrompt, buildMiaomiaoPlayPrompt } from './miaomiaoBoxPrompt';
 
 const rules = [] as [];
 
@@ -98,6 +98,10 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
     expect(BOX_TURN_BAN).not.toContain('每一句都要自成一行');
     expect(BOX_FOLD_PROMPT).toContain('只写这次新折进来的那一截');
     expect(BOX_FOLD_PROMPT).toContain('不要把已有摘要再写一遍');
+    expect(BOX_BIG_FOLD_PROMPT).toContain('严禁乱下结论');
+    expect(BOX_BIG_FOLD_PROMPT).toContain('段与段之间的因果必须接上');
+    expect(BOX_BIG_FOLD_PROMPT).toContain('建议控制在 800 字以内');
+    expect(BOX_BIG_FOLD_PROMPT).not.toContain('400 字以内');
   });
 
   it('剧情节奏要求自己往前走，不靠空钩子等用户接', () => {

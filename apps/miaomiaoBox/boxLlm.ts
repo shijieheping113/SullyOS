@@ -1,7 +1,7 @@
 import { extractContent, safeFetchJson } from '../../utils/safeApi';
-import type { APIConfig } from '../../types';
-
-type LightLlmBag = { lightLLM?: { baseUrl?: string; apiKey?: string; model?: string } };
+import type { APIConfig, SecondaryLlmApiConfig } from '../../types';
+import { isSecondaryLlmReady } from '../../utils/secondaryLlmApi';
+import { SecondaryLlmNotConfiguredError } from '../../utils/secondaryLlmCall';
 
 function messageText(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -110,19 +110,24 @@ export async function callMainChatLlm(opts: {
   }
 }
 
+function temperatureRejected(message: string): boolean {
+  return message.toLowerCase().includes('temperature');
+}
+
+/** 喵喵盒后台总结只走设置里的辅助 API。没配好就报错，不改打别的线路。 */
 export async function callSecondaryLlm(opts: {
-  memoryPalaceConfig: LightLlmBag;
+  secondaryLlm?: SecondaryLlmApiConfig | null;
   system: string;
   user: string;
   temperature: number;
   purpose: string;
 }): Promise<string> {
-  const llm = opts.memoryPalaceConfig?.lightLLM;
-  if (!llm?.baseUrl || !llm.apiKey || !llm.model) {
-    throw new Error('副 API 还没配好，摘要/转写先做不了');
+  const llm = opts.secondaryLlm;
+  if (!llm || !isSecondaryLlmReady(llm)) {
+    throw new SecondaryLlmNotConfiguredError();
   }
   const baseUrl = llm.baseUrl.replace(/\/+$/, '');
-  const data = await safeFetchJson(
+  const send = (includeTemperature: boolean) => safeFetchJson(
     `${baseUrl}/chat/completions`,
     {
       method: 'POST',
@@ -136,7 +141,7 @@ export async function callSecondaryLlm(opts: {
           { role: 'system', content: opts.system },
           { role: 'user', content: opts.user },
         ],
-        temperature: opts.temperature,
+        ...(includeTemperature ? { temperature: opts.temperature } : {}),
         stream: false,
       }),
     },
@@ -144,5 +149,11 @@ export async function callSecondaryLlm(opts: {
     60_000,
     { appName: '喵喵盒', purpose: opts.purpose },
   );
-  return (extractContent(data) || '').trim();
+  try {
+    return (extractContent(await send(true)) || '').trim();
+  } catch (e) {
+    const text = String((e as Error)?.message || '');
+    if (!temperatureRejected(text)) throw e;
+    return (extractContent(await send(false)) || '').trim();
+  }
 }

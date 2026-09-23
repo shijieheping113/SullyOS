@@ -223,11 +223,11 @@ const MiaomiaoBoxHost: React.FC = () => {
     chaseBottom(1500);
   }, [box.page, box.session?.id]);
 
-  // 新消息、出字、思维链：只要还贴着底就继续跟着走；往上翻了就不抢。
+  // 新消息、出字、思维链、盒内总结提醒：只要还贴着底就继续跟着走；往上翻了就不抢。
   useEffect(() => {
     if (box.page !== 'play') return;
     chaseBottom(1200);
-  }, [box.messages, box.liveText, box.liveThinking, box.typing, box.page]);
+  }, [box.messages, box.liveText, box.liveThinking, box.typing, box.foldNote, box.foldBusy, box.page]);
 
   useEffect(() => () => {
     if (pinTimer.current) window.clearInterval(pinTimer.current);
@@ -554,6 +554,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                   </div>
                 )}
                 {box.paramNote && <div className="daysep">{box.paramNote}</div>}
+                {box.foldBusy && <div className="daysep busy">喵喵正在总结前情…</div>}
                 {box.foldNote && <div className="daysep">{box.foldNote}</div>}
                 {box.error && (
                   <div className="daysep errnote">
@@ -653,7 +654,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                   <button onClick={() => box.saveSettings({ ...box.settings!, bigFoldEvery: Math.max(0, (box.settings!.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT) - 1) })}>−</button>
                   <span className="val">{box.settings.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT}</span>
                   <button onClick={() => box.saveSettings({ ...box.settings!, bigFoldEvery: (box.settings!.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT) + 1 })}>+</button>
-                  <span className="unit">条滚动总结后，下一次触发时压成一条大总结</span>
+                  <span className="unit">条滚动总结亮着，回复一轮后就压成大总结</span>
                 </div>
                 <div className="meta">0 表示不做大总结。总结过 {box.session?.foldCount || 0} 次 · 卷起 {box.session?.foldedRoundCount || 0} 轮 · 原文全部留着，随时能翻</div>
               </div>

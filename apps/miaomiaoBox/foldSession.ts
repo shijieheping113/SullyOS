@@ -22,6 +22,23 @@ export function planBigFold(messages: MiaomiaoMessage[], every: number): Miaomia
 }
 
 /**
+ * 一轮普通回复之后，两扇门分开看。
+ * 大总结只看还亮着的滚动总结够不够，不看这轮原文够不够做滚动。
+ * 同一轮两扇都开时，先用这里的 bigBatch（还没写进新滚动），再做 roll。
+ */
+export function planAfterReply(
+  messages: MiaomiaoMessage[],
+  foldN: number,
+  foldKeep: number,
+  bigEvery: number,
+): { bigBatch: MiaomiaoMessage[]; roll: ReturnType<typeof planFold> } {
+  return {
+    bigBatch: planBigFold(messages, bigEvery),
+    roll: planFold(messages, foldN, foldKeep),
+  };
+}
+
+/**
  * 未折轮次凑满「总结 N 轮 + 保留 K 轮」时，把最前面的 N 轮标成 folded。
  * 后 K 轮留着不总结，原文不删，只是不发给模型。
  * 例：N=8、K=3，要到 11 轮才折，折前 8 轮，留下后 3 轮。

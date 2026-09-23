@@ -22,7 +22,7 @@ import {
   type MiaomiaoStarter,
   type MiaomiaoWorldRule,
 } from '../apps/miaomiaoBox/types';
-import { applyBigFold, applyFold, countUnfoldedRounds, dissolveSummary as dissolveSummaryCard, formatBoxHistoryForModel, planBigFold, planFold, relocateSummaries } from '../apps/miaomiaoBox/foldSession';
+import { applyBigFold, applyFold, countUnfoldedRounds, dissolveSummary as dissolveSummaryCard, formatBoxHistoryForModel, planAfterReply, planFold, relocateSummaries } from '../apps/miaomiaoBox/foldSession';
 import { materialsForArchive, packRawArchive, withPerspective, wrapArchiveBody } from '../apps/miaomiaoBox/archiveRewrite';
 import {
   BOX_BIG_FOLD_PROMPT,
@@ -38,6 +38,7 @@ import {
   buildMiaomiaoPlayPrompt,
 } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
 import { callMainChatLlm, callSecondaryLlm, splitBoxThinking } from '../apps/miaomiaoBox/boxLlm';
+import { SecondaryLlmNotConfiguredError } from '../utils/secondaryLlmCall';
 import { applyQuoteStyle, cleanShown, displayTextForBoxReply, normalizeEditBreaks, spokenTextForBoxReply, splitIntoBubbles } from '../apps/miaomiaoBox/speakQuoted';
 
 export type MiaomiaoShell = 'hidden' | 'float' | 'widget';
@@ -362,23 +363,34 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return s;
   };
 
+  const toastSummaryFailure = (e: unknown, failText: string) => {
+    if (e instanceof SecondaryLlmNotConfiguredError) {
+      os.addToast('请先在设置里打开并填好辅助 API，喵喵盒总结才能用', 'error');
+      return;
+    }
+    if (failText) os.addToast(failText, 'error');
+  };
+
   const maybeFold = async (s: MiaomiaoSession, msgs: MiaomiaoMessage[]): Promise<{ messages: MiaomiaoMessage[]; session: MiaomiaoSession; note: string }> => {
     const foldN = s.foldN || MIAOMIAO_FOLD_N_DEFAULT;
     const foldKeep = s.foldKeep ?? MIAOMIAO_FOLD_KEEP_DEFAULT;
     const bigEvery = s.bigFoldEvery ?? MIAOMIAO_BIG_FOLD_DEFAULT;
-    const plan = planFold(msgs, foldN, foldKeep);
-    if (!plan.shouldFold) return { messages: msgs, session: s, note: '' };
+    const gates = planAfterReply(msgs, foldN, foldKeep, bigEvery);
+    if (!gates.bigBatch.length && !gates.roll.shouldFold) return { messages: msgs, session: s, note: '' };
     setFoldBusy(true);
     const notes: string[] = [];
     let curMsgs = msgs;
     let curSession = s;
     try {
-      const batch = planBigFold(curMsgs, bigEvery);
+      const batch = gates.bigBatch;
       if (batch.length) {
         try {
           const packed = batch.map(m => `第 ${m.summaryRange?.fromRound ?? '?'}–${m.summaryRange?.toRound ?? '?'} 轮：\n${m.content}`).join('\n\n');
+          os.addToast('正在压大前情…', 'info');
+          setFoldNote('正在压大前情…');
+          await Promise.resolve();
           const body = (await callSecondaryLlm({
-            memoryPalaceConfig: os.memoryPalaceConfig,
+            secondaryLlm: os.apiConfig.secondaryLlm,
             system: BOX_BIG_FOLD_PROMPT,
             user: packed,
             temperature: BOX_FOLD_TEMPERATURE,
@@ -407,6 +419,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
           await MiaomiaoBoxDB.saveMessage(placedBig);
         } catch (e) {
           notes.push('滚动大总结没做成，原来的几条前情先留着');
+          toastSummaryFailure(e, '大前情没压成，原来的几条前情先留着');
           console.warn('[miaomiao] big fold skipped', e);
         }
       }
@@ -415,8 +428,11 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       try {
         const existing = curMsgs.filter(m => m.role === 'summary' && !m.folded).map(m => m.content).join('\n');
         const fresh = planNow.toFold.map(m => displayTextForBoxReply(m.content)).join('\n');
+        os.addToast('正在写滚动前情…', 'info');
+        setFoldNote('正在写滚动前情…');
+        await Promise.resolve();
         const body = (await callSecondaryLlm({
-          memoryPalaceConfig: os.memoryPalaceConfig,
+          secondaryLlm: os.apiConfig.secondaryLlm,
           system: BOX_FOLD_PROMPT,
           user: `已有的摘要：\n${existing || '（空）'}\n\n这次要折进来的新内容：\n${fresh}`,
           temperature: BOX_FOLD_TEMPERATURE,
@@ -447,6 +463,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         await persistSession(curSession);
       } catch (e) {
         notes.push('这一轮滚动总结没做成，这几轮原文先留着');
+        toastSummaryFailure(e, '这一轮滚动前情没写成，原文先留着');
         console.warn('[miaomiao] fold skipped', e);
       }
       return { messages: curMsgs, session: curSession, note: notes.join(' · ') };
@@ -467,7 +484,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (!sample) return { session: s, note: '' };
     try {
       const raw = await callSecondaryLlm({
-        memoryPalaceConfig: os.memoryPalaceConfig,
+        secondaryLlm: os.apiConfig.secondaryLlm,
         system: BOX_THEME_PROMPT,
         user: sample.slice(0, 2000),
         temperature: 0.7,
@@ -480,6 +497,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       await refreshLists(next.charId);
       return { session: next, note: '' };
     } catch (e) {
+      if (e instanceof SecondaryLlmNotConfiguredError) toastSummaryFailure(e, '');
       console.warn('[miaomiao] theme skipped', e);
       return { session: s, note: '章节名没起成，下次再试' };
     }
@@ -900,7 +918,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (mode === 'remember') {
         const { summaries, remainder } = materialsForArchive(msgs);
         const body = await callSecondaryLlm({
-          memoryPalaceConfig: os.memoryPalaceConfig,
+          secondaryLlm: os.apiConfig.secondaryLlm,
           system: BOX_REMEMBER_PROMPT,
           user: `前面的滚动摘要：\n${summaries || '（空）'}\n\n还没折进去的原文：\n${remainder || '（空）'}`,
           temperature: BOX_REMEMBER_TEMPERATURE,
@@ -916,7 +934,12 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         await persistSession({ ...base, status: 'forgotten', updatedAt: Date.now() });
       }
     } catch (e: any) {
-      setError(e?.message || '合盖没做成');
+      if (e instanceof SecondaryLlmNotConfiguredError) {
+        toastSummaryFailure(e, '');
+        setError('请先在设置里打开并填好辅助 API，喵喵盒总结才能用');
+      } else {
+        setError(e?.message || '合盖没做成');
+      }
       return;
     }
     setPending(null);
