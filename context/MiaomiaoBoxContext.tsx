@@ -656,6 +656,7 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const notes: string[] = [];
     if (reply.fellBack) notes.push('这一轮参数被模型拒绝了，已经回退到主 API 的设置重发');
     if (settings?.thinking === true && !reply.fellBack && !reply.thinking) notes.push('开了思考，但这一轮模型没返回思维链');
+    if (!raw.trim() && reply.thinking) notes.push('这一轮只想了没写剧情');
     setParamNote(notes.join(' · '));
     const { blocks, cleanedContent } = extractHtmlBlocks(raw);
     const html = blocks[0];

@@ -13,19 +13,40 @@ function messageText(value: unknown): string {
   return '';
 }
 
-/** 正文和思维链分开。思维链不进下一轮上下文。 */
+/** 思维链标签：think / thinking / thought。开标签允许带属性，大小写随意。 */
+const THINK_TAG = '(?:thinking|thought|think)';
+
+/**
+ * 正文和思维链分开。思维链不进下一轮上下文。
+ *
+ * 只认标签，认三种写法：
+ * 1. 配对的 <think>…</think>
+ * 2. 只有开标签没收尾的（标签之后的都算思考）
+ * 3. 只有收尾标签没开头的（收尾之前的都算思考）
+ * 没有标签的一律不猜——不按「列出」「1.」「禁令」这类词去切，免得把剧情当成思考吃掉。
+ */
 export function splitBoxThinking(contentRaw: unknown, reasoningRaw: unknown): { content: string; thinking: string } {
   const src = messageText(contentRaw);
   const blocks: string[] = [];
-  const rest = src.replace(/<(think|thinking|thought)>([\s\S]*?)<\/\1>/gi, (_all, _tag, body) => {
+  // 1. 配对标签（开标签可带属性：<think type="x">）
+  let rest = src.replace(new RegExp(`<${THINK_TAG}\\b[^>]*>([\\s\\S]*?)<\\/${THINK_TAG}\\s*>`, 'gi'), (_all, body) => {
     const text = String(body || '').trim();
     if (text) blocks.push(text);
     return '';
   });
-  const open = rest.match(/<(?:think|thinking|thought)>([\s\S]*)$/i);
-  const content = rest.replace(/<(?:think|thinking|thought)>[\s\S]*$/i, '').trim();
+  // 2. 只有开标签没收尾：标签之后的全算思考
+  const open = rest.match(new RegExp(`<${THINK_TAG}\\b[^>]*>([\\s\\S]*)$`, 'i'));
+  if (open && open.index != null) rest = rest.slice(0, open.index).trim();
+  // 3. 只有收尾标签没开头：收尾之前、从上一次切口到这儿的，全算思考
+  let content = rest;
+  const closeAt = rest.search(new RegExp(`<\\/${THINK_TAG}\\s*>`, 'i'));
+  if (closeAt >= 0) {
+    const head = rest.slice(0, closeAt).trim();
+    if (head) blocks.push(head);
+    content = rest.slice(closeAt).replace(new RegExp(`<\\/${THINK_TAG}\\s*>`, 'gi'), '').trim();
+  }
   const thinking = [messageText(reasoningRaw).trim(), ...blocks, open?.[1]?.trim() || ''].filter(Boolean).join('\n\n').trim();
-  return { content, thinking };
+  return { content: content.trim(), thinking };
 }
 
 /**

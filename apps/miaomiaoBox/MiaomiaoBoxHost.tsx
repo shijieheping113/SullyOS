@@ -1,13 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  ArrowsClockwise, ArrowsCounterClockwise, CaretLeft, Clock, CopySimple, DownloadSimple, GearSix, House, Moon, PaperPlaneTilt, PencilSimple, Plus, SpeakerHigh, Sun, Trash,
+  ArrowsClockwise, ArrowsCounterClockwise, CaretLeft, Clock, CopySimple, DotsThree, DownloadSimple, GearSix, House, Moon, PaperPlaneTilt, PencilSimple, Plus, SpeakerHigh, Sun, Trash,
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { AppID } from '../../types';
 import { useMiaomiaoBox } from '../../context/MiaomiaoBoxContext';
 import { MiaomiaoBoxCat } from './MiaomiaoBoxCat';
 import HtmlCard from '../../components/chat/HtmlCard';
-import { MIAOMIAO_BIG_FOLD_DEFAULT, MIAOMIAO_FOLD_KEEP_DEFAULT, MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoStarter } from './types';
+import { MIAOMIAO_BIG_FOLD_DEFAULT, MIAOMIAO_FOLD_KEEP_DEFAULT, MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoSettings, type MiaomiaoStarter } from './types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { countUnfoldedRounds, relocateSummaries } from './foldSession';
 import { splitIntoBubbles } from './speakQuoted';
@@ -62,6 +62,158 @@ function RuleFields({ title, body, onCommit }: { title: string; body: string; on
       <div className="ti" style={{ marginTop: 6 }}>正文</div>
       <textarea ref={bodyRef} className="tarea" value={b} onChange={e => { setB(e.target.value); fitTextarea(e.target, 72); }} />
     </div>
+  );
+}
+
+/**
+ * 盒内小组件：先落在本地，失焦（或这份设置被卸载）时才把改动交出去。
+ * 直接受控怼 saveSettings 等于每敲一个字写一次库，打字快过落库就会掉字。
+ * 归属角色跟着挂载那一次走：卸载补存时如果人已经换到别的盒子，字就不写过去。
+ */
+function DraftField({
+  value, ownerId, onCommit, multiline, className, style, placeholder, autoGrow,
+}: {
+  value: string;
+  ownerId?: string;
+  onCommit: (v: string, ownerId?: string) => void;
+  multiline?: boolean;
+  className?: string;
+  style?: React.CSSProperties;
+  placeholder?: string;
+  autoGrow?: number;
+}) {
+  const [local, setLocal] = useState(value);
+  const localRef = useRef(local);
+  const committedRef = useRef(value);
+  const focusedRef = useRef(false);
+  const elRef = useRef<HTMLTextAreaElement | null>(null);
+  // 只认挂载这一次拿到的回调与归属，卸载补存不会打到别人头上。
+  const commitRef = useRef(onCommit);
+  const ownerRef = useRef(ownerId);
+  localRef.current = local;
+
+  useEffect(() => {
+    if (autoGrow == null) return;
+    fitTextarea(elRef.current, autoGrow);
+  }, [local, autoGrow]);
+
+  // 外部值变了（切角色、重开设置）：框不在焦点上就同步回本地。
+  useEffect(() => {
+    if (focusedRef.current) return;
+    if (value === localRef.current) return;
+    localRef.current = value;
+    committedRef.current = value;
+    setLocal(value);
+  }, [value]);
+
+  const flush = () => {
+    if (localRef.current === committedRef.current) return;
+    committedRef.current = localRef.current;
+    commitRef.current(localRef.current, ownerRef.current);
+  };
+
+  // 打完直接关盒子、切页、切角色：还有没交出去的改动，补存一次。
+  useEffect(() => () => flush(), []);
+
+  const onFocus = () => { focusedRef.current = true; };
+  const onBlur = () => { focusedRef.current = false; flush(); };
+
+  if (multiline) {
+    return (
+      <textarea
+        ref={elRef}
+        className={className}
+        style={style}
+        placeholder={placeholder}
+        value={local}
+        onChange={e => setLocal(e.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
+      />
+    );
+  }
+  return (
+    <input
+      className={className}
+      style={style}
+      placeholder={placeholder}
+      value={local}
+      onChange={e => setLocal(e.target.value)}
+      onFocus={onFocus}
+      onBlur={onBlur}
+    />
+  );
+}
+
+/**
+ * 数字框：输入时先留在本地（否则打「-」会被当成非法值弹回去），
+ * 失焦或卸载时才夹进范围交出去；空着或打成乱码就退回上一次的值。
+ */
+function NumberField({
+  value, min, max, step, ownerId, onCommit,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  ownerId?: string;
+  onCommit: (v: number, ownerId?: string) => void;
+}) {
+  const [local, setLocal] = useState(String(value));
+  const localRef = useRef(local);
+  const committedRef = useRef(value);
+  const focusedRef = useRef(false);
+  const commitRef = useRef(onCommit);
+  const ownerRef = useRef(ownerId);
+  localRef.current = local;
+
+  useEffect(() => {
+    if (focusedRef.current) return;
+    if (value === committedRef.current) return;
+    committedRef.current = value;
+    localRef.current = String(value);
+    setLocal(String(value));
+  }, [value]);
+
+  const clampParsed = (): number | null => {
+    const raw = localRef.current.trim();
+    const n = Number(raw);
+    if (raw === '' || !Number.isFinite(n)) return null;
+    return Math.min(max, Math.max(min, n));
+  };
+
+  const flush = () => {
+    const n = clampParsed();
+    if (n == null) {
+      setLocal(String(committedRef.current));
+      return;
+    }
+    setLocal(String(n));
+    if (n === committedRef.current) return;
+    committedRef.current = n;
+    commitRef.current(n, ownerRef.current);
+  };
+
+  // 卸载时半截输入（空、乱码）直接丢掉；已经成型但没失焦的，补存一次。
+  useEffect(() => () => {
+    const n = clampParsed();
+    if (n == null || n === committedRef.current) return;
+    committedRef.current = n;
+    commitRef.current(n, ownerRef.current);
+  }, []);
+
+  return (
+    <input
+      className="tinput"
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={local}
+      onChange={e => setLocal(e.target.value)}
+      onFocus={() => { focusedRef.current = true; }}
+      onBlur={() => { focusedRef.current = false; flush(); }}
+    />
   );
 }
 
@@ -136,6 +288,8 @@ const POS_KEY = 'miaomiao-box-pos';
 const MiaomiaoBoxHost: React.FC = () => {
   const os = useOS();
   const box = useMiaomiaoBox();
+  const boxRef = useRef(box);
+  boxRef.current = box;
   const [draft, setDraft] = useState('');
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const [sheet, setSheet] = useState(false);
@@ -172,11 +326,19 @@ const MiaomiaoBoxHost: React.FC = () => {
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const holdTimer = useRef<number | null>(null);
+  // 按住那一刻手指落在哪。用来判断「手指是不是真的滑走了」——
+  // 手机手指按下去本来就会抖一两像素，没有这个基准就分不清「抖」和「滑」。
+  const holdStart = useRef({ x: 0, y: 0 });
   const [lpPos, setLpPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [openAnim, setOpenAnim] = useState(false);
   const [rerollOpen, setRerollOpen] = useState(false);
   const [readId, setReadId] = useState<string | null>(null);
-  const lpOpenedAt = useRef(0);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // 长按之后浏览器还会补发一下「点击」，那一下要整笔吞掉：
+  // 不然松手会顺势关掉菜单，也会顺势把语音泡点成播放。
+  const suppressClick = useRef(false);
+  // 手指落下的位置（换算成盒子内的坐标），菜单以它当锚点摆。
+  const lpAnchor = useRef({ x: 0, y: 0 });
   const [themeEdit, setThemeEdit] = useState(false);
   const [themeDraft, setThemeDraft] = useState('');
   const themeHold = useRef<number | null>(null);
@@ -195,20 +357,88 @@ const MiaomiaoBoxHost: React.FC = () => {
   const showWidget = box.shell === 'widget';
   const hasShow = !!(box.session && (box.session.status === 'playing' || box.session.status === 'paused') && box.messages.length > 0);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
+  const pinningRef = useRef(false);
   const pinTimer = useRef<number | null>(null);
+  const pinObserver = useRef<ResizeObserver | null>(null);
+  const pinRaf = useRef<number | null>(null);
+  const pinRelease = useRef<number | null>(null);
 
-  // 卡片 iframe 是加载完才撑高的，撑高会把最新那条顶下去。所以贴底不是一次性的，
-  // 要在一小段时间里持续追。用户自己往上翻（stickToBottom=false）就立刻停手。
-  const chaseBottom = (ms: number) => {
+  const stopChase = () => {
+    pinningRef.current = false;
+    if (pinTimer.current) {
+      window.clearInterval(pinTimer.current);
+      pinTimer.current = null;
+    }
+    if (pinObserver.current) {
+      pinObserver.current.disconnect();
+      pinObserver.current = null;
+    }
+    if (pinRaf.current) {
+      window.cancelAnimationFrame(pinRaf.current);
+      pinRaf.current = null;
+    }
+    if (pinRelease.current) {
+      window.cancelAnimationFrame(pinRelease.current);
+      pinRelease.current = null;
+    }
+  };
+
+  const pinToEnd = () => {
     const el = stageRef.current;
-    if (!el) return;
-    if (pinTimer.current) window.clearInterval(pinTimer.current);
-    const pin = () => { if (stickToBottom.current) el.scrollTop = el.scrollHeight; };
-    pin();
-    let left = ms;
+    if (!el || !stickToBottom.current) {
+      if (!stickToBottom.current) stopChase();
+      return;
+    }
+    pinningRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    if (pinRelease.current) window.cancelAnimationFrame(pinRelease.current);
+    pinRelease.current = window.requestAnimationFrame(() => {
+      pinRelease.current = null;
+      pinningRef.current = false;
+    });
+  };
+
+  // 程序追底时 onScroll 不许关掉贴底。内容变高用 ResizeObserver 跟着走，定时只是短保险。
+  const chaseBottom = (retryIfEmpty = true) => {
+    const el = stageRef.current;
+    if (!el) {
+      if (!retryIfEmpty) return;
+      if (pinRaf.current) window.cancelAnimationFrame(pinRaf.current);
+      pinRaf.current = window.requestAnimationFrame(() => {
+        pinRaf.current = null;
+        chaseBottom(false);
+      });
+      return;
+    }
+    if (pinTimer.current) {
+      window.clearInterval(pinTimer.current);
+      pinTimer.current = null;
+    }
+    if (pinObserver.current) {
+      pinObserver.current.disconnect();
+      pinObserver.current = null;
+    }
+    pinToEnd();
+    if (!stickToBottom.current) return;
+    const watched = listRef.current || el;
+    const observer = new ResizeObserver(() => {
+      if (!stickToBottom.current) {
+        stopChase();
+        return;
+      }
+      pinToEnd();
+    });
+    observer.observe(watched);
+    pinObserver.current = observer;
+    let left = 4000;
     pinTimer.current = window.setInterval(() => {
-      pin();
+      if (!stickToBottom.current) {
+        stopChase();
+        return;
+      }
+      pinToEnd();
       left -= 120;
       if (left <= 0 && pinTimer.current) {
         window.clearInterval(pinTimer.current);
@@ -217,27 +447,105 @@ const MiaomiaoBoxHost: React.FC = () => {
     }, 120);
   };
 
-  // 进对话页：直接落到最新一条，不用自己往下滑。
-  useEffect(() => {
+  // 进对话、换一场、或从小窗点开回浮窗：画出来之前先钉在最底，避免首帧停在半截。
+  // showFloat 也要看进来：缩成小窗时对话区整个被拿掉、点开才重新画出来，
+  // 而那一下 page 和这一场都没变，光靠原来两个依赖这段根本不会重跑，
+  // 新画出来的对话区就停在最上面（这就是「小窗点开停在旧地方」的根）。
+  useLayoutEffect(() => {
+    if (box.page !== 'play' || !showFloat) {
+      stopChase();
+      return;
+    }
     stickToBottom.current = true;
-    chaseBottom(1500);
-  }, [box.page, box.session?.id]);
+    const el = stageRef.current;
+    if (el) {
+      pinningRef.current = true;
+      el.scrollTop = el.scrollHeight;
+    }
+    chaseBottom();
+    return () => stopChase();
+  }, [box.page, box.session?.id, showFloat]);
 
-  // 新消息、出字、思维链、盒内总结提醒：只要还贴着底就继续跟着走；往上翻了就不抢。
+  // 新消息、出字、思维链、盒内总结提醒：还贴着底才跟；往上翻了就不抢。
   useEffect(() => {
-    if (box.page !== 'play') return;
-    chaseBottom(1200);
+    if (box.page !== 'play' || !stickToBottom.current) return;
+    chaseBottom();
   }, [box.messages, box.liveText, box.liveThinking, box.typing, box.foldNote, box.foldBusy, box.page]);
 
-  useEffect(() => () => {
-    if (pinTimer.current) window.clearInterval(pinTimer.current);
-  }, []);
+  useEffect(() => () => stopChase(), []);
   useEffect(() => {
     if (!showFloat || !hasShow) return;
     setOpenAnim(true);
     const t = window.setTimeout(() => setOpenAnim(false), 700);
     return () => window.clearTimeout(t);
   }, [showFloat, hasShow]);
+
+  // ⚠️ 下面这几个 hook 必须留在这句提前 return 之前。
+  // 盒子没开时（showFloat / showWidget 都为假）会从下面直接 return，
+  // hook 要是写在 return 后面，盒子关着就少走几个、一开就多出几个，
+  // 前后两次 render 的 hook 数量对不上，React 会把整棵子树炸掉——盒子就打不开了。
+
+  // 把屏幕上的手指位置换算成盒子里的坐标。
+  const toBoxPoint = (clientX: number, clientY: number) => {
+    const r = floatRef.current?.getBoundingClientRect();
+    return { x: clientX - (r?.left || 0), y: clientY - (r?.top || 0) };
+  };
+
+  // 菜单量出真实宽高之后再摆位：手指上方放不下就翻到下方，左右都收在盒子边里。
+  // （原来这里按写死的「宽 220」算，而语音那排五个按钮实际约 320，右端会被盒子裁掉。）
+  const placeMenu = () => {
+    const el = menuRef.current;
+    const boxEl = floatRef.current;
+    if (!el || !boxEl) return;
+    const br = boxEl.getBoundingClientRect();
+    const a = lpAnchor.current;
+    const pad = 8;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let x = a.x;
+    let y = a.y - h - 10;
+    if (x + w > br.width - pad) x = br.width - w - pad;
+    if (x < pad) x = pad;
+    if (y < pad) y = a.y + 22;
+    if (y + h > br.height - pad) y = Math.max(pad, br.height - h - pad);
+    setLpPos(prev => (prev.x === x && prev.y === y ? prev : { x, y }));
+  };
+
+  // 手指每按一下，都算新的一笔：把那面「吞掉下一次点击」的小旗子先放下。
+  // 长按是「按住不放」，中途不会再按下去，所以旗子能一直立到松手那一下。
+  useEffect(() => {
+    const reset = () => { suppressClick.current = false; };
+    document.addEventListener('pointerdown', reset, true);
+    return () => document.removeEventListener('pointerdown', reset, true);
+  }, []);
+
+  // 菜单开着时，手指一按到别处就关（按在菜单自己身上不算）。
+  // 听的是「按下去」而不是「点一下」：长按后松手补发的那下点击发生在菜单出来之前，
+  // 于是不会再把自己的菜单关掉（这就是「很容易误触关闭」的根）。
+  //
+  // 顺带要把「松手那一下点击」也吞掉：按下的时候菜单已经关了，手指抬起来
+  // 浏览器照样补发一记 click，它会落到菜单下面那条气泡上——语音泡一看
+  // lpId 已经空了（`lpId !== m.id`），就顺手播了。所以这里跟长按那条路一样，
+  // 立起「吞掉下一次点击」的小旗子，交给 .stage 的 onClickCapture 吃掉。
+  // （顺序没问题：放下旗子的常驻监听是本组件挂载时就注册的，比这个晚注册的关菜单监听先跑。）
+  useEffect(() => {
+    if (!lpId) return;
+    const onDown = (ev: PointerEvent) => {
+      const t = ev.target as Node | null;
+      if (menuRef.current && t && menuRef.current.contains(t)) return;
+      suppressClick.current = true;
+      setLpId(null);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [lpId]);
+
+  // 菜单刚挂上还没量过宽度，绘制前先量一次摆正（useLayoutEffect 在绘制前跑，看不见跳动）。
+  useLayoutEffect(() => {
+    if (lpId) placeMenu();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lpId]);
+
   if (!showFloat && !showWidget) return null;
 
   const sub = box.pendingStarter
@@ -290,28 +598,40 @@ const MiaomiaoBoxHost: React.FC = () => {
     if (!d.moved) box.expandFloat();
   };
 
+  // 画面卡右上角那个「⋯」走这里：拿点击的位置当锚点，开同一张菜单。
+  const openMenuAt = (id: string, clientX: number, clientY: number) => {
+    lpAnchor.current = toBoxPoint(clientX, clientY);
+    if (holdTimer.current) window.clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+    setLpId(id);
+  };
+
   const startHold = (id: string, e?: React.PointerEvent) => {
     if (e) {
-      const boxEl = floatRef.current;
-      const r = boxEl ? boxEl.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-      const pad = 8;
-      const menuH = 40;
-      let x = e.clientX - r.left;
-      let y = (e.clientY - r.top) - menuH - 10;
-      if (x + 220 > r.width - pad) x = Math.max(pad, r.width - 220 - pad);
-      if (x < pad) x = pad;
-      if (y < pad) y = Math.min(r.height - menuH - pad, (e.clientY - r.top) + 22);
-      setLpPos({ x, y });
+      lpAnchor.current = toBoxPoint(e.clientX, e.clientY);
+      holdStart.current = { x: e.clientX, y: e.clientY };
     }
     if (holdTimer.current) window.clearTimeout(holdTimer.current);
     holdTimer.current = window.setTimeout(() => {
-      lpOpenedAt.current = Date.now();
+      holdTimer.current = null;
+      // 这一笔已经算「长按过了」：浏览器随后补发的那下点击要整笔吞掉，
+      // 免得松手顺手关掉菜单、或把语音泡点成播放。
+      suppressClick.current = true;
       setLpId(id);
     }, 420);
   };
   const cancelHold = () => {
     if (holdTimer.current) window.clearTimeout(holdTimer.current);
     holdTimer.current = null;
+  };
+  // 只有「真的滑走」才取消长按：气泡上以前是任何一点 pointermove 就取消，
+  // 手指按下去抖一两个像素菜单就出不来。给个 10 像素容差，跟私聊那处一致。
+  // 反过来，手指是往下滑列表的，滑超容差就取消——不能让滚动把菜单滚出来。
+  const holdMove = (e: React.PointerEvent) => {
+    if (!holdTimer.current) return;
+    const dx = Math.abs(e.clientX - holdStart.current.x);
+    const dy = Math.abs(e.clientY - holdStart.current.y);
+    if (dx > 10 || dy > 10) cancelHold();
   };
 
   const onHomeLeft = () => {
@@ -324,7 +644,21 @@ const MiaomiaoBoxHost: React.FC = () => {
     else box.setPage('home');
   };
 
-  const justOpenedMenu = () => Date.now() - lpOpenedAt.current < 500;
+  // 设置项交出去时永远基于最新那份 settings 拼，别拿陈旧快照覆盖别的字段；
+  // 落款跟着输入框挂载时那一盒走，人换到别的盒子了也不把字记到别人头上。
+  const commitBoxSetting = (ownerId: string | undefined, patch: Record<string, unknown>) => {
+    const st = boxRef.current.settings;
+    if (!ownerId || (st && st.charId === ownerId)) {
+      if (!st) return;
+      void boxRef.current.saveSettings({ ...st, ...patch } as MiaomiaoSettings);
+      return;
+    }
+    // 这是上一个盒子没交完的字：直接补回它自己那一格，当下界面的设置一点不动。
+    void (async () => {
+      const own = await MiaomiaoBoxDB.getSettings(ownerId);
+      await MiaomiaoBoxDB.saveSettings({ ...own, ...patch } as MiaomiaoSettings);
+    })();
+  };
   const others = box.liveSessions.filter(s => s.id !== box.session?.id && (s.status === 'playing' || s.status === 'paused'));
   const reading = box.historySessions.find(s => s.id === readId) || null;
 
@@ -447,11 +781,24 @@ const MiaomiaoBoxHost: React.FC = () => {
                 className="stage"
                 ref={stageRef}
                 onScroll={e => {
+                  if (pinningRef.current) return;
                   const el = e.currentTarget;
-                  stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+                  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+                  const wasNear = stickToBottom.current;
+                  stickToBottom.current = near;
+                  if (!near) stopChase();
+                  else if (!wasNear) chaseBottom();
                 }}
-                onClick={() => { if (justOpenedMenu()) return; setLpId(null); }}
+                onClickCapture={e => {
+                  // 长按松手后浏览器补发的那下点击：整笔吞掉，
+                  // 免得它顺手关掉刚开出来的菜单，或把语音泡点成播放。
+                  if (!suppressClick.current) return;
+                  suppressClick.current = false;
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
               >
+                <div className="stage-list" ref={listRef}>
                 {box.pendingStarter && <div className="daysep">新的一场 · {STARTER_LABEL[box.pendingStarter]}</div>}
                 {(box.pendingStarter ? [] : relocateSummaries(box.messages).messages.filter(m => !m.folded)).map(m => m.role === 'summary' ? (
                   editId === m.id ? (
@@ -469,7 +816,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                       onPointerDown={e => startHold(m.id, e)}
                       onPointerUp={cancelHold}
                       onPointerCancel={cancelHold}
-                      onPointerMove={cancelHold}
+                      onPointerMove={holdMove}
                     >
                       <div className="shd"><b>{m.summaryKind === 'big' ? '箱子里的大前情' : '箱子里的前情'}</b><span className="stag">自动总结 · 第 {m.summaryRange?.fromRound}–{m.summaryRange?.toRound} 轮</span></div>
                       <div className="sbd">{m.content}</div>
@@ -507,8 +854,8 @@ const MiaomiaoBoxHost: React.FC = () => {
                           onPointerDown={e => startHold(m.id, e)}
                           onPointerUp={cancelHold}
                           onPointerCancel={cancelHold}
-                          onPointerMove={cancelHold}
-                          onClick={() => { if (justOpenedMenu()) return; if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
+                          onPointerMove={holdMove}
+                          onClick={() => { if (row.kind === 'voice' && lpId !== m.id) void box.playBoxVoice(m.id); }}
                         >
                           <span className={row.kind === 'voice' ? 'voice-line' : 'narr-block'}>{renderBoxText(row.content)}</span>
                           {row.kind === 'voice' && (
@@ -536,7 +883,22 @@ const MiaomiaoBoxHost: React.FC = () => {
                           onPointerDown={e => { e.stopPropagation(); startHold(m.id, e); }}
                           onPointerUp={cancelHold}
                           onPointerCancel={cancelHold}
-                        ><HtmlCard wide allowScripts html={row.htmlSource} onOptionText={text => setDraft(prev => prev ? `${prev}${text}` : text)} /></div>
+                        >
+                          {/* 画面卡自己是一层独立小窗（iframe），手指按上去事件传不出来，
+                              长按永远开不了菜单。就在卡角放一个小「⋯」，点它开同一张菜单。 */}
+                          <button
+                            type="button"
+                            className="htmlmore"
+                            aria-label="画面卡操作"
+                            title="画面卡操作"
+                            onPointerDown={e => {
+                              e.stopPropagation();
+                              if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+                            }}
+                            onClick={e => { e.stopPropagation(); openMenuAt(m.id, e.clientX, e.clientY); }}
+                          ><DotsThree size={15} weight="bold" /></button>
+                          <HtmlCard wide allowScripts html={row.htmlSource} onOptionText={text => setDraft(prev => prev ? `${prev}${text}` : text)} />
+                        </div>
                       </>
                     )}
                   </React.Fragment>
@@ -562,6 +924,7 @@ const MiaomiaoBoxHost: React.FC = () => {
                     <button type="button" className="errx" aria-label="关掉这条报错" onClick={() => box.dismissError()}>×</button>
                   </div>
                 )}
+                </div>
               </div>
               <div className="minichips">
                 {STARTERS.map(id => {
@@ -668,18 +1031,14 @@ const MiaomiaoBoxHost: React.FC = () => {
                 ] as [string, 'temperature' | 'topP' | 'frequencyPenalty' | 'presencePenalty', number, number, number, number][]).map(([label, key, value, min, max, step]) => (
                   <label key={key} className="dlgfield">
                     <span>{label}</span>
-                    <input
-                      className="tinput"
-                      type="number"
+                    <NumberField
+                      key={`miao-num-${key}-${box.settings!.charId}`}
+                      value={value}
                       min={min}
                       max={max}
                       step={step}
-                      value={value}
-                      onChange={e => {
-                        const n = Number(e.target.value);
-                        if (!Number.isFinite(n)) return;
-                        box.saveSettings({ ...box.settings!, [key]: Math.min(max, Math.max(min, n)) });
-                      }}
+                      ownerId={box.settings!.charId}
+                      onCommit={(n, owner) => commitBoxSetting(owner, { [key]: n })}
                     />
                   </label>
                 ))}
@@ -698,11 +1057,14 @@ const MiaomiaoBoxHost: React.FC = () => {
                 {box.settings.thinking === true && (
                   <div className="dlgfield">
                     <span>思考方式（只在这一盒用）</span>
-                    <textarea
+                    <DraftField
+                      key={`miao-guide-${box.settings.charId}`}
+                      multiline
                       className="tarea"
-                      value={box.settings.thinkingGuide || ''}
                       placeholder="留空就不写思考引导。填了就只按这里写的来。"
-                      onChange={e => box.saveSettings({ ...box.settings!, thinkingGuide: e.target.value })}
+                      value={box.settings.thinkingGuide || ''}
+                      ownerId={box.settings.charId}
+                      onCommit={(v, owner) => commitBoxSetting(owner, { thinkingGuide: v })}
                     />
                     <span className="hintline">没填的时候，不另加思考步骤。填了才发给模型，只在这一盒生效。</span>
                   </div>
@@ -739,12 +1101,14 @@ const MiaomiaoBoxHost: React.FC = () => {
                   </div>
                 </div>
                 {box.settings.voiceQuoteStyle === 'custom' && (
-                  <input
+                  <DraftField
+                    key={`miao-quote-${box.settings.charId}`}
                     className="tinput"
                     style={{ marginTop: 8, width: '100%' }}
                     placeholder="自定义成对符号，比如 『』"
                     value={box.settings.voiceQuoteCustom || ''}
-                    onChange={e => box.saveSettings({ ...box.settings!, voiceQuoteCustom: e.target.value })}
+                    ownerId={box.settings.charId}
+                    onCommit={(v, owner) => commitBoxSetting(owner, { voiceQuoteCustom: v })}
                   />
                 )}
               </div>
@@ -823,10 +1187,10 @@ const MiaomiaoBoxHost: React.FC = () => {
             const isVoice = !isSummary && !isUser && !isHtml && (lpMsg?.kind === 'voice' || !!lpMsg?.voiceSourceText || /<[语語]音/.test(lpMsg?.content || '') || !lpMsg?.kind);
             return (
             <div
+              ref={menuRef}
               className="lpmenu fixed"
               style={{ left: lpPos.x, top: lpPos.y }}
               onClick={e => e.stopPropagation()}
-              onClickCapture={e => { if (justOpenedMenu()) { e.preventDefault(); e.stopPropagation(); } }}
             >
               {!isHtml && <button type="button" onClick={() => { if (lpMsg) { setEditId(lpMsg.id); setEditDraft(lpMsg.voiceSourceText || lpMsg.content); } setLpId(null); }}><PencilSimple size={15} />编辑</button>}
               {!isHtml && <button type="button" onClick={() => {

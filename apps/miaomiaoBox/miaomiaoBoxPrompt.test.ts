@@ -113,9 +113,19 @@ describe('buildMiaomiaoPlayPrompt 只带当前 TTS 的语气指导', () => {
     expect(p).toContain('最外层 div 必须写上 width:100% 和 min-height:160px');
   });
 
-  it('思考引导只认自定义，留空就不写', () => {
+  it('思考引导只认自定义，留空就不写；填了就套上「只准在思考里做」的框', () => {
     expect(buildBoxThinkingPrompt()).toBe('');
     expect(buildBoxThinkingPrompt('   ')).toBe('');
-    expect(buildBoxThinkingPrompt('先想猫的反应，再想她在哪')).toBe('先想猫的反应，再想她在哪');
+    const p = buildBoxThinkingPrompt('先想猫的反应，再想她在哪');
+    expect(p).toContain('先想猫的反应，再想她在哪');
+    expect(p).toContain('不写进正文');
+    expect(p).toContain('<think></think>');
+    expect(p).toContain('</think> 之后必须接着写本轮的剧情正文');
+    expect(p).toContain('正文里不许出现清单、小标题、分析');
+  });
+
+  it('禁止段里也钉一句：正文不许出现清单、小标题、分析', () => {
+    expect(BOX_TURN_BAN).toContain('正文里不许出现清单、小标题、分析句');
+    expect(BOX_TURN_BAN).toContain('正文只演这一轮发生的事');
   });
 });
