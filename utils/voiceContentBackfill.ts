@@ -1,9 +1,15 @@
 // 用户语音消息（STT）的正文回写工具。
 //
-// 背景：旧版把识别字包进 <语音>…</语音> 标记、或只存在本机原声资产里。语音壳会被
-// 展示/导出侧的清洗规则连字一起吃掉，存档导出后这段字就丢了。
-// 目标：识别字一律落成正文纯文本（原版导出/外部程序可读），界面仍由 metadata.stt
-// 记号 + 原声资产驱动成同一条语音气泡（见 MessageItem 的 hasUserSttMarker）。
+// 背景：用户说话后，识别字现在以 `<语音>…</语音>` 标签形态落进正文（与 AI 语音消息
+// 同一套标签），这样发给模型时模型能分出「这是条语音消息」，语气才对得上。
+// 早期版本把识别字写成纯文本、靠 metadata.stt 记号区分，但模型侧完全看不出语音，
+// 且同一份存档里两种写法并存。
+//
+// 为什么标签落进正文是安全的（已查证，非推测）：
+//   · 备份导出对消息 content 原样打包（utils/backupFormat.ts 分片写 stores/*.json，
+//     不对 content 做任何清洗）；全仓找不到剥 <语音> 标签的导出规则。
+//   · AI 语音消息本来就带 <语音> 标签存记录、走备份、从原版导入，一路正常。
+//   · 展示侧 MessageItem 用 hasVoiceTag 认标签渲染色条，与用户语音原路径一致。
 //
 // 只处理「用户消息」；AI 的 TTS 语音条（AI 消息 + 语音壳）一律不碰。
 
@@ -33,12 +39,38 @@ export function voiceShellInnerText(content?: string): string {
     return unclosed && unclosed[1] !== undefined ? unclosed[1].trim() : '';
 }
 
+/** 正文是否已经带着语音标签（已是目标形态，不用再包）。 */
+export function hasVoiceShell(content?: string): boolean {
+    return /<\s*[语語]音[^>]*>/.test(content || '');
+}
+
 /**
- * 计算回写后的正文（纯文本）。没有可写的字返回 null（不动这条消息）。
+ * 把识别字包成与 AI 语音同款的标签形态。
+ * 用户语音没有情绪属性（那是角色朗读才有的），所以只写裸 `<语音>`。
+ */
+export function wrapVoiceShell(text: string): string {
+    const inner = (text || '').trim();
+    if (!inner) return '';
+    if (hasVoiceShell(inner)) return inner;
+    return `<语音>${inner}</语音>`;
+}
+
+/**
+ * 计算回写后的正文。没有可写的字返回 null（不动这条消息）。
  * 资产里的字优先（应用维护的权威转写），壳里兜底（原声丢失时壳里的字也救回来）。
  */
 export function computeBackfillContent(input: { content?: string; assetText?: string | null }): string | null {
     const asset = (input.assetText || '').trim();
     if (asset) return asset;
     return voiceShellInnerText(input.content) || null;
+}
+
+/**
+ * 计算写回数据库的正文形态：识别字包进 <语音> 标签。
+ * 与 AI 语音消息同一套格式，模型侧不需要再区分两套写法。
+ */
+export function computeBackfillTaggedContent(input: { content?: string; assetText?: string | null }): string | null {
+    const plain = computeBackfillContent(input);
+    if (!plain) return null;
+    return wrapVoiceShell(plain);
 }

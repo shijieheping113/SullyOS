@@ -387,6 +387,51 @@
 .sully-voice-b .vb-read .vb-line-now { font-size: 14px; }
 .sully-voice-b .vb-read .vb-line-off { font-size: 12px; }
 .sully-voice-b .vb-read .vb-line-on { font-size: 13px; }
+/* 长按某句后浮在句尾的小控件：上下两个小三角 + 中间偏移数字。
+   故意不做外框/底板/阴影——贴着句尾一小片半透明，不遮正文、不抢视线。
+   点页面别处由 VoicePhoneB 的 pointerdown 捕获统一收起。 */
+.sully-voice-b .vb-line { position: relative; }
+.sully-voice-b .vb-speed {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  transform: translateY(-50%);
+  touch-action: manipulation;
+}
+.sully-voice-b .vb-speed-btn {
+  display: block;
+  width: 20px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(28, 28, 30, 0.55);
+  color: #fff;
+  font-size: 8px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sully-voice-b .vb-speed-btn:active { background: rgba(255, 255, 255, 0.35); }
+.sully-voice-b .vb-speed-btn:disabled { opacity: 0.28; cursor: default; }
+.sully-voice-b .vb-speed-num {
+  min-width: 20px;
+  height: 15px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
 .sully-voice-b .vb-tr {
   margin-top: 6px;
   font-size: 11px;
@@ -638,6 +683,26 @@
   color: #fff;
 }
 .sully-voice-b .vb-dock-mic.rec { background: #ff3b30; }
+/* 录音中绕按钮走一圈的进度圈：告诉用户「按住已经被认到了」，
+   不用等到松手才知道有没有录上。320ms 走满一圈，与长按阈值一致。 */
+.sully-voice-b .vb-dock-mic { position: relative; }
+.sully-voice-b .vb-dock-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-top-color: transparent;
+  border-right-color: transparent;
+  pointer-events: none;
+  animation: vbDockRing 320ms linear 1;
+}
+@keyframes vbDockRing {
+  from { transform: rotate(0deg); opacity: 0.95; }
+  to { transform: rotate(360deg); opacity: 0.2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sully-voice-b .vb-dock-ring { animation: none; opacity: 0.6; }
+}
 .sully-voice-b .vb-dock-hint {
   text-align: center;
   font-size: 11px;

@@ -311,6 +311,20 @@ const extractVoiceTag = (text: string): { display: string; speech: string; voice
   const display = text.replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '').trim();
   return { display, speech: voiceText, voiceText, emotion };
 };
+/** TTS 该念的正文：语音标签里优先，其次标签外正文。
+ *
+ *  ⚠️ 这是双语通话那句「听到的是译文」的病根：以前这里直接把整条 bubble.text 交给 TTS，
+ *  标签里的译文会被一起念出来。用户听到译文 → 点编辑只看到原文 → 重读念原文 →
+ *  一保存译文那半截被覆盖掉 → 只剩原文。治根办法是从这里开始就只喂「该念的那一半」，
+ *  译文永远不进入 TTS。 */
+const callSpeechSource = (text: string): string => {
+  const parsed = extractVoiceTag(text);
+  const tagged = (parsed.voiceText || '').trim();
+  if (tagged) return tagged;
+  const outside = (parsed.display || '').trim();
+  if (outside) return outside;
+  return (text || '').trim();
+};
 const splitTextForTts = (rawText: string, maxChunkLen = 120): string[] => {
   const normalized = rawText.replace(/\s+/g, ' ').trim();
   if (!normalized) return [];
@@ -2368,7 +2382,8 @@ ${sentencePlan}`;
     try {
       const voiceTag = extractVoiceTag(bubble.text);
       const { url, traceIds } = await takeOrSynthesizeCallAudio(
-        bubble.text,
+        // 只喂该念的那一半：译文不进 TTS（见 callSpeechSource）。
+        callSpeechSource(bubble.text),
         voiceTag.emotion || bubble.performance?.emotion,
         forceRegenerate,
       );
@@ -2588,7 +2603,7 @@ ${sentencePlan}`;
         let playbackStarted = false;
         if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
           try {
-            const { url } = await takeOrSynthesizeCallAudio(greetingText, greetingReply.speechEmotion);
+            const { url } = await takeOrSynthesizeCallAudio(callSpeechSource(greetingText), greetingReply.speechEmotion);
             if (url) {
               trackBlobUrl(url);
               setAudioUrl(url);
@@ -2910,7 +2925,7 @@ ${sentencePlan}`;
     }
     setGeneratingAudioBubbleId(assistantBubbleId);
     try {
-      const { url: finalUrl, traceIds } = await takeOrSynthesizeCallAudio(assistantText, turnSpeechEmotion);
+      const { url: finalUrl, traceIds } = await takeOrSynthesizeCallAudio(callSpeechSource(assistantText), turnSpeechEmotion);
       if (!finalUrl) throw new Error('未获得可播放音频');
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
@@ -2985,6 +3000,10 @@ ${sentencePlan}`;
     const reread = editAsReread && target.role === 'assistant';
     let stored = next;
     if (reread) {
+      // 只替换 <语音> 标签里的那半，标签外的原文照旧保留。
+      // （查证：译文本来就在标签外，这一步并没有丢它。真正让人听到译文、
+      //  重读变原文的病根在 TTS 喂了整条 bubble.text，已由 callSpeechSource 治根。
+      //  这里保持原样，不加额外改写逻辑。）
       const replaced = target.text.replace(/(<[语語]音[^>]*>)([\s\S]*?)(<\/\s*[语語]音\s*>)/, '$1' + next + '$3');
       if (replaced !== target.text) stored = replaced;
     }
@@ -3057,7 +3076,7 @@ ${sentencePlan}`;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
           setCallState('thinking');
-          const { url: rerollAudioUrl } = await takeOrSynthesizeCallAudio(rerolled, rerollReply.speechEmotion);
+          const { url: rerollAudioUrl } = await takeOrSynthesizeCallAudio(callSpeechSource(rerolled), rerollReply.speechEmotion);
           if (rerollAudioUrl) {
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
@@ -3133,7 +3152,7 @@ ${sentencePlan}`;
       let playbackStarted = false;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
-          const { url } = await takeOrSynthesizeCallAudio(reply.text, reply.speechEmotion);
+          const { url } = await takeOrSynthesizeCallAudio(callSpeechSource(reply.text), reply.speechEmotion);
           if (url) {
             trackBlobUrl(url);
             setAudioUrl(url);
@@ -3747,12 +3766,17 @@ ${sentencePlan}`;
     : { cn: '聆听中', en: 'LISTENING' };
   const latestCallBubble = bubbles[bubbles.length - 1];
   if (callMode === 'voice') {
+    // 状态词：合成中 / 合成好了但浏览器没放出来（自动播放被拦，等你点一下）/
+    // 正在播 / 放完了等你说话。**只换词，不动任何状态判断与播放逻辑。**
+    // ⚠️ 顺序要紧：合成期间 callState 就是 'thinking'，所以合成/待播两支必须排在
+    // 'thinking' 之前判，否则永远先命中「思考中」，「…在开口…」和「…等你开口」走不到。
     const voiceStatus =
-      displayCallState === 'speaking' ? '说话中'
+      displayCallState === 'speaking' ? '在说话'
+      : generatingAudioBubbleId ? '…在开口…'
+      : pendingAutoPlayRef.current ? '…等你开口'
       : displayCallState === 'thinking' ? '思考中'
       : displayCallState === 'connecting' ? '接通中'
       : displayCallState === 'error' ? '连接异常'
-      : generatingAudioBubbleId ? '思考中'
       : '听你说';
     return (
       <div className="h-full w-full relative overflow-hidden bg-[#1c1c1e]" data-avatar-touch-pending={pendingAvatarTouchCount} onPointerDown={flushPendingCallAudio}>

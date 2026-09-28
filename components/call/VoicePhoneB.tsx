@@ -11,6 +11,7 @@ import {
 } from '@phosphor-icons/react';
 import TokenImg from '../os/TokenImg';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from './AvatarTouchFeedback';
+import { resolveSpeakingLineIndex } from '../../utils/callSpeechTiming';
 import './voicePhoneB.css';
 
 export type VoicePhoneBubble = {
@@ -36,6 +37,27 @@ const SPARKLES = [
 ];
 const THEMES = ['ink', 'violet', 'day'];
 const THEME_KEY = 'sully-voice-b-theme';
+// 跟读偏移档位。**方向按「使用逻辑」定，不按「同向/反向」定**：
+//   · 字幕跑太快（声音还在上一句，高亮已经跳到下一句）→ 要把字幕**往后拖** → ▲ → 数字变**负**
+//   · 字幕跟不上（声音已经念下一句了，高亮还停在这句）→ 要把字幕**往前赶** → ▼ → 数字变**正**
+// 所以「负号＝太早、正号＝太晚」，看数字就知道该往哪边调。
+// 数值侧：正 offset = 进度往前推 = 字幕提前（resolveSpeakingLineIndex 里 p + offset）。
+// -6 ~ +6 共 13 档，0 是「按估算原样走」。存本机，刷新后还在。
+const SPEED_KEY = 'sully-voice-b-speed';
+const SPEED_MIN = -6;
+const SPEED_MAX = 6;
+// 每档挪 4% 播放进度 → 满档 ±24%。作用于「进度」而不是每句权重，
+// 之前错在拿它去缩放权重（所有句子同比缩放 = 位置不变 = 白调）。
+const SPEED_PER_STEP = 0.04;
+const readSpeedStep = () => {
+  try {
+    const n = Number(window.localStorage.getItem(SPEED_KEY));
+    if (Number.isFinite(n)) return Math.max(SPEED_MIN, Math.min(SPEED_MAX, Math.round(n)));
+  } catch (e) { /* ignore */ }
+  return 0;
+};
+/** 档位 → 进度偏移量。正数＝字幕提前，负数＝字幕拖后。 */
+const speedStepToOffset = (step: number) => step * SPEED_PER_STEP;
 const readTheme = () => {
   try {
     const t = window.localStorage.getItem(THEME_KEY) || '';
@@ -130,6 +152,58 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   const lingerLine = useRef<string | null>(null);
   const nameHold = useRef<number | null>(null);
   const didInitScroll = useRef(false);
+  // 跟读偏移档位：长按某一句 → 旁边浮出上下箭头，点箭头一档一档调。
+  const [speedStep, setSpeedStep] = useState(readSpeedStep);
+  const [tuningKey, setTuningKey] = useState<string | null>(null);
+  const speedOffset = speedStepToOffset(speedStep);
+  const setSpeed = (step: number) => {
+    const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, step));
+    setSpeedStep(next);
+    try { window.localStorage.setItem(SPEED_KEY, String(next)); } catch (e) { /* ignore */ }
+  };
+  // 长按某句开调速面板；不按、或按住滑走超过阈值，就当普通滚动处理。
+  const lineTuneTimer = useRef<number | null>(null);
+  const lineTuneX = useRef(0);
+  const lineTuneY = useRef(0);
+  const clearLineTune = () => {
+    if (lineTuneTimer.current) { window.clearTimeout(lineTuneTimer.current); lineTuneTimer.current = null; }
+  };
+  const lineTuneProps = (key: string) => ({
+    onPointerDown: (event: React.PointerEvent) => {
+      clearLineTune();
+      lineTuneX.current = event.clientX;
+      lineTuneY.current = event.clientY;
+      lineTuneTimer.current = window.setTimeout(() => {
+        lineTuneTimer.current = null;
+        setTuningKey(key);
+      }, 420);
+    },
+    onPointerMove: (event: React.PointerEvent) => {
+      if (!lineTuneTimer.current) return;
+      if (Math.hypot(event.clientX - lineTuneX.current, event.clientY - lineTuneY.current) > 10) clearLineTune();
+    },
+    onPointerUp: clearLineTune,
+    onPointerCancel: clearLineTune,
+    onPointerLeave: clearLineTune,
+  });
+  // 面板开着时：点页面别处（含点任意别的句子）立刻收起；页面一动也收起。
+  // 面板自己冒泡挡住，所以这里只处理「面板之外」的落点。
+  useEffect(() => {
+    if (!tuningKey) return;
+    const close = () => setTuningKey(null);
+    const onDown = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (target && target.closest && target.closest('.vb-speed')) return;
+      close();
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('pointerdown', onDown, true);
+      clearLineTune();
+    };
+  }, [tuningKey]);
 
   const bubbleLen = props.bubbles.length;
   const prevView = useRef(props.voiceView);
@@ -198,17 +272,9 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
     if (!useLines.length) return -1;
     if (!tracking) return useLines.length - 1;
-    let total = 0;
-    for (let i = 0; i < useLines.length; i++) total += useLines[i].length;
-    const target = tracking.p * total;
-    let acc = 0;
-    let activeIdx = 0;
-    for (let i = 0; i < useLines.length; i++) {
-      acc += useLines[i].length;
-      activeIdx = i;
-      if (target < acc) break;
-    }
-    return activeIdx;
+    // 按每句的预计念多久定位（标点停顿 + 拉丁词音节），再叠加用户的字幕偏移。
+    // 旧实现按字数占比算，真实 TTS 时长和字数不成正比，字幕推进就会忽快忽慢。
+    return resolveSpeakingLineIndex(useLines, tracking.p, speedOffset);
   };
 
   const bubbleLines = (bubble: VoicePhoneBubble) => {
@@ -319,6 +385,33 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     if (el) centerLogLine(el, true);
   }, [props.voiceView, followKey]);
 
+  // 长按某句后浮在旁边的小控件：上下两个小三角 + 中间偏移数字。
+  // ▲＝字幕往后拖（它跑太快了，就往回拉），▼＝字幕往前赶（它跟不上，就往前送）。
+  // 所以 ▲ 数字变负、▼ 数字变正 —— 和「快→负、慢→正」的使用逻辑一致：
+  // 看数字就知道该往哪边调，负号＝太早、正号＝太晚。
+  // 没有外框，只用半透明小片贴在这句话末尾，不遮正文。
+  const speedTuner = (key: string) => (
+    tuningKey === key ? (
+      <div className="vb-speed" onPointerDown={(event) => { event.stopPropagation(); }}>
+        <button
+          type="button"
+          className="vb-speed-btn"
+          aria-label="字幕往后拖一点"
+          disabled={speedStep <= SPEED_MIN}
+          onClick={(event) => { event.stopPropagation(); setSpeed(speedStep - 1); }}
+        ><span aria-hidden="true">▲</span></button>
+        <span className="vb-speed-num" title="负数＝字幕太早，往正数调；正数＝字幕太晚，往负数调">{speedStep > 0 ? '+' + speedStep : speedStep}</span>
+        <button
+          type="button"
+          className="vb-speed-btn"
+          aria-label="字幕往前赶一点"
+          disabled={speedStep >= SPEED_MAX}
+          onClick={(event) => { event.stopPropagation(); setSpeed(speedStep + 1); }}
+        ><span aria-hidden="true">▼</span></button>
+      </div>
+    ) : null
+  );
+
   const renderKeysAi = (bubble: VoicePhoneBubble, index: number) => {
     const { clean, useLines } = bubbleLines(bubble);
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
@@ -339,8 +432,10 @@ const VoicePhoneB: React.FC<Props> = (props) => {
               data-k-line={key}
               data-k-now={kind === 'now' ? '1' : undefined}
               className={'vb-line vb-line-' + kind + (kind === 'now' ? ' sully-speaking-line' : '')}
+              {...lineTuneProps(key)}
             >
               {props.renderLine(line)}
+              {speedTuner(key)}
             </div>
           );
         })}
@@ -363,9 +458,11 @@ const VoicePhoneB: React.FC<Props> = (props) => {
         )}
         {useLines.map((line, i) => {
           const kind = activeIdx < 0 ? 'on' : (i === activeIdx ? 'now' : (i < activeIdx ? 'old' : 'off'));
+          const key = bubble.id + ':' + i;
           return (
-            <div key={i} className={'vb-line vb-line-' + kind + (kind === 'now' ? ' sully-speaking-line' : '')}>
+            <div key={i} className={'vb-line vb-line-' + kind + (kind === 'now' ? ' sully-speaking-line' : '')} {...lineTuneProps(key)}>
               {props.renderLine(line)}
+              {speedTuner(key)}
             </div>
           );
         })}
@@ -694,8 +791,24 @@ const VoicePhoneB: React.FC<Props> = (props) => {
                       props.onCancelStt();
                     }
                   }}
+                  // 手指按住时滑出按钮、或系统把这次触摸判成取消，原来只有
+                  // pointerup/cancel 两路，滑出去那次直接没人接手，录音就断了
+                  // （表现为「按半天录不上，要试几次」）。这两路补上后按着不松就能录完。
+                  onPointerLeave={() => {
+                    if (dockTimer.current) {
+                      window.clearTimeout(dockTimer.current);
+                      dockTimer.current = null;
+                    }
+                    // pointerleave 后浏览器仍会补 pointerup，但只在按钮外抬手时可能不到；
+                    // 这里不结束录音，只清掉「还没到 320ms 的误触」计时，录音照常在跑。
+                  }}
+                  onContextMenu={(event) => {
+                    // 长按会先弹系统菜单，onPointerCancel 会被提前打断；这里兜住。
+                    event.preventDefault();
+                  }}
                 >
                   <Microphone size={22} weight="fill" />
+                  {props.isListening ? <span className="vb-dock-ring" aria-hidden="true" /> : null}
                 </button>
               </>
             )}
