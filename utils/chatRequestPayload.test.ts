@@ -37,6 +37,22 @@ const baseInput = (): BuildChatPayloadInput => ({
 const joinMessages = (messages: Array<{ content: any }>): string =>
     messages.map(m => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n');
 
+it('本地仅节假日感知可独立注入一句，云端生成不烤进本地提醒', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 8, 27, 12));
+    const input = baseInput();
+    input.realtimeConfig = { ...realtimeConfig, weatherEnabled: false, newsEnabled: false, userHolidays: { enabled: true, countryCode: 'CN' } };
+    const reminder = '小明所在地中国 2026-09-27 为中秋节公共假期，实际休息与否以小明自己的日程和说明为准。';
+    vi.spyOn(RealtimeContextManager, 'getUserHoliday').mockResolvedValue(reminder);
+    const local = await buildChatRequestPayload(input);
+    expect(joinMessages(local.fullMessages)).toContain(reminder);
+    expect(RealtimeContextManager.getUserHoliday).toHaveBeenCalledWith(input.realtimeConfig, '小明');
+    const disabled = await buildChatRequestPayload({ ...input, char: { ...input.char, timeAwarenessEnabled: false } });
+    expect(joinMessages(disabled.fullMessages)).not.toContain(reminder);
+    const cloud = await buildChatRequestPayload({ ...input, timelyByWorker: true });
+    expect(joinMessages(cloud.fullMessages)).not.toContain(reminder);
+    vi.useRealTimers();
+});
+
 it('keeps this request history when the archive waterline advances during async prompt construction', async () => {
     const input = baseInput();
     input.char = { ...input.char, autoArchiveEnabled: true, contextRangeMode: 'adaptive' };
@@ -335,4 +351,29 @@ it('ChatApp user modules explicitly identify the pending messages without changi
     expect(request?.content).toContain(JSON.stringify(input.historyMsgs.map(({ id, content }) => ({ id, content }))));
     const other = await buildChatRequestPayload(input);
     expect(joinMessages(other.fullMessages)).not.toContain('USER_SURFACE 的聊天专用格式');
+});
+
+it('聊天深度世界书由消息层插入，公共上下文兜底不会再重复一份', async () => {
+    const input = baseInput();
+    input.char.mountedWorldbooks = [{ id: 'depth-test', title: '深度测试', content: 'UNIQUE_DEPTH_BOOK', constant: true, position: 4, depth: 0, role: 0 }];
+    const payload = await buildChatRequestPayload(input);
+    expect(joinMessages(payload.fullMessages).split('UNIQUE_DEPTH_BOOK')).toHaveLength(2);
+    expect(payload.fullMessages[0].content).not.toContain('UNIQUE_DEPTH_BOOK');
+});
+
+it('单串提示词消费者也从同一管线拿到深度世界书', async () => {
+    const input = baseInput();
+    input.char.mountedWorldbooks = [{ id: 'text-depth', title: '单串深度', content: 'TEXT_ONLY_DEPTH_BOOK', constant: true, position: 4 }];
+    const result = await ChatPrompts.buildSystemPrompt(input.char, input.userProfile, [], [], [], input.historyMsgs);
+    expect(result.split('TEXT_ONLY_DEPTH_BOOK')).toHaveLength(2);
+});
+
+it('文本入口误传 history 时仍保留深度世界书，不丢弃移交后的消息', async () => {
+    const input = baseInput();
+    input.char.mountedWorldbooks = [{ id: 'text-depth', title: '单串深度', content: 'TEXT_ONLY_DEPTH_BOOK', constant: true, position: 4 }];
+    const result = await ChatPrompts.buildSystemPrompt(
+        input.char, input.userProfile, [], [], [], input.historyMsgs,
+        undefined, undefined, undefined, undefined, undefined, { history: [] },
+    );
+    expect(result.split('TEXT_ONLY_DEPTH_BOOK')).toHaveLength(2);
 });

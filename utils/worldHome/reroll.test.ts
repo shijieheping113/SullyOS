@@ -20,6 +20,28 @@ const episode = (id: string): WorldEpisode => ({ id: id + '-ep', worldId: id, ro
     summary: '旧梗概', beats: [beat()], relationshipsBefore: [{ fromId: 'a', toId: 'b', value: 98, label: '朋友' }] });
 
 describe('家园重演', () => {
+    it.each([0, 1, 3])('重演保留私信和群聊位置，新消息数量 %s，支持连续重演', async (count) => {
+        const w = world(`reroll-order-${count}`), ep = episode(w.id);
+        const a = { ...beat(), phone: { dms: [{ to: '乙', lines: ['旧一', '旧二'] }], group: ['旧一', '旧二'] } };
+        const b = { ...beat('乙的回复'), charId: 'b', charName: '乙', phone: { dms: [{ to: '甲', lines: ['乙的回复'] }], group: ['乙的回复'] } };
+        ep.beats = [a, b];
+        applyBeatToThreads(w, { ...a, phone: { dms: [{ to: '乙', lines: ['历史消息'] }], group: ['历史消息'] } }, members, 0, '前一轮');
+        applyBeatToThreads(w, a, members, 1, ep.storyTime);
+        applyBeatToThreads(w, b, members, 1, ep.storyTime);
+        const replies = w.threads!.map(t => t.messages[t.messages.length - 1]);
+        await DB.saveWorld(w); await DB.saveWorldEpisode(ep);
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const lines = Array.from({ length: count }, (_, i) => `新消息-${attempt}-${i}`);
+            vi.mocked(safeFetchJson).mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ narrative: '新剧情', location: '家', mood: '开心', phone: { dms: [{ to: '乙', lines }], group: lines } }) } }] });
+            const result = await rerollWorldCharBeat({ world: w, characters: members as any, apiConfig: { baseUrl: 'https://test.invalid', model: 'test' } as any, userProfile: { name: '我' } as any, groups: [], trigger: 'observe', episodeId: ep.id, charId: 'a' });
+            expect(result.ok).toBe(true);
+            const saved = (await DB.getWorld(w.id))!;
+            for (const [index, thread] of saved.threads!.entries()) {
+                expect(thread.messages.map(m => m.text)).toEqual(['历史消息', ...lines, '乙的回复']);
+                expect(thread.messages[thread.messages.length - 1]).toEqual(replies[index]);
+            }
+        }
+    });
     it('恢复饱和前数值和原标签，重复重演不累计，保留其他角色消息及伏笔', () => {
         const w = world('rollback'), ep = episode(w.id);
         applyBeatToThreads(w, beat(), members, 1, ep.storyTime);
@@ -65,13 +87,22 @@ describe('家园重演', () => {
         expect((await DB.getWorldEpisodes(w.id))[0].beats[0].narrative).toBe('旧剧情');
         expect((await DB.getMessagesByCharId('a', true)).some(m => (m.metadata as any)?.worldId === w.id)).toBe(false);
     });
-    it('完整重演替换私信、关系、伏笔，并以数据库最新世界为准', async () => {
-        const w = world('reroll'), ep = episode(w.id);
-        applyBeatToThreads(w, beat(), members, 1, ep.storyTime);
+    it.each([true, false])('完整重演保存剧情、私信、关系、伏笔（已有剧情：%s）', async (hadBeat) => {
+        const w = world(`reroll-${hadBeat}`), ep = episode(w.id);
+        if (hadBeat) applyBeatToThreads(w, beat(), members, 1, ep.storyTime);
+        else {
+            ep.beats = [];
+            ep.failedCharIds = ['a'];
+            w.relationships = ep.relationshipsBefore!.map(r => ({ ...r }));
+        }
         await DB.saveWorld(w); await DB.saveWorldEpisode(ep);
         vi.mocked(safeFetchJson).mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ narrative: '新剧情', location: '家', mood: '开心', phone: { dms: [{ to: '乙', lines: ['新私信'] }] }, secrets: [{ text: '新伏笔' }], relationships: [{ with: '乙', delta: -3, relabel: '新标签' }] }) } }] });
         const result = await rerollWorldCharBeat({ world: { ...w, relationships: [] }, characters: members as any, apiConfig: { baseUrl: 'https://test.invalid', model: 'test' } as any, userProfile: { name: '我' } as any, groups: [], trigger: 'observe', episodeId: ep.id, charId: 'a' });
         expect(result.ok).toBe(true);
+        const savedEpisode = (await DB.getWorldEpisodes(w.id))[0];
+        expect(savedEpisode.beats).toHaveLength(1);
+        expect(savedEpisode.beats[0].narrative).toBe('新剧情');
+        expect(savedEpisode.failedCharIds).toBeUndefined();
         const saved = (await DB.getWorld(w.id))!;
         expect(saved.threads!.flatMap(t => t.messages).map(m => m.text)).toEqual(['新私信']);
         expect(saved.relationships[0]).toMatchObject({ value: 95, label: '新标签' });

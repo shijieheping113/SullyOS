@@ -3,7 +3,7 @@
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2.6.0-next.28_@neondatabase+serverless@1.1.0_pg@8.22.0/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_e6f2312f5e9a7bcdb7f479ab757e7745/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -563,12 +563,12 @@ async function sendWebPush({ subscription, payload, vapid, ttl, fetch: fetchImpl
   });
   if (!res.ok) {
     const text = await safeReadText(res);
-    const err5 = new Error(
+    const err6 = new Error(
       `Web Push delivery failed: ${res.status} ${res.statusText || ""}${text ? ` \u2014 ${text}` : ""}`
     );
-    err5.code = "PUSH_SEND_FAILED";
-    err5.statusCode = res.status;
-    throw err5;
+    err6.code = "PUSH_SEND_FAILED";
+    err6.statusCode = res.status;
+    throw err6;
   }
   return {
     statusCode: res.status,
@@ -1107,12 +1107,12 @@ function assertValidDecision(decision, options = {}) {
   if (!decision || typeof decision !== "object") {
     throw new TypeError(`onLLMOutput returned invalid decision: ${stringifyDecisionForError(decision)}`);
   }
-  const tag = (
+  const tag2 = (
     /** @type {{ decision?: unknown }} */
     decision.decision
   );
-  if (typeof tag !== "string" || !VALID_DECISIONS.has(tag)) {
-    throw new TypeError(`onLLMOutput returned invalid decision tag: ${stringifyDecisionForError(tag)}`);
+  if (typeof tag2 !== "string" || !VALID_DECISIONS.has(tag2)) {
+    throw new TypeError(`onLLMOutput returned invalid decision tag: ${stringifyDecisionForError(tag2)}`);
   }
   const hasSingular = Object.prototype.hasOwnProperty.call(decision, "pushPayload");
   const hasPlural = Object.prototype.hasOwnProperty.call(decision, "pushPayloads");
@@ -1121,7 +1121,7 @@ function assertValidDecision(decision, options = {}) {
       hasPlural ? "pushPayload (singular) is removed in 0.8.0, use pushPayloads" : "pushPayload (singular) is removed in 0.8.0, use pushPayloads: [yourPayload]"
     );
   }
-  if (tag === "continue") {
+  if (tag2 === "continue") {
     if (!Array.isArray(
       /** @type {{ nextHistory?: unknown }} */
       decision.nextHistory
@@ -1130,10 +1130,10 @@ function assertValidDecision(decision, options = {}) {
     }
     return;
   }
-  if (tag === "skip-push") {
+  if (tag2 === "skip-push") {
     return;
   }
-  if (tag === "tool-request" && inlineToolCalls && Object.prototype.hasOwnProperty.call(decision, "toolCalls")) {
+  if (tag2 === "tool-request" && inlineToolCalls && Object.prototype.hasOwnProperty.call(decision, "toolCalls")) {
     const toolCalls = (
       /** @type {{ toolCalls?: unknown }} */
       decision.toolCalls
@@ -1153,7 +1153,7 @@ function assertValidDecision(decision, options = {}) {
     /** @type {{ pushPayloads?: unknown }} */
     decision.pushPayloads
   )) {
-    throw new TypeError(`decision:"${tag}" requires a pushPayloads array`);
+    throw new TypeError(`decision:"${tag2}" requires a pushPayloads array`);
   }
   const pushes = (
     /** @type {Array<unknown>} */
@@ -1215,7 +1215,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2.6.0-next.28_@neondatabase+serverless@1.1.0_pg@8.22.0/node_modules/@rei-standard/amsg-server/dist/chunk-YBBXKK7U.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_e6f2312f5e9a7bcdb7f479ab757e7745/node_modules/@rei-standard/amsg-server/dist/chunk-VBDBORLR.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -1568,9 +1568,9 @@ function validateSplitPattern(value) {
   return null;
 }
 function validateLlmMessagesArray(messages) {
-  const err5 = validateLlmMessagesShape(messages);
-  if (!err5) return null;
-  const { code, index: i, toolCallIndex: j } = err5;
+  const err6 = validateLlmMessagesShape(messages);
+  if (!err6) return null;
+  const { code, index: i, toolCallIndex: j } = err6;
   switch (code) {
     case "MESSAGES_NOT_ARRAY":
       return "messages must be a non-empty array";
@@ -1683,10 +1683,10 @@ function validateScheduleMessagePayload(payload) {
       };
     }
     if (hasMessages) {
-      const err5 = validateLlmMessagesArray(payload.messages);
-      if (err5) {
+      const err6 = validateLlmMessagesArray(payload.messages);
+      if (err6) {
         return {
-          error: { code: "INVALID_PARAMETERS", message: err5, details: { invalidFields: ["messages"] } },
+          error: { code: "INVALID_PARAMETERS", message: err6, details: { invalidFields: ["messages"] } },
           hasCompletePrompt: false,
           hasMessages: true
         };
@@ -1952,13 +1952,13 @@ async function sendWebPush2(args) {
   if (typeof payload === "string") {
     const size = measurePushPayload(payload);
     if (!size.withinLimit) {
-      const err5 = new Error(
+      const err6 = new Error(
         `sendWebPush: payload is ${size.bytes} bytes, over the ${MAX_PUSH_PAYLOAD_BYTES}-byte limit (push services cap the encrypted body at ${WEB_PUSH_MAX_BODY_BYTES} bytes; aes128gcm adds ${WEB_PUSH_ENCRYPTION_OVERHEAD_BYTES} bytes)`
       );
-      err5.code = "PUSH_PAYLOAD_TOO_LARGE";
-      err5.bytes = size.bytes;
-      err5.maxBytes = MAX_PUSH_PAYLOAD_BYTES;
-      throw err5;
+      err6.code = "PUSH_PAYLOAD_TOO_LARGE";
+      err6.bytes = size.bytes;
+      err6.maxBytes = MAX_PUSH_PAYLOAD_BYTES;
+      throw err6;
     }
   }
   return sendWebPush(args);
@@ -2026,6 +2026,10 @@ function isTaskCancelledError(error) {
   return !!error && typeof error === "object" && /** @type {any} */
   error.code === TASK_CANCELLED_CODE;
 }
+function markUnrecoverablePartialDelivery(error, { outboxed, pushedCount }) {
+  if (outboxed || !(pushedCount > 0) || isTaskCancelledError(error)) return error;
+  return markPermanent(error);
+}
 var TERMINAL_PUSH_STATUSES = /* @__PURE__ */ new Set([404, 410]);
 var PUSH_PAYLOAD_TOO_LARGE_STATUS = 413;
 var PERMANENT_ERROR_CODES = /* @__PURE__ */ new Set([
@@ -2033,6 +2037,19 @@ var PERMANENT_ERROR_CODES = /* @__PURE__ */ new Set([
   "PUSH_SUBSCRIPTION_STORE_UNSUPPORTED",
   "PUSH_PAYLOAD_TOO_LARGE"
 ]);
+var LLM_CALL_FAILED_CODE = "LLM_CALL_FAILED";
+var PERMANENT_LLM_STATUSES = /* @__PURE__ */ new Set([400, 401, 402, 403, 404, 405, 413, 422]);
+function isPermanentLlmFailure(error) {
+  if (!error || typeof error !== "object") return false;
+  const { code, llmStatus } = (
+    /** @type {any} */
+    error
+  );
+  return code === LLM_CALL_FAILED_CODE && Number.isInteger(llmStatus) && PERMANENT_LLM_STATUSES.has(llmStatus);
+}
+function markPermanentIfLlmRejected(error) {
+  return isPermanentLlmFailure(error) ? markPermanent(error) : error;
+}
 function isPermanentDeliveryFailure(failure) {
   const { permanent, errorCode, pushStatus } = failure || {};
   return permanent === true || typeof errorCode === "string" && PERMANENT_ERROR_CODES.has(errorCode) || Number.isInteger(pushStatus) && (TERMINAL_PUSH_STATUSES.has(
@@ -2107,12 +2124,20 @@ function isUniqueViolation(error) {
   const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
   return message.includes("duplicate key") || message.includes("unique constraint");
 }
+async function callLlm2(payload, options) {
+  try {
+    return await callLlm(payload, options);
+  } catch (error) {
+    throw markPermanentIfLlmRejected(error);
+  }
+}
 var STATE_CHUNK_SLICE_BYTES = 200 * 1024;
 var DEFAULT_MAX_STATE_VALUE_BYTES = 5 * 1024 * 1024;
 var INTERNAL_STATE_CHAR_RE = /[\u0000-\u001f]/;
 var SEP = "";
 var CHUNK_NS_PREFIX = `${SEP}amsg-chunks${SEP}`;
 var ROOT_MARKER_PREFIX = `${SEP}amsg-chunked${SEP}v1${SEP}`;
+var CHUNK_NAMESPACE_PREFIX = CHUNK_NS_PREFIX;
 function chunkNamespaceFor(namespace) {
   return CHUNK_NS_PREFIX + namespace;
 }
@@ -2428,42 +2453,90 @@ async function discardUndeliveredPushesForTask({ db, userId, taskUuid }) {
     return;
   }
   if (typeof db.listUnackedOutbox !== "function" || typeof db.discardOutboxMessages !== "function") return;
-  const messageIds = [];
-  let exhausted = false;
+  let scan;
   try {
-    let cursor = 0;
-    let scanned = 0;
-    while (scanned < OUTBOX_SCAN_MAX_ROWS) {
-      const rows = await db.listUnackedOutbox(userId, cursor, OUTBOX_SCAN_PAGE_SIZE);
-      if (!rows || rows.length === 0) {
-        exhausted = true;
-        break;
-      }
-      scanned += rows.length;
-      let nextCursor = cursor;
-      for (const row of rows) {
-        if (row.id > nextCursor) nextCursor = row.id;
-        if (row.task_uuid !== taskUuid) continue;
-        if (row.delivered_at != null) continue;
-        messageIds.push(row.message_id);
-      }
-      if (nextCursor <= cursor) break;
-      cursor = nextCursor;
-      if (rows.length < OUTBOX_SCAN_PAGE_SIZE) {
-        exhausted = true;
-        break;
-      }
-    }
+    scan = await scanUnackedOutboxForTask(db, userId, taskUuid);
   } catch (error) {
     console.warn("[amsg-server] outbox \u67E5\u672A\u6295\u9012\u7684\u884C\u5931\u8D25\uFF08\u5DF2\u5FFD\u7565\uFF09:", error && error.message);
     return;
   }
-  if (!exhausted) {
+  if (!scan.exhausted) {
     console.warn(
       `[amsg-server] outbox \u626B\u63CF\u5230 ${OUTBOX_SCAN_MAX_ROWS} \u884C\u4E0A\u9650\u4ECD\u672A\u626B\u5B8C\uFF0C\u4EFB\u52A1 ${taskUuid} \u53EF\u80FD\u8FD8\u6709\u672A\u6295\u9012\u7684\u884C\u6CA1\u64A4\u6389\uFF08\u88AB\u53D6\u6D88\u4EFB\u52A1\u7684\u884C\u901A\u5E38\u662F\u6700\u65B0\u7684\uFF0C\u6B63\u597D\u5728\u4E0A\u9650\u4E4B\u5916\uFF09\u3002\u7ED9\u9002\u914D\u5668\u5B9E\u73B0 discardUndeliveredOutboxForTask \u53EF\u7ED5\u5F00\u8FD9\u4E2A\u4E0A\u9650\u3002`
     );
   }
-  await discardPushesFromOutbox({ db, userId, messageIds });
+  await discardPushesFromOutbox({
+    db,
+    userId,
+    // 已经推出去的那几条不动（见上）。
+    messageIds: scan.rows.filter((row) => row.delivered_at == null).map((row) => row.message_id)
+  });
+}
+async function scanUnackedOutboxForTask(db, userId, taskUuid) {
+  const rows = [];
+  let exhausted = false;
+  let cursor = 0;
+  let scanned = 0;
+  while (scanned < OUTBOX_SCAN_MAX_ROWS) {
+    const page = await db.listUnackedOutbox(userId, cursor, OUTBOX_SCAN_PAGE_SIZE);
+    if (!page || page.length === 0) {
+      exhausted = true;
+      break;
+    }
+    scanned += page.length;
+    let nextCursor = cursor;
+    for (const row of page) {
+      if (row.id > nextCursor) nextCursor = row.id;
+      if (row.task_uuid === taskUuid) rows.push(row);
+    }
+    if (nextCursor <= cursor) break;
+    cursor = nextCursor;
+    if (page.length < OUTBOX_SCAN_PAGE_SIZE) {
+      exhausted = true;
+      break;
+    }
+  }
+  return { rows, exhausted };
+}
+var COMMITTED_BATCH_LOOKBACK_MS = 60 * 60 * 1e3;
+var COMMITTED_BATCH_MAX_ROWS = 500;
+async function findCommittedBatch({ db, userId, userKey, taskUuid, occurrenceMs, now = Date.now() }) {
+  if (!db || !taskUuid || !Number.isFinite(occurrenceMs)) return null;
+  let rows;
+  try {
+    rows = await listOutboxRowsForTask(db, userId, taskUuid, Math.min(occurrenceMs, now) - COMMITTED_BATCH_LOOKBACK_MS);
+  } catch (error) {
+    console.warn("[amsg-server] \u67E5\u8FD9\u6B21\u89E6\u53D1\u843D\u5B9A\u7684\u6279\u6B21\u5931\u8D25\uFF08\u6309\u6CA1\u6709\u5904\u7406\uFF0C\u8FD9\u4E00\u8DF3\u4F1A\u91CD\u65B0\u751F\u6210\uFF09:", error && error.message);
+    return null;
+  }
+  if (!rows || rows.length === 0) return null;
+  const entries = [];
+  for (const row of rows) {
+    if (row.total_messages == null) continue;
+    let push;
+    try {
+      push = JSON.parse(await decryptFromStorage(row.payload, userKey));
+    } catch (_decryptError) {
+      continue;
+    }
+    if (!push || typeof push !== "object") continue;
+    if (push.taskUuid !== taskUuid || push.occurrenceMs !== occurrenceMs) continue;
+    if (push.messageKind === "result") continue;
+    entries.push({ push, delivered: row.delivered_at != null, acked: row.acked_at != null });
+  }
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => (a.push.messageIndex ?? 0) - (b.push.messageIndex ?? 0));
+  return { entries };
+}
+async function listOutboxRowsForTask(db, userId, taskUuid, sinceMs) {
+  if (typeof db.listOutboxForTask === "function") {
+    return db.listOutboxForTask(userId, taskUuid, { sinceMs, limit: COMMITTED_BATCH_MAX_ROWS });
+  }
+  if (typeof db.listUnackedOutbox === "function") {
+    const { rows } = await scanUnackedOutboxForTask(db, userId, taskUuid);
+    return rows.filter((row) => !(Number(row.created_at) < sinceMs));
+  }
+  return null;
 }
 function shouldSendPush(push, { outboxed }) {
   if (!outboxed) return true;
@@ -3011,7 +3084,17 @@ async function runAgenticFire({ task, decryptedPayload, userKey, ctx }) {
     now: new Date(nowFn()),
     scratch
   });
-  const progress = { sentCount: 0, pushedCount: 0, total: 0, iterations: 0, skipReason: null, usage: null };
+  const progress = {
+    sentCount: 0,
+    pushedCount: 0,
+    total: 0,
+    iterations: 0,
+    skipReason: null,
+    usage: null,
+    usageTotal: null,
+    llmCalls: 0,
+    outboxed: false
+  };
   let settledStatus = "failed";
   let settledError = null;
   try {
@@ -3060,6 +3143,13 @@ async function runAgenticFire({ task, decryptedPayload, userKey, ctx }) {
       // 最后一轮 LLM 响应的 usage（prompt/completion tokens；没跑到 LLM →
       // null）。宿主拿它更新用量记账，不用从 llmResponse 里自己扒。
       usage: progress.usage,
+      // 整次 fire 的用量：所有轮次的 token 相加、实际发了几次 LLM 请求（失败
+      // 的那次也算）。失败结局一样带——「失败也花了钱」宿主要记得上。
+      usageTotal: progress.usageTotal,
+      llmCalls: progress.llmCalls,
+      // finish 的整批已经落进 outbox 了吗。true 时客户端补收一定拿得到全部
+      // total 段，推送没发完的那部分库会在重试时补推、不会重新生成。
+      outboxed: progress.outboxed,
       scratch,
       readState,
       writeState,
@@ -3118,7 +3208,8 @@ async function runFireChain({
     }
     progress.iterations = iteration + 1;
     const roundTimeoutMs = Math.max(1, Math.min(3e5, deadline - nowFn()));
-    const { response: llmResponse } = await callLlm(
+    progress.llmCalls++;
+    const { response: llmResponse } = await callLlm2(
       {
         ...decryptedPayload,
         ...chatCred || {},
@@ -3130,6 +3221,7 @@ async function runFireChain({
     const assistantMessage = extractAssistantMessage(llmResponse);
     messages = [...messages, assistantMessage];
     progress.usage = llmResponse && typeof llmResponse === "object" && llmResponse.usage || null;
+    progress.usageTotal = accumulateUsage(progress.usageTotal, progress.usage);
     const sessionCtx = Object.freeze({
       ...buildSessionContext({
         sessionId,
@@ -3273,19 +3365,21 @@ async function sendHookPushPayloads({
   let sentCount = 0;
   let pushedCount = 0;
   progress.total = total;
-  const afterSendBase = { task, total, scratch, readState, writeState, emitResult, usage: progress.usage };
+  const afterSendBase = {
+    task,
+    total,
+    scratch,
+    readState,
+    writeState,
+    emitResult,
+    usage: progress.usage,
+    usageTotal: progress.usageTotal,
+    llmCalls: progress.llmCalls
+  };
   const sentIds = [];
   const finalized = [];
+  let outboxed = false;
   try {
-    if (!ctx.vapid || !ctx.vapid.email || !ctx.vapid.publicKey || !ctx.vapid.privateKey) {
-      throw new Error("VAPID configuration missing - push notifications cannot be sent");
-    }
-    const pushSubscription = await resolvePushSubscription({
-      db: ctx.db,
-      userId: task.user_id,
-      userKey,
-      legacyFallback: (decryptedPayload && decryptedPayload.pushSubscription) ?? null
-    });
     for (let i = 0; i < total; i++) {
       const push = { ...pushPayloads[i] };
       if (typeof push.messageId !== "string" || !push.messageId) push.messageId = `${messageIdBase}_hook_${i}`;
@@ -3296,7 +3390,17 @@ async function sendHookPushPayloads({
       stampTaskIdentity(push, task, decryptedPayload, occurrenceMs);
       finalized.push(push);
     }
-    const outboxed = await appendPushesToOutbox({ db: ctx.db, userId: task.user_id, userKey, pushes: finalized });
+    outboxed = await appendPushesToOutbox({ db: ctx.db, userId: task.user_id, userKey, pushes: finalized });
+    progress.outboxed = outboxed;
+    if (!ctx.vapid || !ctx.vapid.email || !ctx.vapid.publicKey || !ctx.vapid.privateKey) {
+      throw new Error("VAPID configuration missing - push notifications cannot be sent");
+    }
+    const pushSubscription = await resolvePushSubscription({
+      db: ctx.db,
+      userId: task.user_id,
+      userKey,
+      legacyFallback: (decryptedPayload && decryptedPayload.pushSubscription) ?? null
+    });
     const pushGate = { outboxed };
     const willPush = finalized.map((push) => shouldSendPush(push, pushGate));
     const lastPushIndex = willPush.lastIndexOf(true);
@@ -3312,6 +3416,7 @@ async function sendHookPushPayloads({
       if (willPush[i] && i < lastPushIndex) await sleep2(SLEEP_BETWEEN_MESSAGES_MS);
     }
   } catch (error) {
+    markUnrecoverablePartialDelivery(error, { outboxed, pushedCount });
     await markPushesDelivered({ db: ctx.db, userId: task.user_id, messageIds: sentIds });
     if (isTaskCancelledError(error)) {
       await discardUndeliveredPushes({
@@ -3321,12 +3426,40 @@ async function sendHookPushPayloads({
         sentIds
       });
     }
-    await notifyAfterSend(ctx, { ...afterSendBase, sentCount, pushedCount, error });
+    await notifyAfterSend(ctx, { ...afterSendBase, sentCount, pushedCount, outboxed, error });
     throw error;
   }
   await markPushesDelivered({ db: ctx.db, userId: task.user_id, messageIds: sentIds });
-  await notifyAfterSend(ctx, { ...afterSendBase, sentCount, pushedCount, error: null });
+  await notifyAfterSend(ctx, { ...afterSendBase, sentCount, pushedCount, outboxed, error: null });
   return total;
+}
+function accumulateUsage(total, usage) {
+  if (!usage || typeof usage !== "object") return total;
+  const prompt = readTokenCount(usage, ["prompt_tokens", "input_tokens"]);
+  const completion = readTokenCount(usage, ["completion_tokens", "output_tokens"]);
+  let totalTokens = readTokenCount(usage, ["total_tokens"]);
+  if (totalTokens === null && prompt !== null && completion !== null) totalTokens = prompt + completion;
+  if (prompt === null && completion === null && totalTokens === null) return total;
+  const base = total || { prompt_tokens: null, completion_tokens: null, total_tokens: null };
+  return {
+    prompt_tokens: addTokenCount(base.prompt_tokens, prompt),
+    completion_tokens: addTokenCount(base.completion_tokens, completion),
+    total_tokens: addTokenCount(base.total_tokens, totalTokens)
+  };
+}
+function readTokenCount(usage, keys) {
+  for (const key of keys) {
+    const value = (
+      /** @type {Record<string, unknown>} */
+      usage[key]
+    );
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  }
+  return null;
+}
+function addTokenCount(sum, value) {
+  if (value === null) return sum;
+  return (sum ?? 0) + value;
 }
 var DEFAULT_SPLIT_REGEX = /([。！？!?]+)/;
 var SLEEP_BETWEEN_MESSAGES_MS2 = 1500;
@@ -3443,7 +3576,41 @@ function positiveIntegerOr(value, fallback) {
     value
   ) : fallback;
 }
-async function processSingleMessage(task, ctx, providedMasterKey, predecrypted = null) {
+async function redeliverCommittedBatch(task, ctx, userKey, decryptedPayload, batch) {
+  const pending = batch.entries.filter((entry) => !entry.delivered && !entry.acked && shouldSendPush(entry.push, { outboxed: true })).map((entry) => entry.push);
+  const messagesSent = batch.entries.length;
+  if (pending.length === 0) {
+    return { success: true, messagesSent, redelivered: true, pushedCount: 0 };
+  }
+  if (!ctx.vapid || !ctx.vapid.email || !ctx.vapid.publicKey || !ctx.vapid.privateKey) {
+    throw new Error("VAPID configuration missing - push notifications cannot be sent");
+  }
+  const pushSubscription = await resolvePushSubscription({
+    db: ctx.db,
+    userId: task.user_id,
+    userKey,
+    legacyFallback: decryptedPayload.pushSubscription ?? null
+  });
+  const sentIds = [];
+  let cancelled = false;
+  try {
+    for (let i = 0; i < pending.length; i++) {
+      await sendTaggedPush(ctx.webpush, pushSubscription, JSON.stringify(pending[i]));
+      sentIds.push(pending[i].messageId);
+      if (i < pending.length - 1) await sleepFor(ctx, SLEEP_BETWEEN_MESSAGES_MS2);
+    }
+  } catch (error) {
+    cancelled = isTaskCancelledError(error);
+    throw error;
+  } finally {
+    await markPushesDelivered({ db: ctx.db, userId: task.user_id, messageIds: sentIds });
+    if (cancelled) {
+      await discardUndeliveredPushes({ db: ctx.db, userId: task.user_id, pushes: pending, sentIds });
+    }
+  }
+  return { success: true, messagesSent, redelivered: true, pushedCount: sentIds.length };
+}
+async function processSingleMessage(task, ctx, providedMasterKey, predecrypted = null, options = {}) {
   try {
     const masterKey = providedMasterKey || ctx.masterKey;
     if (!masterKey) {
@@ -3451,6 +3618,17 @@ async function processSingleMessage(task, ctx, providedMasterKey, predecrypted =
     }
     const userKey = predecrypted && predecrypted.userKey || await deriveUserEncryptionKey(task.user_id, masterKey);
     const decryptedPayload = predecrypted && predecrypted.payload || JSON.parse(await decryptFromStorage(task.encrypted_payload, userKey));
+    const resumeCommittedBatch = options && typeof options.resumeCommittedBatch === "boolean" ? options.resumeCommittedBatch : (task.retry_count || 0) > 0;
+    if (resumeCommittedBatch) {
+      const committed = await findCommittedBatch({
+        db: ctx.db,
+        userId: task.user_id,
+        userKey,
+        taskUuid: task.uuid,
+        occurrenceMs: occurrenceMsOf(task)
+      });
+      if (committed) return await redeliverCommittedBatch(task, ctx, userKey, decryptedPayload, committed);
+    }
     if (ctx.hooks && typeof ctx.hooks.onBeforeFire === "function" && taskNeedsLlm(decryptedPayload)) {
       const agentic = await runAgenticFire({ task, decryptedPayload, userKey, ctx });
       if (agentic.handled) return agentic.result;
@@ -3464,7 +3642,7 @@ async function processSingleMessage(task, ctx, providedMasterKey, predecrypted =
       const hasChatSource = hasChatCredRef(decryptedPayload) || !!(decryptedPayload.apiUrl && decryptedPayload.apiKey && decryptedPayload.primaryModel);
       if (hasPrompt && hasChatSource) {
         const chatCred = await resolveFireCredentials({ db: ctx.db, userId: task.user_id, userKey, decryptedPayload });
-        const aiResult = await callLlm(chatCred ? { ...decryptedPayload, ...chatCred } : decryptedPayload);
+        const aiResult = await callLlm2(chatCred ? { ...decryptedPayload, ...chatCred } : decryptedPayload);
         messageContent = aiResult.content;
         llmResponse = aiResult.response;
       } else if (decryptedPayload.userMessage) {
@@ -3474,7 +3652,7 @@ async function processSingleMessage(task, ctx, providedMasterKey, predecrypted =
       }
     } else if (decryptedPayload.messageType === "prompted" || decryptedPayload.messageType === "auto") {
       const chatCred = await resolveFireCredentials({ db: ctx.db, userId: task.user_id, userKey, decryptedPayload });
-      const aiResult = await callLlm(chatCred ? { ...decryptedPayload, ...chatCred } : decryptedPayload);
+      const aiResult = await callLlm2(chatCred ? { ...decryptedPayload, ...chatCred } : decryptedPayload);
       messageContent = aiResult.content;
       llmResponse = aiResult.response;
     } else {
@@ -3485,15 +3663,6 @@ async function processSingleMessage(task, ctx, providedMasterKey, predecrypted =
       messageContent = stripReasoningTags(messageContent);
     }
     const messages = splitMessageIntoSentences(messageContent, decryptedPayload.splitPattern ?? null);
-    if (!ctx.vapid.email || !ctx.vapid.publicKey || !ctx.vapid.privateKey) {
-      throw new Error("VAPID configuration missing - push notifications cannot be sent");
-    }
-    const pushSubscription = await resolvePushSubscription({
-      db: ctx.db,
-      userId: task.user_id,
-      userKey,
-      legacyFallback: decryptedPayload.pushSubscription ?? null
-    });
     const sessionId = task.id != null ? `sess_task_${task.id}${occurrenceSuffix(task)}` : `sess_${randomUUID()}`;
     const source = decryptedPayload.messageType === "instant" ? "instant" : "scheduled";
     const messageSubtype = decryptedPayload.messageSubtype || "chat";
@@ -3540,6 +3709,15 @@ async function processSingleMessage(task, ctx, providedMasterKey, predecrypted =
     }
     const pushesToSend = reasoningPush ? [reasoningPush, ...contentPushes] : contentPushes;
     const outboxed = await appendPushesToOutbox({ db: ctx.db, userId: task.user_id, userKey, pushes: pushesToSend });
+    if (!ctx.vapid.email || !ctx.vapid.publicKey || !ctx.vapid.privateKey) {
+      throw new Error("VAPID configuration missing - push notifications cannot be sent");
+    }
+    const pushSubscription = await resolvePushSubscription({
+      db: ctx.db,
+      userId: task.user_id,
+      userKey,
+      legacyFallback: decryptedPayload.pushSubscription ?? null
+    });
     const pushGate = { outboxed };
     const contentToPush = contentPushes.filter((push) => shouldSendPush(push, pushGate));
     const sentIds = [];
@@ -3564,7 +3742,7 @@ async function processSingleMessage(task, ctx, providedMasterKey, predecrypted =
       }
     } catch (error) {
       cancelledMidBurst = isTaskCancelledError(error);
-      throw error;
+      throw markUnrecoverablePartialDelivery(error, { outboxed, pushedCount: sentIds.length });
     } finally {
       await markPushesDelivered({ db: ctx.db, userId: task.user_id, messageIds: sentIds });
       if (cancelledMidBurst) {
@@ -3619,7 +3797,9 @@ async function processMessagesByUuid(uuid, ctx, maxRetries = 2, userId, provided
     if (!task) {
       return { success: false, error: { code: "TASK_NOT_FOUND", message: "\u4EFB\u52A1\u4E0D\u5B58\u5728\u6216\u5DF2\u5904\u7406" } };
     }
-    const result = await processSingleMessage(task, ctx, masterKey);
+    const result = await processSingleMessage(task, ctx, masterKey, null, {
+      resumeCommittedBatch: retryCount > 0 || (task.retry_count || 0) > 0
+    });
     if (!result.success) {
       const permanent = isPermanentDeliveryFailure({
         permanent: result.permanent,
@@ -3942,6 +4122,7 @@ var CLAIM_LEASE_MARGIN_MS = 2 * 60 * 1e3;
 var DEFAULT_LEASE_HEARTBEAT_MS = 30 * 1e3;
 var DEFAULT_HEARTBEAT_LEASE_TTL_MS = 90 * 1e3;
 var STALE_AFTER_MS = 60 * 60 * 1e3;
+var DEFAULT_MAX_DELIVERY_RETRIES = 3;
 var adaptersWithoutLastErrorColumn = /* @__PURE__ */ new WeakSet();
 var lastErrorColumnSuspicions = /* @__PURE__ */ new WeakMap();
 var warnedAboutMissingLastErrorColumn = false;
@@ -3988,6 +4169,10 @@ function guardWebpushWithLease(webpush, lease) {
 }
 function resolveStaleAfterMs(ctx) {
   return positiveNumber(ctx.staleAfterMs) || STALE_AFTER_MS;
+}
+function resolveMaxDeliveryRetries(ctx) {
+  const value = ctx.maxDeliveryRetries;
+  return Number.isInteger(value) && value >= 0 ? value : DEFAULT_MAX_DELIVERY_RETRIES;
 }
 function isRecurringType(recurrenceType) {
   return recurrenceType === "daily" || recurrenceType === "weekly";
@@ -4058,6 +4243,7 @@ async function deliverTasks(ctx, tasks) {
   const masterKey = ctx.masterKey;
   const claimLeaseMs = resolveClaimLeaseMs(ctx);
   const staleAfterMs = resolveStaleAfterMs(ctx);
+  const maxDeliveryRetries = resolveMaxDeliveryRetries(ctx);
   const serializeBy = typeof ctx.serializeBy === "function" ? ctx.serializeBy : null;
   const heartbeatMs = ctx.leaseHeartbeatMs === 0 ? 0 : positiveNumber(ctx.leaseHeartbeatMs) || DEFAULT_LEASE_HEARTBEAT_MS;
   const heartbeatEnabled = heartbeatMs > 0 && typeof db.claimTask === "function" && typeof db.renewTaskLease === "function";
@@ -4075,6 +4261,7 @@ async function deliverTasks(ctx, tasks) {
     staleTasks: [],
     cancelledTasks: [],
     reasoningSkippedTasks: [],
+    redeliveredTasks: [],
     failedTasks: []
   };
   const groupsTakenThisTick = /* @__PURE__ */ new Set();
@@ -4249,7 +4436,7 @@ async function deliverTasks(ctx, tasks) {
     const permanent = isPermanentDeliveryFailure({ permanent: failure.permanent, errorCode, pushStatus });
     const errorExtra = buildErrorExtra(errorCode, pushStatus);
     try {
-      if (permanent || task.retry_count >= 3) {
+      if (permanent || task.retry_count >= maxDeliveryRetries) {
         const encrypted = await encryptPayloadWithLastError(task, decryptedPayload, userKey, reason, errorExtra);
         if (isRecurringType(recurrenceType)) {
           const nextSendAt = nextFutureOccurrence(Date.parse(task.next_send_at), recurrenceType, Date.now(), tzId);
@@ -4435,7 +4622,10 @@ async function deliverTasks(ctx, tasks) {
           isTaskCancelled: () => lease.lost
         },
         masterKey,
-        { userKey, payload: decryptedPayload }
+        { userKey, payload: decryptedPayload },
+        // 重试计数就记在这一列上：大于 0 说明这是同一次触发的重试，内容已经落
+        // 进 outbox 的话只补推送、不再生成（见 redeliverCommittedBatch）。
+        { resumeCommittedBatch: (task.retry_count || 0) > 0 }
       );
     } catch (error) {
       if (lease.lost) {
@@ -4466,6 +4656,9 @@ async function deliverTasks(ctx, tasks) {
         { errorCode: sendResult.errorCode || null, permanent: sendResult.permanent === true, pushStatus: sendResult.pushStatusCode }
       );
       return;
+    }
+    if (sendResult.redelivered) {
+      results.redeliveredTasks.push({ taskId: task.id, pushedCount: sendResult.pushedCount || 0 });
     }
     if (sendResult.reasoningError) {
       results.reasoningSkippedTasks.push({ taskId: task.id, reason: sendResult.reasoningError });
@@ -4548,6 +4741,10 @@ async function deliverTasks(ctx, tasks) {
       // 正文送到了、只有思考过程没发出去的任务（{ taskId, reason }）。这些任务
       // 照常计入 successCount——列在这里只是让「这次没有思考过程」看得见。
       reasoningSkippedTasks: results.reasoningSkippedTasks,
+      // 重试那一跳只补推送、没有重新生成的任务（{ taskId, pushedCount }）：上一跳
+      // 内容已经落进 outbox，只是推送没发完。照常计入 successCount。
+      // pushedCount 为 0 说明剩下的段客户端已经补收并 ack 了，这一跳什么都不用推。
+      redeliveredTasks: results.redeliveredTasks,
       failedTasks: results.failedTasks
     }
   };
@@ -5115,20 +5312,41 @@ function createLlmCredentialsHandler(ctx) {
     if (!isPlainObject(payload)) return err2(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
     const wantsAll = payload.all === true;
     const credIds = payload.credIds;
-    if (!wantsAll && (!Array.isArray(credIds) || credIds.length === 0)) {
-      return err2(400, "INVALID_PARAMETERS", "\u8981\u4E48 { all: true }\uFF0C\u8981\u4E48 credIds \u975E\u7A7A\u6570\u7EC4", { invalidFields: ["credIds"] });
+    const credIdPrefix = payload.credIdPrefix;
+    const given = [
+      wantsAll ? "all" : null,
+      credIds !== void 0 ? "credIds" : null,
+      credIdPrefix !== void 0 ? "credIdPrefix" : null
+    ].filter(Boolean);
+    if (given.length === 0) {
+      return err2(400, "INVALID_PARAMETERS", "\u8981\u4E48 { all: true }\uFF0C\u8981\u4E48 credIds \u975E\u7A7A\u6570\u7EC4\uFF0C\u8981\u4E48 credIdPrefix \u524D\u7F00", { invalidFields: ["credIds", "credIdPrefix"] });
     }
-    if (wantsAll && credIds !== void 0) {
-      return err2(400, "INVALID_PARAMETERS", "all \u4E0E credIds \u4E0D\u80FD\u540C\u65F6\u51FA\u73B0", { invalidFields: ["all", "credIds"] });
+    if (given.length > 1) {
+      return err2(400, "INVALID_PARAMETERS", `all / credIds / credIdPrefix \u4E00\u6B21\u53EA\u80FD\u7ED9\u4E00\u4E2A\uFF08\u8FD9\u6B21\u7ED9\u4E86 ${given.join(" + ")}\uFF09`, { invalidFields: given });
     }
-    if (!wantsAll) {
+    if (credIds !== void 0) {
+      if (!Array.isArray(credIds) || credIds.length === 0) {
+        return err2(400, "INVALID_PARAMETERS", "credIds \u5FC5\u987B\u662F\u975E\u7A7A\u6570\u7EC4", { invalidFields: ["credIds"] });
+      }
       for (let i = 0; i < credIds.length; i++) {
         if (!isValidCredId(credIds[i])) {
           return err2(400, "INVALID_PARAMETERS", `credIds[${i}] \u4E0D\u662F\u5408\u6CD5 cred_id`, { invalidFields: [`credIds[${i}]`] });
         }
       }
     }
+    if (credIdPrefix !== void 0) {
+      if (!isValidCredId(credIdPrefix)) {
+        return err2(400, "INVALID_PARAMETERS", `credIdPrefix \u5FC5\u987B\u662F 1\u2013${CRED_ID_MAX_LENGTH} \u5B57\u7B26\u3001\u4E0D\u542B\u63A7\u5236\u5B57\u7B26\u7684\u5B57\u7B26\u4E32\uFF08\u8981\u5168\u6E05\u7528 { all: true }\uFF09`, { invalidFields: ["credIdPrefix"] });
+      }
+    }
     if (!supportsLlmCredentialsStore(db)) return UNSUPPORTED2;
+    if (credIdPrefix !== void 0) {
+      if (typeof db.deleteLlmCredentialsByPrefix !== "function") {
+        return err2(501, "LLM_CREDENTIALS_PREFIX_DELETE_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301\u6309\u524D\u7F00\u5220\u9664\u51ED\u636E");
+      }
+      const deleted2 = await db.deleteLlmCredentialsByPrefix(userId, credIdPrefix);
+      return { status: 200, body: { success: true, data: { deleted: deleted2 } } };
+    }
     const deleted = await db.deleteLlmCredentials(userId, wantsAll ? null : [...new Set(credIds)]);
     return { status: 200, body: { success: true, data: { deleted } } };
   }
@@ -5969,6 +6187,108 @@ var D1Adapter = class {
     const res = await this._db.prepare("DELETE FROM client_state WHERE user_id = ?").bind(userId).run();
     return res.meta.changes || 0;
   }
+  /**
+   * 这个用户名下有哪些命名空间，各自几条、占多少字节、最后更新是什么时候
+   * （宿主对账「云端到底存了什么」用）。
+   *
+   * `foldPrefix` 传进来的是大值分块那个保留命名空间的前缀（见
+   * lib/state-chunks.js）：以它开头的行不单独成一个命名空间，而是折算进
+   * 去掉前缀之后的那个原命名空间——保留命名空间是库的存储实现细节，宿主眼里
+   * 那些切片行就是原命名空间占掉的地方。折算口径：
+   *   - `byte_size` / `updated_at` 算进去（存储确实占着、写入确实发生过）；
+   *   - `entry_count` 不算（切片是一个逻辑条目的几段，不是几个条目）。
+   * 不传 `foldPrefix` = 不折算，保留命名空间按普通命名空间原样列出来。
+   *
+   * 前缀由调用方传、不由适配器自己知道：分块是 lib 层的约定，适配器只照着折。
+   *
+   * 折算写在 SQL 里而不是取回来在 JS 里合，是因为有 `limit`：保留命名空间以
+   * \u001f 开头，BINARY 排序下排在所有正常命名空间前面，先取 limit 条再折算
+   * 的话额度会被切片命名空间吃光，正常命名空间一条都露不出来。
+   *
+   * `LENGTH(CAST(value AS BLOB))` 数的是字节不是字符——TEXT 上的 `LENGTH()`
+   * 按字符算，密文虽然是 ASCII 十六进制、两者相同，但换个存法就悄悄差一截。
+   *
+   * 这条语句要把该用户的 client_state 全扫一遍（GROUP BY 本来就得看每一行），
+   * 所以没为它单独加索引：它是宿主按需点开的对账口，不在 cron 路径上。别把它
+   * 塞进每分钟跑的东西里（理由见 adapters/schema.sqlite.js 的 CLIENT_STATE_INDEXES）。
+   *
+   * @param {string} userId
+   * @param {{ limit?: number, foldPrefix?: string|null }} [opts]
+   * @returns {Promise<Array<{ namespace: string, entry_count: number, byte_size: number, updated_at: number }>>}
+   *   按 namespace 升序，最多 `limit` 条。
+   */
+  async listClientStateNamespaces(userId, { limit = 200, foldPrefix = null } = {}) {
+    const stmt = foldPrefix ? this._db.prepare(
+      `SELECT
+           CASE WHEN substr(namespace, 1, ?) = ? THEN substr(namespace, ?) ELSE namespace END AS ns,
+           SUM(CASE WHEN substr(namespace, 1, ?) = ? THEN 0 ELSE 1 END) AS entry_count,
+           SUM(LENGTH(CAST(value AS BLOB))) AS byte_size,
+           MAX(updated_at) AS updated_at
+         FROM client_state
+         WHERE user_id = ?
+         GROUP BY ns
+         ORDER BY ns ASC
+         LIMIT ?`
+    ).bind(
+      foldPrefix.length,
+      foldPrefix,
+      foldPrefix.length + 1,
+      foldPrefix.length,
+      foldPrefix,
+      userId,
+      limit
+    ) : this._db.prepare(
+      `SELECT
+           namespace AS ns,
+           COUNT(*) AS entry_count,
+           SUM(LENGTH(CAST(value AS BLOB))) AS byte_size,
+           MAX(updated_at) AS updated_at
+         FROM client_state
+         WHERE user_id = ?
+         GROUP BY namespace
+         ORDER BY namespace ASC
+         LIMIT ?`
+    ).bind(userId, limit);
+    const res = await stmt.all();
+    return (res.results || []).map((row) => ({
+      namespace: row.ns,
+      entry_count: Number(row.entry_count || 0),
+      byte_size: Number(row.byte_size || 0),
+      updated_at: Number(row.updated_at || 0)
+    }));
+  }
+  /**
+   * 把这几个命名空间下这个用户的行一次删光（一次 batch = 一次事务）。
+   *
+   * 调用方传的是「原命名空间 + 它的切片保留命名空间」两个（见
+   * lib/state-chunks.js 的 chunkNamespaceFor）：只删前者的话，大值那几行切片
+   * 留在库里成孤儿——读不出来、也不会被别的路径清掉。哪些命名空间算一组由调
+   * 用方决定，适配器只负责它们在同一个事务里删完。
+   *
+   * 条件是 `user_id = ? AND namespace = ?`，吃的是主键
+   * (user_id, namespace, key) 的前两列，不扫表。
+   *
+   * @param {string} userId
+   * @param {string[]} namespaces
+   * @returns {Promise<number>} 删掉的行数合计（含切片行）
+   */
+  async deleteClientStateNamespaces(userId, namespaces) {
+    if (!namespaces || namespaces.length === 0) return 0;
+    const SQL = "DELETE FROM client_state WHERE user_id = ? AND namespace = ?";
+    const statements = namespaces.map((namespace) => this._db.prepare(SQL).bind(userId, namespace));
+    if (statements.length === 1) {
+      const res = await statements[0].run();
+      return res.meta.changes || 0;
+    }
+    let results;
+    if (typeof this._db.batch === "function") {
+      results = await this._db.batch(statements);
+    } else {
+      results = [];
+      for (const stmt of statements) results.push(await stmt.run());
+    }
+    return results.reduce((n, res) => n + (res.meta.changes || 0), 0);
+  }
   // ── push_subscriptions (user-level Web Push subscription) ──────────────
   /**
    * 这个用户当前登记的推送订阅（密文原样返回，解密在上层）。
@@ -6099,6 +6419,39 @@ var D1Adapter = class {
       credIds
     );
   }
+  /**
+   * 按 cred_id 前缀删这个用户的凭据（宿主按角色清理：`char:<charId>/` 一把清
+   * 掉该角色名下的 chat / instant / emotion 几行）。
+   *
+   * **不用 LIKE。** 两条 D1 的限制在这儿各埋一个雷：
+   *   - LIKE / GLOB 的 pattern 在 D1 上最长 50 字节（SQLite 默认 50000，官方文
+   *     档没写这一条）。`char:<uuid>/` 就是 42 字节，前缀里再多点东西、或者
+   *     cred_id 用上契约允许的 128 字符，pattern 当场超限，整条语句报
+   *     `LIKE or GLOB pattern too complex`——本地 better-sqlite3 上永远复现不
+   *     了，只有真实 D1 才炸。
+   *   - 退一步「先 SELECT 出匹配的 cred_id 再按 id 批量删」也不是好路：单条语
+   *     句最多 100 个绑定参数，得自己切批，还平白多一个来回和一个「查完到删完
+   *     之间又写进来一行」的窗口。
+   * 走字典序范围（`cred_id >= 前缀 AND cred_id < 上界`）两条都绕开了：没有长度
+   * 上限，前缀里的 `%` `_` `\` 只是普通字符，一条语句三个绑定参数，而且直接吃
+   * (user_id, cred_id) 主键索引。上界算法见本文件顶部的 prefixRangeEnd。
+   *
+   * 前缀没有字典序上界时（prefixRangeEnd 返回空串，实际用不到——见那个函数的
+   * 说明）范围条件一行都匹配不上，删 0 行。宁可少删，也不能把别人的行带走。
+   *
+   * @param {string} userId
+   * @param {string} credIdPrefix - 非空前缀，空串由上层拒掉（空前缀 = 删全部，
+   *   那是 `deleteLlmCredentials(userId, null)` 的活儿，不能从这个口误伤进来）
+   * @returns {Promise<number>} 删掉的行数
+   */
+  async deleteLlmCredentialsByPrefix(userId, credIdPrefix) {
+    if (typeof credIdPrefix !== "string" || credIdPrefix.length === 0) return 0;
+    const res = await this._db.prepare(
+      `DELETE FROM llm_credentials
+       WHERE user_id = ? AND cred_id >= ? AND cred_id < ?`
+    ).bind(userId, credIdPrefix, prefixRangeEnd(credIdPrefix)).run();
+    return res.meta.changes || 0;
+  }
   // ── message_outbox（服务端消息收件箱，客户端 ack）────────────────────────
   /**
    * 发送前把这一批 push 落进 outbox（一次 batch）。(user_id, message_id)
@@ -6200,6 +6553,38 @@ var D1Adapter = class {
     return res.meta.changes || 0;
   }
   /**
+   * 某条任务名下、某个时刻之后落的行，**不论投递 / ack 状态**（payload 仍是密文）。
+   *
+   * 给「生成成功之后推送失败、重试只补推送」那条路用（见 lib/outbox-store.js 的
+   * findCommittedBatch）：重试那一跳先来这里看这次触发的整批是不是已经落定了。
+   * 已 ack 的行也要读——客户端在两次重试之间把整批补收并 ack 了，同样说明这次
+   * 触发的内容已经生成过，不该再生成一份。
+   *
+   * `+user_id` 的一元加号是故意的：它让这一项不参与选索引，查询改走
+   * idx_outbox_created 按 created_at 收窄。否则 SQLite 会挑 (user_id, message_id)
+   * 的唯一约束索引，单用户部署下 user_id 对每一行都成立，等于把整个收件箱扫一遍
+   * （D1 按扫过的行数计费）。idx_outbox_created 不在时照样查得出来，只是退回扫表。
+   *
+   * @param {string} userId
+   * @param {string} taskUuid
+   * @param {{ sinceMs?: number, limit?: number }} [options] - sinceMs：只要
+   *   created_at ≥ 它的行（epoch 毫秒）；limit：最多读几行（默认 500）
+   * @returns {Promise<Array<{ id: number, message_id: string, task_uuid: string|null,
+   *   session_id: string|null, message_index: number|null, total_messages: number|null,
+   *   payload: string, created_at: number, delivered_at: number|null, acked_at: number|null }>>}
+   */
+  async listOutboxForTask(userId, taskUuid, { sinceMs = 0, limit = 500 } = {}) {
+    const res = await this._db.prepare(
+      `SELECT id, message_id, task_uuid, session_id, message_index, total_messages, payload,
+              created_at, delivered_at, acked_at
+       FROM message_outbox
+       WHERE +user_id = ? AND task_uuid = ? AND created_at >= ?
+       ORDER BY created_at, id
+       LIMIT ?`
+    ).bind(userId, taskUuid, sinceMs, limit).all();
+    return res.results || [];
+  }
+  /**
    * 未 ack 的行（id 升序，游标翻页）。payload 仍是密文，解密在 handler。
    *
    * @param {string} userId
@@ -6233,6 +6618,36 @@ var D1Adapter = class {
       (placeholders) => `UPDATE message_outbox SET acked_at = ?
          WHERE user_id = ? AND acked_at IS NULL AND message_id IN (${placeholders})`,
       [ackedAt, userId],
+      messageIds
+    );
+  }
+  /**
+   * 主动删 outbox 的行：数组删指定那几条，传 null 删这个用户的全部。
+   *
+   * 跟 `discardOutboxMessages` 是两件事：那个只撤「还没发出去的」，是取消 / 顶
+   * 替时的收尾；这个不看 delivered_at / acked_at，是宿主的清理口（对完账之后
+   * 把某几条、或者整个收件箱清掉）。在此之前 message_outbox 只能等 cron 的
+   * TTL（已签收 7 天 / 任何行 28 天）自己老化。
+   *
+   * 数组形态走 `_runInClauseWrite`：D1 单条语句最多 100 个绑定参数，`user_id`
+   * 占掉 1 个，所以一批最多 99 个 id，多了自动切批、整组仍在一个事务里（切开
+   * 之后「只删掉前 99 个」那种中间态比原问题更难查）。
+   *
+   * @param {string} userId
+   * @param {string[]|null} messageIds - null = 这个用户的全部
+   * @returns {Promise<number>} 删掉的行数
+   */
+  async deleteOutboxMessages(userId, messageIds = null) {
+    if (messageIds !== null && (!messageIds || messageIds.length === 0)) return 0;
+    if (messageIds === null) {
+      const res = await this._db.prepare(
+        "DELETE FROM message_outbox WHERE user_id = ?"
+      ).bind(userId).run();
+      return res.meta.changes || 0;
+    }
+    return this._runInClauseWrite(
+      (placeholders) => `DELETE FROM message_outbox WHERE user_id = ? AND message_id IN (${placeholders})`,
+      [userId],
       messageIds
     );
   }
@@ -6499,6 +6914,20 @@ function createClientStateHandler(ctx) {
     const gate = requireUserId(headers);
     if (gate.error) return gate.error;
     const { userId } = gate;
+    const namespace = new URL(url, "https://dummy").searchParams.get("namespace");
+    if (namespace !== null) {
+      if (!namespace.trim()) {
+        return err3(400, "INVALID_STATE_NAMESPACE", "namespace \u4F20\u4E86\u5C31\u4E0D\u80FD\u662F\u7A7A\u7684\uFF08\u8981\u6574\u8868\u5168\u6E05\u5C31\u522B\u5E26\u8FD9\u4E2A\u53C2\u6570\uFF09");
+      }
+      if (INTERNAL_STATE_CHAR_RE.test(namespace)) {
+        return err3(400, "INVALID_STATE_NAMESPACE", "namespace \u4E0D\u80FD\u5305\u542B\u63A7\u5236\u5B57\u7B26\uFF08\\u0000-\\u001f \u4E3A\u5E93\u5185\u90E8\u4FDD\u7559\uFF09");
+      }
+      if (typeof db.deleteClientStateNamespaces !== "function") {
+        return err3(501, "CLIENT_STATE_NAMESPACE_DELETE_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301\u6309\u547D\u540D\u7A7A\u95F4\u5220\u9664 client_state");
+      }
+      const deleted2 = await db.deleteClientStateNamespaces(userId, [namespace, chunkNamespaceFor(namespace)]);
+      return { status: 200, body: { success: true, data: { deleted: deleted2, namespace } } };
+    }
     if (typeof db.clearClientState !== "function") {
       return err3(501, "CLIENT_STATE_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301 client_state");
     }
@@ -6507,7 +6936,46 @@ function createClientStateHandler(ctx) {
   }
   return { PUT, GET, DELETE };
 }
-var SERVER_VERSION = true ? "2.6.0-next.28" : "0.0.0-dev";
+var MAX_CLIENT_STATE_NAMESPACES = 200;
+function err4(status, code, message, details) {
+  const error = details === void 0 ? { code, message } : { code, message, details };
+  return { status, body: { success: false, error } };
+}
+function createClientStateNamespacesHandler(ctx) {
+  async function GET(url, headers) {
+    const tenantResult = await ctx.tenantManager.resolveTenant(headers);
+    if (!tenantResult.ok) return tenantResult.error;
+    const { db, masterKey } = tenantResult.context;
+    const gate = requireUserId(headers);
+    if (gate.error) return gate.error;
+    const { userId } = gate;
+    const limitRaw = new URL(url, "https://dummy").searchParams.get("limit");
+    let limit = limitRaw == null || limitRaw === "" ? MAX_CLIENT_STATE_NAMESPACES : Number(limitRaw);
+    if (!Number.isInteger(limit) || limit <= 0) {
+      return err4(400, "INVALID_NAMESPACE_LIMIT", `limit \u5FC5\u987B\u662F 1-${MAX_CLIENT_STATE_NAMESPACES} \u7684\u6574\u6570`);
+    }
+    limit = Math.min(limit, MAX_CLIENT_STATE_NAMESPACES);
+    if (typeof db.listClientStateNamespaces !== "function") {
+      return err4(501, "CLIENT_STATE_NAMESPACES_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301\u6309\u547D\u540D\u7A7A\u95F4\u7EDF\u8BA1 client_state");
+    }
+    const rows = await db.listClientStateNamespaces(userId, {
+      limit: limit + 1,
+      foldPrefix: CHUNK_NAMESPACE_PREFIX
+    });
+    const truncated = rows.length > limit;
+    const namespaces = rows.slice(0, limit).map((row) => ({
+      namespace: row.namespace,
+      entryCount: Number(row.entry_count || 0),
+      byteSize: Number(row.byte_size || 0),
+      updatedAt: Number(row.updated_at || 0)
+    }));
+    const userKey = await deriveUserEncryptionKey(userId, masterKey);
+    const encryptedResponse = await encryptPayload({ namespaces, truncated, limit }, userKey);
+    return { status: 200, body: { success: true, encrypted: true, version: 1, data: encryptedResponse } };
+  }
+  return { GET };
+}
+var SERVER_VERSION = true ? "2.6.0-next.30" : "0.0.0-dev";
 var SERVER_FEATURES = Object.freeze([
   "client-state",
   "client-state-chunking",
@@ -6594,7 +7062,29 @@ var SERVER_FEATURES = Object.freeze([
   "emit-result",
   // PUT /client-state 的 entry 认 value: null（删掉这个 key，连切片行一起；同一套
   // last-write-wins，被拦下的进 skippedEntries；删掉的条数在 data.deleted）。
-  "client-state-delete"
+  "client-state-delete",
+  // GET /client-state/namespaces：云端有哪些命名空间 + 每个几条 / 占多少字节 /
+  // 最后更新是什么时候（大值切片的保留命名空间折算进原命名空间，不单独列）。
+  "client-state-namespaces",
+  // DELETE /client-state?namespace=<ns>：只清这一个命名空间（连它的切片行一起）。
+  // 不带参数仍是整表全清。
+  "client-state-delete-namespace",
+  // DELETE /llm-credentials 认 credIdPrefix：按 cred_id 前缀删（`char:<charId>/`
+  // 一把清掉一个角色名下的几行）。
+  "llm-credentials-delete-prefix",
+  // DELETE /outbox：主动删收件箱的行（{ messageIds } 或 { all: true }），不再只能
+  // 等 cron 的 TTL 老化。
+  "outbox-delete",
+  // LLM 上游明确拒了请求（400 / 401 / 402 / 403 / 404 / 405 / 413 / 422）一跳终
+  // 审，不再重试；fire hook 拿到的 error 上带 permanent: true。
+  "llm-permanent-errors",
+  // 生成成功、整批落进收件箱之后推送才失败的，重试只补推送、不重新生成；
+  // onAfterSend / onFireSettled 的载荷带 outboxed。
+  "redeliver-committed-batch",
+  // onAfterSend / onFireSettled 的载荷带整次 fire 的 usageTotal 与 llmCalls。
+  "hook-usage-total",
+  // 工厂配置认 maxDeliveryRetries（投递失败的重试次数上限，默认 3）。
+  "max-delivery-retries"
 ]);
 function createCapabilitiesHandler(ctx) {
   async function GET(url, headers) {
@@ -6613,7 +7103,8 @@ function createCapabilitiesHandler(ctx) {
 var MAX_OUTBOX_PAGE_SIZE = 100;
 var DEFAULT_OUTBOX_PAGE_SIZE = 50;
 var MAX_OUTBOX_ACK_IDS = 200;
-function err4(status, code, message, details) {
+var MAX_OUTBOX_DELETE_IDS = 200;
+function err5(status, code, message, details) {
   const error = details === void 0 ? { code, message } : { code, message, details };
   return { status, body: { success: false, error } };
 }
@@ -6626,18 +7117,18 @@ function createOutboxHandler(ctx) {
     if (gate.error) return gate.error;
     const { userId } = gate;
     if (typeof db.listUnackedOutbox !== "function") {
-      return err4(501, "OUTBOX_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301 message_outbox");
+      return err5(501, "OUTBOX_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301 message_outbox");
     }
     const params = new URL(url, "https://dummy").searchParams;
     const sinceRaw = params.get("since");
     const since = sinceRaw == null || sinceRaw === "" ? 0 : Number(sinceRaw);
     if (!Number.isInteger(since) || since < 0) {
-      return err4(400, "INVALID_OUTBOX_CURSOR", "since \u5FC5\u987B\u662F\u975E\u8D1F\u6574\u6570\uFF08\u4E0A\u4E00\u9875\u54CD\u5E94\u91CC\u7684 cursor\uFF09");
+      return err5(400, "INVALID_OUTBOX_CURSOR", "since \u5FC5\u987B\u662F\u975E\u8D1F\u6574\u6570\uFF08\u4E0A\u4E00\u9875\u54CD\u5E94\u91CC\u7684 cursor\uFF09");
     }
     const limitRaw = params.get("limit");
     let limit = limitRaw == null || limitRaw === "" ? DEFAULT_OUTBOX_PAGE_SIZE : Number(limitRaw);
     if (!Number.isInteger(limit) || limit <= 0) {
-      return err4(400, "INVALID_OUTBOX_LIMIT", `limit \u5FC5\u987B\u662F 1-${MAX_OUTBOX_PAGE_SIZE} \u7684\u6574\u6570`);
+      return err5(400, "INVALID_OUTBOX_LIMIT", `limit \u5FC5\u987B\u662F 1-${MAX_OUTBOX_PAGE_SIZE} \u7684\u6574\u6570`);
     }
     limit = Math.min(limit, MAX_OUTBOX_PAGE_SIZE);
     const userKey = await deriveUserEncryptionKey(userId, masterKey);
@@ -6679,13 +7170,13 @@ function createOutboxHandler(ctx) {
     if (!tenantResult.ok) return tenantResult.error;
     const { db, masterKey } = tenantResult.context;
     if (getHeader(headers, "x-payload-encrypted") !== "true") {
-      return err4(400, "ENCRYPTION_REQUIRED", "\u8BF7\u6C42\u4F53\u5FC5\u987B\u52A0\u5BC6");
+      return err5(400, "ENCRYPTION_REQUIRED", "\u8BF7\u6C42\u4F53\u5FC5\u987B\u52A0\u5BC6");
     }
     const gate = requireUserId(headers);
     if (gate.error) return gate.error;
     const { userId } = gate;
     if (getHeader(headers, "x-encryption-version") !== "1") {
-      return err4(400, "UNSUPPORTED_ENCRYPTION_VERSION", "\u52A0\u5BC6\u7248\u672C\u4E0D\u652F\u6301");
+      return err5(400, "UNSUPPORTED_ENCRYPTION_VERSION", "\u52A0\u5BC6\u7248\u672C\u4E0D\u652F\u6301");
     }
     const parsedBody = parseEncryptedBody(body);
     if (!parsedBody.ok) return { status: 400, body: { success: false, error: parsedBody.error } };
@@ -6695,28 +7186,76 @@ function createOutboxHandler(ctx) {
       payload = await decryptPayload(parsedBody.data, userKey);
     } catch (error) {
       if (error instanceof SyntaxError) {
-        return err4(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u4E0D\u662F\u6709\u6548 JSON");
+        return err5(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u4E0D\u662F\u6709\u6548 JSON");
       }
-      return err4(400, "DECRYPTION_FAILED", "\u8BF7\u6C42\u4F53\u89E3\u5BC6\u5931\u8D25");
+      return err5(400, "DECRYPTION_FAILED", "\u8BF7\u6C42\u4F53\u89E3\u5BC6\u5931\u8D25");
     }
-    if (!isPlainObject(payload)) return err4(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
+    if (!isPlainObject(payload)) return err5(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
     const messageIds = payload.messageIds;
     if (!Array.isArray(messageIds) || messageIds.length === 0) {
-      return err4(400, "INVALID_OUTBOX_ACK", "messageIds \u5FC5\u987B\u662F\u975E\u7A7A\u6570\u7EC4");
+      return err5(400, "INVALID_OUTBOX_ACK", "messageIds \u5FC5\u987B\u662F\u975E\u7A7A\u6570\u7EC4");
     }
     if (messageIds.length > MAX_OUTBOX_ACK_IDS) {
-      return err4(400, "TOO_MANY_OUTBOX_ACK_IDS", `\u5355\u6B21\u6700\u591A ack ${MAX_OUTBOX_ACK_IDS} \u6761`, { count: messageIds.length });
+      return err5(400, "TOO_MANY_OUTBOX_ACK_IDS", `\u5355\u6B21\u6700\u591A ack ${MAX_OUTBOX_ACK_IDS} \u6761`, { count: messageIds.length });
     }
     if (!messageIds.every((id) => typeof id === "string" && id.trim())) {
-      return err4(400, "INVALID_OUTBOX_ACK", "messageIds \u7684\u6BCF\u4E00\u9879\u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32");
+      return err5(400, "INVALID_OUTBOX_ACK", "messageIds \u7684\u6BCF\u4E00\u9879\u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32");
     }
     if (typeof db.ackOutboxMessages !== "function") {
-      return err4(501, "OUTBOX_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301 message_outbox");
+      return err5(501, "OUTBOX_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301 message_outbox");
     }
     const acked = await db.ackOutboxMessages(userId, messageIds, Date.now());
     return { status: 200, body: { success: true, data: { acked } } };
   }
-  return { GET, POST };
+  async function DELETE(url, headers, body) {
+    const tenantResult = await ctx.tenantManager.resolveTenant(headers);
+    if (!tenantResult.ok) return tenantResult.error;
+    const { db, masterKey } = tenantResult.context;
+    if (getHeader(headers, "x-payload-encrypted") !== "true") {
+      return err5(400, "ENCRYPTION_REQUIRED", "\u8BF7\u6C42\u4F53\u5FC5\u987B\u52A0\u5BC6");
+    }
+    const gate = requireUserId(headers);
+    if (gate.error) return gate.error;
+    const { userId } = gate;
+    if (getHeader(headers, "x-encryption-version") !== "1") {
+      return err5(400, "UNSUPPORTED_ENCRYPTION_VERSION", "\u52A0\u5BC6\u7248\u672C\u4E0D\u652F\u6301");
+    }
+    const parsedBody = parseEncryptedBody(body);
+    if (!parsedBody.ok) return { status: 400, body: { success: false, error: parsedBody.error } };
+    const userKey = await deriveUserEncryptionKey(userId, masterKey);
+    let payload;
+    try {
+      payload = await decryptPayload(parsedBody.data, userKey);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return err5(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u4E0D\u662F\u6709\u6548 JSON");
+      }
+      return err5(400, "DECRYPTION_FAILED", "\u8BF7\u6C42\u4F53\u89E3\u5BC6\u5931\u8D25");
+    }
+    if (!isPlainObject(payload)) return err5(400, "INVALID_PAYLOAD_FORMAT", "\u89E3\u5BC6\u540E\u7684\u6570\u636E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
+    const wantsAll = payload.all === true;
+    const messageIds = payload.messageIds;
+    if (wantsAll && messageIds !== void 0) {
+      return err5(400, "INVALID_OUTBOX_DELETE", "all \u4E0E messageIds \u4E0D\u80FD\u540C\u65F6\u51FA\u73B0");
+    }
+    if (!wantsAll) {
+      if (!Array.isArray(messageIds) || messageIds.length === 0) {
+        return err5(400, "INVALID_OUTBOX_DELETE", "\u8981\u4E48 { all: true }\uFF0C\u8981\u4E48 messageIds \u975E\u7A7A\u6570\u7EC4");
+      }
+      if (messageIds.length > MAX_OUTBOX_DELETE_IDS) {
+        return err5(400, "TOO_MANY_OUTBOX_DELETE_IDS", `\u5355\u6B21\u6700\u591A\u5220 ${MAX_OUTBOX_DELETE_IDS} \u6761`, { count: messageIds.length });
+      }
+      if (!messageIds.every((id) => typeof id === "string" && id.trim())) {
+        return err5(400, "INVALID_OUTBOX_DELETE", "messageIds \u7684\u6BCF\u4E00\u9879\u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32");
+      }
+    }
+    if (typeof db.deleteOutboxMessages !== "function") {
+      return err5(501, "OUTBOX_DELETE_NOT_SUPPORTED", "\u5F53\u524D\u6570\u636E\u5E93\u9002\u914D\u5668\u4E0D\u652F\u6301\u5220\u9664 message_outbox \u7684\u884C");
+    }
+    const deleted = await db.deleteOutboxMessages(userId, wantsAll ? null : [...new Set(messageIds)]);
+    return { status: 200, body: { success: true, data: { deleted } } };
+  }
+  return { GET, POST, DELETE };
 }
 function createSingleUserServer(config) {
   if (!config || !config.db) throw new Error("[amsg-server single-user] config.db is required");
@@ -6751,7 +7290,10 @@ function createSingleUserServer(config) {
     // notifyFireSettled）。
     onFireSettled: config.onFireSettled,
     // hook 的 ctx.scheduleTask() 单次 fire 建任务的条数上限（默认 2）。
-    maxScheduledTasksPerFire: config.maxScheduledTasksPerFire
+    maxScheduledTasksPerFire: config.maxScheduledTasksPerFire,
+    // 定时任务投递失败后的重试次数上限（默认 3）。handlers 用不到，宿主拿这个
+    // ctx 去调 runScheduledTick 时它跟着走。
+    maxDeliveryRetries: config.maxDeliveryRetries
   };
   return {
     ctx,
@@ -6765,6 +7307,7 @@ function createSingleUserServer(config) {
       getMessage: createGetMessageHandler(ctx),
       vapidPublicKey: createVapidPublicKeyHandler(ctx),
       clientState: createClientStateHandler(ctx),
+      clientStateNamespaces: createClientStateNamespacesHandler(ctx),
       pushSubscription: createPushSubscriptionHandler(ctx),
       llmCredentials: createLlmCredentialsHandler(ctx),
       capabilities: createCapabilitiesHandler(ctx),
@@ -6917,14 +7460,19 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
       //（action 'fast_forwarded'）都会调（凭据字段不透传；best-effort，
       // 见 lib/run-tick.js）。
       onStaleSkip: cfg.onStaleSkip,
-      // 推送发出（或发挂）之后的 hook：{ task, sentCount, total, error,
-      // scratch, readState, writeState }（best-effort，见 lib/agentic-fire.js）。
+      // 推送发出（或发挂）之后的 hook：{ task, sentCount, pushedCount, total,
+      // error, usage, usageTotal, llmCalls, outboxed, scratch, readState,
+      // writeState }（best-effort，见 lib/agentic-fire.js）。
       onAfterSend: cfg.onAfterSend,
-      // 一次 fire 收尾的 hook：{ task, status, skipReason, sentCount, total,
-      // iterations, error, scratch, readState, writeState }。发完 / 跳过 /
+      // 一次 fire 收尾的 hook：{ task, status, skipReason, sentCount,
+      // pushedCount, total, iterations, error, metadata, usage, usageTotal,
+      // llmCalls, outboxed, scratch, readState, writeState }。发完 / 跳过 /
       // 抛错都会调，宿主用它做「开始时占点什么、结束时放掉」那类收尾
       //（best-effort，见 lib/agentic-fire.js）。
       onFireSettled: cfg.onFireSettled,
+      // 一次触发投递失败后最多再重试几次（默认 3，0 = 第一次失败就终审；见
+      // lib/run-tick.js 的 DEFAULT_MAX_DELIVERY_RETRIES）。
+      maxDeliveryRetries: cfg.maxDeliveryRetries,
       // 分组串行：(task) => 分组标识 | null。同一分组的任务同时只跑一条，
       // 跨跳也算（见 lib/run-tick.js）。不配 = 全并发，与以前一致。
       serializeBy: cfg.serializeBy,
@@ -7000,6 +7548,8 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
         result = await server.handlers.capabilities.GET(url, headers);
       } else if (method === "PUT" && pathname.endsWith("/client-state")) {
         result = await server.handlers.clientState.PUT(headers, body);
+      } else if (method === "GET" && pathname.endsWith("/client-state/namespaces")) {
+        result = await server.handlers.clientStateNamespaces.GET(url, headers);
       } else if (method === "GET" && pathname.endsWith("/client-state")) {
         result = await server.handlers.clientState.GET(url, headers);
       } else if (method === "DELETE" && pathname.endsWith("/client-state")) {
@@ -7008,6 +7558,8 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
         result = await server.handlers.outbox.GET(url, headers);
       } else if (method === "POST" && pathname.endsWith("/outbox/ack")) {
         result = await server.handlers.outbox.POST(headers, body);
+      } else if (method === "DELETE" && pathname.endsWith("/outbox")) {
+        result = await server.handlers.outbox.DELETE(url, headers, body);
       } else if (method === "PUT" && pathname.endsWith("/push-subscription")) {
         result = await server.handlers.pushSubscription.PUT(headers, body);
       } else if (method === "GET" && pathname.endsWith("/push-subscription")) {
@@ -7077,7 +7629,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-09-18";
+var AMSG_BUNDLE_VERSION = "2026-09-27.2";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -7559,6 +8111,162 @@ var renderFireSceneBlock = (scene, nowMs, tz, options) => {
 ${lines.join("\n")}`;
 };
 
+// utils/amsgLimits.ts
+var DEFAULT_MAX_UNANSWERED_SENDS = 3;
+var DEFAULT_MIN_SEND_GAP_MINUTES = 10;
+var DEFAULT_DAILY_SEND_CAP = 0;
+var DEFAULT_RECURRING_STOP_AFTER = 3;
+var DEFAULT_MAX_ACTIVE_TASKS = 5;
+var MAX_ACTIVE_TASKS_CEILING = 10;
+var resolveCount = (value, fallback, ceiling) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return fallback === 0 ? Infinity : fallback;
+  }
+  if (value === 0) return Infinity;
+  if (value < 1) return fallback === 0 ? Infinity : fallback;
+  return Math.min(ceiling, Math.floor(value));
+};
+var resolveMaxUnansweredSends = (value) => resolveCount(value, DEFAULT_MAX_UNANSWERED_SENDS, 99);
+var resolveAmsgLimits = (settings) => {
+  const s = settings ?? {};
+  const gap = s.minSendGapMinutes;
+  const gapMinutes = typeof gap === "number" && Number.isFinite(gap) && gap >= 0 ? Math.min(24 * 60, Math.floor(gap)) : DEFAULT_MIN_SEND_GAP_MINUTES;
+  const tasks = s.maxActiveTasks;
+  return {
+    maxUnansweredSends: resolveMaxUnansweredSends(s.maxUnansweredSends),
+    minSendGapMs: gapMinutes * 6e4,
+    dailySendCap: resolveCount(s.dailySendCap, DEFAULT_DAILY_SEND_CAP, 999),
+    recurringStopAfter: resolveCount(s.recurringStopAfter, DEFAULT_RECURRING_STOP_AFTER, 99),
+    // 任务名额没有「不限」这一档：挂太多等于把「同时有几件事在后台排队」这件事交出去了。
+    maxActiveTasks: typeof tasks === "number" && Number.isFinite(tasks) && tasks >= 1 ? Math.min(MAX_ACTIVE_TASKS_CEILING, Math.floor(tasks)) : DEFAULT_MAX_ACTIVE_TASKS,
+    allowSelfRecurring: s.allowSelfRecurring === true,
+    allowSelfForce: s.allowSelfForce === true
+  };
+};
+var AMSG_LIMITS_KEY = "limits";
+var parseAmsgLimitsRecord = (value) => {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === "object" && parsed.v === 1 && typeof parsed.selfScheduleEnabled === "boolean") {
+      return parsed;
+    }
+  } catch {
+  }
+  return null;
+};
+var AMSG_DAILY_SENDS_KEY = "daily_sends";
+var DAILY_COUNTED_KEEP = 20;
+var dayKeyInZone = (nowMs, tzId) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tzId,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(nowMs));
+  const map = {};
+  for (const p of parts) map[p.type] = p.value;
+  return `${map.year}-${map.month}-${map.day}`;
+};
+var parseDailySends = (value) => {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === "object" && parsed.v === 1 && typeof parsed.day === "string" && typeof parsed.sends === "number") {
+      return parsed;
+    }
+  } catch {
+  }
+  return null;
+};
+var sendsOnDay = (record, day) => record && record.day === day ? record.sends : 0;
+var bumpDailySends = (record, day, add) => {
+  const base = record && record.day === day ? record : { v: 1, day, sends: 0 };
+  const alreadyCounted = !!add.sentId && (base.counted ?? []).includes(add.sentId);
+  const sends = base.sends + (alreadyCounted ? 0 : add.sends ?? 0);
+  const llmCalls = add.llmCalls ? (base.llmCalls ?? 0) + add.llmCalls : base.llmCalls;
+  const counted = add.sentId && add.sends && !alreadyCounted ? [...base.counted ?? [], add.sentId].slice(-DAILY_COUNTED_KEEP) : base.counted;
+  return {
+    v: 1,
+    day,
+    sends,
+    ...llmCalls !== void 0 ? { llmCalls } : {},
+    ...counted ? { counted } : {}
+  };
+};
+var earliestSlotAfter = (fromMs, gapMs, busy) => {
+  if (gapMs <= 0) return fromMs;
+  const sorted = [...busy].filter(Number.isFinite).sort((a, b) => a - b);
+  let slot = fromMs;
+  for (let moved = true; moved; ) {
+    moved = false;
+    for (const b of sorted) {
+      if (Math.abs(slot - b) < gapMs) {
+        slot = b + gapMs;
+        moved = true;
+      }
+    }
+  }
+  return slot;
+};
+var findGapConflict = (sendAtMs, gapMs, busy) => {
+  if (gapMs <= 0) return null;
+  return busy.find((b) => Number.isFinite(b) && Math.abs(sendAtMs - b) < gapMs) ?? null;
+};
+var FIRE_GAP_TOLERANCE_MS = 3 * 6e4;
+var describeMinutes = (minutes) => {
+  if (minutes < 60) return `${minutes} \u5206\u949F`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} \u5C0F\u65F6 ${m} \u5206\u949F` : `${h} \u5C0F\u65F6`;
+};
+var checkSelfScheduleRules = (input) => {
+  const { limits } = input;
+  if (input.recurrence !== "none" && !limits.allowSelfRecurring) {
+    return {
+      ok: false,
+      reason: "recurring_not_allowed",
+      message: "\u7528\u6237\u6CA1\u6709\u8BA9\u4F60\u6392\u6BCF\u5929/\u6BCF\u5468\u91CD\u590D\u7684\u6D88\u606F\uFF0C\u8FD9\u6B21\u53EA\u80FD\u6392\u4E00\u6B21\u6027\u7684\uFF08\u53BB\u6389 recurrence \u518D\u6392\uFF09\u3002"
+    };
+  }
+  const conflict = findGapConflict(input.sendAtMs, limits.minSendGapMs, input.busy);
+  if (conflict !== null) {
+    const gapMinutes = Math.round(limits.minSendGapMs / 6e4);
+    const earliest = earliestSlotAfter(
+      Math.max(input.earliestMs, input.sendAtMs),
+      limits.minSendGapMs,
+      input.busy
+    );
+    return {
+      ok: false,
+      reason: "min_gap",
+      message: `\u79BB ${input.formatTime(conflict)} \u90A3\u6B21\u592A\u8FD1\u4E86\uFF1A\u7528\u6237\u5B9A\u4E86\u4E24\u6B21\u4E3B\u52A8\u6D88\u606F\u4E4B\u95F4\u81F3\u5C11\u9694 ${describeMinutes(gapMinutes)}\u3002\u8981\u6392\u7684\u8BDD\u6700\u65E9 ${input.formatTime(earliest)}\uFF1B\u6CA1\u90A3\u4E48\u8981\u7D27\u7684\u8BDD\uFF0C\u8FD9\u6B21\u5C31\u522B\u6392\u4E86\u3002`
+    };
+  }
+  return {
+    ok: true,
+    expirePolicy: input.expirePolicy === "force" && !limits.allowSelfForce ? "expire" : input.expirePolicy
+  };
+};
+var buildLimitsBrief = (input) => {
+  const { limits } = input;
+  const lines = [];
+  if (Number.isFinite(limits.maxUnansweredSends)) {
+    const left = Math.max(0, limits.maxUnansweredSends - input.committedSends);
+    lines.push(`- \u5BF9\u65B9\u6CA1\u56DE\u7684\u65F6\u5019\uFF0C\u4F60\u6700\u591A\u8FDE\u7740\u4E3B\u52A8\u627E\u5BF9\u65B9 ${limits.maxUnansweredSends} \u6B21\uFF08\u4E00\u6B21\u53EF\u4EE5\u8BF4\u597D\u51E0\u53E5\uFF1B\u6392\u597D\u8FD8\u6CA1\u53D1\u7684\u4E5F\u7B97\uFF09\uFF0C` + (left > 0 ? `\u73B0\u5728\u8FD8\u80FD\u518D\u6392 ${left} \u6B21\u3002` : "\u73B0\u5728\u4E00\u6B21\u90FD\u4E0D\u80FD\u518D\u6392\u4E86\uFF0C\u7B49\u5BF9\u65B9\u56DE\u590D\u3002"));
+  }
+  if (limits.minSendGapMs > 0) {
+    lines.push(`- \u4E24\u6B21\u4E3B\u52A8\u627E\u5BF9\u65B9\u4E4B\u95F4\u81F3\u5C11\u9694 ${describeMinutes(Math.round(limits.minSendGapMs / 6e4))}` + (input.earliestText ? `\uFF0C\u8FD9\u6B21\u6700\u65E9\u6392\u5230 ${input.earliestText}\u3002` : "\u3002"));
+  }
+  if (input.dailyRemaining !== void 0 && Number.isFinite(limits.dailySendCap)) {
+    lines.push(input.dailyRemaining > 0 ? `- \u4ECA\u5929\u8FD8\u80FD\u518D\u4E3B\u52A8\u627E\u5BF9\u65B9 ${input.dailyRemaining} \u6B21\u3002` : "- \u4ECA\u5929\u4E3B\u52A8\u627E\u5BF9\u65B9\u7684\u6B21\u6570\u5DF2\u7ECF\u7528\u5B8C\u4E86\uFF0C\u8981\u6392\u5C31\u6392\u5230\u660E\u5929\u3002");
+  }
+  lines.push(`- \u540C\u65F6\u6700\u591A\u6302 ${limits.maxActiveTasks} \u4E2A\u6392\u7A0B\u4EFB\u52A1\uFF0C\u73B0\u5728\u6302\u7740 ${input.activeTasks} \u4E2A\u3002`);
+  if (!limits.allowSelfRecurring) lines.push("- \u53EA\u80FD\u6392\u4E00\u6B21\u6027\u7684\uFF0C\u4E0D\u80FD\u6392\u6BCF\u5929/\u6BCF\u5468\u91CD\u590D\u7684\u3002");
+  if (!limits.allowSelfForce) lines.push("- \u6392\u7684\u6D88\u606F\u5230\u70B9\u78B0\u4E0A\u5BF9\u65B9\u6B63\u5728\u804A\u5929\u4F1A\u81EA\u52A8\u4F5C\u7F62\uFF08\u8F6C\u6210\u4F60\u5728\u804A\u5929\u91CC\u81EA\u7136\u5E26\u51FA\uFF09\uFF0C\u6CA1\u6709\u300C\u5230\u70B9\u5FC5\u53D1\u300D\u3002");
+  return ["\u7528\u6237\u7ED9\u4F60\u5B9A\u7684\u89C4\u77E9\uFF08\u7CFB\u7EDF\u7167\u7740\u6267\u884C\uFF1A\u8D85\u51FA\u7684\u6392\u4E0D\u4E0A\uFF0C\u6392\u4E0A\u4E86\u5230\u70B9\u4E5F\u4E0D\u53D1\uFF09\uFF1A", ...lines].join("\n");
+};
+
 // utils/amsgFirePack.ts
 var AMSG_STATE_NAMESPACE_PREFIX = "amsg:char:";
 var amsgStateNamespace = (charId) => `${AMSG_STATE_NAMESPACE_PREFIX}${charId}`;
@@ -7668,25 +8376,25 @@ var createSelfLog = (basePackAt, anchorUserMsgAt = null) => ({
   anchorUserMsgAt,
   entries: [],
   unansweredSends: 0,
+  recurringSends: {},
   tasks: []
 });
-var DEFAULT_MAX_UNANSWERED_SENDS = 3;
-var resolveMaxUnansweredSends = (value) => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_MAX_UNANSWERED_SENDS;
-  if (value === 0) return Infinity;
-  if (value < 1) return DEFAULT_MAX_UNANSWERED_SENDS;
-  return Math.min(99, Math.floor(value));
-};
 var countUnansweredSends = (log) => log ? log.unansweredSends : 0;
 var reconcileSelfLogWithPack = (stored, pack, lastUserMessageAt) => {
   let log = stored ?? createSelfLog(pack.builtAt, lastUserMessageAt);
   if (lastUserMessageAt != null && (log.anchorUserMsgAt == null || lastUserMessageAt > log.anchorUserMsgAt)) {
-    log = { ...log, anchorUserMsgAt: lastUserMessageAt, entries: [], unansweredSends: 0 };
+    log = { ...log, anchorUserMsgAt: lastUserMessageAt, entries: [], unansweredSends: 0, recurringSends: {} };
   }
   if (log.basePackAt !== pack.builtAt) {
     log = { ...log, basePackAt: pack.builtAt, tasks: [] };
   }
   return log;
+};
+var countRecurringSends = (log, clientTaskId) => clientTaskId && log?.recurringSends?.[clientTaskId] || 0;
+var bumpRecurringSend = (log, clientTaskId) => {
+  if (!clientTaskId) return log;
+  const counts = log.recurringSends ?? {};
+  return { ...log, recurringSends: { ...counts, [clientTaskId]: (counts[clientTaskId] ?? 0) + 1 } };
 };
 var appendSelfLogTask = (log, task) => ({
   ...log,
@@ -7706,7 +8414,7 @@ var appendSelfLogEntry = (log, entry) => {
 var parseSelfLog = (value) => {
   try {
     const parsed = JSON.parse(value);
-    if (parsed && typeof parsed === "object" && parsed.v === 4 && typeof parsed.basePackAt === "number" && (parsed.anchorUserMsgAt === null || typeof parsed.anchorUserMsgAt === "number") && typeof parsed.unansweredSends === "number" && Array.isArray(parsed.tasks) && Array.isArray(parsed.entries) && parsed.entries.every((e) => {
+    if (parsed && typeof parsed === "object" && parsed.v === 4 && typeof parsed.basePackAt === "number" && (parsed.anchorUserMsgAt === null || typeof parsed.anchorUserMsgAt === "number") && typeof parsed.unansweredSends === "number" && (parsed.recurringSends === void 0 || !!parsed.recurringSends && typeof parsed.recurringSends === "object") && Array.isArray(parsed.tasks) && Array.isArray(parsed.entries) && parsed.entries.every((e) => {
       const entry = e;
       return !!entry && typeof entry.id === "string" && typeof entry.at === "number" && typeof entry.text === "string";
     })) {
@@ -7727,16 +8435,16 @@ var renderSelfLogBlock = (log, nowMs, tz, maxUnanswered = DEFAULT_MAX_UNANSWERED
   if (!log || log.entries.length === 0) return "";
   const fresh = log.entries.filter((e) => e.at > log.basePackAt);
   const sends = countUnansweredSends(log);
-  const limitHalf = Number.isFinite(maxUnanswered) ? `\uFF0C\u4E0A\u9650 ${maxUnanswered} \u6761\uFF0C\u5230\u4E0A\u9650\u540E\u4F60\u81EA\u5DF1\u6392\u7684\u540E\u7EED\u4F1A\u6682\u505C\u3001\u7B49\u5BF9\u65B9\u56DE\u590D\u624D\u6062\u590D` : "";
+  const limitHalf = Number.isFinite(maxUnanswered) ? `\uFF0C\u4E0A\u9650 ${maxUnanswered} \u6B21\uFF0C\u5230\u4E0A\u9650\u540E\u4F60\u81EA\u5DF1\u6392\u7684\u540E\u7EED\u5230\u70B9\u4F1A\u76F4\u63A5\u8DF3\u8FC7\u3001\u4E0D\u8865\u53D1\uFF0C\u7B49\u5BF9\u65B9\u56DE\u590D\u624D\u91CD\u65B0\u8BA1\u6570` : "";
   if (fresh.length === 0) {
     if (sends === 0) return "";
     return [
       "",
       "",
-      `\uFF08\u5BF9\u65B9\u672A\u56DE\u5E94\u671F\u95F4\u4F60\u5DF2\u8FDE\u53D1 ${sends} \u6761\u4E3B\u52A8\u6D88\u606F${limitHalf}\u3002\u522B\u628A\u5DF2\u7ECF\u8BF4\u8FC7\u7684\u8BDD\u6362\u4E2A\u8BF4\u6CD5\u518D\u8BB2\u4E00\u904D\u3002\uFF09`
+      `\uFF08\u5BF9\u65B9\u672A\u56DE\u5E94\u671F\u95F4\u4F60\u5DF2\u8FDE\u7740\u4E3B\u52A8\u627E\u4E86\u5BF9\u65B9 ${sends} \u6B21${limitHalf}\u3002\u522B\u628A\u5DF2\u7ECF\u8BF4\u8FC7\u7684\u8BDD\u6362\u4E2A\u8BF4\u6CD5\u518D\u8BB2\u4E00\u904D\u3002\uFF09`
     ].join("\n");
   }
-  const countLine = sends >= 1 ? `\uFF08\u5BF9\u65B9\u4E00\u76F4\u6CA1\u56DE\u5E94\uFF0C\u5176\u4E2D\u4E3B\u52A8\u53D1\u8D77\u7684\u4F60\u5DF2\u8FDE\u53D1 ${sends} \u6761${limitHalf}\u3002\u5F80\u4E0B\u63A5\u7740\u8BF4\uFF0C\u522B\u628A\u5DF2\u7ECF\u8BF4\u8FC7\u7684\u8BDD\u6362\u4E2A\u8BF4\u6CD5\u518D\u8BB2\u4E00\u904D\uFF0C\u4E5F\u522B\u5047\u88C5\u8FD9\u4E9B\u6CA1\u53D1\u751F\u8FC7\u3002\uFF09` : "\uFF08\u8FD9\u51E0\u6761\u662F\u4F60\u53D1\u51FA\u53BB\u7684\uFF0C\u5BF9\u65B9\u8FD8\u6CA1\u56DE\u5E94\u3002\u5F80\u4E0B\u63A5\u7740\u8BF4\uFF0C\u522B\u628A\u5DF2\u7ECF\u8BF4\u8FC7\u7684\u8BDD\u6362\u4E2A\u8BF4\u6CD5\u518D\u8BB2\u4E00\u904D\uFF0C\u4E5F\u522B\u5047\u88C5\u8FD9\u4E9B\u6CA1\u53D1\u751F\u8FC7\u3002\uFF09";
+  const countLine = sends >= 1 ? `\uFF08\u5BF9\u65B9\u4E00\u76F4\u6CA1\u56DE\u5E94\uFF0C\u4F60\u5DF2\u8FDE\u7740\u4E3B\u52A8\u627E\u4E86\u5BF9\u65B9 ${sends} \u6B21${limitHalf}\u3002\u5F80\u4E0B\u63A5\u7740\u8BF4\uFF0C\u522B\u628A\u5DF2\u7ECF\u8BF4\u8FC7\u7684\u8BDD\u6362\u4E2A\u8BF4\u6CD5\u518D\u8BB2\u4E00\u904D\uFF0C\u4E5F\u522B\u5047\u88C5\u8FD9\u4E9B\u6CA1\u53D1\u751F\u8FC7\u3002\uFF09` : "\uFF08\u8FD9\u51E0\u6761\u662F\u4F60\u53D1\u51FA\u53BB\u7684\uFF0C\u5BF9\u65B9\u8FD8\u6CA1\u56DE\u5E94\u3002\u5F80\u4E0B\u63A5\u7740\u8BF4\uFF0C\u522B\u628A\u5DF2\u7ECF\u8BF4\u8FC7\u7684\u8BDD\u6362\u4E2A\u8BF4\u6CD5\u518D\u8BB2\u4E00\u904D\uFF0C\u4E5F\u522B\u5047\u88C5\u8FD9\u4E9B\u6CA1\u53D1\u751F\u8FC7\u3002\uFF09";
   return [
     "",
     "",
@@ -7762,7 +8470,7 @@ var renderFirePack = (pack, nowMs, taskInstruction, extras) => {
     extras?.selfLog ?? null,
     nowMs,
     tz,
-    resolveMaxUnansweredSends(pack.maxUnansweredSends)
+    extras?.maxUnansweredSends ?? DEFAULT_MAX_UNANSWERED_SENDS
   ));
   out = fillSlot(out, AMSG_SLOT_TASK_LIST, extras?.taskListBlock ?? "");
   out = fillSlot(out, AMSG_SLOT_SCENE, renderFireSceneBlock(pack.scene, nowMs, tz, {
@@ -7805,7 +8513,7 @@ var chatFieldOk = (chat) => {
 var parseFirePack = (value) => {
   try {
     const parsed = JSON.parse(value);
-    if (parsed && typeof parsed === "object" && parsed.v === FIRE_PACK_VERSION && chatFieldOk(parsed.chat) && typeof parsed.template === "string" && parsed.template.length > 0 && (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === "number") && typeof parsed.tzId === "string" && parsed.tzId.length > 0 && typeof parsed.userTzId === "string" && parsed.userTzId.length > 0 && typeof parsed.targetName === "string" && typeof parsed.builtAt === "number" && Array.isArray(parsed.pendingTasks) && (parsed.scene === null || typeof parsed.scene === "object") && (parsed.maxUnansweredSends === void 0 || typeof parsed.maxUnansweredSends === "number" && Number.isFinite(parsed.maxUnansweredSends) && parsed.maxUnansweredSends >= 0) && typeof parsed.selfScheduleEnabled === "boolean") {
+    if (parsed && typeof parsed === "object" && parsed.v === FIRE_PACK_VERSION && chatFieldOk(parsed.chat) && typeof parsed.template === "string" && parsed.template.length > 0 && (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === "number") && typeof parsed.tzId === "string" && parsed.tzId.length > 0 && typeof parsed.userTzId === "string" && parsed.userTzId.length > 0 && typeof parsed.targetName === "string" && typeof parsed.builtAt === "number" && Array.isArray(parsed.pendingTasks) && (parsed.scene === null || typeof parsed.scene === "object") && typeof parsed.selfScheduleEnabled === "boolean") {
       return parsed;
     }
   } catch {
@@ -8053,7 +8761,6 @@ function shouldExpireFire(input) {
 var DELIVERED_WINDOW_MS = 30 * 6e4;
 
 // utils/amsg2Tasks.ts
-var MAX_ACTIVE_TASKS_PER_CHAR = 5;
 var shortTaskId = (taskUuid) => taskUuid.slice(0, 8);
 var describeRecurrence = (recurrence) => recurrence === "daily" ? "\u6BCF\u5929" : recurrence === "weekly" ? "\u6BCF\u5468" : "\u4E00\u6B21\u6027";
 var AMSG2_SCHEDULE_SECRECY_NOTE = "\u4E0D\u8981\u5411\u7528\u6237\u590D\u8FF0\u6216\u63D0\u53CA\u8FD9\u4EFD\u6392\u7A0B\u4FE1\u606F\u672C\u8EAB\u7684\u5B58\u5728\u3002";
@@ -8122,34 +8829,40 @@ var FIRE_TOOL_DESCRIPTION = [
   `\u4E00\u6B21\u6700\u591A\u6392 ${MAX_FIRE_SCHEDULES} \u6761\uFF1B\u6BCF\u4E2A\u89D2\u8272\u540C\u65F6\u6302\u7684\u4EFB\u52A1\u4E5F\u6709\u4E0A\u9650\uFF0C\u6392\u4E0D\u4E0B\u65F6\u4F1A\u544A\u8BC9\u4F60\u3002`,
   "\u6CA1\u6709\u300C\u63A5\u7740\u8BF4\u300D\u7684\u5FC5\u8981\u5C31\u522B\u6392\u2014\u2014\u4E3A\u4E86\u6392\u800C\u6392\u51FA\u6765\u7684\u540E\u7EED\uFF0C\u7528\u6237\u8BFB\u8D77\u6765\u5C31\u662F\u6CA1\u8BDD\u627E\u8BDD\u3002"
 ].join("\n");
-var buildParameters = (example) => ({
+var buildScheduleParameters = (opts) => ({
   type: "object",
   properties: {
-    send_at: {
-      type: "string",
-      description: `\u5F00\u59CB\u751F\u6210\u7684\u65F6\u95F4\uFF0C\u5199\u4F60\u672C\u5730\u7684\u5899\u949F\u65F6\u95F4\u3001\u4E0D\u5E26\u65F6\u533A\u540E\u7F00\uFF08\u5982 ${example}\uFF09\uFF0C\u7CFB\u7EDF\u6309\u4F60\u6240\u5728\u7684\u65F6\u533A\u7406\u89E3\u3002\u81F3\u5C11\u6BD4\u5F53\u524D\u65F6\u95F4\u665A 1 \u5206\u949F\u3002\u6392\u4E4B\u524D\u5148\u60F3\u60F3\u5BF9\u65B9\u90A3\u8FB9\u662F\u51E0\u70B9\u2014\u2014\u4F60\u4EEC\u4E4B\u95F4\u53EF\u80FD\u6709\u65F6\u5DEE\uFF0C\u522B\u628A\u6D88\u606F\u6392\u5230\u5BF9\u65B9\u7684\u6DF1\u591C\u3002`
-    },
+    send_at: { type: "string", description: opts.sendAtDescription },
     mode: {
       type: "string",
       enum: ["auto", "prompted"],
-      description: "\u751F\u6210\u6A21\u5F0F\u3002auto=\u5230\u70B9\u6839\u636E\u90A3\u65F6\u7684\u4E0A\u4E0B\u6587\u81EA\u7531\u53D1\u6325\uFF1Bprompted=\u56F4\u7ED5 prompt_hint \u7684\u65B9\u5411\u8BF4\u3002\u9ED8\u8BA4 auto\u3002"
+      description: opts.modeDescription
     },
-    prompt_hint: {
-      type: "string",
-      description: '\u7ED9\u672A\u6765\u90A3\u6761\u6D88\u606F\u7684\u65B9\u5411\uFF0C\u5982"\u63A5\u7740\u521A\u624D\u90A3\u53EA\u732B\u7684\u8BDD\u5F80\u4E0B\u8BF4""\u544A\u8BC9\u4ED6\u6C64\u7096\u597D\u4E86"\u3002mode=prompted \u65F6\u5FC5\u586B\u3002'
-    },
-    recurrence: {
-      type: "string",
-      enum: ["none", "daily", "weekly"],
-      description: "\u91CD\u590D\u7C7B\u578B\u3002none=\u4E00\u6B21\u6027\uFF08\u9ED8\u8BA4\uFF09\uFF1Bdaily/weekly=\u6BCF\u5929/\u6BCF\u5468\u540C\u4E00\u65F6\u95F4\u3002"
-    },
-    expire_policy: {
-      type: "string",
-      enum: ["expire", "force"],
-      description: EXPIRE_POLICY_DESCRIPTION
-    }
+    prompt_hint: { type: "string", description: opts.promptHintDescription },
+    ...opts.abilities.allowRecurring ? {
+      recurrence: {
+        type: "string",
+        enum: ["none", "daily", "weekly"],
+        description: opts.recurrenceDescription
+      }
+    } : {},
+    ...opts.abilities.allowForce ? {
+      expire_policy: {
+        type: "string",
+        enum: ["expire", "force"],
+        // 与前台共用一份：同一个策略在两个入口说两套话，角色的选择会跟着入口漂。
+        description: EXPIRE_POLICY_DESCRIPTION
+      }
+    } : {}
   },
   required: ["send_at"]
+});
+var buildParameters = (example, abilities) => buildScheduleParameters({
+  sendAtDescription: `\u5F00\u59CB\u751F\u6210\u7684\u65F6\u95F4\uFF0C\u5199\u4F60\u672C\u5730\u7684\u5899\u949F\u65F6\u95F4\u3001\u4E0D\u5E26\u65F6\u533A\u540E\u7F00\uFF08\u5982 ${example}\uFF09\uFF0C\u7CFB\u7EDF\u6309\u4F60\u6240\u5728\u7684\u65F6\u533A\u7406\u89E3\u3002\u81F3\u5C11\u6BD4\u5F53\u524D\u65F6\u95F4\u665A 1 \u5206\u949F\u3002\u6392\u4E4B\u524D\u5148\u60F3\u60F3\u5BF9\u65B9\u90A3\u8FB9\u662F\u51E0\u70B9\u2014\u2014\u4F60\u4EEC\u4E4B\u95F4\u53EF\u80FD\u6709\u65F6\u5DEE\uFF0C\u522B\u628A\u6D88\u606F\u6392\u5230\u5BF9\u65B9\u7684\u6DF1\u591C\u3002`,
+  modeDescription: "\u751F\u6210\u6A21\u5F0F\u3002auto=\u5230\u70B9\u6839\u636E\u90A3\u65F6\u7684\u4E0A\u4E0B\u6587\u81EA\u7531\u53D1\u6325\uFF1Bprompted=\u56F4\u7ED5 prompt_hint \u7684\u65B9\u5411\u8BF4\u3002\u9ED8\u8BA4 auto\u3002",
+  promptHintDescription: '\u7ED9\u672A\u6765\u90A3\u6761\u6D88\u606F\u7684\u65B9\u5411\uFF0C\u5982"\u63A5\u7740\u521A\u624D\u90A3\u53EA\u732B\u7684\u8BDD\u5F80\u4E0B\u8BF4""\u544A\u8BC9\u4ED6\u6C64\u7096\u597D\u4E86"\u3002mode=prompted \u65F6\u5FC5\u586B\u3002',
+  recurrenceDescription: "\u91CD\u590D\u7C7B\u578B\u3002none=\u4E00\u6B21\u6027\uFF08\u9ED8\u8BA4\uFF09\uFF1Bdaily/weekly=\u6BCF\u5929/\u6BCF\u5468\u540C\u4E00\u65F6\u95F4\u3002",
+  abilities
 });
 var buildFireScheduleTool = (opts) => ({
   type: "function",
@@ -8157,7 +8870,8 @@ var buildFireScheduleTool = (opts) => ({
     name: AMSG_FIRE_SCHEDULE_TOOL,
     description: FIRE_TOOL_DESCRIPTION,
     parameters: buildParameters(
-      buildSendAtExample(opts.nowMs, opts.tz)
+      buildSendAtExample(opts.nowMs, opts.tz),
+      opts.abilities
     )
   }
 });
@@ -8210,7 +8924,8 @@ var buildFireScheduleBlock = (mode, opts) => {
     // 角色在 prompt 里只看得到自己那边的钟，很容易把「晚上聊两句」排到对方的凌晨三点。
     // 对方那边此刻几点写在【当前时刻补充】里（有时差时才有那一行）。
     "\u5B9A\u65F6\u95F4\u4E4B\u524D\u5148\u60F3\u60F3\u5BF9\u65B9\u90A3\u8FB9\u662F\u51E0\u70B9\uFF1A\u4F60\u4EEC\u4E4B\u95F4\u53EF\u80FD\u6709\u65F6\u5DEE\uFF0C\u522B\u628A\u6D88\u606F\u6392\u5230\u5BF9\u65B9\u7684\u6DF1\u591C\u3002",
-    "\u6CA1\u5FC5\u8981\u5C31\u522B\u6392\u3002\u4E3A\u4E86\u6392\u800C\u6392\u51FA\u6765\u7684\u540E\u7EED\uFF0C\u8BFB\u8D77\u6765\u5C31\u662F\u6CA1\u8BDD\u627E\u8BDD\u3002"
+    "\u6CA1\u5FC5\u8981\u5C31\u522B\u6392\u3002\u4E3A\u4E86\u6392\u800C\u6392\u51FA\u6765\u7684\u540E\u7EED\uFF0C\u8BFB\u8D77\u6765\u5C31\u662F\u6CA1\u8BDD\u627E\u8BDD\u3002",
+    ...opts.limitsBrief ? [opts.limitsBrief] : []
   ].join("\n");
 };
 var buildTaskInstruction = (mode, promptHint) => {
@@ -8818,6 +9533,369 @@ var renderRealtimeWorldBlock = (input) => {
   return parts.join("\n");
 };
 
+// presets/holidays/countries.json
+var countries_default = [{ countryCode: "AD", name: "Andorra" }, { countryCode: "AG", name: "Antigua and Barbuda" }, { countryCode: "AI", name: "Anguilla" }, { countryCode: "AL", name: "Albania" }, { countryCode: "AM", name: "Armenia" }, { countryCode: "AO", name: "Angola" }, { countryCode: "AR", name: "Argentina" }, { countryCode: "AT", name: "Austria" }, { countryCode: "AU", name: "Australia" }, { countryCode: "AW", name: "Aruba" }, { countryCode: "AX", name: "\xC5land Islands" }, { countryCode: "BA", name: "Bosnia and Herzegovina" }, { countryCode: "BB", name: "Barbados" }, { countryCode: "BD", name: "Bangladesh" }, { countryCode: "BE", name: "Belgium" }, { countryCode: "BF", name: "Burkina Faso" }, { countryCode: "BG", name: "Bulgaria" }, { countryCode: "BH", name: "Bahrain" }, { countryCode: "BI", name: "Burundi" }, { countryCode: "BJ", name: "Benin" }, { countryCode: "BL", name: "Saint Barth\xE9lemy" }, { countryCode: "BM", name: "Bermuda" }, { countryCode: "BO", name: "Bolivia" }, { countryCode: "BQ", name: "Caribbean Netherlands" }, { countryCode: "BR", name: "Brazil" }, { countryCode: "BS", name: "Bahamas" }, { countryCode: "BW", name: "Botswana" }, { countryCode: "BY", name: "Belarus" }, { countryCode: "BZ", name: "Belize" }, { countryCode: "CA", name: "Canada" }, { countryCode: "CC", name: "Cocos (Keeling) Islands" }, { countryCode: "CD", name: "DR Congo" }, { countryCode: "CF", name: "Central African Republic" }, { countryCode: "CG", name: "Congo" }, { countryCode: "CH", name: "Switzerland" }, { countryCode: "CI", name: "Ivory Coast" }, { countryCode: "CK", name: "Cook Islands" }, { countryCode: "CL", name: "Chile" }, { countryCode: "CM", name: "Cameroon" }, { countryCode: "CN", name: "China" }, { countryCode: "CO", name: "Colombia" }, { countryCode: "CR", name: "Costa Rica" }, { countryCode: "CU", name: "Cuba" }, { countryCode: "CV", name: "Cape Verde" }, { countryCode: "CW", name: "Cura\xE7ao" }, { countryCode: "CX", name: "Christmas Island" }, { countryCode: "CY", name: "Cyprus" }, { countryCode: "CZ", name: "Czechia" }, { countryCode: "DE", name: "Germany" }, { countryCode: "DJ", name: "Djibouti" }, { countryCode: "DK", name: "Denmark" }, { countryCode: "DM", name: "Dominica" }, { countryCode: "DO", name: "Dominican Republic" }, { countryCode: "DZ", name: "Algeria" }, { countryCode: "EC", name: "Ecuador" }, { countryCode: "EE", name: "Estonia" }, { countryCode: "EG", name: "Egypt" }, { countryCode: "ER", name: "Eritrea" }, { countryCode: "ES", name: "Spain" }, { countryCode: "ET", name: "Ethiopia" }, { countryCode: "FI", name: "Finland" }, { countryCode: "FK", name: "Falkland Islands" }, { countryCode: "FM", name: "Micronesia" }, { countryCode: "FO", name: "Faroe Islands" }, { countryCode: "FR", name: "France" }, { countryCode: "GA", name: "Gabon" }, { countryCode: "GB", name: "United Kingdom" }, { countryCode: "GD", name: "Grenada" }, { countryCode: "GE", name: "Georgia" }, { countryCode: "GF", name: "French Guiana" }, { countryCode: "GG", name: "Guernsey" }, { countryCode: "GH", name: "Ghana" }, { countryCode: "GI", name: "Gibraltar" }, { countryCode: "GL", name: "Greenland" }, { countryCode: "GM", name: "Gambia" }, { countryCode: "GN", name: "Guinea" }, { countryCode: "GP", name: "Guadeloupe" }, { countryCode: "GQ", name: "Equatorial Guinea" }, { countryCode: "GR", name: "Greece" }, { countryCode: "GT", name: "Guatemala" }, { countryCode: "GW", name: "Guinea-Bissau" }, { countryCode: "GY", name: "Guyana" }, { countryCode: "HK", name: "Hong Kong" }, { countryCode: "HN", name: "Honduras" }, { countryCode: "HR", name: "Croatia" }, { countryCode: "HT", name: "Haiti" }, { countryCode: "HU", name: "Hungary" }, { countryCode: "ID", name: "Indonesia" }, { countryCode: "IE", name: "Ireland" }, { countryCode: "IM", name: "Isle of Man" }, { countryCode: "IQ", name: "Iraq" }, { countryCode: "IS", name: "Iceland" }, { countryCode: "IT", name: "Italy" }, { countryCode: "JE", name: "Jersey" }, { countryCode: "JM", name: "Jamaica" }, { countryCode: "JP", name: "Japan" }, { countryCode: "KE", name: "Kenya" }, { countryCode: "KH", name: "Cambodia" }, { countryCode: "KI", name: "Kiribati" }, { countryCode: "KM", name: "Comoros" }, { countryCode: "KN", name: "Saint Kitts and Nevis" }, { countryCode: "KR", name: "South Korea" }, { countryCode: "KY", name: "Cayman Islands" }, { countryCode: "KZ", name: "Kazakhstan" }, { countryCode: "LC", name: "Saint Lucia" }, { countryCode: "LI", name: "Liechtenstein" }, { countryCode: "LR", name: "Liberia" }, { countryCode: "LS", name: "Lesotho" }, { countryCode: "LT", name: "Lithuania" }, { countryCode: "LU", name: "Luxembourg" }, { countryCode: "LV", name: "Latvia" }, { countryCode: "LY", name: "Libya" }, { countryCode: "MA", name: "Morocco" }, { countryCode: "MC", name: "Monaco" }, { countryCode: "MD", name: "Moldova" }, { countryCode: "ME", name: "Montenegro" }, { countryCode: "MF", name: "Saint Martin" }, { countryCode: "MG", name: "Madagascar" }, { countryCode: "MH", name: "Marshall Islands" }, { countryCode: "MK", name: "North Macedonia" }, { countryCode: "ML", name: "Mali" }, { countryCode: "MN", name: "Mongolia" }, { countryCode: "MP", name: "Northern Mariana Islands" }, { countryCode: "MQ", name: "Martinique" }, { countryCode: "MR", name: "Mauritania" }, { countryCode: "MS", name: "Montserrat" }, { countryCode: "MT", name: "Malta" }, { countryCode: "MW", name: "Malawi" }, { countryCode: "MX", name: "Mexico" }, { countryCode: "MZ", name: "Mozambique" }, { countryCode: "NA", name: "Namibia" }, { countryCode: "NC", name: "New Caledonia" }, { countryCode: "NE", name: "Niger" }, { countryCode: "NF", name: "Norfolk Island" }, { countryCode: "NG", name: "Nigeria" }, { countryCode: "NI", name: "Nicaragua" }, { countryCode: "NL", name: "Netherlands" }, { countryCode: "NO", name: "Norway" }, { countryCode: "NR", name: "Nauru" }, { countryCode: "NU", name: "Niue" }, { countryCode: "NZ", name: "New Zealand" }, { countryCode: "PA", name: "Panama" }, { countryCode: "PE", name: "Peru" }, { countryCode: "PF", name: "French Polynesia" }, { countryCode: "PG", name: "Papua New Guinea" }, { countryCode: "PH", name: "Philippines" }, { countryCode: "PL", name: "Poland" }, { countryCode: "PM", name: "Saint Pierre and Miquelon" }, { countryCode: "PN", name: "Pitcairn Islands" }, { countryCode: "PR", name: "Puerto Rico" }, { countryCode: "PT", name: "Portugal" }, { countryCode: "PW", name: "Palau" }, { countryCode: "PY", name: "Paraguay" }, { countryCode: "RO", name: "Romania" }, { countryCode: "RS", name: "Serbia" }, { countryCode: "RU", name: "Russia" }, { countryCode: "RW", name: "Rwanda" }, { countryCode: "SB", name: "Solomon Islands" }, { countryCode: "SC", name: "Seychelles" }, { countryCode: "SD", name: "Sudan" }, { countryCode: "SE", name: "Sweden" }, { countryCode: "SG", name: "Singapore" }, { countryCode: "SH", name: "Saint Helena, Ascension and Tristan da Cunha" }, { countryCode: "SI", name: "Slovenia" }, { countryCode: "SJ", name: "Svalbard and Jan Mayen" }, { countryCode: "SK", name: "Slovakia" }, { countryCode: "SL", name: "Sierra Leone" }, { countryCode: "SM", name: "San Marino" }, { countryCode: "SN", name: "Senegal" }, { countryCode: "SO", name: "Somalia" }, { countryCode: "SR", name: "Suriname" }, { countryCode: "SS", name: "South Sudan" }, { countryCode: "ST", name: "S\xE3o Tom\xE9 and Pr\xEDncipe" }, { countryCode: "SV", name: "El Salvador" }, { countryCode: "SX", name: "Sint Maarten" }, { countryCode: "SY", name: "Syria" }, { countryCode: "SZ", name: "Eswatini" }, { countryCode: "TC", name: "Turks and Caicos Islands" }, { countryCode: "TD", name: "Chad" }, { countryCode: "TG", name: "Togo" }, { countryCode: "TK", name: "Tokelau" }, { countryCode: "TN", name: "Tunisia" }, { countryCode: "TO", name: "Tonga" }, { countryCode: "TR", name: "T\xFCrkiye" }, { countryCode: "TT", name: "Trinidad and Tobago" }, { countryCode: "TV", name: "Tuvalu" }, { countryCode: "TZ", name: "Tanzania" }, { countryCode: "UA", name: "Ukraine" }, { countryCode: "UG", name: "Uganda" }, { countryCode: "US", name: "United States" }, { countryCode: "UY", name: "Uruguay" }, { countryCode: "VA", name: "Vatican City" }, { countryCode: "VC", name: "Saint Vincent and the Grenadines" }, { countryCode: "VE", name: "Venezuela" }, { countryCode: "VG", name: "British Virgin Islands" }, { countryCode: "VI", name: "United States Virgin Islands" }, { countryCode: "VN", name: "Vietnam" }, { countryCode: "VU", name: "Vanuatu" }, { countryCode: "WF", name: "Wallis and Futuna" }, { countryCode: "WS", name: "Samoa" }, { countryCode: "YE", name: "Yemen" }, { countryCode: "ZA", name: "South Africa" }, { countryCode: "ZM", name: "Zambia" }, { countryCode: "ZW", name: "Zimbabwe" }];
+
+// presets/holidays/cn-2026.json
+var cn_2026_default = {
+  $schema: "https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/schema.json",
+  $id: "https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/2026.json",
+  year: 2026,
+  papers: [
+    "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+  ],
+  days: [
+    {
+      name: "\u5143\u65E6",
+      date: "2026-01-01",
+      isOffDay: true
+    },
+    {
+      name: "\u5143\u65E6",
+      date: "2026-01-02",
+      isOffDay: true
+    },
+    {
+      name: "\u5143\u65E6",
+      date: "2026-01-03",
+      isOffDay: true
+    },
+    {
+      name: "\u5143\u65E6",
+      date: "2026-01-04",
+      isOffDay: false
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-14",
+      isOffDay: false
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-15",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-16",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-17",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-18",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-19",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-20",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-21",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-22",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-23",
+      isOffDay: true
+    },
+    {
+      name: "\u6625\u8282",
+      date: "2026-02-28",
+      isOffDay: false
+    },
+    {
+      name: "\u6E05\u660E\u8282",
+      date: "2026-04-04",
+      isOffDay: true
+    },
+    {
+      name: "\u6E05\u660E\u8282",
+      date: "2026-04-05",
+      isOffDay: true
+    },
+    {
+      name: "\u6E05\u660E\u8282",
+      date: "2026-04-06",
+      isOffDay: true
+    },
+    {
+      name: "\u52B3\u52A8\u8282",
+      date: "2026-05-01",
+      isOffDay: true
+    },
+    {
+      name: "\u52B3\u52A8\u8282",
+      date: "2026-05-02",
+      isOffDay: true
+    },
+    {
+      name: "\u52B3\u52A8\u8282",
+      date: "2026-05-03",
+      isOffDay: true
+    },
+    {
+      name: "\u52B3\u52A8\u8282",
+      date: "2026-05-04",
+      isOffDay: true
+    },
+    {
+      name: "\u52B3\u52A8\u8282",
+      date: "2026-05-05",
+      isOffDay: true
+    },
+    {
+      name: "\u52B3\u52A8\u8282",
+      date: "2026-05-09",
+      isOffDay: false
+    },
+    {
+      name: "\u7AEF\u5348\u8282",
+      date: "2026-06-19",
+      isOffDay: true
+    },
+    {
+      name: "\u7AEF\u5348\u8282",
+      date: "2026-06-20",
+      isOffDay: true
+    },
+    {
+      name: "\u7AEF\u5348\u8282",
+      date: "2026-06-21",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-09-20",
+      isOffDay: false
+    },
+    {
+      name: "\u4E2D\u79CB\u8282",
+      date: "2026-09-25",
+      isOffDay: true
+    },
+    {
+      name: "\u4E2D\u79CB\u8282",
+      date: "2026-09-26",
+      isOffDay: true
+    },
+    {
+      name: "\u4E2D\u79CB\u8282",
+      date: "2026-09-27",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-01",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-02",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-03",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-04",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-05",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-06",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-07",
+      isOffDay: true
+    },
+    {
+      name: "\u56FD\u5E86\u8282",
+      date: "2026-10-10",
+      isOffDay: false
+    }
+  ]
+};
+
+// utils/malaysiaHolidayRegions.ts
+var MALAYSIA_HOLIDAY_REGIONS = [
+  { sourceCode: "JHR", code: "MY-01", name: "\u67D4\u4F5B", english: "Johor" },
+  { sourceCode: "KDH", code: "MY-02", name: "\u5409\u6253", english: "Kedah" },
+  { sourceCode: "KTN", code: "MY-03", name: "\u5409\u5170\u4E39", english: "Kelantan" },
+  { sourceCode: "MLK", code: "MY-04", name: "\u9A6C\u516D\u7532", english: "Melaka" },
+  { sourceCode: "NSN", code: "MY-05", name: "\u68EE\u7F8E\u5170", english: "Negeri Sembilan" },
+  { sourceCode: "PHG", code: "MY-06", name: "\u5F6D\u4EA8", english: "Pahang" },
+  { sourceCode: "PNG", code: "MY-07", name: "\u69DF\u57CE", english: "Pulau Pinang" },
+  { sourceCode: "PRK", code: "MY-08", name: "\u9739\u96F3", english: "Perak" },
+  { sourceCode: "PLS", code: "MY-09", name: "\u73BB\u7483\u5E02", english: "Perlis" },
+  { sourceCode: "SGR", code: "MY-10", name: "\u96EA\u5170\u83AA", english: "Selangor" },
+  { sourceCode: "TRG", code: "MY-11", name: "\u767B\u5609\u697C", english: "Terengganu" },
+  { sourceCode: "SBH", code: "MY-12", name: "\u6C99\u5DF4", english: "Sabah" },
+  { sourceCode: "SWK", code: "MY-13", name: "\u7802\u62C9\u8D8A", english: "Sarawak" },
+  { sourceCode: "KUL", code: "MY-14", name: "\u5409\u9686\u5761", english: "Kuala Lumpur" },
+  { sourceCode: "LBN", code: "MY-15", name: "\u7EB3\u95FD", english: "Labuan" },
+  { sourceCode: "PJY", code: "MY-16", name: "\u5E03\u57CE", english: "Putrajaya" }
+];
+var malaysiaHolidayRegion = (code) => MALAYSIA_HOLIDAY_REGIONS.find((r) => r.code === code);
+
+// utils/userHolidays.ts
+var HOLIDAY_CACHE_PREFIX = "user_holidays_v1_";
+var HOLIDAY_COUNTRIES = [...countries_default, { countryCode: "MY", name: "Malaysia" }];
+function holidayCountryName(code) {
+  try {
+    return new Intl.DisplayNames(["zh-CN"], { type: "region" }).of(code) || code;
+  } catch {
+    return HOLIDAY_COUNTRIES.find((c) => c.countryCode === code)?.name || code;
+  }
+}
+var memory = /* @__PURE__ */ new Map();
+var inFlight = /* @__PURE__ */ new Map();
+var retryAfter = /* @__PURE__ */ new Map();
+var DAY = 864e5;
+var cleanName = (name) => typeof name === "string" ? name.replace(/[\r\n\x00-\x1f]/g, " ").slice(0, 80).trim() : "";
+var validDate = (date) => typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date);
+function parseHolidayCalendar(country, year, raw, now) {
+  if (country === "MY") {
+    if (raw?.meta?.year !== year || !Array.isArray(raw.data) || !raw.data.length) return null;
+    const states = new Map(MALAYSIA_HOLIDAY_REGIONS.map((r) => [r.sourceCode, r.code]));
+    if (!raw.data.every((d) => validDate(d?.date) && d.date.startsWith(`${year}-`) && cleanName(d.name) && Array.isArray(d.state_codes) && d.state_codes.length > 0 && d.state_codes.every((code) => typeof code === "string" && states.has(code)))) return null;
+    return { country, year, fetchedAt: now, days: raw.data.map((d) => {
+      const regions = [...new Set(d.state_codes.map((code) => states.get(code)))];
+      return {
+        date: d.date,
+        name: cleanName(d.name),
+        off: true,
+        ...regions.length === states.size ? {} : { regions }
+      };
+    }) };
+  }
+  if (country === "CN") {
+    if (raw?.year !== year || !Array.isArray(raw.papers) || !raw.papers.length || !Array.isArray(raw.days)) return null;
+    if (!raw.days.every((d) => validDate(d?.date) && cleanName(d?.name) && typeof d?.isOffDay === "boolean")) return null;
+    return { country, year, fetchedAt: now, days: raw.days.map((d) => ({ date: d.date, name: cleanName(d.name), off: d.isOffDay })) };
+  }
+  if (!Array.isArray(raw) || !raw.every((d) => validDate(d?.date) && d.countryCode === country && Array.isArray(d.types))) return null;
+  return { country, year, fetchedAt: now, days: raw.filter((d) => d.types.includes("Public") && cleanName(d.localName || d.name) && (d.global === true || Array.isArray(d.counties))).map((d) => ({
+    date: d.date,
+    name: cleanName(d.localName || d.name),
+    off: true,
+    ...d.global === true ? {} : { regions: d.counties.filter((v) => typeof v === "string") }
+  })) };
+}
+function validCached(raw, country, year) {
+  return raw?.country === country && raw.year === year && Number.isFinite(raw.fetchedAt) && Array.isArray(raw.days) && raw.days.every((d) => validDate(d?.date) && typeof d.name === "string" && d.name === cleanName(d.name) && typeof d.off === "boolean" && (d.regions === void 0 || Array.isArray(d.regions) && d.regions.every((r) => typeof r === "string")));
+}
+function insertUserHolidayInProfile(prompt, reminder) {
+  if (!reminder) return prompt;
+  const heading = "### \u4E92\u52A8\u5BF9\u8C61 (User)\n";
+  return prompt.includes(heading) ? prompt.replace(heading, `${heading}- ${reminder}
+`) : `${prompt}
+
+### \u4E92\u52A8\u5BF9\u8C61\u4FE1\u606F\u8865\u5145
+${reminder}
+`;
+}
+async function loadHolidayCalendar(country, year, cache, now = Date.now()) {
+  if (!HOLIDAY_COUNTRIES.some((c) => c.countryCode === country) || !Number.isInteger(year) || year < 2e3 || year > 2200) return null;
+  if (country === "CN" && year === 2026) return parseHolidayCalendar(country, year, cn_2026_default, now);
+  const key = `${HOLIDAY_CACHE_PREFIX}${country}_${year}`;
+  let saved = memory.get(key);
+  if (!saved && cache) {
+    try {
+      const raw = await cache.read(key);
+      if (validCached(raw, country, year)) saved = raw;
+    } catch {
+    }
+  }
+  if (saved && now >= saved.fetchedAt && now - saved.fetchedAt < DAY) return saved;
+  if ((retryAfter.get(key) || 0) > now) return saved || null;
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const job = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3e3);
+    try {
+      const url = country === "CN" ? `https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master/${year}.json` : country === "MY" ? `https://malaysia-holiday.dydxsoft.my/api/v1/holidays?year=${year}` : `https://date.nager.at/api/v3/PublicHolidays/${year}/${country}`;
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error("holiday unavailable");
+      const fresh = parseHolidayCalendar(country, year, await res.json(), now);
+      if (!fresh) throw new Error("holiday unconfirmed");
+      memory.set(key, fresh);
+      try {
+        await cache?.write(key, fresh);
+      } catch {
+      }
+      return fresh;
+    } catch {
+      retryAfter.set(key, now + 36e5);
+      return saved || null;
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  inFlight.set(key, job);
+  try {
+    return await job;
+  } finally {
+    inFlight.delete(key);
+  }
+}
+function renderUserHoliday(config, date, days, userName) {
+  const matches = days.filter((d) => d.date === date && (!d.regions || !!config.subdivisionCode && d.regions.includes(config.subdivisionCode)));
+  if (!matches.length) return "";
+  const working = matches.some((d) => !d.off);
+  const names = [...new Set(matches.filter((d) => d.off === !working).map((d) => cleanName(d.name)))].join("\u3001");
+  const regionName = config.countryCode === "MY" ? malaysiaHolidayRegion(config.subdivisionCode || "")?.name : void 0;
+  const region = config.subdivisionCode ? `\uFF08${regionName || config.subdivisionCode}\uFF09` : "";
+  const person = cleanName(userName) || "\u7528\u6237";
+  return `${person}\u6240\u5728\u5730${holidayCountryName(config.countryCode)}${region} ${date} \u4E3A${names}${working ? "\u8C03\u4F11\u8865\u73ED\u65E5" : "\u516C\u5171\u5047\u671F"}\uFF0C\u5B9E\u9645\u4F11\u606F\u4E0E\u5426\u4EE5${person}\u81EA\u5DF1\u7684\u65E5\u7A0B\u548C\u8BF4\u660E\u4E3A\u51C6\u3002`;
+}
+async function getUserHolidayReminder(config, cache, now = Date.now(), userName) {
+  if (!config?.enabled || !config.countryCode) return "";
+  const local = nowInTimeZone(config.timeZone, new Date(now));
+  const year = local.getFullYear();
+  const calendars = await Promise.all([
+    loadHolidayCalendar(config.countryCode, year, cache, now),
+    // CN next year's New Year announcement can change December's schedule.
+    config.countryCode === "CN" && local.getMonth() === 11 ? loadHolidayCalendar("CN", year + 1, cache, now) : null
+  ]);
+  const days = /* @__PURE__ */ new Map();
+  for (const calendar of calendars) {
+    if (!calendar) continue;
+    const grouped = /* @__PURE__ */ new Map();
+    for (const day of calendar.days) grouped.set(day.date, [...grouped.get(day.date) || [], day]);
+    for (const [date2, values] of grouped) days.set(date2, values);
+  }
+  const date = getLocalDateKey(local);
+  return renderUserHoliday(config, date, days.get(date) || [], userName);
+}
+
 // worker/amsg/src/realtimeWorld.ts
 var AMSG_WEATHER_SNAPSHOT_KEY = "world_weather";
 var AMSG_HOTNEWS_SNAPSHOT_KEY = "world_hotnews";
@@ -8906,6 +9984,22 @@ var loadHotNews = async (cfg, nowMs, globalRows, pendingWrites) => {
     return snap.items;
   }
   return [];
+};
+var buildUserHolidayBlock = async (args) => {
+  const { toolConfig: cfg, nowMs, globalRows } = args;
+  if (!args.timeAwarenessEnabled || !cfg.userHolidays?.timeZone) return "";
+  return getUserHolidayReminder(cfg.userHolidays, {
+    async read(key) {
+      try {
+        return JSON.parse(globalRows.find((row) => row.key === key)?.value || "null");
+      } catch {
+        return null;
+      }
+    },
+    async write(key, data) {
+      await args.writeState?.(args.globalNamespace, [{ key, value: JSON.stringify(data) }]);
+    }
+  }, nowMs, args.userName);
 };
 var buildRealtimeWorldBlock = async (args) => {
   const { toolConfig: cfg, nowMs, globalRows } = args;
@@ -9073,6 +10167,9 @@ var handleInstantChat = async (args) => {
   if (!isEncryptedEnvelope2(body.taskPayload)) {
     return fail3(400, "INVALID_TASK_PAYLOAD", "taskPayload \u5FC5\u987B\u662F\u52A0\u5BC6\u4FE1\u5C01\uFF08iv / authTag / encryptedData\uFF09");
   }
+  if (body.credPayload !== void 0 && !isEncryptedEnvelope2(body.credPayload)) {
+    return fail3(400, "INVALID_CRED_PAYLOAD", "credPayload \u5FC5\u987B\u662F\u52A0\u5BC6\u4FE1\u5C01\uFF08iv / authTag / encryptedData\uFF09");
+  }
   const requestUrl = new URL(request.url);
   const mountPath = requestUrl.pathname.replace(/\/+$/, "").replace(/\/instant-chat$/, "");
   const internalUrl = (path) => {
@@ -9095,26 +10192,34 @@ var handleInstantChat = async (args) => {
       return null;
     }
   };
-  let stateResponse;
-  let stateBody = null;
-  let stateCause = null;
-  for (let attempt = 0; attempt < stateBackoffMs.length; attempt += 1) {
-    if (attempt > 0) {
-      console.warn(`[amsg:instant-chat] \u4E91\u7AEF\u72B6\u6001\u7B2C ${attempt} \u6B21\u6CA1\u5199\u8FDB\u53BB\uFF08${stateCause ?? stateResponse.status}\uFF09\uFF0C\u91CD\u8BD5`);
-      await sleep(stateBackoffMs[attempt]);
+  const forwardIdempotentPut = async (path, envelope, label) => {
+    let response;
+    let responseBody = null;
+    let cause = null;
+    for (let attempt = 0; attempt < stateBackoffMs.length; attempt += 1) {
+      if (attempt > 0) {
+        console.warn(`[amsg:instant-chat] ${label}\u7B2C ${attempt} \u6B21\u6CA1\u5199\u8FDB\u53BB\uFF08${cause ?? response.status}\uFF09\uFF0C\u91CD\u8BD5`);
+        await sleep(stateBackoffMs[attempt]);
+      }
+      response = await upstream2.fetch(
+        new Request(internalUrl(path), {
+          method: "PUT",
+          headers: encryptedHeaders,
+          body: JSON.stringify(envelope)
+        }),
+        env
+      );
+      responseBody = await readBody(response);
+      cause = readUpstreamCause(response.status, responseBody);
+      if (response.status < 500) break;
     }
-    stateResponse = await upstream2.fetch(
-      new Request(internalUrl("/client-state"), {
-        method: "PUT",
-        headers: encryptedHeaders,
-        body: JSON.stringify(body.statePayload)
-      }),
-      env
-    );
-    stateBody = await readBody(stateResponse);
-    stateCause = readUpstreamCause(stateResponse.status, stateBody);
-    if (stateResponse.status < 500) break;
-  }
+    return { response, body: responseBody, cause };
+  };
+  const {
+    response: stateResponse,
+    body: stateBody,
+    cause: stateCause
+  } = await forwardIdempotentPut("/client-state", body.statePayload, "\u4E91\u7AEF\u72B6\u6001");
   if (!stateResponse.ok) {
     return json(stateResponse.status, {
       success: false,
@@ -9137,6 +10242,26 @@ var handleInstantChat = async (args) => {
         step: "client-state"
       }
     });
+  }
+  const credPayload = body.credPayload;
+  if (credPayload !== void 0) {
+    const {
+      response: credResponse,
+      body: credBody,
+      cause: credCause
+    } = await forwardIdempotentPut("/llm-credentials", credPayload, "LLM \u51ED\u636E");
+    if (!credResponse.ok || credBody?.success === false) {
+      return json(credResponse.ok ? 502 : credResponse.status, {
+        success: false,
+        error: {
+          code: "INSTANT_CHAT_CREDENTIALS_FAILED",
+          message: "\u8FD9\u4E00\u8F6E\u7684 API \u51ED\u636E\u6CA1\u4F20\u4E0A\u53BB\uFF0C\u8FD9\u6761\u6CA1\u53D1\u51FA\u53BB",
+          step: "llm-credentials",
+          upstream: credBody,
+          ...credCause ? { upstreamLog: credCause } : {}
+        }
+      });
+    }
   }
   const taskResponse = await upstream2.fetch(
     new Request(internalUrl("/schedule-message"), {
@@ -9182,12 +10307,27 @@ var handleInstantChat = async (args) => {
   if (!kicked.ok) {
     console.warn("[amsg:instant-chat] \u53EB\u9192 DO \u5931\u8D25\uFF08\u7B49 cron \u515C\u5E95\uFF09", kicked.error);
   }
-  return json(202, { status: "accepted", uuid });
+  return json(202, {
+    status: "accepted",
+    uuid,
+    ...credPayload !== void 0 ? { credentialsSynced: true } : {}
+  });
 };
 
 // worker/amsg/src/selfUpdate.ts
 var CF_API = "https://api.cloudflare.com/client/v4";
 var BUNDLE_URL = "https://raw.githubusercontent.com/Tosd0/sullyos-workers/main/amsg/worker.bundle.js";
+function resolveBundleUrl(env) {
+  const configured = env.AMSG_BUNDLE_URL?.trim();
+  if (!configured) return BUNDLE_URL;
+  try {
+    const url = new URL(configured);
+    if (url.protocol === "https:") return url.toString();
+  } catch {
+  }
+  console.warn("[amsg:self-update] AMSG_BUNDLE_URL \u4E0D\u662F https \u5730\u5740\uFF0C\u6539\u7528\u9ED8\u8BA4\u6210\u54C1\u5305");
+  return BUNDLE_URL;
+}
 var MAIN_MODULE = "worker.bundle.js";
 var FALLBACK_COMPATIBILITY_DATE = "2026-01-01";
 var FALLBACK_COMPATIBILITY_FLAGS = ["global_fetch_strictly_public"];
@@ -9203,8 +10343,8 @@ async function cf(token, path, init = {}) {
       headers: { Authorization: `Bearer ${token}`, ...init.headers },
       body: init.body
     });
-  } catch (err5) {
-    return { ok: false, detail: `\u8FDE\u4E0D\u4E0A Cloudflare API\uFF1A${err5.message}` };
+  } catch (err6) {
+    return { ok: false, detail: `\u8FDE\u4E0D\u4E0A Cloudflare API\uFF1A${err6.message}` };
   }
   const text = await res.text();
   let payload;
@@ -9274,12 +10414,20 @@ async function locateScript(env, token, scriptName) {
     message: `\u5728\u8FD9\u679A token \u80FD\u78B0\u5230\u7684 ${accounts.length} \u4E2A\u8D26\u53F7\u91CC\u90FD\u6CA1\u627E\u5230\u540D\u4E3A ${scriptName} \u7684 Worker\u3002\u8981\u4E48 token \u7684\u6743\u9650\u6CA1\u8986\u76D6\u5230\u5B83\u6240\u5728\u7684\u8D26\u53F7\uFF0C\u8981\u4E48 Worker \u540D\u5B57\u5BF9\u4E0D\u4E0A\uFF08\u53EF\u7528 CF_SCRIPT_NAME \u6307\u5B9A\uFF09\u3002`
   };
 }
-async function fetchLatestBundle() {
+function bundleFetchUrl(base, nowMs = Date.now()) {
+  const url = new URL(base);
+  url.searchParams.set("t", String(nowMs));
+  return url.toString();
+}
+async function fetchLatestBundle(env = {}) {
   let res;
   try {
-    res = await fetch(BUNDLE_URL, { headers: { "User-Agent": "sullyos-amsg-self-update" } });
-  } catch (err5) {
-    return { ok: false, message: `\u53D6\u4E0D\u5230\u6700\u65B0\u4EE3\u7801\uFF1A${err5.message}` };
+    res = await fetch(bundleFetchUrl(resolveBundleUrl(env)), {
+      headers: { "User-Agent": "sullyos-amsg-self-update" },
+      cache: "no-store"
+    });
+  } catch (err6) {
+    return { ok: false, message: `\u53D6\u4E0D\u5230\u6700\u65B0\u4EE3\u7801\uFF1A${err6.message}` };
   }
   if (!res.ok) return { ok: false, message: `\u53D6\u6700\u65B0\u4EE3\u7801\u5931\u8D25\uFF08HTTP ${res.status}\uFF09` };
   const code = await res.text();
@@ -9290,7 +10438,8 @@ async function fetchLatestBundle() {
   if (!code.includes(BUNDLE_FINGERPRINT)) {
     return { ok: false, message: "\u53D6\u56DE\u6765\u7684\u6587\u4EF6\u4E0D\u50CF amsg \u7684 worker \u4EE3\u7801\uFF0C\u6CA1\u6709\u8986\u76D6\uFF0C\u5F53\u524D\u7248\u672C\u4E0D\u52A8\u3002" };
   }
-  return { ok: true, code };
+  const hash = (await sha256Hex(code)).slice(0, 12);
+  return { ok: true, bundle: { code, hash, bytes } };
 }
 function rebuildBindings(existing, env) {
   const bindings = [];
@@ -9327,7 +10476,7 @@ function buildDurableObjectPlan(existing) {
     migrations: { new_tag: INSTANT_TICK_MIGRATION_TAG, new_sqlite_classes: [INSTANT_TICK_CLASS] }
   };
 }
-async function handleSelfUpdate(request, env) {
+async function authorizeSelfUpdate(request, env) {
   const serverToken = env.AMSG_SERVER_TOKEN?.trim();
   if (!serverToken) {
     return fail(
@@ -9346,19 +10495,13 @@ async function handleSelfUpdate(request, env) {
       "\u6CA1\u914D CF_API_TOKEN\uFF0C\u6CA1\u6CD5\u81EA\u5DF1\u66F4\u65B0\u3002\u53BB Cloudflare \u5EFA\u4E00\u679A\u53EA\u52FE Workers Scripts \u2192 Edit \u7684 API Token\uFF0C\u52A0\u8FDB\u8FD9\u4E2A Worker \u7684\u53D8\u91CF\u91CC\u3002"
     );
   }
-  const scriptName = resolveScriptName(env, request.url);
-  if (!scriptName) {
-    return fail(
-      "SCRIPT_NAME_UNKNOWN",
-      "\u8BA4\u4E0D\u51FA\u8FD9\u4E2A Worker \u53EB\u4EC0\u4E48\uFF08\u591A\u534A\u662F\u5957\u4E86\u4EE3\u7406\u57DF\u540D\uFF09\u3002\u7ED9\u5B83\u52A0\u4E00\u6761 CF_SCRIPT_NAME \u53D8\u91CF\uFF0C\u503C\u586B Worker \u7684\u540D\u5B57\u3002"
-    );
-  }
+  return { ok: true, token };
+}
+async function performSelfUpdate(env, token, scriptName, bundle) {
   const located = await locateScript(env, token, scriptName);
   if (!located.ok) return fail("SCRIPT_NOT_LOCATED", located.message);
   const account = { id: located.accountId };
   const settings = { result: located.settings };
-  const bundle = await fetchLatestBundle();
-  if (!bundle.ok) return fail("BUNDLE_INVALID", bundle.message);
   const rebuilt = rebuildBindings(
     settings.result?.bindings ?? [],
     env
@@ -9398,17 +10541,496 @@ async function handleSelfUpdate(request, env) {
   if (!uploaded.ok) {
     return fail("UPLOAD_FAILED", `\u4E0A\u4F20\u5931\u8D25\uFF08${uploaded.detail}\uFF09\u3002\u5F53\u524D\u7248\u672C\u4E0D\u52A8\u3002`);
   }
-  const hash = (await sha256Hex(bundle.code)).slice(0, 12);
-  const bytes = new TextEncoder().encode(bundle.code).length;
   return {
     ok: true,
     code: "UPDATED",
     message: "\u5DF2\u7ECF\u66F4\u65B0\u5230\u6700\u65B0\u7248\u672C\u3002",
-    bundleHash: hash,
-    bundleBytes: bytes,
+    bundleHash: bundle.hash,
+    bundleBytes: bundle.bytes,
     scriptName
   };
 }
+async function handleSelfUpdate(request, env) {
+  const gate = await authorizeSelfUpdate(request, env);
+  if (!gate.ok) return gate;
+  const scriptName = resolveScriptName(env, request.url);
+  if (!scriptName) {
+    return fail(
+      "SCRIPT_NAME_UNKNOWN",
+      "\u8BA4\u4E0D\u51FA\u8FD9\u4E2A Worker \u53EB\u4EC0\u4E48\uFF08\u591A\u534A\u662F\u5957\u4E86\u4EE3\u7406\u57DF\u540D\uFF09\u3002\u7ED9\u5B83\u52A0\u4E00\u6761 CF_SCRIPT_NAME \u53D8\u91CF\uFF0C\u503C\u586B Worker \u7684\u540D\u5B57\u3002"
+    );
+  }
+  const fetched = await fetchLatestBundle(env);
+  if (!fetched.ok) return fail("BUNDLE_INVALID", fetched.message);
+  return performSelfUpdate(env, gate.token, scriptName, fetched.bundle);
+}
+
+// utils/amsgSelfUpdateState.ts
+var OUTCOMES = /* @__PURE__ */ new Set(["updated", "up_to_date", "failed"]);
+var SOURCES = /* @__PURE__ */ new Set(["cron", "client", "manual"]);
+var parseAmsgSelfUpdateState = (raw) => {
+  const value = raw;
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.lastCheckAt !== "string" || Number.isNaN(Date.parse(value.lastCheckAt))) return null;
+  if (typeof value.lastOutcome !== "string" || !OUTCOMES.has(value.lastOutcome)) return null;
+  const error = value.lastError;
+  return {
+    lastCheckAt: value.lastCheckAt,
+    lastSource: typeof value.lastSource === "string" && SOURCES.has(value.lastSource) ? value.lastSource : "cron",
+    lastOutcome: value.lastOutcome,
+    bundleHash: typeof value.bundleHash === "string" && value.bundleHash ? value.bundleHash : null,
+    lastUpdatedAt: typeof value.lastUpdatedAt === "string" ? value.lastUpdatedAt : null,
+    lastError: error && typeof error === "object" && typeof error.code === "string" ? { code: error.code, message: typeof error.message === "string" ? error.message : "" } : null
+  };
+};
+
+// utils/amsgTickReport.ts
+var TICK_STALL_MS = 5 * 6e4;
+var LATE_START_MS = 3 * 6e4;
+var SAME_WRITE_TOLERANCE_MS = 5e3;
+var TICK_FAILURE_SERIES_GAP_MS = 3 * 6e4;
+var classifyOverdueTasks = (tasks, nowMs) => {
+  const verdicts = tasks.map((task) => {
+    const state = task.leaseUntilMs !== null && task.leaseUntilMs > nowMs ? "sending" : task.retryAfterMs !== null && task.retryAfterMs > nowMs ? "retry-wait" : "ready";
+    const readySinceMs = Math.max(task.nextSendAtMs, task.retryAfterMs ?? -Infinity);
+    const lastSettledMs = Math.max(
+      task.nextSendAtMs,
+      (task.createdAtMs ?? -Infinity) + SAME_WRITE_TOLERANCE_MS,
+      (task.currentErrorAtMs ?? -Infinity) + SAME_WRITE_TOLERANCE_MS
+    );
+    const lastStartedAtMs = task.updatedAtMs !== null && task.updatedAtMs > lastSettledMs ? task.updatedAtMs : null;
+    const unfinishedAttempt = state === "ready" && lastStartedAtMs !== null;
+    const lateStart = state === "sending" && lastStartedAtMs !== null && lastStartedAtMs - readySinceMs > LATE_START_MS;
+    const waitedTooLong = state === "ready" && nowMs - readySinceMs >= TICK_STALL_MS;
+    return {
+      state,
+      readySinceMs,
+      lastStartedAtMs,
+      unfinishedAttempt,
+      lateStart,
+      queuedBehind: false,
+      stuck: unfinishedAttempt || waitedTooLong
+    };
+  });
+  return verdicts.map(({ readySinceMs: _readySinceMs, ...verdict }, index) => {
+    if (verdict.state !== "ready" || verdict.unfinishedAttempt) return verdict;
+    const key = tasks[index].serializeKey;
+    if (!key) return verdict;
+    const blocked = verdicts.some((other, otherIndex) => otherIndex !== index && other.state === "sending" && tasks[otherIndex].serializeKey === key);
+    return blocked ? { ...verdict, queuedBehind: true, stuck: false } : verdict;
+  });
+};
+var judgeOverdueTasks = (tasks) => {
+  if (tasks.some((task) => task.verdict.stuck)) return "stalled";
+  if (tasks.some((task) => task.hasCurrentError || task.verdict.lateStart)) return "failing";
+  return "healthy";
+};
+
+// worker/amsg/src/tickReport.ts
+var MAX_OVERDUE_TASKS = 50;
+var MAX_RECENT_FAILURES = 10;
+var RECENT_FAILURE_WINDOW_MS = 24 * 60 * 6e4;
+var TASK_COLUMNS = `uuid, user_id, encrypted_payload, message_type, status, next_send_at,
+       retry_count, retry_after, lease_until, created_at, updated_at, last_error`;
+var parseMs = (value) => {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+};
+var toIso = (ms) => ms === null ? null : new Date(ms).toISOString();
+var parseLastError = (raw) => {
+  if (!raw) return null;
+  let value = null;
+  try {
+    const parsed = JSON.parse(raw);
+    value = parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return { at: null, occurrence: null, reason: raw, errorCode: null, pushStatus: null };
+  }
+  if (!value) return null;
+  const pick = (key) => typeof value?.[key] === "string" && value[key] ? value[key] : null;
+  const pushStatus = Number(value.pushStatus);
+  return {
+    at: pick("at"),
+    occurrence: pick("occurrence"),
+    reason: pick("reason") || "",
+    errorCode: pick("errorCode"),
+    pushStatus: Number.isFinite(pushStatus) && pushStatus > 0 ? pushStatus : null
+  };
+};
+var isCurrentOccurrence = (error, nextSendAtMs) => {
+  const occurrenceMs = parseMs(error.occurrence);
+  if (occurrenceMs !== null) return occurrenceMs === nextSendAtMs;
+  const atMs = parseMs(error.at);
+  return atMs !== null && atMs >= nextSendAtMs;
+};
+var createIdentityReader = (masterKey, serializeKeyOf) => {
+  const userKeys = /* @__PURE__ */ new Map();
+  return async (row) => {
+    const unknown = { charId: null, contactName: null, kind: null, serializeKey: null };
+    if (!masterKey || !row.user_id || !row.encrypted_payload) return unknown;
+    try {
+      let userKey = userKeys.get(row.user_id);
+      if (!userKey) {
+        userKey = deriveUserEncryptionKey(row.user_id, masterKey);
+        userKeys.set(row.user_id, userKey);
+      }
+      const payload = JSON.parse(await decryptFromStorage(row.encrypted_payload, await userKey));
+      const metadata = payload.metadata && typeof payload.metadata === "object" ? payload.metadata : null;
+      return {
+        charId: typeof metadata?.charId === "string" ? metadata.charId : null,
+        contactName: typeof payload.contactName === "string" && payload.contactName ? payload.contactName : null,
+        kind: readTaskKind(metadata),
+        serializeKey: serializeKeyOf({ metadata })
+      };
+    } catch {
+      return unknown;
+    }
+  };
+};
+var readOverdueTasks = async (db, options) => {
+  const nowMs = options.nowMs ?? Date.now();
+  const rows = (await db.prepare(
+    `SELECT ${TASK_COLUMNS}
+         FROM scheduled_messages
+        WHERE status = 'pending' AND next_send_at <= ?
+        ORDER BY next_send_at ASC
+        LIMIT ?`
+  ).bind(new Date(nowMs).toISOString(), MAX_OVERDUE_TASKS + 1).all()).results || [];
+  const truncated = rows.length > MAX_OVERDUE_TASKS;
+  const readIdentity = createIdentityReader(options.masterKey, options.serializeKeyOf);
+  const prepared = (await Promise.all(rows.slice(0, MAX_OVERDUE_TASKS).map(async (row) => {
+    const nextSendAtMs = parseMs(row.next_send_at);
+    if (!row.uuid || nextSendAtMs === null) return null;
+    const lastError = parseLastError(row.last_error);
+    const currentError = lastError && isCurrentOccurrence(lastError, nextSendAtMs) ? lastError : null;
+    const identity = await readIdentity(row);
+    const facts = {
+      nextSendAtMs,
+      createdAtMs: parseMs(row.created_at),
+      updatedAtMs: parseMs(row.updated_at),
+      retryAfterMs: parseMs(row.retry_after),
+      leaseUntilMs: parseMs(row.lease_until),
+      currentErrorAtMs: currentError ? parseMs(currentError.at) : null,
+      serializeKey: identity.serializeKey
+    };
+    return { row: { ...row, uuid: row.uuid }, nextSendAtMs, currentError, identity, facts };
+  }))).filter((item) => item !== null);
+  const verdicts = classifyOverdueTasks(prepared.map((item) => item.facts), nowMs);
+  const tasks = prepared.map(({ row, nextSendAtMs, currentError, identity, facts }, index) => {
+    const verdict = verdicts[index];
+    return {
+      uuid: row.uuid,
+      charId: identity.charId,
+      contactName: identity.contactName,
+      kind: identity.kind,
+      messageType: row.message_type,
+      nextSendAt: new Date(nextSendAtMs).toISOString(),
+      state: verdict.state,
+      stuck: verdict.stuck,
+      retryCount: Number(row.retry_count) || 0,
+      retryAfter: toIso(facts.retryAfterMs),
+      lastStartedAt: toIso(verdict.lastStartedAtMs),
+      unfinishedAttempt: verdict.unfinishedAttempt,
+      lateStart: verdict.lateStart,
+      queuedBehind: verdict.queuedBehind,
+      lastError: currentError
+    };
+  });
+  return {
+    tasks,
+    truncated,
+    verdict: judgeOverdueTasks(tasks.map((task, index) => ({
+      verdict: verdicts[index],
+      hasCurrentError: task.lastError !== null
+    })))
+  };
+};
+var readRecentFailures = async (db, options) => {
+  const nowMs = options.nowMs ?? Date.now();
+  const sinceMs = nowMs - RECENT_FAILURE_WINDOW_MS;
+  const rows = (await db.prepare(
+    `SELECT ${TASK_COLUMNS}
+         FROM scheduled_messages
+        WHERE last_error IS NOT NULL
+          AND updated_at >= ?
+          AND message_type != 'instant'
+          AND (status = 'failed' OR (status = 'pending' AND next_send_at > ?))
+        ORDER BY updated_at DESC
+        LIMIT ?`
+  ).bind(new Date(sinceMs).toISOString(), new Date(nowMs).toISOString(), MAX_RECENT_FAILURES).all()).results || [];
+  const readIdentity = createIdentityReader(options.masterKey, options.serializeKeyOf);
+  const failures = await Promise.all(rows.map(async (row) => {
+    const error = parseLastError(row.last_error);
+    const atMs = parseMs(error?.at);
+    if (!row.uuid || !error || atMs === null || atMs < sinceMs) return null;
+    const identity = await readIdentity(row);
+    return {
+      uuid: row.uuid,
+      charId: identity.charId,
+      contactName: identity.contactName,
+      kind: identity.kind,
+      messageType: row.message_type,
+      outcome: row.status === "failed" ? "failed" : "skipped",
+      error
+    };
+  }));
+  return failures.filter((item) => item !== null);
+};
+var DIAGNOSTICS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS worker_diagnostics (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)`;
+var readDiagnosticValue = async (db, key) => {
+  if (typeof db?.prepare !== "function") return null;
+  try {
+    const row = await db.prepare("SELECT value FROM worker_diagnostics WHERE key = ?").bind(key).first();
+    return typeof row?.value === "string" ? row.value : null;
+  } catch {
+    return null;
+  }
+};
+var writeDiagnosticValue = async (db, key, value, nowMs = Date.now()) => {
+  await db.prepare(DIAGNOSTICS_TABLE_SQL).run();
+  await db.prepare(
+    `INSERT INTO worker_diagnostics (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).bind(key, value, nowMs).run();
+};
+var TICK_FAILURE_KEY = "tick_failure";
+var TASK_WRITE_FAILURE_STATUSES = /* @__PURE__ */ new Set([
+  "claim_failed",
+  "retry_update_failed",
+  "stale_update_failed",
+  "post_send_cleanup_failed"
+]);
+var pickTickFailure = (outcome) => {
+  const value = outcome;
+  if (!value || typeof value !== "object") return null;
+  if (value.ok === false) {
+    const cause2 = value.cause;
+    return {
+      stage: typeof cause2?.stage === "string" && cause2.stage ? cause2.stage : "tick",
+      name: typeof cause2?.name === "string" && cause2.name ? cause2.name : "Error",
+      message: typeof cause2?.message === "string" ? cause2.message : "",
+      code: typeof cause2?.code === "string" && cause2.code ? cause2.code : null
+    };
+  }
+  const failedTasks = value.summary?.details?.failedTasks;
+  if (!Array.isArray(failedTasks)) return null;
+  const hit = failedTasks.find((entry) => TASK_WRITE_FAILURE_STATUSES.has(entry?.status));
+  if (!hit) return null;
+  const reason = typeof hit.reason === "string" ? hit.reason : "";
+  const updateError = typeof hit.updateError === "string" ? hit.updateError : "";
+  const rawMessage = updateError ? `${updateError}\uFF08\u672C\u6765\u8981\u8BB0\u4E0B\u7684\u5931\u8D25\u539F\u56E0\uFF1A${reason || "\u65E0"}\uFF09` : reason;
+  const cause = summarizeErrorCause({ name: "TaskWriteFailed", message: rawMessage }, "tick");
+  return { stage: hit.status, name: cause.name, message: cause.message ?? "", code: null };
+};
+var recordTickOutcome = async (db, outcome, nowMs = Date.now()) => {
+  const failure = pickTickFailure(outcome);
+  if (!failure || typeof db?.prepare !== "function") return;
+  try {
+    const previous = parseStoredTickFailure(await readDiagnosticValue(db, TICK_FAILURE_KEY));
+    const sameSeries = previous && previous.stage === failure.stage && previous.name === failure.name && nowMs - Date.parse(previous.lastAt) <= TICK_FAILURE_SERIES_GAP_MS;
+    const nowIso = new Date(nowMs).toISOString();
+    const record = {
+      ...failure,
+      firstAt: sameSeries ? previous.firstAt : nowIso,
+      lastAt: nowIso,
+      count: sameSeries ? previous.count + 1 : 1
+    };
+    await writeDiagnosticValue(db, TICK_FAILURE_KEY, JSON.stringify(record), nowMs);
+  } catch (error) {
+    console.warn("[amsg:tick-report] \u8FD9\u4E00\u8DF3\u7684\u62A5\u9519\u6CA1\u8BB0\u8FDB\u5E93", error);
+  }
+};
+var parseStoredTickFailure = (raw) => {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value.stage !== "string" || typeof value.firstAt !== "string" || typeof value.lastAt !== "string") {
+      return null;
+    }
+    return {
+      stage: value.stage,
+      name: typeof value.name === "string" ? value.name : "Error",
+      message: typeof value.message === "string" ? value.message : "",
+      code: typeof value.code === "string" ? value.code : null,
+      firstAt: value.firstAt,
+      lastAt: value.lastAt,
+      count: Number(value.count) || 1
+    };
+  } catch {
+    return null;
+  }
+};
+var readTickFailure = async (db, nowMs = Date.now()) => {
+  const record = parseStoredTickFailure(await readDiagnosticValue(db, TICK_FAILURE_KEY));
+  if (!record) return null;
+  return { ...record, ongoing: nowMs - Date.parse(record.lastAt) <= TICK_FAILURE_SERIES_GAP_MS };
+};
+var buildTickReport = async (db, options) => {
+  const nowMs = options.nowMs ?? Date.now();
+  const scoped = { ...options, nowMs };
+  const [overdue, recentFailures, tickFailure] = await Promise.all([
+    readOverdueTasks(db, scoped),
+    readRecentFailures(db, scoped),
+    readTickFailure(db, nowMs)
+  ]);
+  return {
+    now: new Date(nowMs).toISOString(),
+    tasks: overdue.tasks,
+    recentFailures,
+    tickFailure,
+    truncated: overdue.truncated
+  };
+};
+
+// worker/amsg/src/autoUpdate.ts
+var AUTO_UPDATE_CRON_INTERVAL_MS = 6 * 60 * 6e4;
+var AUTO_UPDATE_CLIENT_INTERVAL_MS = 30 * 6e4;
+var SELF_UPDATE_KEY = "self_update";
+var SCHEMA_ENSURED_KEY = "schema_ensured";
+var SCHEMA_ENSURE_RETRY_MS = 60 * 6e4;
+var readSelfUpdateState = async (db) => {
+  const raw = await readDiagnosticValue(db, SELF_UPDATE_KEY);
+  if (!raw) return null;
+  try {
+    return parseAmsgSelfUpdateState(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
+var writeSelfUpdateState = async (db, state, nowMs) => {
+  await writeDiagnosticValue(db, SELF_UPDATE_KEY, JSON.stringify(state), nowMs);
+};
+var markSchemaUnverified = async (db, nowMs) => {
+  await writeDiagnosticValue(db, SCHEMA_ENSURED_KEY, "", nowMs);
+};
+var applySelfUpdateResult = (previous, source, result, nowMs) => {
+  const nowIso = new Date(nowMs).toISOString();
+  if (result.ok) {
+    return {
+      lastCheckAt: nowIso,
+      lastSource: source,
+      lastOutcome: "updated",
+      bundleHash: result.bundleHash ?? previous?.bundleHash ?? null,
+      lastUpdatedAt: nowIso,
+      lastError: null
+    };
+  }
+  return {
+    lastCheckAt: nowIso,
+    lastSource: source,
+    lastOutcome: "failed",
+    bundleHash: previous?.bundleHash ?? null,
+    lastUpdatedAt: previous?.lastUpdatedAt ?? null,
+    lastError: { code: result.code, message: result.message }
+  };
+};
+var recordManualSelfUpdate = async (db, result, nowMs = Date.now()) => {
+  if (typeof db?.prepare !== "function") return;
+  try {
+    const previous = await readSelfUpdateState(db);
+    await writeSelfUpdateState(db, applySelfUpdateResult(previous, "manual", result, nowMs), nowMs);
+    if (result.ok) await markSchemaUnverified(db, nowMs);
+  } catch (error) {
+    console.warn("[amsg:auto-update] \u624B\u52A8\u66F4\u65B0\u7684\u7ED3\u679C\u6CA1\u8BB0\u8FDB\u5E93", error);
+  }
+};
+var runAutoUpdate = async (env, db, options) => {
+  const token = env.CF_API_TOKEN?.trim();
+  if (!token) return { action: "unsupported" };
+  const nowMs = options.nowMs ?? Date.now();
+  const previous = await readSelfUpdateState(db);
+  const minInterval = options.source === "cron" ? AUTO_UPDATE_CRON_INTERVAL_MS : AUTO_UPDATE_CLIENT_INTERVAL_MS;
+  if (previous && nowMs - Date.parse(previous.lastCheckAt) < minInterval) {
+    return { action: "throttled", state: previous };
+  }
+  const claimed = {
+    lastCheckAt: new Date(nowMs).toISOString(),
+    lastSource: options.source,
+    lastOutcome: previous?.lastOutcome ?? "up_to_date",
+    bundleHash: previous?.bundleHash ?? null,
+    lastUpdatedAt: previous?.lastUpdatedAt ?? null,
+    lastError: previous?.lastError ?? null
+  };
+  await writeSelfUpdateState(db, claimed, nowMs);
+  const settle = async (result2) => {
+    const state = applySelfUpdateResult(previous, options.source, result2, nowMs);
+    await writeSelfUpdateState(db, state, nowMs);
+    if (result2.ok) await markSchemaUnverified(db, nowMs);
+    return { action: state.lastOutcome, state };
+  };
+  if (!options.scriptName) {
+    return settle({
+      ok: false,
+      code: "SCRIPT_NAME_UNKNOWN",
+      message: "\u8BA4\u4E0D\u51FA\u8FD9\u4E2A Worker \u53EB\u4EC0\u4E48\u3002\u7ED9\u5B83\u52A0\u4E00\u6761 CF_SCRIPT_NAME \u53D8\u91CF\uFF0C\u503C\u586B Worker \u7684\u540D\u5B57\uFF0C\u81EA\u52A8\u66F4\u65B0\u624D\u77E5\u9053\u8BE5\u66F4\u65B0\u8C01\u3002"
+    });
+  }
+  const fetched = await fetchLatestBundle(env);
+  if (!fetched.ok) return settle({ ok: false, code: "BUNDLE_INVALID", message: fetched.message });
+  const bindingsComplete = Boolean(env.INSTANT_TICK);
+  if (previous?.bundleHash === fetched.bundle.hash && bindingsComplete) {
+    const state = {
+      ...claimed,
+      lastOutcome: "up_to_date",
+      bundleHash: fetched.bundle.hash,
+      lastError: null
+    };
+    await writeSelfUpdateState(db, state, nowMs);
+    return { action: "up_to_date", state };
+  }
+  if (previous?.bundleHash === fetched.bundle.hash) {
+    console.log("[amsg:auto-update] \u4EE3\u7801\u6CA1\u53D8\u4F46 INSTANT_TICK \u7ED1\u5B9A\u4E0D\u5728\uFF0C\u518D\u4F20\u4E00\u6B21\u628A\u7ED1\u5B9A\u8865\u4E0A");
+  }
+  const result = await performSelfUpdate(env, token, options.scriptName, fetched.bundle);
+  if (result.ok) {
+    console.log(`[amsg:auto-update] \u5DF2\u6362\u4E0A\u65B0\u4EE3\u7801 ${result.bundleHash}\uFF08${options.source} \u89E6\u53D1\uFF09`);
+  } else {
+    console.warn(`[amsg:auto-update] \u66F4\u65B0\u5931\u8D25 ${result.code}\uFF1A${result.message}`);
+  }
+  return settle(result);
+};
+var readSchemaMarker = async (db) => {
+  const raw = await readDiagnosticValue(db, SCHEMA_ENSURED_KEY);
+  if (!raw) return { ensuredFor: "", failedAtMs: null };
+  try {
+    const value = JSON.parse(raw);
+    return {
+      ensuredFor: typeof value?.ensuredFor === "string" ? value.ensuredFor : "",
+      failedAtMs: typeof value?.failedAtMs === "number" ? value.failedAtMs : null
+    };
+  } catch {
+    return { ensuredFor: "", failedAtMs: null };
+  }
+};
+var ensureSchemaOnce = async (db, schemaVersion, ensure, nowMs = Date.now()) => {
+  if (typeof db?.prepare !== "function") return "skipped";
+  const marker = await readSchemaMarker(db);
+  if (marker.ensuredFor === schemaVersion) return "skipped";
+  if (marker.failedAtMs !== null && nowMs - marker.failedAtMs < SCHEMA_ENSURE_RETRY_MS) return "skipped";
+  try {
+    const result = await ensure();
+    if (result.migrated) console.log(`[amsg:auto-update] \u8868\u7ED3\u6784\u5DF2\u6309 ${schemaVersion} \u8865\u9F50`);
+    if (!result.ok) {
+      console.warn(`[amsg:auto-update] \u8868\u7ED3\u6784\u8865\u4E0D\u9F50\uFF0C\u8FD8\u7F3A\uFF1A${result.missing.join("\u3001")}`);
+      await writeDiagnosticValue(db, SCHEMA_ENSURED_KEY, JSON.stringify({ ensuredFor: "", failedAtMs: nowMs }), nowMs);
+      return "failed";
+    }
+    await writeDiagnosticValue(db, SCHEMA_ENSURED_KEY, JSON.stringify({ ensuredFor: schemaVersion, failedAtMs: null }), nowMs);
+    return "ok";
+  } catch (error) {
+    console.warn("[amsg:auto-update] \u8868\u7ED3\u6784\u81EA\u67E5\u6CA1\u8DD1\u6210", error);
+    try {
+      await writeDiagnosticValue(db, SCHEMA_ENSURED_KEY, JSON.stringify({ ensuredFor: "", failedAtMs: nowMs }), nowMs);
+    } catch {
+    }
+    return "failed";
+  }
+};
 
 // worker/amsg/src/cronTrigger.ts
 var AMSG_CRON_EXPRESSION = "* * * * *";
@@ -11985,24 +13607,24 @@ function normalizeVoiceTags(t) {
   result = result.replace(/＜\s*[/／]\s*([语語]音|字幕)\s*＞/g, "</$1>");
   result = result.replace(/＜\s*((?:[语語]音|字幕)[^<>＜＞]*?)\s*＞/g, "<$1>");
   result = result.replace(/<\s*[/／]\s*([语語]音|字幕)\s*>/g, "</$1>");
-  result = result.replace(/<([语語]音|字幕)\s*([^<>]*?)\s*>/g, (_m, tag, attrs) => {
-    if (!attrs) return `<${tag}>`;
+  result = result.replace(/<([语語]音|字幕)\s*([^<>]*?)\s*>/g, (_m, tag2, attrs) => {
+    if (!attrs) return `<${tag2}>`;
     const fixed = attrs.replace(/[“”＂]/g, '"').replace(/[‘’]/g, "'").replace(/＝/g, "=").trim();
-    return `<${tag} ${fixed}>`;
+    return `<${tag2} ${fixed}>`;
   });
   result = repairPairedTag(result, /<\/?[语語]音[^>]*>/g, (tok) => /語/.test(tok) ? "\u8A9E\u97F3" : "\u8BED\u97F3", true);
   result = repairPairedTag(result, /<\/?字幕[^>]*>/g, () => "\u5B57\u5E55", false);
   return result;
 }
-var simpTransTag = (tag) => tag.replace(/譯/g, "\u8BD1");
+var simpTransTag = (tag2) => tag2.replace(/譯/g, "\u8BD1");
 function normalizeTranslationTags(t) {
   if (!/[<＜]\s*[/／]?\s*(?:翻[译譯]|原文|[译譯]文)/.test(t)) return t;
   let result = t;
-  result = result.replace(/[<＜]\s*[/／]\s*(翻[译譯]|原文|[译譯]文)\s*[>＞]/g, (_m, tag) => `</${simpTransTag(tag)}>`);
-  result = result.replace(/[<＜]\s*(翻[译譯]|原文|[译譯]文)\s*[>＞]/g, (_m, tag) => `<${simpTransTag(tag)}>`);
+  result = result.replace(/[<＜]\s*[/／]\s*(翻[译譯]|原文|[译譯]文)\s*[>＞]/g, (_m, tag2) => `</${simpTransTag(tag2)}>`);
+  result = result.replace(/[<＜]\s*(翻[译譯]|原文|[译譯]文)\s*[>＞]/g, (_m, tag2) => `<${simpTransTag(tag2)}>`);
   result = result.replace(
     /[<＜]\s*([/／]?)\s*(翻[译譯]|原文|[译譯]文)\s*(?=$|\n|[<＜])/g,
-    (_m, slash, tag) => `<${slash ? "/" : ""}${simpTransTag(tag)}>`
+    (_m, slash, tag2) => `<${slash ? "/" : ""}${simpTransTag(tag2)}>`
   );
   result = repairPairedTag(result, /<\/?原文[^>]*>/g, () => "\u539F\u6587", false);
   result = repairPairedTag(result, /<\/?译文[^>]*>/g, () => "\u8BD1\u6587", false);
@@ -12601,6 +14223,205 @@ function classifyLLMOutput(text) {
   return { kind: "finish", cleanedText, sanitizedBody, directives: dedupedDirectives };
 }
 
+// utils/vrWorld/sarEnvelopeCore.ts
+var planFromSARModuleSnapshot = (snapshot) => {
+  if (!snapshot || !snapshot.character && !snapshot.user) return null;
+  const character = snapshot.character;
+  const user = snapshot.user;
+  const hasActiveEffect = character?.phase === "active" || user?.phase === "active";
+  const hasAfterglow = character?.phase === "afterglow" || user?.phase === "afterglow";
+  return { character, user, hasActiveEffect, hasAfterglow, requiresEnvelope: hasActiveEffect };
+};
+var isPlainSARChatActionOnlyChunk = (text) => {
+  const clean = text.trim();
+  if (!clean) return false;
+  return /^(?:(?:（[^（）]*）|\([^()]*\)|\*[^*\n]+\*)\s*)+[。！？!?…～~—-]*$/s.test(clean);
+};
+var isSARChatActionOnlyChunk = (text) => {
+  const bilingualParts = text.split(/%%BILINGUAL%%/i).map((part) => part.trim()).filter(Boolean);
+  return bilingualParts.length > 0 && bilingualParts.every(isPlainSARChatActionOnlyChunk);
+};
+var isSARChatHtmlPlaceholder = (text) => /^\[HTML\s*卡片\]$/i.test(text.trim());
+var consumeSARChatSurfaceChunk = (canonicalChunk, surfaceChunks, startIndex) => {
+  let index = Math.max(0, startIndex);
+  if (isSARChatHtmlPlaceholder(canonicalChunk)) {
+    if (surfaceChunks[index] && isSARChatHtmlPlaceholder(surfaceChunks[index])) index += 1;
+    return { nextIndex: index };
+  }
+  if (isSARChatActionOnlyChunk(canonicalChunk)) {
+    if (surfaceChunks[index] && isSARChatActionOnlyChunk(surfaceChunks[index])) index += 1;
+    return { nextIndex: index };
+  }
+  while (surfaceChunks[index] && (isSARChatActionOnlyChunk(surfaceChunks[index]) || isSARChatHtmlPlaceholder(surfaceChunks[index]))) index += 1;
+  const surface = surfaceChunks[index];
+  return { surface, nextIndex: surface === void 0 ? index : index + 1 };
+};
+var tag = (raw, name) => {
+  const match = raw.match(new RegExp(`<${name}>\\s*([\\s\\S]*?)\\s*</${name}>`, "i"));
+  const value = match?.[1]?.trim();
+  return value || void 0;
+};
+var parseSARModuleReply = (raw, plan) => {
+  if (!plan.requiresEnvelope) return { canonical: raw, enveloped: false };
+  const body = tag(raw, "SAR_MODULE_OUTPUT") || raw;
+  const canonical = tag(body, "CHAR_TRUE");
+  if (!canonical) return { canonical: raw.trim(), enveloped: false };
+  return {
+    canonical,
+    assistantSurface: plan.character?.phase === "active" ? tag(body, "CHAR_SURFACE") : void 0,
+    userSurface: plan.user?.phase === "active" ? tag(body, "USER_SURFACE") : void 0,
+    enveloped: true
+  };
+};
+var createSARModuleSurfaceMeta = (state, surface) => {
+  const clean = surface.trim();
+  if (!clean || state.phase !== "active") return void 0;
+  return {
+    version: 1,
+    runId: state.runId,
+    moduleId: state.moduleId,
+    moduleTitle: state.moduleTitle,
+    target: state.target,
+    phase: "active",
+    surface: clean,
+    canonicalField: "content",
+    surfaceField: "metadata.sarModuleSurface.surface"
+  };
+};
+
+// worker/amsg/src/sarEnvelope.ts
+var AMSG_SAR_META_KEY = "amsgSar";
+var amsgSarUserSurfaceKey = (clientTaskId) => `sar_user_surface:${clientTaskId}`;
+var amsgSarSnapshotKey = (clientTaskId) => `sar_snapshot:${clientTaskId}`;
+var amsgSarSurfaceKey = (clientTaskId, segmentIndex) => `sar_surface:${clientTaskId}:${segmentIndex}`;
+var SAR_SURFACE_BANNER_MAX = 100;
+var clipSarSurfaceBanner = (banner) => {
+  const chars = Array.from(banner);
+  return chars.length <= SAR_SURFACE_BANNER_MAX ? banner : `${chars.slice(0, SAR_SURFACE_BANNER_MAX - 1).join("")}\u2026`;
+};
+var isPlainObject2 = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+var isSurfaceSource = (value) => isPlainObject2(value) && typeof value.phase === "string";
+var readSarSnapshot = (metadata) => {
+  const raw = metadata?.[AMSG_SAR_META_KEY];
+  if (!isPlainObject2(raw) || raw.v !== 1) return null;
+  if (raw.character !== void 0 && !isSurfaceSource(raw.character)) return null;
+  if (raw.user !== void 0 && !isSurfaceSource(raw.user)) return null;
+  return raw;
+};
+var stripSarSnapshot = (metadata) => {
+  const { [AMSG_SAR_META_KEY]: _snapshot, ...rest } = metadata ?? {};
+  return rest;
+};
+var SURFACE_BLOCK_RE = /<(CHAR_SURFACE|USER_SURFACE)>[\s\S]*?(?:<\/\1>|(?=<\/?(?:SAR_MODULE_OUTPUT|CHAR_TRUE|CHAR_SURFACE|USER_SURFACE)>)|$)/gi;
+var PLACEHOLDER = String.fromCharCode(5);
+var PLACEHOLDER_RE = new RegExp(`${PLACEHOLDER}(\\d+)${PLACEHOLDER}`, "g");
+var maskSarSurfaceBlocks = (text) => {
+  const blocks = [];
+  const masked = text.replace(SURFACE_BLOCK_RE, (block) => {
+    blocks.push(block);
+    return `${PLACEHOLDER}${blocks.length - 1}${PLACEHOLDER}`;
+  });
+  return {
+    masked,
+    restore: (value) => blocks.length === 0 ? value : value.replace(PLACEHOLDER_RE, (_m, n) => blocks[Number(n)] ?? "")
+  };
+};
+var ENVELOPE_TAG_RE = /<\/?(?:SAR_MODULE_OUTPUT|CHAR_TRUE|CHAR_SURFACE|USER_SURFACE)>/gi;
+var stripEnvelopeTags = (text) => text.replace(ENVELOPE_TAG_RE, "").trim();
+var closeOpenTag = (text, name, stoppers) => {
+  const open = new RegExp(`<${name}>`, "i").exec(text);
+  if (!open || new RegExp(`</${name}>`, "i").test(text)) return text;
+  const after = open.index + open[0].length;
+  const stop = new RegExp(stoppers.join("|"), "i").exec(text.slice(after));
+  const at = stop ? after + stop.index : text.length;
+  return `${text.slice(0, at)}</${name}>${text.slice(at)}`;
+};
+var repairEnvelope = (text) => {
+  let repaired = closeOpenTag(text, "CHAR_TRUE", ["<CHAR_SURFACE>", "<USER_SURFACE>", "</SAR_MODULE_OUTPUT>"]);
+  repaired = closeOpenTag(repaired, "CHAR_SURFACE", ["<USER_SURFACE>", "<CHAR_TRUE>", "</SAR_MODULE_OUTPUT>"]);
+  repaired = closeOpenTag(repaired, "USER_SURFACE", ["<CHAR_SURFACE>", "<CHAR_TRUE>", "</SAR_MODULE_OUTPUT>"]);
+  return repaired;
+};
+var parseSarEnvelopeRounds = (rounds, plan) => {
+  const texts = rounds.filter((round) => round.trim().length > 0);
+  if (!plan.requiresEnvelope) return { canonical: texts.join("\n"), enveloped: false, pieces: [] };
+  const pieces = [];
+  let enveloped = false;
+  let userSurface;
+  for (const text of texts) {
+    const parsed = parseSARModuleReply(repairEnvelope(text), plan);
+    if (parsed.enveloped) {
+      enveloped = true;
+      if (parsed.userSurface) userSurface = parsed.userSurface;
+    }
+    const canonical = stripEnvelopeTags(parsed.canonical);
+    if (!canonical) continue;
+    const surface = parsed.enveloped && parsed.assistantSurface ? stripEnvelopeTags(parsed.assistantSurface) : "";
+    pieces.push({ canonical, ...surface ? { surface } : {} });
+  }
+  return {
+    canonical: pieces.map((p) => p.canonical).join("\n"),
+    enveloped,
+    pieces,
+    ...userSurface ? { userSurface } : {}
+  };
+};
+var isEmojiSegment = (seg) => /^\[\[SEND_EMOJI[:：]/i.test(seg.raw.trim());
+var isHtmlSegment = (seg) => /^\[html\][\s\S]*\[\/html\]$/i.test(seg.raw.trim());
+var TRANSLATION_BLOCK_RE = /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>([\s\S]*?)<\/译文>\s*<\/翻译>/;
+var alignKey = (seg) => {
+  const translation = seg.raw.match(TRANSLATION_BLOCK_RE);
+  if (translation) {
+    const original = translation[1].trim();
+    const translated = translation[2].trim();
+    return original && translated ? `${original}
+%%BILINGUAL%%
+${translated}` : original || translated;
+  }
+  return seg.sanitized;
+};
+var segmentSurface = (surfaceText) => {
+  const prepared = surfaceText.replace(/\[html\][\s\S]*?\[\/html\]/gi, "\n").replace(/\[\[[\s\S]*?\]\]/g, "");
+  return sanitizeIntoSegments(prepared).filter((seg) => !isEmojiSegment(seg) && !isHtmlSegment(seg));
+};
+var alignSarSurfaceSegments = (canonicalSegments, surfaceText) => {
+  const surfaceSegs = segmentSurface(surfaceText);
+  const surfaceKeys = surfaceSegs.map(alignKey);
+  let index = 0;
+  return canonicalSegments.map((seg) => {
+    if (isEmojiSegment(seg) || isHtmlSegment(seg)) return void 0;
+    const consumed = consumeSARChatSurfaceChunk(alignKey(seg), surfaceKeys, index);
+    index = consumed.nextIndex;
+    if (consumed.surface === void 0) return void 0;
+    const matched = surfaceSegs[consumed.nextIndex - 1];
+    return matched ? { surface: matched.raw, banner: matched.sanitized } : void 0;
+  });
+};
+var segmentCanonical = (text) => {
+  const scan = classifyLLMOutput(text);
+  return sanitizeIntoSegments(scan.kind === "finish" ? scan.cleanedText : scan.prefix);
+};
+var buildSarSurfaceSlots = (parse, segments) => {
+  const none = segments.map(() => void 0);
+  if (!parse.pieces.some((p) => p.surface)) return none;
+  if (parse.pieces.length === 1) return alignSarSurfaceSegments(segments, parse.pieces[0].surface ?? "");
+  const counts = parse.pieces.map((p) => segmentCanonical(p.canonical).length);
+  if (counts.reduce((a, b) => a + b, 0) !== segments.length) {
+    return alignSarSurfaceSegments(
+      segments,
+      parse.pieces.map((p) => p.surface).filter((s) => !!s).join("\n")
+    );
+  }
+  const slots = [];
+  let offset = 0;
+  parse.pieces.forEach((piece, i) => {
+    const slice = segments.slice(offset, offset + counts[i]);
+    offset += counts[i];
+    slots.push(...piece.surface ? alignSarSurfaceSegments(slice, piece.surface) : slice.map(() => void 0));
+  });
+  return slots;
+};
+
 // worker/amsg/src/agentic.ts
 var createFireSessionState = () => ({
   narrations: [],
@@ -12671,13 +14492,17 @@ var classifyNativeToolCalls = (rawToolCalls, manageToolNames, mcpResolve) => {
 };
 function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration, maxToolIterations = DEFAULT_TOOL_ITERATIONS) {
   const isFinalRound = typeof iteration === "number" && iteration >= maxToolIterations - 1;
+  const sarPlan = planFromSARModuleSnapshot(build.sar ?? null);
+  const sarMask = sarPlan?.requiresEnvelope ? maskSarSurfaceBlocks(llmOutputText) : null;
+  const roundText = sarMask ? sarMask.masked : llmOutputText;
+  const restoreSurfaces = (text) => sarMask ? sarMask.restore(text) : text;
   const nativeToolCalls = mcp?.nativeToolCalls ?? [];
-  const textCalls = mcp?.resolve.size ? extractTextFakedMcpCalls(llmOutputText, mcp.resolve, { alsoMatchPrefix: MCP_FIRE_NAME_PREFIX }) : [];
+  const textCalls = mcp?.resolve.size ? extractTextFakedMcpCalls(roundText, mcp.resolve, { alsoMatchPrefix: MCP_FIRE_NAME_PREFIX }) : [];
   const nativeScheduleCalls = schedule?.nativeToolCalls ?? [];
   const hasNativeSchedule = nativeScheduleCalls.some(
     (tc) => tc?.function?.name === AMSG_FIRE_SCHEDULE_TOOL
   );
-  const scheduleTextCalls = schedule ? extractFireScheduleTextCalls(llmOutputText) : [];
+  const scheduleTextCalls = schedule ? extractFireScheduleTextCalls(roundText) : [];
   const scheduleCalls = [
     ...nativeScheduleCalls,
     ...(hasNativeSchedule ? [] : scheduleTextCalls).map((c) => ({
@@ -12686,7 +14511,7 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration, 
       function: { name: AMSG_FIRE_SCHEDULE_TOOL, arguments: JSON.stringify(c.args) }
     }))
   ];
-  const strippedText = scheduleTextCalls.length ? stripTextFakedMcpCalls(llmOutputText, scheduleTextCalls) : llmOutputText;
+  const strippedText = scheduleTextCalls.length ? stripTextFakedMcpCalls(roundText, scheduleTextCalls) : roundText;
   const scanText = textCalls.length ? stripTextFakedMcpCalls(strippedText, textCalls) : strippedText;
   const mcpToolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : textCalls.map((c) => ({
     // id 只需在一轮的 assistant/tool 消息配对里唯一；本次 fire 内自增，绝不重号。
@@ -12701,7 +14526,7 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration, 
   if (isToolRound) {
     const narration = result.kind === "tool-request" ? result.prefix : scanText;
     if (state.duplicateToolCalls < MAX_DUPLICATE_TOOL_CALLS && !isFinalRound) {
-      if (narration.trim()) state.narrations.push(narration);
+      if (narration.trim()) state.narrations.push(restoreSurfaces(narration));
       if (state.xhsShareNotes === null && XHS_SHARE_TAG_RE.test(narration)) {
         state.xhsShareNotes = [...build.xhsNotes ?? []];
       }
@@ -12711,9 +14536,11 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration, 
       };
     }
   }
-  const thisRound = isToolRound ? "" : scanText;
-  const fullText = [...state.narrations, thisRound].filter((part) => part.trim().length > 0).join("\n");
-  const finalScan = fullText === scanText ? result : classifyLLMOutput(fullText);
+  const thisRound = isToolRound ? "" : restoreSurfaces(scanText);
+  const rounds = [...state.narrations, thisRound].filter((part) => part.trim().length > 0);
+  const fullText = rounds.join("\n");
+  const sarParse = sarPlan?.requiresEnvelope ? parseSarEnvelopeRounds(rounds, sarPlan) : null;
+  const finalScan = sarParse ? classifyLLMOutput(sarParse.canonical) : fullText === scanText ? result : classifyLLMOutput(fullText);
   const cleanedText = finalScan.kind === "finish" ? finalScan.cleanedText : finalScan.prefix;
   const directives = attachSceneSong(
     finalScan.kind === "finish" ? finalScan.directives : [],
@@ -12734,12 +14561,31 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration, 
       ...scheduleChanges.length > 0 ? { scheduleChanges } : {}
     };
   }
+  const sarCharacter = build.sar?.character;
+  const surfaceSlots = sarParse && sarCharacter?.phase === "active" ? buildSarSurfaceSlots(sarParse, segments) : [];
+  const sarLastMeta = {
+    ...build.sar ? { [AMSG_SAR_META_KEY]: build.sar } : {},
+    ...sarParse?.userSurface ? { amsgSarUserSurface: sarParse.userSurface } : {}
+  };
+  const lastMeta = finishMeta || Object.keys(sarLastMeta).length > 0 ? { ...finishMeta ?? {}, ...sarLastMeta } : void 0;
   const lastIdx = segments.length - 1;
   return {
     decision: "finish",
-    pushPayloads: segments.map(
-      (seg, i) => buildScheduledPush(seg.raw, build, i === lastIdx ? finishMeta : void 0, seg.sanitized)
-    )
+    pushPayloads: segments.map((seg, i) => {
+      const slot = surfaceSlots[i];
+      const surfaceMeta = slot && sarCharacter ? createSARModuleSurfaceMeta(sarCharacter, slot.surface) : void 0;
+      const extra = {
+        ...surfaceMeta ? { amsgSarSurface: surfaceMeta } : {},
+        ...i === lastIdx ? lastMeta ?? {} : {}
+      };
+      return buildScheduledPush(
+        seg.raw,
+        build,
+        Object.keys(extra).length > 0 ? extra : void 0,
+        // 外显横幅截短：这条 push 还要装外显 meta，别把单段正文的字节预算吃掉一半。
+        surfaceMeta && slot ? clipSarSurfaceBanner(slot.banner) : seg.sanitized
+      );
+    })
   };
 }
 function buildScheduledPush(message, build, extraMeta, bannerBody) {
@@ -12755,7 +14601,8 @@ function buildScheduledPush(message, build, extraMeta, bannerBody) {
     messageSubtype: "chat",
     taskId: build.taskId,
     metadata: {
-      ...build.metadata,
+      // SAR 快照不许摊进每一条（它只随最后一条经 extraMeta 回去）；调用方已摘过，这里兜一道。
+      ...stripSarSnapshot(build.metadata),
       amsgOccurrenceMs: build.occurrenceMs,
       ...extraMeta ?? {}
     },
@@ -12901,303 +14748,6 @@ function buildScheduleChangeResult(args) {
     directives: args.directives.map((d) => ({ startTime: d.startTime, activity: d.activity }))
   };
 }
-
-// utils/amsgTickReport.ts
-var TICK_STALL_MS = 5 * 6e4;
-var LATE_START_MS = 3 * 6e4;
-var SAME_WRITE_TOLERANCE_MS = 5e3;
-var TICK_FAILURE_SERIES_GAP_MS = 3 * 6e4;
-var classifyOverdueTasks = (tasks, nowMs) => {
-  const verdicts = tasks.map((task) => {
-    const state = task.leaseUntilMs !== null && task.leaseUntilMs > nowMs ? "sending" : task.retryAfterMs !== null && task.retryAfterMs > nowMs ? "retry-wait" : "ready";
-    const readySinceMs = Math.max(task.nextSendAtMs, task.retryAfterMs ?? -Infinity);
-    const lastSettledMs = Math.max(
-      task.nextSendAtMs,
-      (task.createdAtMs ?? -Infinity) + SAME_WRITE_TOLERANCE_MS,
-      (task.currentErrorAtMs ?? -Infinity) + SAME_WRITE_TOLERANCE_MS
-    );
-    const lastStartedAtMs = task.updatedAtMs !== null && task.updatedAtMs > lastSettledMs ? task.updatedAtMs : null;
-    const unfinishedAttempt = state === "ready" && lastStartedAtMs !== null;
-    const lateStart = state === "sending" && lastStartedAtMs !== null && lastStartedAtMs - readySinceMs > LATE_START_MS;
-    const waitedTooLong = state === "ready" && nowMs - readySinceMs >= TICK_STALL_MS;
-    return {
-      state,
-      readySinceMs,
-      lastStartedAtMs,
-      unfinishedAttempt,
-      lateStart,
-      queuedBehind: false,
-      stuck: unfinishedAttempt || waitedTooLong
-    };
-  });
-  return verdicts.map(({ readySinceMs: _readySinceMs, ...verdict }, index) => {
-    if (verdict.state !== "ready" || verdict.unfinishedAttempt) return verdict;
-    const key = tasks[index].serializeKey;
-    if (!key) return verdict;
-    const blocked = verdicts.some((other, otherIndex) => otherIndex !== index && other.state === "sending" && tasks[otherIndex].serializeKey === key);
-    return blocked ? { ...verdict, queuedBehind: true, stuck: false } : verdict;
-  });
-};
-var judgeOverdueTasks = (tasks) => {
-  if (tasks.some((task) => task.verdict.stuck)) return "stalled";
-  if (tasks.some((task) => task.hasCurrentError || task.verdict.lateStart)) return "failing";
-  return "healthy";
-};
-
-// worker/amsg/src/tickReport.ts
-var MAX_OVERDUE_TASKS = 50;
-var MAX_RECENT_FAILURES = 10;
-var RECENT_FAILURE_WINDOW_MS = 24 * 60 * 6e4;
-var TASK_COLUMNS = `uuid, user_id, encrypted_payload, message_type, status, next_send_at,
-       retry_count, retry_after, lease_until, created_at, updated_at, last_error`;
-var parseMs = (value) => {
-  if (!value) return null;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : null;
-};
-var toIso = (ms) => ms === null ? null : new Date(ms).toISOString();
-var parseLastError = (raw) => {
-  if (!raw) return null;
-  let value = null;
-  try {
-    const parsed = JSON.parse(raw);
-    value = parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return { at: null, occurrence: null, reason: raw, errorCode: null, pushStatus: null };
-  }
-  if (!value) return null;
-  const pick = (key) => typeof value?.[key] === "string" && value[key] ? value[key] : null;
-  const pushStatus = Number(value.pushStatus);
-  return {
-    at: pick("at"),
-    occurrence: pick("occurrence"),
-    reason: pick("reason") || "",
-    errorCode: pick("errorCode"),
-    pushStatus: Number.isFinite(pushStatus) && pushStatus > 0 ? pushStatus : null
-  };
-};
-var isCurrentOccurrence = (error, nextSendAtMs) => {
-  const occurrenceMs = parseMs(error.occurrence);
-  if (occurrenceMs !== null) return occurrenceMs === nextSendAtMs;
-  const atMs = parseMs(error.at);
-  return atMs !== null && atMs >= nextSendAtMs;
-};
-var createIdentityReader = (masterKey, serializeKeyOf) => {
-  const userKeys = /* @__PURE__ */ new Map();
-  return async (row) => {
-    const unknown = { charId: null, contactName: null, kind: null, serializeKey: null };
-    if (!masterKey || !row.user_id || !row.encrypted_payload) return unknown;
-    try {
-      let userKey = userKeys.get(row.user_id);
-      if (!userKey) {
-        userKey = deriveUserEncryptionKey(row.user_id, masterKey);
-        userKeys.set(row.user_id, userKey);
-      }
-      const payload = JSON.parse(await decryptFromStorage(row.encrypted_payload, await userKey));
-      const metadata = payload.metadata && typeof payload.metadata === "object" ? payload.metadata : null;
-      return {
-        charId: typeof metadata?.charId === "string" ? metadata.charId : null,
-        contactName: typeof payload.contactName === "string" && payload.contactName ? payload.contactName : null,
-        kind: readTaskKind(metadata),
-        serializeKey: serializeKeyOf({ metadata })
-      };
-    } catch {
-      return unknown;
-    }
-  };
-};
-var readOverdueTasks = async (db, options) => {
-  const nowMs = options.nowMs ?? Date.now();
-  const rows = (await db.prepare(
-    `SELECT ${TASK_COLUMNS}
-         FROM scheduled_messages
-        WHERE status = 'pending' AND next_send_at <= ?
-        ORDER BY next_send_at ASC
-        LIMIT ?`
-  ).bind(new Date(nowMs).toISOString(), MAX_OVERDUE_TASKS + 1).all()).results || [];
-  const truncated = rows.length > MAX_OVERDUE_TASKS;
-  const readIdentity = createIdentityReader(options.masterKey, options.serializeKeyOf);
-  const prepared = (await Promise.all(rows.slice(0, MAX_OVERDUE_TASKS).map(async (row) => {
-    const nextSendAtMs = parseMs(row.next_send_at);
-    if (!row.uuid || nextSendAtMs === null) return null;
-    const lastError = parseLastError(row.last_error);
-    const currentError = lastError && isCurrentOccurrence(lastError, nextSendAtMs) ? lastError : null;
-    const identity = await readIdentity(row);
-    const facts = {
-      nextSendAtMs,
-      createdAtMs: parseMs(row.created_at),
-      updatedAtMs: parseMs(row.updated_at),
-      retryAfterMs: parseMs(row.retry_after),
-      leaseUntilMs: parseMs(row.lease_until),
-      currentErrorAtMs: currentError ? parseMs(currentError.at) : null,
-      serializeKey: identity.serializeKey
-    };
-    return { row: { ...row, uuid: row.uuid }, nextSendAtMs, currentError, identity, facts };
-  }))).filter((item) => item !== null);
-  const verdicts = classifyOverdueTasks(prepared.map((item) => item.facts), nowMs);
-  const tasks = prepared.map(({ row, nextSendAtMs, currentError, identity, facts }, index) => {
-    const verdict = verdicts[index];
-    return {
-      uuid: row.uuid,
-      charId: identity.charId,
-      contactName: identity.contactName,
-      kind: identity.kind,
-      messageType: row.message_type,
-      nextSendAt: new Date(nextSendAtMs).toISOString(),
-      state: verdict.state,
-      stuck: verdict.stuck,
-      retryCount: Number(row.retry_count) || 0,
-      retryAfter: toIso(facts.retryAfterMs),
-      lastStartedAt: toIso(verdict.lastStartedAtMs),
-      unfinishedAttempt: verdict.unfinishedAttempt,
-      lateStart: verdict.lateStart,
-      queuedBehind: verdict.queuedBehind,
-      lastError: currentError
-    };
-  });
-  return {
-    tasks,
-    truncated,
-    verdict: judgeOverdueTasks(tasks.map((task, index) => ({
-      verdict: verdicts[index],
-      hasCurrentError: task.lastError !== null
-    })))
-  };
-};
-var readRecentFailures = async (db, options) => {
-  const nowMs = options.nowMs ?? Date.now();
-  const sinceMs = nowMs - RECENT_FAILURE_WINDOW_MS;
-  const rows = (await db.prepare(
-    `SELECT ${TASK_COLUMNS}
-         FROM scheduled_messages
-        WHERE last_error IS NOT NULL
-          AND updated_at >= ?
-          AND message_type != 'instant'
-          AND (status = 'failed' OR (status = 'pending' AND next_send_at > ?))
-        ORDER BY updated_at DESC
-        LIMIT ?`
-  ).bind(new Date(sinceMs).toISOString(), new Date(nowMs).toISOString(), MAX_RECENT_FAILURES).all()).results || [];
-  const readIdentity = createIdentityReader(options.masterKey, options.serializeKeyOf);
-  const failures = await Promise.all(rows.map(async (row) => {
-    const error = parseLastError(row.last_error);
-    const atMs = parseMs(error?.at);
-    if (!row.uuid || !error || atMs === null || atMs < sinceMs) return null;
-    const identity = await readIdentity(row);
-    return {
-      uuid: row.uuid,
-      charId: identity.charId,
-      contactName: identity.contactName,
-      kind: identity.kind,
-      messageType: row.message_type,
-      outcome: row.status === "failed" ? "failed" : "skipped",
-      error
-    };
-  }));
-  return failures.filter((item) => item !== null);
-};
-var DIAGNOSTICS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS worker_diagnostics (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-)`;
-var TICK_FAILURE_KEY = "tick_failure";
-var TASK_WRITE_FAILURE_STATUSES = /* @__PURE__ */ new Set([
-  "claim_failed",
-  "retry_update_failed",
-  "stale_update_failed",
-  "post_send_cleanup_failed"
-]);
-var pickTickFailure = (outcome) => {
-  const value = outcome;
-  if (!value || typeof value !== "object") return null;
-  if (value.ok === false) {
-    const cause2 = value.cause;
-    return {
-      stage: typeof cause2?.stage === "string" && cause2.stage ? cause2.stage : "tick",
-      name: typeof cause2?.name === "string" && cause2.name ? cause2.name : "Error",
-      message: typeof cause2?.message === "string" ? cause2.message : "",
-      code: typeof cause2?.code === "string" && cause2.code ? cause2.code : null
-    };
-  }
-  const failedTasks = value.summary?.details?.failedTasks;
-  if (!Array.isArray(failedTasks)) return null;
-  const hit = failedTasks.find((entry) => TASK_WRITE_FAILURE_STATUSES.has(entry?.status));
-  if (!hit) return null;
-  const reason = typeof hit.reason === "string" ? hit.reason : "";
-  const updateError = typeof hit.updateError === "string" ? hit.updateError : "";
-  const rawMessage = updateError ? `${updateError}\uFF08\u672C\u6765\u8981\u8BB0\u4E0B\u7684\u5931\u8D25\u539F\u56E0\uFF1A${reason || "\u65E0"}\uFF09` : reason;
-  const cause = summarizeErrorCause({ name: "TaskWriteFailed", message: rawMessage }, "tick");
-  return { stage: hit.status, name: cause.name, message: cause.message ?? "", code: null };
-};
-var recordTickOutcome = async (db, outcome, nowMs = Date.now()) => {
-  const failure = pickTickFailure(outcome);
-  if (!failure || typeof db?.prepare !== "function") return;
-  try {
-    await db.prepare(DIAGNOSTICS_TABLE_SQL).run();
-    const existing = await db.prepare("SELECT value FROM worker_diagnostics WHERE key = ?").bind(TICK_FAILURE_KEY).first();
-    const previous = parseStoredTickFailure(existing?.value);
-    const sameSeries = previous && previous.stage === failure.stage && previous.name === failure.name && nowMs - Date.parse(previous.lastAt) <= TICK_FAILURE_SERIES_GAP_MS;
-    const nowIso = new Date(nowMs).toISOString();
-    const record = {
-      ...failure,
-      firstAt: sameSeries ? previous.firstAt : nowIso,
-      lastAt: nowIso,
-      count: sameSeries ? previous.count + 1 : 1
-    };
-    await db.prepare(
-      `INSERT INTO worker_diagnostics (key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    ).bind(TICK_FAILURE_KEY, JSON.stringify(record), nowMs).run();
-  } catch (error) {
-    console.warn("[amsg:tick-report] \u8FD9\u4E00\u8DF3\u7684\u62A5\u9519\u6CA1\u8BB0\u8FDB\u5E93", error);
-  }
-};
-var parseStoredTickFailure = (raw) => {
-  if (!raw) return null;
-  try {
-    const value = JSON.parse(raw);
-    if (!value || typeof value.stage !== "string" || typeof value.firstAt !== "string" || typeof value.lastAt !== "string") {
-      return null;
-    }
-    return {
-      stage: value.stage,
-      name: typeof value.name === "string" ? value.name : "Error",
-      message: typeof value.message === "string" ? value.message : "",
-      code: typeof value.code === "string" ? value.code : null,
-      firstAt: value.firstAt,
-      lastAt: value.lastAt,
-      count: Number(value.count) || 1
-    };
-  } catch {
-    return null;
-  }
-};
-var readTickFailure = async (db, nowMs = Date.now()) => {
-  try {
-    const row = await db.prepare("SELECT value FROM worker_diagnostics WHERE key = ?").bind(TICK_FAILURE_KEY).first();
-    const record = parseStoredTickFailure(row?.value);
-    if (!record) return null;
-    return { ...record, ongoing: nowMs - Date.parse(record.lastAt) <= TICK_FAILURE_SERIES_GAP_MS };
-  } catch {
-    return null;
-  }
-};
-var buildTickReport = async (db, options) => {
-  const nowMs = options.nowMs ?? Date.now();
-  const scoped = { ...options, nowMs };
-  const [overdue, recentFailures, tickFailure] = await Promise.all([
-    readOverdueTasks(db, scoped),
-    readRecentFailures(db, scoped),
-    readTickFailure(db, nowMs)
-  ]);
-  return {
-    now: new Date(nowMs).toISOString(),
-    tasks: overdue.tasks,
-    recentFailures,
-    tickFailure,
-    truncated: overdue.truncated
-  };
-};
 
 // worker/amsg/src/nativeFcm.ts
 var accessTokenCache = null;
@@ -13393,13 +14943,31 @@ var OFFLOAD_BATONS = [
     log: "[amsg:emotion] \u8BC4\u4F30\u7ED3\u679C\u65C1\u8DEF\u5B58\u50A8"
   },
   {
+    field: "amsgSar",
+    refField: "amsgSarRef",
+    key: amsgSarSnapshotKey,
+    log: "[amsg:sar] \u6A21\u5757\u5FEB\u7167\u65C1\u8DEF\u5B58\u50A8"
+  },
+  {
+    field: "amsgSarUserSurface",
+    refField: "amsgSarUserSurfaceRef",
+    key: amsgSarUserSurfaceKey,
+    log: "[amsg:sar] \u7528\u6237\u5916\u663E\u65C1\u8DEF\u5B58\u50A8"
+  },
+  {
+    field: "amsgSarSurface",
+    refField: "amsgSarSurfaceRef",
+    key: amsgSarSurfaceKey,
+    log: "[amsg:sar] \u672C\u6BB5\u5916\u663E\u65C1\u8DEF\u5B58\u50A8"
+  },
+  {
     field: "xhsSession",
     refField: "xhsSessionRef",
     key: amsgXhsSessionKey,
     log: "[amsg:agentic] XHS \u4F1A\u8BDD\u6570\u636E\u65C1\u8DEF\u5B58\u50A8"
   }
 ];
-var offloadOversizedPush = async (payload, writeState, charId, clientTaskId) => {
+var offloadOversizedPush = async (payload, writeState, charId, clientTaskId, segmentIndex = 0) => {
   if (pushFits(payload)) return payload;
   if (!clientTaskId) {
     console.warn("[amsg:offload] push \u8D85\u9650\u5374\u6CA1\u6709 clientTaskId\uFF0C\u65C1\u8DEF\u5B58\u50A8\u7528\u4E0D\u4E0A", {
@@ -13419,7 +14987,7 @@ var offloadOversizedPush = async (payload, writeState, charId, clientTaskId) => 
     const meta = readMeta(current);
     const value = meta[baton.field];
     if (!hasOffloadable(value)) continue;
-    const key = baton.key(clientTaskId);
+    const key = baton.key(clientTaskId, segmentIndex);
     await writeState(amsgStateNamespace(charId), [
       { key, value: typeof value === "string" ? value : JSON.stringify(value) }
     ]);
@@ -13535,7 +15103,23 @@ var sendInstantErrorPush = async (args) => {
 var amsgFireSettled = async (info) => {
   const stash = getFireStash(info.scratch);
   if (!stash) return;
-  if (stash.instant && info.status === "failed" && stash.taskUuid) {
+  const committed = info.outboxed === true;
+  const delivered = committed || (info.sentCount ?? 0) > 0;
+  const stateWrites = [];
+  if (!stash.instant && !stash.dailyCounted) {
+    stash.dailyCounted = true;
+    const sent = delivered ? 1 : 0;
+    const llmCalls = typeof info.llmCalls === "number" && info.llmCalls > 0 ? info.llmCalls : 0;
+    if (sent || llmCalls) {
+      stash.dailySends = bumpDailySends(stash.dailySends, stash.dailyDay, {
+        sends: sent,
+        llmCalls,
+        sentId: `${stash.clientTaskId || "task"}@${stash.occurrenceMs}`
+      });
+      stateWrites.push({ key: AMSG_DAILY_SENDS_KEY, value: JSON.stringify(stash.dailySends) });
+    }
+  }
+  if (stash.instant && info.status === "failed" && !committed && stash.taskUuid) {
     const failReason = info.error instanceof Error ? info.error.message : String(info.error ?? "\u672A\u77E5\u9519\u8BEF");
     const retryCount = typeof info.task?.retry_count === "number" ? info.task.retry_count : 0;
     const errorCode = readErrorCode(info.error);
@@ -13570,7 +15154,7 @@ var amsgFireSettled = async (info) => {
       }
     }
   }
-  if (stash.instant && stash.emotionLatePending && stash.emotionEvalPromise && stash.clientTaskId && (info.sentCount ?? 0) > 0) {
+  if (stash.instant && stash.emotionLatePending && stash.emotionEvalPromise && stash.clientTaskId && delivered) {
     stash.emotionLatePending = false;
     try {
       const outcome = await stash.emotionEvalPromise;
@@ -13587,12 +15171,15 @@ var amsgFireSettled = async (info) => {
   }
   const texts = stash.selfLogTexts;
   stash.selfLogTexts = null;
-  const sentCount = info.sentCount ?? 0;
+  const sentCount = committed && texts ? texts.length : info.sentCount ?? 0;
   if (texts && sentCount > 0) {
     const text = texts.slice(0, sentCount).filter((message) => message.trim()).join("\n");
+    const entryId = `${stash.clientTaskId || "task"}@${stash.occurrenceMs}`;
+    const rerun = stash.selfLog.entries.some((e) => e.id === entryId);
     const next = appendSelfLogEntry(stash.selfLog, {
-      id: `${stash.clientTaskId || "task"}@${stash.occurrenceMs}`,
+      id: entryId,
       at: Date.now(),
+      startedAt: stash.firedAt,
       text,
       // 即时对话是在答用户刚说的话——列进自述块保持连续性，但不占「主动连发」的额度
       // （带这个标记的条目不会让 selfLog.unansweredSends 加一）。
@@ -13602,15 +15189,20 @@ var amsgFireSettled = async (info) => {
       stash.selfLog = next;
       stash.selfLogDirty = true;
     }
+    if (!stash.instant && stash.recurring && stash.clientTaskId && !rerun) {
+      stash.selfLog = bumpRecurringSend(stash.selfLog, stash.clientTaskId);
+      stash.selfLogDirty = true;
+    }
   }
-  if (!stash.selfLogDirty) return;
-  stash.selfLogDirty = false;
+  if (stash.selfLogDirty) {
+    stash.selfLogDirty = false;
+    stateWrites.push({ key: AMSG_SELF_LOG_KEY, value: JSON.stringify(stash.selfLog) });
+  }
+  if (stateWrites.length === 0) return;
   try {
-    await info.writeState(amsgStateNamespace(stash.charId), [
-      { key: AMSG_SELF_LOG_KEY, value: JSON.stringify(stash.selfLog) }
-    ]);
+    await info.writeState(amsgStateNamespace(stash.charId), stateWrites);
   } catch (error) {
-    console.warn("[amsg:self-log] \u5199\u5165\u5931\u8D25\uFF08\u8FD9\u6B21\u7167\u5E38\u53D1\u9001\uFF0C\u4F46\u4E0B\u4E00\u6B21\u5230\u70B9\u89D2\u8272\u4E0D\u4F1A\u77E5\u9053\u8BF4\u8FC7\u8FD9\u53E5\uFF09", error);
+    console.warn("[amsg:self-log] \u5199\u5165\u5931\u8D25\uFF08\u8FD9\u6B21\u7167\u5E38\u53D1\u9001\uFF0C\u4F46\u4E0B\u4E00\u6B21\u5230\u70B9\u89D2\u8272\u4E0D\u4F1A\u77E5\u9053\u8BF4\u8FC7\u8FD9\u53E5\uFF0C\u6BCF\u65E5\u8BA1\u6570\u4E5F\u5C11\u8BB0\u4E00\u6B21\uFF09", error);
   }
 };
 var amsgStaleSkip = async (task, info) => {
@@ -13686,37 +15278,59 @@ var raceEmotionEval = (promise, lateNote = "\u8BC4\u4F30\u6CA1\u8D76\u4E0A\u8FD9
     if (timer !== void 0) clearTimeout(timer);
   });
 };
+var countCommittedSelfSends = (stash) => {
+  const refundedSends = stash.cancelledTasks.filter((uuid) => stash.plannedSelfSendUuids.includes(uuid)).length;
+  return countUnansweredSends(stash.selfLog) + stash.plannedSelfSends - refundedSends + stash.scheduledTasks.length + (stash.instant ? 0 : 1);
+};
+var selfScheduleBusyTimes = (stash, nowMs) => {
+  const busy = liveTaskView(stash).map((t) => currentOccurrenceMs(t, nowMs)).filter((ms) => ms != null);
+  if (stash.lastSelfSendAt != null) busy.push(stash.lastSelfSendAt);
+  if (!stash.instant) busy.push(nowMs);
+  return busy;
+};
 var runFireScheduleTool = async (stash, scheduleTask, args, nowMs) => {
   if (typeof scheduleTask !== "function") {
     return { ok: false, reason: "not_supported", message: "\u5F53\u524D\u540E\u53F0\u7248\u672C\u8FD8\u4E0D\u652F\u6301\u7ED9\u81EA\u5DF1\u6392\u540E\u7EED\uFF0C\u8FD9\u6B21\u5C31\u628A\u8BDD\u8BF4\u5B8C\u5427\u3002" };
   }
-  const unansweredLimit = stash.maxUnansweredSends;
-  const refundedSends = stash.cancelledTasks.filter((uuid2) => stash.plannedSelfSendUuids.includes(uuid2)).length;
-  const committedSends = countUnansweredSends(stash.selfLog) + stash.plannedSelfSends - refundedSends + stash.scheduledTasks.length;
+  const unansweredLimit = stash.limits.maxUnansweredSends;
+  const committedSends = countCommittedSelfSends(stash);
   if (committedSends + 1 > unansweredLimit) {
     return {
       ok: false,
       reason: "unanswered_limit",
-      message: `\u5BF9\u65B9\u8FD8\u6CA1\u56DE\u590D\uFF0C\u8FD9\u671F\u95F4\u4F60\u5DF2\u7ECF\u53D1\u4E86/\u6392\u4E86 ${committedSends} \u6761\uFF0C\u7528\u6237\u8BBE\u7F6E\u7684\u8FDE\u53D1\u4E0A\u9650\u662F ${unansweredLimit} \u6761\u2014\u2014\u8FD9\u6B21\u522B\u6392\u4E86\uFF0C\u7B49 ta \u56DE\u590D\u518D\u8BF4\u3002`
+      message: `\u5BF9\u65B9\u8FD8\u6CA1\u56DE\u590D\uFF0C\u8FD9\u671F\u95F4\u4F60\u5DF2\u7ECF\u4E3B\u52A8\u627E\u4E86 / \u6392\u4E86 ${committedSends} \u6B21\uFF0C\u7528\u6237\u8BBE\u7684\u8FDE\u53D1\u4E0A\u9650\u662F ${unansweredLimit} \u6B21\u2014\u2014\u8FD9\u6B21\u522B\u6392\u4E86\uFF0C\u7B49 ta \u56DE\u590D\u518D\u8BF4\u3002`
     };
   }
   if (stash.scheduledTasks.length >= MAX_FIRE_SCHEDULES) {
     return {
       ok: false,
       reason: "fire_limit",
-      message: `\u8FD9\u6B21\u5DF2\u7ECF\u6392\u4E86 ${MAX_FIRE_SCHEDULES} \u6761\uFF0C\u591F\u4E86\uFF0C\u5269\u4E0B\u7684\u8BDD\u76F4\u63A5\u5199\u8FDB\u8FD9\u6761\u6D88\u606F\u91CC\u3002`
+      message: `\u8FD9\u6B21\u5DF2\u7ECF\u6392\u4E86 ${MAX_FIRE_SCHEDULES} \u6B21\u540E\u7EED\uFF0C\u591F\u4E86\uFF0C\u5269\u4E0B\u7684\u8BDD\u76F4\u63A5\u5199\u8FDB\u8FD9\u6761\u6D88\u606F\u91CC\u3002`
     };
   }
-  const live = stash.pendingTaskCount + stash.scheduledTasks.length;
-  if (live >= MAX_ACTIVE_TASKS_PER_CHAR) {
+  const pendingUuids = new Set(stash.pendingTasks.map((t) => t.taskUuid));
+  const freedSlots = stash.cancelledTasks.filter((uuid2) => pendingUuids.has(uuid2)).length;
+  const live = stash.pendingTaskCount - freedSlots + stash.scheduledTasks.length;
+  if (live >= stash.limits.maxActiveTasks) {
     return {
       ok: false,
       reason: "task_limit",
-      message: `\u4F60\u540C\u65F6\u6302\u7740\u7684\u4EFB\u52A1\u5DF2\u7ECF\u6709 ${live} \u4E2A\uFF08\u4E0A\u9650 ${MAX_ACTIVE_TASKS_PER_CHAR}\uFF09\uFF0C\u8FD9\u6B21\u522B\u518D\u6392\u4E86\u3002`
+      message: `\u4F60\u540C\u65F6\u6302\u7740\u7684\u4EFB\u52A1\u5DF2\u7ECF\u6709 ${live} \u4E2A\uFF08\u7528\u6237\u8BBE\u7684\u4E0A\u9650\u662F ${stash.limits.maxActiveTasks}\uFF09\uFF0C\u8FD9\u6B21\u522B\u518D\u6392\u4E86\u3002`
     };
   }
   const parsed = parseFireScheduleArgs(args, nowMs, stash.tz);
   if ("ok" in parsed) return parsed;
+  const rules = checkSelfScheduleRules({
+    limits: stash.limits,
+    sendAtMs: Date.parse(parsed.sendAt),
+    recurrence: parsed.recurrence,
+    expirePolicy: parsed.expirePolicy,
+    busy: selfScheduleBusyTimes(stash, nowMs),
+    earliestMs: nowMs + MIN_SCHEDULE_LEAD_MS2,
+    formatTime: (ms) => formatFireTimeShort(ms, stash.tz)
+  });
+  if (!rules.ok) return rules;
+  parsed.expirePolicy = rules.expirePolicy;
   const seq = stash.selfScheduleSeq;
   const uuid = buildSelfScheduleUuid(stash.charId, stash.occurrenceMs, seq);
   const clientTaskId = `${uuid}-c`;
@@ -13939,7 +15553,9 @@ var amsgHooks = {
       }
     };
     const taskMeta = ctx.task.metadata ?? {};
-    const policy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
+    const taskPolicy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
+    const selfScheduled = taskMeta.amsgSelfScheduled === true;
+    const recurring = ctx.task.recurrenceType === "daily" || ctx.task.recurrenceType === "weekly";
     const emotionEvalSpec = takeEmotionEvalSpec(ctx.task.metadata);
     const taskKind = readTaskKind(taskMeta);
     if (taskKind) {
@@ -13964,6 +15580,9 @@ var amsgHooks = {
       };
     }
     const charRows = await ctx.readState(amsgStateNamespace(charId));
+    const limitsRecord = parseAmsgLimitsRecord(charRows.find((r) => r.key === AMSG_LIMITS_KEY)?.value);
+    const recordLimits = resolveAmsgLimits(limitsRecord);
+    const policy = selfScheduled && taskPolicy === "force" && !recordLimits.allowSelfForce ? "expire" : taskPolicy;
     const presence = parseAmsgChatPresence(
       charRows.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value
     );
@@ -13986,6 +15605,8 @@ var amsgHooks = {
     const packJson = await unpackOrFail("fire_pack", packRow.value);
     const pack = parseFirePack(packJson);
     if (!pack) throw fail3(`fire_pack \u89E3\u6790\u5931\u8D25\uFF1A${describeFirePackVersion(packJson)}`);
+    const legacyUnanswered = pack.maxUnansweredSends;
+    const limits = limitsRecord || legacyUnanswered === void 0 ? recordLimits : { ...recordLimits, maxUnansweredSends: resolveMaxUnansweredSends(legacyUnanswered) };
     if (instant && !pack.chat) {
       throw fail3("\u5373\u65F6\u5BF9\u8BDD\u4EFB\u52A1\u7684 fire_pack \u91CC\u6CA1\u6709 chat \u6BB5\uFF08\u4E91\u7AEF\u72B6\u6001\u6CA1\u8DDF\u4E0A\uFF09");
     }
@@ -14039,8 +15660,22 @@ var amsgHooks = {
     const maxToolIterations = resolveToolIterationBudget(!!mcpResolve);
     const storedSelfLog = parseSelfLog(charRows.find((r) => r.key === AMSG_SELF_LOG_KEY)?.value ?? "");
     const selfLog = reconcileSelfLogWithPack(storedSelfLog, pack, expireInput.lastUserMessageAt);
-    const maxUnansweredSends = resolveMaxUnansweredSends(pack.maxUnansweredSends);
-    if (!instant && taskMeta.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {
+    const clientTaskId = typeof taskMeta.amsgClientTaskId === "string" ? taskMeta.amsgClientTaskId : "";
+    const nowMs = ctx.now.getTime();
+    const scheduleOff = !pack.selfScheduleEnabled || limitsRecord?.selfScheduleEnabled === false;
+    if (!instant && (scheduleOff || selfScheduled && recurring && !limits.allowSelfRecurring)) {
+      console.log("[amsg:schedule-off-skip]", {
+        taskId: ctx.task.id,
+        charId,
+        selfScheduled,
+        recurring,
+        scheduleOff
+      });
+      await recordSkip(ctx, charId, "schedule-off", occurrenceMs);
+      return { skip: true };
+    }
+    const maxUnansweredSends = limits.maxUnansweredSends;
+    if (!instant && selfScheduled && countUnansweredSends(selfLog) >= maxUnansweredSends) {
       console.log("[amsg:unanswered-limit-skip]", {
         taskId: ctx.task.id,
         charId,
@@ -14050,13 +15685,49 @@ var amsgHooks = {
       await recordSkip(ctx, charId, "unanswered-limit", occurrenceMs);
       return { skip: true };
     }
+    const occurrenceEntryId = `${clientTaskId || "task"}@${occurrenceMs}`;
+    const lastSelfSendAt = selfLog.entries.filter((e) => !e.reply && e.id !== occurrenceEntryId).map((e) => e.startedAt ?? e.at).reduce((latest, at) => latest == null || at > latest ? at : latest, null);
+    if (!instant && selfScheduled && limits.minSendGapMs > 0 && lastSelfSendAt != null && nowMs < lastSelfSendAt + limits.minSendGapMs - FIRE_GAP_TOLERANCE_MS) {
+      console.log("[amsg:min-gap-skip]", {
+        taskId: ctx.task.id,
+        charId,
+        lastSelfSendAt,
+        gapMs: limits.minSendGapMs
+      });
+      await recordSkip(ctx, charId, "min-gap", occurrenceMs);
+      return { skip: true };
+    }
+    if (!instant && recurring && Number.isFinite(limits.recurringStopAfter) && countRecurringSends(selfLog, clientTaskId) >= limits.recurringStopAfter) {
+      console.log("[amsg:recurring-unanswered-skip]", {
+        taskId: ctx.task.id,
+        charId,
+        sends: countRecurringSends(selfLog, clientTaskId),
+        stopAfter: limits.recurringStopAfter
+      });
+      await recordSkip(ctx, charId, "recurring-unanswered", occurrenceMs);
+      return { skip: true };
+    }
+    const dailyDay = dayKeyInZone(nowMs, pack.userTzId);
+    const dailySends = parseDailySends(charRows.find((r) => r.key === AMSG_DAILY_SENDS_KEY)?.value);
+    const sentToday = sendsOnDay(dailySends, dailyDay);
+    if (!instant && sentToday >= limits.dailySendCap) {
+      console.log("[amsg:daily-limit-skip]", {
+        taskId: ctx.task.id,
+        charId,
+        day: dailyDay,
+        sentToday,
+        cap: limits.dailySendCap
+      });
+      await recordSkip(ctx, charId, "daily-limit", occurrenceMs);
+      return { skip: true };
+    }
     const livePendingTasks = [...pack.pendingTasks, ...selfLog.tasks];
-    const selfScheduleAllowed = pack.selfScheduleEnabled;
+    const otherLiveTasks = livePendingTasks.filter((t) => recurring || t.taskUuid !== ctx.task.uuid && (!clientTaskId || t.clientTaskId !== clientTaskId));
+    const selfScheduleAllowed = !scheduleOff;
     const canSelfSchedule = typeof ctx.scheduleTask === "function" && selfScheduleAllowed;
     const tz = { tzId: pack.tzId };
-    const clientTaskId = typeof taskMeta.amsgClientTaskId === "string" ? taskMeta.amsgClientTaskId : "";
     const { toolCtx, proxyWorkerUrl, xhsCookie } = buildToolCtx(toolPack, toolConfig);
-    const plannedSelfSendTasks = livePendingTasks.filter((t) => t.source === "character" && isPendingTask(t, ctx.now.getTime()));
+    const plannedSelfSendTasks = otherLiveTasks.filter((t) => t.source === "character" && isPendingTask(t, ctx.now.getTime()) && t.taskUuid !== ctx.task.uuid);
     const stash = {
       session: createFireSessionState(),
       toolCtx,
@@ -14072,14 +15743,20 @@ var amsgHooks = {
       mcpSpentMs: 0,
       // 「还能不能再排」按客户端已知的 + 角色自己排过还没被认领的一起算，
       // 不然角色离线期间连排几次就能绕过每角色的任务上限。
-      pendingTaskCount: livePendingTasks.length,
+      pendingTaskCount: otherLiveTasks.length,
       pendingTasks: livePendingTasks,
       scheduledTasks: [],
       // 序号与 scheduledTasks 一样从空账起步；此后只增不减（取消不回退，见字段注释）。
       selfScheduleSeq: 0,
       cancelledTasks: [],
       renewedTasks: [],
-      maxUnansweredSends,
+      limits,
+      lastSelfSendAt,
+      recurring,
+      dailyDay,
+      dailySends,
+      dailyCounted: false,
+      firedAt: nowMs,
       plannedSelfSends: plannedSelfSendTasks.length,
       plannedSelfSendUuids: plannedSelfSendTasks.map((t) => t.taskUuid),
       charId,
@@ -14105,20 +15782,38 @@ var amsgHooks = {
     }) : "";
     const taskListBlock = baseTaskListBlock && canManageTasks ? `${baseTaskListBlock}
 \uFF08\u6E05\u5355\u91CC\u7684\u4EFB\u52A1\u5F52\u4F60\u7BA1\uFF1A\u60C5\u51B5\u53D8\u4E86\u4E0D\u8BE5\u54CD\u7684\u53EF\u4EE5\u7528 cancel_active_message \u53D6\u6D88\uFF0C\u53EA\u662F\u8981\u6362\u65F6\u95F4\u7684\u7528 renew_active_message \u6539\u671F\uFF0Ctask_id \u5C31\u662F\u6E05\u5355\u91CC\u7684\u77ED id\u3002\uFF09` : baseTaskListBlock;
-    const realtimeWorldBlock = await buildRealtimeWorldBlock({
+    const worldArgs = {
       toolConfig,
+      userName: pack.targetName,
       timeAwarenessEnabled: toolPack.timeAwarenessEnabled,
       tzId: pack.tzId,
       nowMs: ctx.now.getTime(),
       globalRows,
       globalNamespace: AMSG_GLOBAL_NAMESPACE,
       writeState: ctx.writeState
-    });
+    };
+    const [realtimeWorldBlock, userHoliday] = await Promise.all([
+      buildRealtimeWorldBlock(worldArgs),
+      buildUserHolidayBlock(worldArgs)
+    ]);
     const mcpBlock = mcpResolve ? buildMcpFireBlock(mcpResolve, { mode: mcpNative ? "native" : "text" }) : "";
-    const scheduleBlock = canSelfSchedule ? buildFireScheduleBlock(mcpNative ? "native" : "text", { nowMs: ctx.now.getTime(), tz }) : "";
+    const limitsBrief = canSelfSchedule ? buildLimitsBrief({
+      limits,
+      committedSends: countCommittedSelfSends(stash),
+      activeTasks: otherLiveTasks.length,
+      earliestText: limits.minSendGapMs > 0 ? formatFireTimeShort(earliestSlotAfter(
+        nowMs + MIN_SCHEDULE_LEAD_MS2,
+        limits.minSendGapMs,
+        selfScheduleBusyTimes(stash, nowMs)
+      ), tz) : void 0,
+      // 正在发的这一条（定时触发）发完就占掉今天的一个名额。
+      dailyRemaining: Number.isFinite(limits.dailySendCap) ? Math.max(0, limits.dailySendCap - sentToday - (instant ? 0 : 1)) : void 0
+    }) : "";
+    const scheduleBlock = canSelfSchedule ? buildFireScheduleBlock(mcpNative ? "native" : "text", { nowMs: ctx.now.getTime(), tz, limitsBrief }) : "";
+    const abilities = { allowRecurring: limits.allowSelfRecurring, allowForce: limits.allowSelfForce };
     const fireTools = [
       ...mcpResolve && mcpNative ? buildMcpFireTools(mcpResolve) : [],
-      ...canSelfSchedule && mcpNative ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz })] : [],
+      ...canSelfSchedule && mcpNative ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz, abilities })] : [],
       ...canManageTasks ? [buildFireCancelTool(), buildFireRenewTool({ nowMs: ctx.now.getTime(), tz })] : []
     ];
     stash.fireToolNames = new Set(fireTools.map((t) => t?.function?.name).filter((n) => typeof n === "string" && !n.startsWith(MCP_FIRE_NAME_PREFIX)));
@@ -14151,6 +15846,12 @@ var amsgHooks = {
         ...pack.chat.messages.map((m) => ({ role: m.role, content: m.content })),
         ...timelyBlock ? [{ role: "system", content: timelyBlock }] : []
       ];
+      if (userHoliday) {
+        const profileMessage = instantMessages.find((m) => m.role === "system" && typeof m.content === "string" && m.content.includes("### \u4E92\u52A8\u5BF9\u8C61 (User)\n"));
+        if (profileMessage) profileMessage.content = insertUserHolidayInProfile(profileMessage.content, userHoliday);
+        else instantMessages.push({ role: "system", content: `### \u4E92\u52A8\u5BF9\u8C61\u4FE1\u606F\u8865\u5145
+${userHoliday}` });
+      }
       if (emotionEvalSpec) {
         const storedEvalRaw = clientTaskId ? charRows.find((r) => r.key === amsgEmotionUpdateKey(clientTaskId))?.value : void 0;
         stash.emotionEvalPromise = storedEvalRaw ? Promise.resolve({ raw: storedEvalRaw, error: null }) : (async () => {
@@ -14178,14 +15879,15 @@ var amsgHooks = {
         totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS
       };
     }
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
+    const prompt = insertUserHolidayInProfile(renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
+      maxUnansweredSends,
       selfLog,
       taskListBlock,
       realtimeWorldBlock,
       // 「此刻在做什么」里的钟点跟今日节日同一个开关：关掉时间感知的角色不该从日程块
       // 读到「23:00」——那正是这个开关要挡的东西。日程内容本身照给。
       includeClock: toolPack.timeAwarenessEnabled
-    }) + mcpBlock + scheduleBlock;
+    }), userHoliday) + mcpBlock + scheduleBlock;
     return {
       messages: [{ role: "user", content: prompt }],
       ...common
@@ -14238,7 +15940,10 @@ var amsgHooks = {
         messageType,
         // 摘掉评估配置再交出去：它里头是用户副 API 的 apiKey，而 metadata 会被整个
         // 摊进每条 push 的 payload（见 agentic 的 buildScheduledPush）。见 stripEmotionEvalSpec。
-        metadata: stripEmotionEvalSpec(ctx.metadata),
+        // SAR 快照同样摘掉，单独经 sar 传入：它只随最后一条 push 原样回去一次。
+        metadata: stripSarSnapshot(stripEmotionEvalSpec(ctx.metadata)),
+        // SAR 临时模块快照（形状不对就当没有）。要求信封时 processLLMRound 在分段前拆信封。
+        sar: readSarSnapshot(ctx.metadata),
         occurrenceMs: stash.occurrenceMs,
         // round 1 XHS 工具抓到的笔记 / xsecToken 快照：finish 时按 directive 引用
         // 挑选后随最后一条 push 带回客户端（客户端离线跑不了 round 1，缺这份
@@ -14388,12 +16093,13 @@ var amsgHooks = {
       }
       if (stash.charId) {
         const budgeted = [];
-        for (const payload of payloads) {
+        for (const [index, payload] of payloads.entries()) {
           budgeted.push(await offloadOversizedPush(
             payload,
             ctx.writeState,
             stash.charId,
-            stash.clientTaskId
+            stash.clientTaskId,
+            index
           ));
         }
         payloads = budgeted;
@@ -14754,7 +16460,7 @@ var readServerVersion = async (request, env) => {
   }
 };
 var src_default = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
     if (pathname.endsWith("/config-check")) {
@@ -14771,9 +16477,47 @@ var src_default = {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
-          workerVersion: AMSG_BUNDLE_VERSION
+          workerVersion: AMSG_BUNDLE_VERSION,
+          // 自动更新：有没有这个能力（配没配 CF_API_TOKEN，不回值）+ 最近一次检查的结果。
+          // 读的是诊断表，D1 没绑上时读不到就是 null，不影响上面那些照常回答。
+          selfUpdate: {
+            supported: Boolean(env.CF_API_TOKEN?.trim()),
+            state: await readSelfUpdateState(env.DB)
+          }
         }
       });
+    }
+    if (pathname.endsWith("/self-update/check")) {
+      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method !== "POST") {
+        return jsonWithCors(405, {
+          success: false,
+          error: { code: "METHOD_NOT_ALLOWED", message: "/self-update/check \u53EA\u63A5\u53D7 POST" }
+        });
+      }
+      const gate = await authorizeSelfUpdate(request, env);
+      if (!gate.ok) {
+        return jsonWithCors(gate.code === "CF_TOKEN_MISSING" ? 400 : 401, {
+          success: false,
+          error: { code: gate.code, message: gate.message }
+        });
+      }
+      const db = env.DB;
+      if (typeof db?.prepare !== "function") {
+        return jsonWithCors(503, {
+          success: false,
+          error: { code: "WORKER_CONFIG_MISSING", message: "\u6CA1\u7ED1 D1\uFF0C\u8BB0\u4E0D\u4E0B\u68C0\u67E5\u7ED3\u679C\uFF0C\u5148\u628A DB \u7ED1\u4E0A\u3002" }
+        });
+      }
+      const check = runAutoUpdate(env, db, {
+        source: "client",
+        scriptName: resolveScriptName(env, request.url)
+      }).catch((error) => {
+        console.warn("[amsg:auto-update] \u51B7\u542F\u52A8\u89E6\u53D1\u7684\u68C0\u67E5\u6CA1\u8DD1\u5B8C", error);
+      });
+      if (ctx?.waitUntil) ctx.waitUntil(check);
+      else await check;
+      return jsonWithCors(202, { success: true, data: { accepted: true } });
     }
     if (pathname.endsWith("/debug")) {
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -14801,6 +16545,7 @@ var src_default = {
         });
       }
       const result = await handleSelfUpdate(request, env);
+      await recordManualSelfUpdate(env.DB, result);
       return jsonWithCors(result.ok ? 200 : 400, {
         success: result.ok,
         data: result.ok ? result : void 0,
@@ -14900,8 +16645,17 @@ var src_default = {
       console.error(`[amsg] \u5B9A\u65F6\u4EFB\u52A1\u6574\u8F6E\u8DF3\u8FC7\uFF1A${report.message}`);
       return;
     }
+    await ensureSchemaOnce(env.DB, SCHEMA_VERSION, () => upstream.ensureSchema(env));
     const outcome = await upstream.scheduled(event, env);
     await recordTickOutcome(env.DB, outcome);
+    try {
+      await runAutoUpdate(env, env.DB, {
+        source: "cron",
+        scriptName: env.CF_SCRIPT_NAME?.trim() || null
+      });
+    } catch (error) {
+      console.warn("[amsg:auto-update] \u8FD9\u4E00\u8DF3\u7684\u81EA\u52A8\u66F4\u65B0\u68C0\u67E5\u6CA1\u8DD1\u5B8C", error);
+    }
   }
 };
 export {

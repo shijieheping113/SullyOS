@@ -1253,7 +1253,7 @@ export default function MemoryPalaceApp() {
         if (!window.confirm(
             `重新整合「${box.name || '未命名事件'}」？\n\n`
             + `副 API 会重新读取盒内全部 ${sourceCount} 条原始记忆，不使用当前整合回忆；`
-            + `随后重新生成语义向量。新总结和向量都成功后才会覆盖当前内容。`,
+            + `随后重新生成语义向量。成功后，本次参与整合的活节点会归档（保留原文），累计归档满 12 条会封盒；失败则保持原样。`,
         )) return;
 
         setRegeneratingBoxId(box.id);
@@ -1284,7 +1284,7 @@ export default function MemoryPalaceApp() {
             setAllBoxes(boxes);
             setSelectedNode(prev => prev?.id === result.summary.id ? result.summary : prev);
             await loadStats();
-            addToast(`已重新整合 ${result.sourceCount} 条原始记忆，语义向量已更新`, 'success');
+            addToast(`已重新整合并归档 ${result.sourceCount} 条原始记忆，语义向量已更新`, 'success');
         } catch (e: any) {
             addToast(`重新整合失败：${e?.message || e}`, 'error');
         } finally {
@@ -2905,8 +2905,10 @@ export default function MemoryPalaceApp() {
     }
 
     // ─── 未启用记忆宫殿 ─────────────────────────────────
+    // 走到这里时只有全局配置页可能没有 char（上面的 picker 分支兜住了其它 view），
+    // 下面各个角色视图都带上 char 判断，免得从选人页直接进全局配置时读空角色崩掉
 
-    if (!char!.memoryPalaceEnabled && view !== 'globalSettings') {
+    if (char && !char.memoryPalaceEnabled && view !== 'globalSettings') {
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div
@@ -2970,7 +2972,7 @@ export default function MemoryPalaceApp() {
         v <= 0.5 ? '偶尔会想起旧事' :
         v <= 0.8 ? '敏感，容易纠结旧事' : '执念很深，难以释怀';
 
-    if (detectingPersonality && view !== 'globalSettings') {
+    if (char && detectingPersonality && view !== 'globalSettings') {
         return (
             <div style={{ paddingLeft: 32, paddingRight: 32, paddingBottom: 32, paddingTop: SAFE_PAD_TOP, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
                 <div style={{ marginBottom: 16, color: '#7c3aed', animation: 'pulse 2s ease-in-out infinite', display: 'inline-flex' }}>
@@ -2986,7 +2988,7 @@ export default function MemoryPalaceApp() {
         );
     }
 
-    if (pendingPersonality && view !== 'globalSettings') {
+    if (char && pendingPersonality && view !== 'globalSettings') {
         return (
             <div style={{ paddingLeft: 24, paddingRight: 24, paddingBottom: 24, paddingTop: SAFE_PAD_TOP, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
                 <div style={{ marginBottom: 12, color: '#7c3aed', display: 'inline-flex' }}>
@@ -3895,7 +3897,7 @@ create table if not exists memory_vectors (
                 </>)}
 
                 {/* 人格风格 & 反刍倾向：由 LLM 自动推断，默认折叠 */}
-                {!isGlobal && (<>
+                {!isGlobal && char && (<>
                 <details style={{ marginTop: 16 }}>
                     <summary style={{ fontSize: 10, color: '#c4c4c4', cursor: 'pointer', userSelect: 'none' }}>
                         认知参数
@@ -4041,7 +4043,9 @@ create table if not exists memory_vectors (
                     <p className="mt-2 text-center text-xs text-slate-500">不需要副 API。永久删除前会有两次确认。</p>
                     {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={() => {
                         trackEvent('清空聊天记录');
-                        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                        // 同 Chat.tsx：用户删的正是云端那份快照里存着的对话原文，不能让它
+                        // 因为「这个角色没有待触发任务」被悄悄留下。
+                        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig }, 'invalidate');
                         setRangeModalOpen(false); setRangeMessages([]); setRangeStartId(null); setRangeEndId(null);
                         addToast('选中的聊天原文已清理，已有记忆保留', 'success');
                     }} />}
@@ -4924,7 +4928,7 @@ create table if not exists memory_vectors (
 
     // ─── 宫殿概览视图 ────────────────────────────────
 
-    if (view === 'palace') {
+    if (view === 'palace' && char) {
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 {/* 标题 + 返回 + 设置 */}

@@ -8,6 +8,8 @@ import { extractModelIds, normalizeModelIds } from '../utils/modelList';
 import { shareOrDownloadBlob } from '../utils/shareExport';
 import { bucketRetryCount, isAnalyticsConfigured, isAnalyticsEnabled, setAnalyticsEnabled, trackEvent } from '../utils/analytics';
 import Modal from '../components/os/Modal';
+import UserHolidaySettings from '../components/settings/UserHolidaySettings';
+import { consumeHolidaySettings, hasHolidaySettingsRequest, type UserHolidayConfig } from '../utils/userHolidays';
 import { NotionManager, FeishuManager, RealtimeContextManager, fetchOwmWeather, fetchOpenMeteoWeather } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { resolveXhsDeploymentMode } from '../utils/xhsMcpConfig';
@@ -27,6 +29,7 @@ import { loadMcpServers, saveMcpServers, createMcpServer, testMcpConnection, res
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { PushVapidSettingsModal } from '../components/settings/PushVapidSettingsModal';
+import AmsgCloudDataModal from '../components/settings/AmsgCloudDataModal';
 import PushSubscriptionPanel from '../components/settings/PushSubscriptionPanel';
 import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
 import { syncAmsgLlmCredentials, syncAmsgToolConfig, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
@@ -47,7 +50,7 @@ import {
     type AvatarModelBackupProgress,
 } from '../utils/avatarModelBackup';
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '../utils/apiConfigNormalize';
-import { configFromPreset, findActivePresetId, type PresetSwitchPatch } from '../utils/apiPresetSwitch';
+import { configFromPreset, findActivePresetId, presetDiffersFromConfig, type PresetSwitchPatch } from '../utils/apiPresetSwitch';
 import type { APIConfig, TtsProvider, SttEngineId, SttApiConfig, SttUsageStats } from '../types';
 import { defaultQwenEmotionPrompt, getSttUsage, resetSttUsage, doubaoGzipSupported, isSttSupported } from '../utils/volcStt';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
@@ -558,6 +561,8 @@ const Settings: React.FC = () => {
   const [newPresetName, setNewPresetName] = useState('');
   // 就地编辑某条预设：只改预设本身；改的正好是当前生效那条时，生效配置一并跟着走
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
+  // 保存前在用某条预设、保存后跟它对不上了：记下是哪条和刚存的配置，弹窗问要不要存回去
+  const [presetWriteback, setPresetWriteback] = useState<{ presetId: string; config: PresetSwitchPatch } | null>(null);
   const [editPresetName, setEditPresetName] = useState('');
   const [editPresetUrl, setEditPresetUrl] = useState('');
   const [editPresetKey, setEditPresetKey] = useState('');
@@ -569,14 +574,21 @@ const Settings: React.FC = () => {
   
   // UI States
   const [showModelModal, setShowModelModal] = useState(false);
+  // 打开模型弹窗那一刻的模型名：点 × 关掉时退回它，只有「确定」/点选列表才算数。
+  const modelBeforePickerRef = useRef('');
   const [modelFilter, setModelFilter] = useState('');
   const [showVisionModelModal, setShowVisionModelModal] = useState(false);
   const [visionModelFilter, setVisionModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  /** 云端没清干净时停在这里：本地还一个字节都没动，等用户决定重试还是照样重置。 */
+  const [resetCloudFailure, setResetCloudFailure] = useState<{ workerUrl: string; detail: string } | null>(null);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showApiCallLog, setShowApiCallLog] = useState(false);
-  const [showRealtimeModal, setShowRealtimeModal] = useState(false);
+  const [holidaySettingsFocus] = useState(hasHolidaySettingsRequest);
+  useEffect(() => { if (holidaySettingsFocus) consumeHolidaySettings(); }, [holidaySettingsFocus]);
+  const [showRealtimeModal, setShowRealtimeModal] = useState(holidaySettingsFocus);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showMcpHelp, setShowMcpHelp] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
@@ -685,6 +697,7 @@ const Settings: React.FC = () => {
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
+  const [rtUserHolidays, setRtUserHolidays] = useState<UserHolidayConfig>(() => ({ ...(realtimeConfig.userHolidays || { enabled: false, countryCode: '' }), ...(holidaySettingsFocus ? { enabled: true } : {}) }));
   const [rtWeatherKey, setRtWeatherKey] = useState(realtimeConfig.weatherApiKey);
   const [rtWeatherCity, setRtWeatherCity] = useState(realtimeConfig.weatherCity);
   const [rtNewsEnabled, setRtNewsEnabled] = useState(realtimeConfig.newsEnabled);
@@ -728,7 +741,11 @@ const Settings: React.FC = () => {
   const [rtXhsCookie, setRtXhsCookie] = useState(realtimeConfig.xhsMcpConfig?.cookie || '');
   const [rtXhsPlatform, setRtXhsPlatform] = useState<'xhs' | 'rednote' | undefined>(realtimeConfig.xhsMcpConfig?.platform);
   const [rtXhsGuideOpen, setRtXhsGuideOpen] = useState(false);
-  const [rtTestStatus, setRtTestStatus] = useState('');
+  const [rtTestStatuses, setRtTestStatuses] = useState<Record<string, string>>({});
+  const renderRtTestStatus = (key: string) => {
+      const status = rtTestStatuses[key];
+      return status ? <div role="status" aria-live="polite" className={`p-3 rounded-xl text-xs font-medium whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${status.includes('成功') ? 'bg-emerald-100 text-emerald-700' : status.includes('失败') || status.includes('错误') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>{status}</div> : null;
+  };
 
   // 麦当劳 MCP (token / 启用态都直接存 localStorage, 不进 realtimeConfig)
   const [mcdToken, setMcdTokenState] = useState(() => getMcdToken());
@@ -757,6 +774,15 @@ const Settings: React.FC = () => {
   // "深度重置". 不持久化, 刷新页面归零 (用户原话: "刷新页面正常消失").
   const [ppZombieStreak, setPpZombieStreak] = useState(0);
   const [showAmsg2Modal, setShowAmsg2Modal] = useState(false);
+  const [showAmsgCloudData, setShowAmsgCloudData] = useState(false);
+  /**
+   * 导出时带不带主动消息 2.0 的后端连接（Worker 地址 + 密钥 + 用户 id）。
+   *
+   * 默认不带。备份是会被分享出去的，带上就等于把自己那台 Worker 的钥匙一起发了：
+   * 对方的 App 会静默连上来，把 ta 的 API 凭据和聊天上下文写进你的 D1，而 ta 手里的
+   * 主密钥能解开你那台机器上所有的密文。换设备恢复自己的备份才需要它。
+   */
+  const [exportBackendConnection, setExportBackendConnection] = useState(false);
   const [showVapidModal, setShowVapidModal] = useState(false);
   const [vapidReadyTick, setVapidReadyTick] = useState(0); // 关闭 VAPID 弹窗后刷新顶层徽标
 
@@ -1156,21 +1182,57 @@ const Settings: React.FC = () => {
   /**
    * 保存下面这份表单 = 改「当前生效的配置」，**不会**顺手覆盖任何一条预设。
    * 想把改动存回预设，走预设那排的铅笔（弹窗里可一键填入当前配置）。
+   *
+   * modelOverride：模型弹窗里刚选定的模型。setLocalModel 要到下一次渲染才生效，
+   * 选完立刻保存时得把它直接递进来，不然存进去的还是选之前那个。
    */
-  const handleSaveApi = () => {
+  const handleSaveApi = (modelOverride?: string) => {
     const nextConfig = {
       apiKey: normalizeApiCredential(localKey),
       baseUrl: normalizeApiBaseUrl(localUrl),
-      model: normalizeApiModel(localModel),
+      model: normalizeApiModel(modelOverride ?? localModel),
       stream: localStream,
       temperature: localTemperature,
     };
+    // 「是不是来自某条预设」要在保存之前问，存完值就对不上了
+    const sourcePreset = apiPresets.find(preset => preset.id === activePresetId);
     setLocalKey(nextConfig.apiKey);
     setLocalUrl(nextConfig.baseUrl);
     setLocalModel(nextConfig.model);
     commitApiConfig(nextConfig);
     setStatusMsg('配置已保存');
     setTimeout(() => setStatusMsg(''), 2000);
+    if (sourcePreset && presetDiffersFromConfig(sourcePreset, nextConfig)) {
+      setPresetWriteback({ presetId: sourcePreset.id, config: nextConfig });
+    }
+  };
+
+  // 把刚保存的当前配置写回它原来那条预设。当前配置已经生效了，这里只动预设。
+  const confirmPresetWriteback = () => {
+    setPresetWriteback(null);
+    if (!presetWriteback) return;
+    const preset = apiPresets.find(item => item.id === presetWriteback.presetId);
+    if (!preset) return;  // 弹窗开着的时候这条被删了
+    updateApiPreset(preset.id, preset.name, { ...preset.config, ...presetWriteback.config });
+    addToast(`已存回预设「${preset.name}」`, 'success');
+  };
+
+  // 模型弹窗：选定即保存生效（连同表单里的 URL / Key 一起，跟「保存配置」同一条路），
+  // 不留「弹窗里点了确定、其实还没保存」的中间状态。× 关掉 = 放弃这次挑选。
+  const openModelPicker = () => {
+    modelBeforePickerRef.current = localModel;
+    setShowModelModal(true);
+  };
+
+  const cancelModelPicker = () => {
+    setLocalModel(modelBeforePickerRef.current);
+    setShowModelModal(false);
+  };
+
+  const confirmModelPicker = (model: string) => {
+    setLocalModel(model);
+    setShowModelModal(false);
+    handleSaveApi(model);
   };
 
   const handleSaveVisionApi = (enabled = localVisionEnabled) => {
@@ -1403,9 +1465,11 @@ const Settings: React.FC = () => {
         const models = extractModelIds(data);
         if (models.length > 0) {
             setAvailableModels(models);
-            if (models.length > 0 && !models.includes(localModel)) setLocalModel(models[0]);
+            openModelPicker();
+            // 还没填过模型才顺手预选第一个；手填的名字不在列表里也照样保留
+            //（不少中转的 /models 列不全），换不换由用户在弹窗里定。
+            if (!localModel.trim()) setLocalModel(models[0]);
             setStatusMsg(`获取到 ${models.length} 个模型`);
-            setShowModelModal(true); // Open selector immediately
         } else { setStatusMsg('模型列表为空或格式不兼容'); }
     } catch (error: any) {
         console.error(error);
@@ -1452,7 +1516,10 @@ const Settings: React.FC = () => {
           // 但绝不能发给别人。media_only 只有媒体、不含密钥，视为可分享。
           if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
               const includesSettings = mode !== 'media_only';
-              const msg = includesSettings
+              const includesBackend = includesSettings && exportBackendConnection;
+              const msg = includesBackend
+                  ? '该导出数据包含了明文密钥，以及主动消息 2.0 的后端连接（Worker 地址与主密钥）。拿到这个文件的人可以连上你那台 Worker，请不要发送给任何人'
+                  : includesSettings
                   ? '该导出数据包含了明文密钥，请不要发送给任何人'
                   : '该导出内容安全，可以用于分享';
               if (!window.confirm(`${msg}\n\n点「确定」继续导出，「取消」中止。`)) {
@@ -1462,7 +1529,7 @@ const Settings: React.FC = () => {
           }
 
           // Trigger export (Context handles loading state UI)
-          const blob = await exportSystem(mode);
+          const blob = await exportSystem(mode, { includeBackendConnection: exportBackendConnection });
           
           const fileName = `Sully_Backup_${mode}_${new Date().toISOString().slice(0, 10)}.zip`;
           if (!Capacitor.isNativePlatform()) {
@@ -1540,7 +1607,16 @@ const Settings: React.FC = () => {
       if (!file) return;
 
       // Pass the File object directly to importSystem
-      importSystem(file).catch(err => {
+      importSystem(file, {
+          // 备份里带着 Worker 后端连接时问一句。程序分不清这份文件是自己的还是别人的
+          // （换新设备时用户 id 本来就对不上），只有拿着文件的人知道，所以把话问出去。
+          confirmBackendRestore: (workerUrl) => window.confirm(
+              `这份备份里带着一个主动消息 2.0 的后端连接：\n\n${workerUrl}\n\n`
+              + '如果这是你自己导出的备份，点「确定」连上它。\n\n'
+              + '如果是别人给你的，点「取消」——连上去的话，你的 API 密钥和聊天记录会被写进对方那台服务器。\n\n'
+              + '（不连也不影响其它数据导入，之后可以在设置里手动填。）',
+          ),
+      }).catch(err => {
           console.error(err);
           // 只上报归类后的固定枚举：报错原文（可能含文件路径/内容片段）只留在 console
           const rawMessage = String(err?.message || '');
@@ -1865,15 +1941,40 @@ const Settings: React.FC = () => {
       }
   };
 
-  const confirmReset = () => {
-      resetSystem();
-      setShowResetConfirm(false);
+  // 重置会先清云端再删本地，清云端要发几个请求，所以按钮得自己顶着「进行中」。
+  // 顺利的话页面直接刷新，下面这些 setState 都执行不到。
+  const confirmReset = async () => {
+      setResetting(true);
+      try {
+          const result = await resetSystem();
+          if (result.status === 'cloud-cleanup-failed') {
+              setShowResetConfirm(false);
+              setResetCloudFailure({ workerUrl: result.workerUrl, detail: result.detail });
+          } else if (result.status === 'failed') {
+              setShowResetConfirm(false);
+          }
+      } finally {
+          setResetting(false);
+      }
+  };
+
+  /** 云端没清干净，用户仍然要重置：这一次不再拦，能清多少算多少。 */
+  const confirmResetAnyway = async () => {
+      setResetting(true);
+      try {
+          setResetCloudFailure(null);
+          await resetSystem({ force: true });
+      } finally {
+          setResetting(false);
+      }
   };
 
   // 保存实时感知配置
   const handleSaveRealtimeConfig = () => {
+      if (rtUserHolidays.enabled && !rtUserHolidays.countryCode) { addToast('请选择生活所在的国家／地区，或关闭节假日感知', 'error'); return; }
       const updates = {
           weatherEnabled: rtWeatherEnabled,
+          userHolidays: { ...rtUserHolidays, introChoice: rtUserHolidays.enabled ? 'configured' as const : 'declined' as const },
           weatherApiKey: rtWeatherKey,
           weatherCity: rtWeatherCity,
           newsEnabled: rtNewsEnabled,
@@ -1911,6 +2012,7 @@ const Settings: React.FC = () => {
 
   // 测试天气API连接：填了 key 测 OpenWeatherMap，没填测免费的 Open-Meteo
   const testWeatherApi = async () => {
+      const setRtTestStatus = (value: string) => setRtTestStatuses(previous => ({ ...previous, weather: value }));
       if (!rtWeatherCity) {
           setRtTestStatus('请先填写城市');
           return;
@@ -1932,6 +2034,7 @@ const Settings: React.FC = () => {
 
   // 测试Notion连接
   const testNotionApi = async () => {
+      const setRtTestStatus = (value: string) => setRtTestStatuses(previous => ({ ...previous, notion: value }));
       if (!rtNotionKey || !rtNotionDbId) {
           setRtTestStatus('请填写 Notion API Key 和 Database ID');
           return;
@@ -1949,6 +2052,7 @@ const Settings: React.FC = () => {
 
   // 测试飞书连接
   const testFeishuApi = async () => {
+      const setRtTestStatus = (value: string) => setRtTestStatuses(previous => ({ ...previous, feishu: value }));
       if (!rtFeishuAppId || !rtFeishuAppSecret || !rtFeishuBaseId || !rtFeishuTableId) {
           setRtTestStatus('请填写飞书 App ID、App Secret、多维表格 ID 和数据表 ID');
           return;
@@ -1966,6 +2070,8 @@ const Settings: React.FC = () => {
 
   // 测试小红书 Bridge 连接
   const testXhsMcp = async () => {
+      const statusKey = rtXhsMode === 'lite' ? 'xhs-lite' : 'xhs-local';
+      const setRtTestStatus = (value: string) => setRtTestStatuses(previous => ({ ...previous, [statusKey]: value }));
       const urlToUse = rtXhsMode === 'lite' ? XHS_LITE_URL : rtXhsLocalUrl;
       const cookieToUse = rtXhsMode === 'lite' ? (rtXhsCookie.trim() || undefined) : undefined;
       if (!urlToUse) {
@@ -2195,6 +2301,23 @@ const Settings: React.FC = () => {
         >
             <StorageUsagePanel />
 
+            <label className="mb-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 cursor-pointer">
+                <input
+                    type="checkbox"
+                    checked={exportBackendConnection}
+                    onChange={(e) => setExportBackendConnection(e.target.checked)}
+                    className="mt-0.5 shrink-0"
+                />
+                <span className="text-[11px] leading-relaxed text-slate-600">
+                    <span className="font-bold">包含主动消息 2.0 的后端连接</span>
+                    <span className="block text-slate-400">
+                        换设备恢复时勾上，Worker 地址和密钥会一起带走。
+                        <span className="font-bold text-rose-500">勾着导出的备份不要分享给别人</span>
+                        ——拿到文件的人能连上你那台 Worker，也能解开里面的聊天记录。
+                    </span>
+                </span>
+            </label>
+
             <div className="mb-3">
                 <button onClick={() => handleExport('full')} className="w-full py-4 bg-gradient-to-r from-violet-500 to-purple-600 border border-violet-300 rounded-xl text-xs font-bold text-white shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden mb-3">
                     <div className="absolute top-0 right-0 px-1.5 py-0.5 bg-white/20 text-[9px] text-white rounded-bl-lg font-bold">完整</div>
@@ -2260,6 +2383,8 @@ const Settings: React.FC = () => {
                 • <b>整合导出</b>: 一次性导出文字与图片媒体；VRM / Live2D 模型请使用下方独立备份。<br/>
                 • <b>纯文字备份</b>: 包含所有聊天记录、角色设定、剧情数据。所有图片会被移除（减小体积）。<br/>
                 • <b>媒体与美化素材</b>: 导出相册、表情包、聊天图片、头像、主题气泡、壁纸、图标等图片资源和外观配置。<br/>
+                • <b>装扮与搭配</b>: 整合/媒体备份包含桌面主题、聊天装扮、搭配收藏、旧气泡及实际素材，并保留来源权限、角色搭配和投稿更新绑定。纯文字备份不能完整恢复美化。<br/>
+                • <b>作者搬家</b>: 整合备份还包含 Repo 状态、美化偏好和引导记录；已在作者页开启“记住作者身份”时，也携带作者码与密码。导入后恢复这些数据，不会自动登录或投稿。<br/>
                 • <b>语音范围</b>: 整合/媒体备份仅包含已收藏语音，以及 Live2D 开机、触摸预设实际引用的语音；未收藏的聊天、通话等临时语音不会导出。<br/>
                 • 兼容旧版 JSON 备份文件的导入。
             </p>
@@ -2662,7 +2787,7 @@ const Settings: React.FC = () => {
                     </div>
                     
                     <button
-                        onClick={() => setShowModelModal(true)}
+                        onClick={openModelPicker}
                         title={localModel || 'Select Model...'}
                         className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm"
                     >
@@ -2676,12 +2801,12 @@ const Settings: React.FC = () => {
                     </button>
                 </div>
 
-                <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
+                <button onClick={() => handleSaveApi()} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
                     {statusMsg || '保存配置'}
                 </button>
                 {apiPresets.length > 0 && (
                     <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
-                        这里改的是当前生效的配置，不会动上面的预设；要把改动存回某条预设，点它的铅笔。
+                        这里改的是当前生效的配置。它原本来自某条预设的话，保存后会问你要不要一起存回那条预设。
                     </p>
                 )}
 
@@ -4202,7 +4327,7 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 模型选择 Modal */}
-      <Modal isOpen={showModelModal} title="选择模型" onClose={() => setShowModelModal(false)}>
+      <Modal isOpen={showModelModal} title="选择模型" onClose={cancelModelPicker}>
         {(() => {
             const { filtered, commonPrefix } = modelPickerView;
             return (
@@ -4216,7 +4341,7 @@ const Settings: React.FC = () => {
                             className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all"
                         />
                         <button
-                            onClick={() => setShowModelModal(false)}
+                            onClick={() => confirmModelPicker(localModel)}
                             className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
                         >
                             确定
@@ -4255,7 +4380,7 @@ const Settings: React.FC = () => {
                             return (
                                 <button
                                     key={m}
-                                    onClick={() => { setLocalModel(m); setShowModelModal(false); }}
+                                    onClick={() => confirmModelPicker(m)}
                                     title={m}
                                     className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-start gap-2 ${selected ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                                 >
@@ -4459,6 +4584,28 @@ const Settings: React.FC = () => {
           </div>
       </Modal>
 
+      {/* 保存后问要不要存回预设 */}
+      <Modal
+          isOpen={!!presetWriteback}
+          title="存回预设？"
+          onClose={() => setPresetWriteback(null)}
+          footer={
+              <>
+                  <button onClick={() => setPresetWriteback(null)} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">不保存</button>
+                  <button onClick={confirmPresetWriteback} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-transform">保存</button>
+              </>
+          }
+      >
+          <div className="space-y-2 text-sm text-slate-600 leading-relaxed">
+              <p>
+                  当前配置已经和预设「{apiPresets.find(item => item.id === presetWriteback?.presetId)?.name ?? ''}」不一样了。
+              </p>
+              <p className="text-xs text-slate-400">
+                  若不保存，当前配置为临时配置，切换预设后消失。若保存，则用当前配置覆盖这条预设原来的内容。
+              </p>
+          </div>
+      </Modal>
+
       {/* 强制导出 Modal */}
       <Modal isOpen={showExportModal} title="备份下载" onClose={() => { revokeDownloadUrl(); setShowExportModal(false); }} footer={
           <div className="flex gap-2 w-full">
@@ -4483,6 +4630,7 @@ const Settings: React.FC = () => {
           footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}
       >
           <div className="space-y-5 max-h-[60vh] overflow-y-auto no-scrollbar">
+              <UserHolidaySettings value={rtUserHolidays} onChange={setRtUserHolidays} />
               {/* 天气配置 */}
               <div className="bg-emerald-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
@@ -4505,7 +4653,8 @@ const Settings: React.FC = () => {
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">城市</label>
                               <input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="北京 / Beijing / Shanghai" />
                           </div>
-                          <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气API</button>
+<button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气API</button>
+                          {renderRtTestStatus('weather')}
                       </div>
                   )}
               </div>
@@ -4671,6 +4820,7 @@ const Settings: React.FC = () => {
                               <input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从数据库URL复制" />
                           </div>
                           <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试Notion连接</button>
+                          {renderRtTestStatus('notion')}
                           <div className="border-t border-orange-200/50 pt-2 mt-2">
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">笔记数据库 ID（可选）</label>
                               <input type="text" value={rtNotionNotesDbId} onChange={e => setRtNotionNotesDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="用户日常笔记的数据库ID" />
@@ -4723,6 +4873,7 @@ const Settings: React.FC = () => {
                               <input type="text" value={rtFeishuTableId} onChange={e => setRtFeishuTableId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="tblxxxxxxxx" />
                           </div>
                            <button onClick={testFeishuApi} className="w-full py-2 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试读取连接</button>
+                          {renderRtTestStatus('feishu')}
                            <p className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-700">
                                测试不会新增记录，只验证凭据、读取权限和 Table ID。读取成功但写入提示 Forbidden，说明还缺新增记录权限。
                            </p>
@@ -4761,6 +4912,7 @@ const Settings: React.FC = () => {
                               <input value={rtXhsLocalUrl} onChange={e => setRtXhsLocalUrl(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" />
                           </div>
                           <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                          {renderRtTestStatus('xhs-local')}
                           <div className="grid grid-cols-2 gap-2">
                               <div>
                                   <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label>
@@ -4804,6 +4956,7 @@ const Settings: React.FC = () => {
                               <textarea value={rtXhsCookie} onChange={e => { setRtXhsCookie(e.target.value); setRtXhsPlatform(undefined); }} rows={2} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[10px] font-mono resize-y" placeholder="a1=...; web_session=...; （从浏览器登录后复制完整 cookie）" />
                           </div>
                           <button onClick={testXhsMcp} className="w-full py-2 bg-rose-100 text-rose-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                          {renderRtTestStatus('xhs-lite')}
                           <div className="grid grid-cols-2 gap-2">
                               <div>
                                   <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label>
@@ -4910,12 +5063,6 @@ const Settings: React.FC = () => {
                   )}
               </div>
 
-              {/* 测试状态 */}
-              {rtTestStatus && (
-                  <div className={`p-3 rounded-xl text-xs font-medium text-center ${rtTestStatus.includes('成功') ? 'bg-emerald-100 text-emerald-700' : rtTestStatus.includes('失败') || rtTestStatus.includes('错误') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
-                      {rtTestStatus}
-                  </div>
-              )}
           </div>
       </Modal>
 
@@ -4993,8 +5140,8 @@ const Settings: React.FC = () => {
           onClose={() => setShowResetConfirm(false)}
           footer={
               <div className="flex gap-2 w-full">
-                  <button onClick={() => setShowResetConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button>
-                  <button onClick={confirmReset} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200">确认格式化</button>
+                  <button onClick={() => setShowResetConfirm(false)} disabled={resetting} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl disabled:opacity-50">取消</button>
+                  <button onClick={confirmReset} disabled={resetting} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 disabled:opacity-60">{resetting ? '清理中…' : '确认格式化'}</button>
               </div>
           }
       >
@@ -5002,6 +5149,32 @@ const Settings: React.FC = () => {
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-red-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
               <p className="text-center text-sm text-slate-600 font-medium">
                   这将<span className="text-red-500 font-bold">永久删除</span>所有角色、聊天记录和设置，且无法恢复！
+              </p>
+              <p className="text-center text-xs text-slate-400">
+                  主动消息 2.0 在云端存的定时任务、角色上下文和 API 凭据也会一起清掉。
+              </p>
+          </div>
+      </Modal>
+
+      {/* 云端没清干净：本地还一个字节都没动，让用户决定 */}
+      <Modal
+          isOpen={!!resetCloudFailure}
+          title="云端还没清干净"
+          onClose={() => setResetCloudFailure(null)}
+          footer={
+              <div className="flex gap-2 w-full">
+                  <button onClick={() => setResetCloudFailure(null)} disabled={resetting} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl disabled:opacity-50">先不重置</button>
+                  <button onClick={confirmResetAnyway} disabled={resetting} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 disabled:opacity-60">{resetting ? '清理中…' : '仍然重置'}</button>
+              </div>
+          }
+      >
+          <div className="flex flex-col gap-3 py-2 text-sm text-slate-600">
+              <p>{resetCloudFailure?.detail}。本地数据一个字节都还没动，你可以检查一下网络和 Worker 连接再试一次。</p>
+              <p className="text-xs text-slate-400 break-all">
+                  Worker 地址：{resetCloudFailure?.workerUrl}
+              </p>
+              <p className="text-xs text-rose-500">
+                  仍然重置的话，本地会归零，而云端那些没清掉的定时任务还会到点运行、消耗你的 API 额度。重置之后本地不再保存连接信息，只能去 Cloudflare 后台手动删掉那个 D1 数据库。
               </p>
           </div>
       </Modal>
@@ -5016,6 +5189,13 @@ const Settings: React.FC = () => {
         addToast={addToast}
         realtimeConfig={realtimeConfig}
         onOpenVapid={() => { setShowAmsg2Modal(false); setShowVapidModal(true); }}
+        onOpenCloudData={() => { setShowAmsg2Modal(false); setShowAmsgCloudData(true); }}
+      />
+      <AmsgCloudDataModal
+        isOpen={showAmsgCloudData}
+        onClose={() => setShowAmsgCloudData(false)}
+        characters={characters}
+        addToast={addToast}
       />
 
     </div>

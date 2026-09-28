@@ -1,3 +1,7 @@
+import {migrateLegacyWhiteboxPresets} from './legacyWhiteboxPresets';
+import {restoreDecorationMedia} from './decorationMediaBackup';
+import {exportBeautyPreferences,importBeautyPreferences} from './beautyPreferencesBackup';
+import {exportBeautyAuthorBackup,importBeautyAuthorBackup} from './beautyAuthorBackup';
 import { toMountedWorldbook } from './worldbook';
 import { orderWorldEpisodes } from './worldHome/episodeOrder';
 
@@ -719,37 +723,59 @@ export const DB = {
   //
   // 性能：走 [charId, type] 复合索引直取 vr_card，成本只跟该角色 vr_card 条数相关，
   // 跟总消息量无关——上万条聊天的用户也不会把整段历史读进内存。
-  getVRCardsByCharId: async (charId: string): Promise<Message[]> => {
+  getVRCardsByCharId: async (charId: string, limit?: number, accept: (message: Message) => boolean = () => true): Promise<Message[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
-      if (store.indexNames.contains('charId_type')) {
+      if (store.indexNames.contains('charId_type') && limit === undefined) {
           const idx = store.index('charId_type');
           const req = idx.getAll(IDBKeyRange.only([charId, 'vr_card']));
           req.onsuccess = () => {
-              const results = (req.result || []).filter((m: Message) => !m.groupId && (m as any).metadata?.vrCard);
+              const results = (req.result || []).filter((m: Message) => !m.groupId && (m as any).metadata?.vrCard && accept(m));
               resolve(results);
           };
           req.onerror = () => reject(req.error);
           return;
       }
-      // 兜底：复合索引尚未建好的极少数情况（如升级事务还没跑完），用倒序游标扫，
-      // 凑够 80 条 vr_card 即停——避免 getAll 整段历史。
-      const index = store.index('charId');
+      // 首页限量读取走倒序游标；旧库缺复合索引时回退 charId，默认最多 80 条。
+      const indexed = store.indexNames.contains('charId_type');
+      const index = store.index(indexed ? 'charId_type' : 'charId');
       const collected: Message[] = [];
-      const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
+      const cursorReq = index.openCursor(IDBKeyRange.only(indexed ? [charId, 'vr_card'] : charId), 'prev');
       cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
-          if (cursor && collected.length < 80) {
+          if (cursor && collected.length < (limit ?? 80)) {
               const m = cursor.value as Message;
-              if (!m.groupId && m.type === 'vr_card' && (m as any).metadata?.vrCard) collected.push(m);
+              if (!m.groupId && m.type === 'vr_card' && (m as any).metadata?.vrCard && accept(m)) collected.push(m);
               cursor.continue();
           } else {
               resolve(collected);
           }
       };
       cursorReq.onerror = () => reject(cursorReq.error);
+    });
+  },
+
+  // UI 的可见性判断只需要 ID；游标逐条丢弃正文，避免把图片和全量聊天留在内存。
+  getPrivateMessageRefs: async (charId: string, limit: number, afterId = 0): Promise<Pick<Message, 'id' | 'groupId'>[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_MESSAGES, 'readonly');
+      const refs: Pick<Message, 'id' | 'groupId'>[] = [];
+      const req = tx.objectStore(STORE_MESSAGES).index('charId').openCursor(IDBKeyRange.only(charId), 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor || Number(cursor.primaryKey) <= afterId || refs.length >= limit) {
+          resolve(refs.reverse());
+          return;
+        }
+        const message = cursor.value as Message;
+        if (!message.groupId) refs.push({ id: message.id });
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error || new Error('消息读取中断'));
     });
   },
 
@@ -1477,6 +1503,19 @@ export const DB = {
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
+    });
+  },
+
+  // Commit a preset together with its provenance so a failed save cannot advance its version.
+  saveAssetBatch: async (entries: Array<{id:string;data:string}>): Promise<void> => {
+    const db=await openDB();
+    return new Promise((resolve,reject)=>{
+      const transaction=db.transaction(STORE_ASSETS,'readwrite');
+      const store=transaction.objectStore(STORE_ASSETS);
+      for(const entry of entries)store.put(entry);
+      transaction.oncomplete=()=>resolve();
+      transaction.onerror=()=>reject(transaction.error);
+      transaction.onabort=()=>reject(transaction.error||new Error('Asset batch aborted'));
     });
   },
 
@@ -3490,7 +3529,10 @@ export const DB = {
       }
   },
 
-  exportFullData: async (): Promise<Partial<FullBackupData>> => {
+  exportFullData: async (
+      options: { includeBackendConnection?: boolean } = {},
+  ): Promise<Partial<FullBackupData>> => {
+      await migrateLegacyWhiteboxPresets(DB);
       const db = await openDB();
       
       const getAllFromStore = (storeName: string): Promise<any[]> => {
@@ -3609,7 +3651,9 @@ export const DB = {
           luckinLocal: exportLuckinLocal(),       // 瑞幸 token + 启用状态（存 localStorage）
           mcdLocal: exportMcdLocal(),             // 麦当劳 token + 启用状态（存 localStorage）
           mcpLocal: exportMcpLocal(),             // 通用 MCP 服务器配置（存 localStorage）
-          amsg2GlobalConfig: await exportAmsg2GlobalConfig(), // 主动消息 2.0 全局配置（存独立的 ActiveMsg 库）
+          amsg2GlobalConfig: await exportAmsg2GlobalConfig(options), // 主动消息 2.0 全局配置（存独立的 ActiveMsg 库；后端连接默认不带走）
+          beautyAuthorLocal: exportBeautyAuthorBackup(),
+          beautyPreferences: exportBeautyPreferences(),
           desktopSkinLocal: await exportDesktopSkinLocal(), // 桌面皮肤：界面配色 + 看板 banner（看板图令牌解析为 data URL）
       };
   },
@@ -3626,6 +3670,11 @@ export const DB = {
               itemDone?: number;
               itemTotal?: number;
           }) => void;
+          /**
+           * 让备份里带的 Worker 地址 / 密钥 / 用户 id 落地。默认不落：导入者未必知道
+           * 这份文件是谁的，静默连上去的话，ta 的 API 凭据和聊天上下文会写进别人那台 D1。
+           */
+          allowBackendConnection?: boolean;
       } = {}
   ): Promise<void> => {
       const db = await openDB();
@@ -3876,7 +3925,8 @@ export const DB = {
                       const img = media.roomItems?.[item.id];
                       return img ? { ...item, image: img } : item;
                   })
-              } : c.roomConfig
+              } : c.roomConfig,
+              ...restoreDecorationMedia(media.decoration),
           } as CharacterProfile;
       };
 
@@ -4085,9 +4135,18 @@ export const DB = {
           // 必须在 OSContext 那段「导入后跟云端对一次账」之前落地：那段的第一道门是
           // 「本机有没有 Worker 地址」，地址还没写回去的话它会整段跳过，旧档角色留在
           // 云端的无主任务就没人取消，等用户手填回地址时照样到点推送。
-          await importAmsg2GlobalConfig((data as any).amsg2GlobalConfig);
+          await importAmsg2GlobalConfig(
+              (data as any).amsg2GlobalConfig,
+              { allowBackendConnection: options.allowBackendConnection },
+          );
           (data as any).amsg2GlobalConfig = undefined;
       }, 1);
+      await runSection('美化偏好', data.beautyPreferences !== undefined, async () => {
+          importBeautyPreferences(data.beautyPreferences);data.beautyPreferences=undefined;
+      });
+      await runSection('美化作者身份', data.beautyAuthorLocal !== undefined, async () => {
+          importBeautyAuthorBackup(data.beautyAuthorLocal);data.beautyAuthorLocal=undefined;
+      });
       await runSection('桌面皮肤偏好', (data as any).desktopSkinLocal !== undefined, async () => {
           await importDesktopSkinLocal((data as any).desktopSkinLocal); // 界面配色 + 看板 banner（data URL→本机 blob）
           (data as any).desktopSkinLocal = undefined;

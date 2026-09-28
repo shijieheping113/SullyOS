@@ -2096,7 +2096,7 @@ ${namedSection}### 禁令
     // spark-follow 2-C/2-H：opts.hideDelete = 关注页复用本卡片时藏掉自带 ×（编辑/删除由关注页自己的角标负责，删除要多断开追踪）；
     // images 为空（关注帖没图）时不渲染媒体，只留 bgStyle 空白底——不塞 ✨ 冒充有图
     const renderFeedItem = (post: SocialPost, opts?: { hideDelete?: boolean }) => (
-        <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid mb-3 bg-white/70 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all cursor-pointer active:scale-[0.98] border border-white/50 relative group">
+        <div key={post.id} onClick={() => handleOpenPost(post)} className="min-w-0 break-inside-avoid mb-3 bg-white/70 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all cursor-pointer active:scale-[0.98] border border-white/50 relative group">
             <div className="aspect-[4/5] w-full flex items-center justify-center relative overflow-hidden" style={{ background: post.bgStyle }}>
                 {/* Decorative Overlay for "Premium" look */}
                 <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
@@ -2108,12 +2108,12 @@ ${namedSection}### 禁令
                 )}
             </div>
             <div className="p-3">
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2 min-w-0">
+                <div className="flex justify-between items-center gap-2">
+                    <div className="flex flex-1 items-center gap-2 min-w-0">
                         <TokenImg value={resolveSparkCharAvatar(post.authorCharId, post.authorAvatar, post.authorName)} className="w-5 h-5 rounded-full object-cover shrink-0 ring-1 ring-white/50" />
                         <span className="text-[11px] text-slate-700 truncate font-medium">{post.authorName}</span>
                     </div>
-                    <div className="flex items-center gap-1 text-slate-400 group-hover:text-slate-600 transition-colors">
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 transition-colors">
                         <Icons.Heart filled={post.isLiked} className="w-4 h-4" onClick={(e) => handleLike(e, post)} />
                         <span className="text-[10px] font-medium whitespace-nowrap">{fmtCount(post.likes)}</span>
                     </div>

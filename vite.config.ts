@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import { execSync } from 'node:child_process';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -6,6 +6,22 @@ import { readFileSync, existsSync } from 'node:fs';
 import https from 'node:https';
 import crypto from 'node:crypto';
 import { bakeVoiceMiddleware } from './server/bake-voice-middleware';
+
+// MiniMax 国服 / 海外是两套域名，前端每个请求都带 X-MiniMax-Region 头说明走哪边。
+// Vite 的开发代理底层是 http-proxy，不认 router 选项，所以在 configure 里包一层 proxy.web，
+// 按请求头给每个请求单独指定 target。
+const minimaxTargetFor = (headers: Record<string, string | string[] | undefined>): string => {
+  const region = String(headers['x-minimax-region'] || '').toLowerCase();
+  return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
+};
+const routeMinimaxByRegion: ProxyOptions['configure'] = (proxy) => {
+  const forward = proxy.web.bind(proxy);
+  // callback 为空时不能往下传 undefined：http-proxy 按参数位置认 options，多一个空位会把 options 挤掉
+  proxy.web = (req, res, options, callback) => {
+    const routed = { ...options, target: minimaxTargetFor(req.headers) };
+    return callback ? forward(req, res, routed, callback) : forward(req, res, routed);
+  };
+};
 
 // 构建时抓 git 分支 + short commit + UTC+8 构建时间，注入到版本信息显示。
 // 非 git 环境（容器、tarball 部署）退化成 'unknown'，不影响构建。
@@ -196,31 +212,21 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
         rewrite: () => '/v1/t2a_v2',
-        // Route to 国服 / 海外 based on X-MiniMax-Region header sent by the client.
-        router: (req) => {
-          const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
-          return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
-        },
+        configure: routeMinimaxByRegion,
       }),
       '/api/minimax/get-voice': withOutboundProxy({
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
         secure: true,
         rewrite: () => '/v1/get_voice',
-        router: (req) => {
-          const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
-          return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
-        },
+        configure: routeMinimaxByRegion,
       }),
       '/api/minimax/music': withOutboundProxy({
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
         secure: true,
         rewrite: () => '/v1/music_generation',
-        router: (req) => {
-          const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
-          return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
-        },
+        configure: routeMinimaxByRegion,
       }),
       // 鱼声 Fish Audio TTS：转发到 https://api.fish.audio/v1/tts（返回二进制音频）
       '/api/fishaudio/tts': withOutboundProxy({
@@ -271,6 +277,8 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
+            // Only load the image renderer when exporting a beauty preview.
+            if (id.includes('html2canvas')) return 'beauty-preview-renderer';
             // Local camera emotion calibration is opt-in. Keep MediaPipe out of
             // the preloaded common vendor so its JS is fetched only after the
             // user explicitly enables their camera.
@@ -289,7 +297,9 @@ export default defineConfig({
             if (id.includes('untitled-pixi-live2d-engine')) {
               return 'vendor-live2d-engine';
             }
-            if (id.includes('@pixi/') || /[\\/]node_modules[\\/]pixi\.js[\\/]/.test(id)) {
+            // Filters extend Pixi classes during module evaluation. Keeping them
+            // in common vendor creates vendor -> Pixi -> vendor TDZ cycles.
+            if (id.includes('pixi-filters') || id.includes('@pixi/') || /[\\/]node_modules[\\/]pixi\.js[\\/]/.test(id)) {
               return 'vendor-live2d';
             }
             if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {

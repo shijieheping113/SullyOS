@@ -24,8 +24,6 @@ import { FIRE_GRACE_MS, recurrencePeriodMs } from './amsg2ExpireGuard';
 import { AMSG_INSTANT_CHAT_SUBTYPE, type AmsgTzRef, formatFireTimeShort } from './amsgFirePack';
 import { AMSG_BACKGROUND_JOB_SUBTYPE } from './amsgTaskKinds';
 
-export const MAX_ACTIVE_TASKS_PER_CHAR = 5;
-
 /**
  * 这个角色是否开着主动消息 2.0。
  *

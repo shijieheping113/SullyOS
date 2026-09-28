@@ -1,5 +1,12 @@
+import {isBuiltinAppearance, readBuiltinAppearance} from '../utils/builtinAppearance';
+import { browserHolidayCache, deviceTimeZone, getUserHolidayReminder } from '../utils/userHolidays';
+import {exportDecorationMedia} from '../utils/decorationMediaBackup';
+import {migrateLegacyWhiteboxPresets} from '../utils/legacyWhiteboxPresets';
+import {exportBeautyPreferences} from '../utils/beautyPreferencesBackup';
+import {exportBeautyAuthorBackup} from '../utils/beautyAuthorBackup';
 
 import { initializeFirstUseGuide } from '../utils/firstUseGuide';
+import { startBeautyUsage, stopBeautyUsage, stopBeautyForThemeChange } from '../utils/beautyUsage';
 import { FEEDBACK_INVITATION_KEY, hasPriorFeedbackInstallEvidence, initializeFeedbackInvitation, suppressFeedbackInvitation } from '../utils/feedbackInvitation';
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import type { VRSARActivity } from '../types';
@@ -73,9 +80,11 @@ import {
 } from '../utils/memoryPalace/autoArchive';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { ActiveMsgStore, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
-import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
-import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
+import { ActiveMsgStore, backupHasBackendConnection, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
+import { charMayHaveCloudState, purgeCharCloudState, purgeCloudCharById } from '../utils/amsg2CharCleanup';
+import { parseCharCredId } from '../utils/amsgLlmCredentials';
+import { SAR_MODULE_RUNTIME_CHANGED_EVENT, type SarModuleRuntimeChangedDetail } from '../utils/sarModuleRuntimeEvents';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgToolConfigAndPrompts, wipeAmsgCloudDataForReset } from '../utils/amsgStateSync';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
@@ -310,6 +319,34 @@ const normalizeMemoryPalaceConfig = (value?: Partial<MemoryPalaceGlobalConfig> |
 /** deleteCharacter 的结果：cloud-cleanup-failed = 云端还有任务没清掉，本地没删。 */
 export type DeleteCharacterResult = { status: 'deleted' } | { status: 'cloud-cleanup-failed' };
 
+/**
+ * resetSystem 的结果。
+ *
+ * `cloud-cleanup-failed` = 云端那份没清干净，**本地一个字节都还没动**，等调用方拿着
+ * worker 地址去问用户是重试还是照样重置。`failed` = 本地这一步自己炸了（已经提示过）。
+ * `done` 的时候页面正在刷新，调用方拿到它基本没机会做别的。
+ */
+/** importSystem 的可选行为。 */
+export interface ImportSystemOptions {
+  /**
+   * 备份里带着 Worker 后端连接（地址 + 共享密钥 + 主密钥 + 用户 id）时问一句要不要连上。
+   *
+   * **不给这个回调 = 一律不还原。** 程序分不清「自己的备份」和「别人的备份」：文件里没有
+   * 可信的身份标记，换新设备时用户 id 本来就跟备份里对不上——而那恰恰是最正当的自己人。
+   * 能判断的只有拿着文件的人，所以这里只负责把话问出去，不猜。
+   */
+  confirmBackendRestore?: (workerUrl: string) => boolean | Promise<boolean>;
+  /** 二改全量备份导入：走 fork 层专属的还原分支（作者原包导入不传）。 */
+  forkImport?: boolean;
+  /** 导入的是「作者原包」（不含 fork 层）时，是否连 fork 相关表也一起替换，而不是合并。 */
+  replaceForkStoresOnAuthorPackage?: boolean;
+}
+
+export type ResetSystemResult =
+  | { status: 'done' }
+  | { status: 'cloud-cleanup-failed'; workerUrl: string; detail: string }
+  | { status: 'failed' };
+
 interface OSContextType {
   activeApp: AppID;
   openApp: (appId: AppID) => void;
@@ -402,11 +439,12 @@ interface OSContextType {
   // Appearance Presets
   appearancePresets: AppearancePreset[];
   saveAppearancePreset: (name: string, themeOverride?: OSTheme) => void;
-  applyAppearancePreset: (id: string) => void;
+  applyAppearancePreset: (id: string) => Promise<void>;
   deleteAppearancePreset: (id: string) => void;
+  replaceAppearancePreset: (id:string, data:unknown, origin:import('../utils/decorationLibrary').DecorationOrigin)=>Promise<void>;
   renameAppearancePreset: (id: string, name: string) => void;
   exportAppearancePreset: (id: string) => Promise<Blob>;
-  importAppearancePreset: (file: File) => Promise<void>;
+  importAppearancePreset: (file: File) => Promise<string>;
 
   toasts: Toast[];
   addToast: (message: string, type?: Toast['type']) => void;
@@ -442,14 +480,11 @@ interface OSContextType {
   listCloudBackups: () => Promise<CloudBackupFile[]>;
 
   // System
-  exportSystem: (mode: 'text_only' | 'media_only' | 'full', options?: { forkLayer?: boolean }) => Promise<Blob>;
-  importSystem: (fileOrJson: File | string, options?: {
-      forkImport?: boolean;
-      replaceForkStoresOnAuthorPackage?: boolean;
-  }) => Promise<void>;
+  exportSystem: (mode: 'text_only' | 'media_only' | 'full', options?: { includeBackendConnection?: boolean; forkLayer?: boolean }) => Promise<Blob>;
+  importSystem: (fileOrJson: File | string, options?: ImportSystemOptions) => Promise<void>; // Accept File or String
   exportForkFullBackup: () => Promise<Blob>;
   importForkFullBackup: (fileOrJson: File | string, options?: { replaceForkStoresOnAuthorPackage?: boolean }) => Promise<void>;
-  resetSystem: () => Promise<void>;
+  resetSystem: (options?: { force?: boolean }) => Promise<ResetSystemResult>;
   sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
 
   // Logs
@@ -901,6 +936,9 @@ const OSContext = import.meta.env.DEV
   ? (osContextHmrGlobal.__SULLYOS_OS_CONTEXT_HMR__ ??= createContext<OSContextType | undefined>(undefined))
   : createContext<OSContextType | undefined>(undefined);
 
+// Static previews supply fictional state without mounting the live provider or its effects.
+export const OSPreviewProvider = OSContext.Provider;
+
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ... (State declarations same as before) ...
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
@@ -987,6 +1025,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
+  useEffect(() => {
+    const refresh = () => {
+      if (realtimeConfig.userHolidays?.enabled) {
+        void getUserHolidayReminder({ ...realtimeConfig.userHolidays, timeZone: deviceTimeZone() }, browserHolidayCache).catch(() => {});
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 60 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [realtimeConfig.userHolidays]);
   const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
     try {
       const saved = localStorage.getItem('os_memory_palace_config');
@@ -2932,7 +2982,51 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }));
       };
 
+      // 即时对话的回复在 React 外落库时，activeMsgRuntime 顺手把 SAR 临时模块推进了一回合
+      // （直写 DB）。只把 vrState.sarModule 这一个字段搬回内存：vrState 的其它字段保留内存值，
+      // 模块走完（DB 里已经没有这个键）时内存里也要删掉。不搬的话，下一次 updateCharacter /
+      // updateUserProfile 用旧内存整份写回，回合会被倒回去。
+      // 不打 amsg 脏：模块状态不进 fire_pack，即时对话的快照是发送时现取的。
+      const sarModuleRuntimeChangedHandler = (e: Event) => {
+          const detail = ((e as CustomEvent).detail || {}) as Partial<SarModuleRuntimeChangedDetail>;
+          if (detail.target === 'character') {
+              const charId = detail.charId;
+              if (!charId) return;
+              void DB.getAllCharacters().then(all => {
+                  const fresh = all.find(c => c.id === charId);
+                  if (!fresh) return;
+                  const freshModule = fresh.vrState?.sarModule;
+                  setCharacters(prev => prev.map(c => {
+                      if (c.id !== charId || c.vrState?.sarModule === freshModule) return c;
+                      const base = c.vrState ?? fresh.vrState;
+                      if (!base) return c;
+                      const vrState = { ...base };
+                      if (freshModule) vrState.sarModule = freshModule;
+                      else delete vrState.sarModule;
+                      return { ...c, vrState };
+                  }));
+              }).catch(() => {});
+              return;
+          }
+          if (detail.target === 'user') {
+              void DB.getUserProfile().then(fresh => {
+                  if (!fresh) return;
+                  const freshModule = fresh.vrState?.sarModule;
+                  setUserProfile(prev => {
+                      if (prev.vrState?.sarModule === freshModule) return prev;
+                      const base = prev.vrState ?? fresh.vrState;
+                      if (!base) return prev;
+                      const vrState = { ...base };
+                      if (freshModule) vrState.sarModule = freshModule;
+                      else delete vrState.sarModule;
+                      return { ...prev, vrState };
+                  });
+              }).catch(() => {});
+          }
+      };
+
       window.addEventListener('amsg2-tasks-adopted', tasksAdoptedHandler);
+      window.addEventListener(SAR_MODULE_RUNTIME_CHANGED_EVENT, sarModuleRuntimeChangedHandler);
       const linkedArchiveDeletedHandler = (event: Event) => {
           const detail = (event as CustomEvent<LinkedArchiveDeletionDetail>).detail;
           if (!detail?.charId || !detail.nodeId || !['delete', 'keep'].includes(detail.choice)) return;
@@ -2949,6 +3043,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener(MEMORY_AUTO_ARCHIVE_SYNC_EVENT, memoryAutoArchiveSyncHandler);
       return () => {
           window.removeEventListener('amsg2-tasks-adopted', tasksAdoptedHandler);
+          window.removeEventListener(SAR_MODULE_RUNTIME_CHANGED_EVENT, sarModuleRuntimeChangedHandler);
           window.removeEventListener(LINKED_ARCHIVE_DELETED, linkedArchiveDeletedHandler);
           window.removeEventListener('char-music-profile-updated', musicProfileSyncHandler);
           window.removeEventListener(MEMORY_AUTO_ARCHIVE_SYNC_EVENT, memoryAutoArchiveSyncHandler);
@@ -2988,6 +3083,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     if ('bootAnimationEnabled' in updates || 'bootAnimationStyle' in updates) {
       try { sessionStorage.removeItem('sullyos_boot_seen_session'); } catch { /* ignore */ }
     }
+    stopBeautyForThemeChange(updates);
     const { wallpaper, lockWallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
     // Legacy slots are banned — never let them enter state, regardless of caller intent.
     const sanitizedWidgets = launcherWidgets !== undefined
@@ -3253,7 +3349,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       id: `char-${Date.now()}`,
       name,
       avatar: generateAvatar(name),
-      description: '点击编辑设定...',
+      description: '',
       systemPrompt: '',
       memories: [],
       contextLimit: DEFAULT_MANUAL_CONTEXT_LIMIT,
@@ -3267,6 +3363,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     return newChar;
   };
   const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => {
+    if (typeof updates !== 'function' && Object.keys(updates).some(key => ['chatAppearance','chatFineTune','bubbleStyle','chatBackground','chromeCustomCss','chatSound','chatSoundBound','chatDecorationCssIsolated'].includes(key))) stopBeautyUsage('chat:' + id);
     setCharacters(prev => {
       const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) }) : c);
       const target = updated.find(c => c.id === id);
@@ -3556,6 +3653,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
   const setCustomIcon = async (appId: string, iconUrl: string | undefined) => {
+      stopBeautyUsage('appearance');
       const stored = iconUrl?.startsWith('data:') ? await migrateDataUrlToRef(iconUrl) : iconUrl;
       setCustomIcons(prev => {
           const next = { ...prev };
@@ -3607,12 +3705,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
       setAppearancePresets(prev => [preset, ...prev]);
       await DB.saveAsset(`appearance_preset_${preset.id}`, JSON.stringify(preset));
+      await DB.saveAsset(`decoration_origin_${preset.id}`, JSON.stringify({kind:'self'}));
       addToast(`外观预设「${name}」已保存`, 'success');
   };
 
   const applyAppearancePreset = async (id: string) => {
-      const preset = appearancePresets.find(p => p.id === id);
-      if (!preset) return;
+      const builtin = isBuiltinAppearance(id);
+      const preset = builtin ? await readBuiltinAppearance(id, theme) : appearancePresets.find(p => p.id === id);
+      if (!preset) throw new Error('外观预设不存在，请重新导入');
       // Strip banned legacy widget data from preset before applying — old beautification packs
       // may still carry launcherWidgetImage / bl / br, and they must never reach the UI.
       const sanitizedPresetTheme: any = { ...preset.theme, launcherWidgetImage: undefined };
@@ -3693,6 +3793,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               persistedIcons[appId] = stored;
               await DB.saveAsset(`icon_${appId}`, stored);
           }
+          if (builtin) {
+              for (const appId of Object.keys(customIcons)) {
+                  if (!(appId in persistedIcons) && appId !== '_pwa_') await DB.deleteAsset(`icon_${appId}`);
+              }
+              // The installed app icon is independent of desktop artwork.
+              if (customIcons._pwa_) persistedIcons._pwa_ = customIcons._pwa_;
+          }
           setCustomIcons(persistedIcons);
       }
       // Apply chat themes if present
@@ -3725,6 +3832,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
       }
+      await startBeautyUsage(preset.id, 'appearance');
+      if (!builtin) stopBeautyUsage('chat:global');
       addToast(`已应用预设「${preset.name}」`, 'success');
   };
 
@@ -3739,6 +3848,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // 残留经常导致图标错乱，这里直接整体清空再写回 default。
   // 已保存的外观预设不动，用户随时还能切回去。
   const resetAppearance = async () => {
+      stopBeautyUsage('appearance'); stopBeautyUsage('chat:*');
       try {
           await resolveLockWallpaperStoredValue(undefined);
           setTheme(defaultTheme);
@@ -3782,6 +3892,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
+  const replaceAppearancePreset = async (id:string, data:unknown, origin:import('../utils/decorationLibrary').DecorationOrigin) => {
+      const existing=await DB.getAsset(`appearance_preset_${id}`);
+      if(!existing)throw Error('原主题已删除，请重新领取');
+      const old=JSON.parse(existing) as AppearancePreset;
+      const raw=data as any;
+      if(raw?.type!=='sully_appearance_preset'||!raw.theme)throw Error('主题格式无效');
+      const presetTheme={...raw.theme};
+      if(presetTheme.wallpaper?.startsWith('blob:'))presetTheme.wallpaper=(await DB.getAsset('wallpaper'))||'';
+      if(presetTheme.lockWallpaper?.startsWith('blob:'))presetTheme.lockWallpaper=(await DB.getAsset('lock_wallpaper'))||undefined;
+      const preset=await migrateAppearancePresetBlobRefs({id,name:raw.name||old.name,createdAt:old.createdAt,theme:presetTheme,customIcons:raw.customIcons,chatThemes:raw.chatThemes,chatLayout:raw.chatLayout} as AppearancePreset);
+      const {originAssets}=await import('../utils/decorationLibrary');
+      await DB.saveAssetBatch([{id:`appearance_preset_${id}`,data:JSON.stringify(preset)},...originAssets(id,origin)]);
+      setAppearancePresets(prev=>prev.map(item=>item.id===id?preset:item));
+  };
+
   const renameAppearancePreset = async (id: string, name: string) => {
       setAppearancePresets(prev => prev.map(p => {
           if (p.id !== id) return p;
@@ -3800,7 +3925,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       const exportPreset = deepCloneForExport(preset);
       await resolveBlobRefsDeep(exportPreset);
       // 保留原始壁纸画质，把整个预设 JSON 塞进 zip 包压体积
-      const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...exportPreset }, null, 2);
+      const {readDecorationOrigin} = await import('../utils/decorationLibrary');
+      const origin = await readDecorationOrigin(id);
+      const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...exportPreset, beautyOrigin:{...origin,share:undefined} }, null, 2);
       const JSZip = await loadJSZip();
       const zip = new JSZip();
       (zip as any).file('preset.json', data);
@@ -3809,7 +3936,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       );
   };
 
-  const importAppearancePreset = async (file: File): Promise<void> => {
+  const importAppearancePreset = async (file: File): Promise<string> => {
       // 兼容两种格式：新版 .zip（内含 preset.json）/ 旧版 .json 明文
       let raw: any;
       const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
@@ -3835,15 +3962,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           chatThemes: raw.chatThemes,
           chatLayout: raw.chatLayout,
       } as AppearancePreset);
-      setAppearancePresets(prev => [preset, ...prev]);
       await DB.saveAsset(`appearance_preset_${preset.id}`, JSON.stringify(preset));
+      const {importedOrigin} = await import('../utils/decorationLibrary');
+      await DB.saveAsset(`decoration_origin_${preset.id}`, JSON.stringify(importedOrigin(raw)));
+      setAppearancePresets(prev => [preset, ...prev]);
       addToast(`已导入预设「${preset.name}」`, 'success');
+      return preset.id;
   };
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
   const exportSystem = async (
       mode: 'text_only' | 'media_only' | 'full',
-      exportOptions: { forkLayer?: boolean } = {},
+      exportOptions: { includeBackendConnection?: boolean; forkLayer?: boolean } = {},
   ): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
@@ -4199,11 +4329,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // ActiveMsg 库里，不在上面那份 store 清单内，所以单独取一次；异步，故在字面量外。
           // 纯配置无媒体，跟着 text_only / full 走。
           if (mode === 'text_only' || mode === 'full') {
-              backupData.amsg2GlobalConfig = await exportAmsg2GlobalConfig();
+              backupData.amsg2GlobalConfig = await exportAmsg2GlobalConfig(exportOptions);
           }
 
           // 桌面皮肤偏好（电子宠物/手游风的界面配色 + 看板 banner）——异步（看板图令牌需解析为
           // data URL 才能跨设备），所以在对象字面量外单独 await。text_only 只带配色偏好、跳过看板大图。
+          if(mode==='full'||mode==='text_only')await migrateLegacyWhiteboxPresets(DB);
+          if(mode==='full'){backupData.beautyAuthorLocal=exportBeautyAuthorBackup();backupData.beautyPreferences=exportBeautyPreferences();}
           backupData.desktopSkinLocal = await exportDesktopSkinLocal(mode !== 'text_only');
 
           // 协同工作是可拆卸的独立 IndexedDB，不在主 DB store 清单里，必须单独打包。
@@ -4524,6 +4656,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const mediaList = rawData.map((c: CharacterProfile, index: number) => {
                           const extracted = {
                               charId: c.id,
+                              decoration: exportDecorationMedia(c),
                               avatar: c.avatar,
                               companionAvatar: c.companionAvatar,
                               companionTouchSettings: c.companionTouchSettings,
@@ -4749,7 +4882,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const importSystem = async (
       fileOrJson: File | string,
-      importOptions: { forkImport?: boolean; replaceForkStoresOnAuthorPackage?: boolean } = {},
+      importOptions: ImportSystemOptions = {},
   ): Promise<void> => {
       const sourceName = typeof fileOrJson === 'string' ? 'json' : fileOrJson.name;
       const sourceSize = typeof fileOrJson === 'string'
@@ -5035,6 +5168,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           };
 
+          // 备份里带着 Worker 后端连接时先问一句。谁拿到这个文件都能连上那台 Worker：
+          // 不问就连的话，导入者的 API 凭据和聊天上下文会写进别人那台 D1，而 ta 自己
+          // 毫不知情；分享备份的那位也没同意把后端借出去。不点头就只还原几个开关。
+          let allowBackendConnection = false;
+          const backupBackendConfig = (data as any)?.amsg2GlobalConfig;
+          if (backupHasBackendConnection(backupBackendConfig) && importOptions.confirmBackendRestore) {
+              allowBackendConnection = await importOptions.confirmBackendRestore(
+                  String(backupBackendConfig.workerUrl).trim(),
+              );
+          }
+
           showImportProgress('database', '正在写入数据库...', 50, { current: '准备写入数据库', currentFile: '' });
           suppressFeedbackInvitation();
           const forkLayerBeforeImport = isForkBackupData(data);
@@ -5046,6 +5190,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               await clearForkBackupStores();
           }
           await DB.importFullData(data, {
+              allowBackendConnection,
               beforeWrite: restoreAssetsInPlace,
               onProgress: progress => {
                   const sectionRatio = progress.sectionTotal > 0
@@ -5313,14 +5458,33 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const amsgWorkerUrl = (await ActiveMsgStore.getGlobalConfig()).workerUrl?.trim();
               if (amsgWorkerUrl) {
                   const knownCharIds = new Set(importedChars.map(c => c.id));
+                  const orphanCharIds = new Set<string>();
                   const remoteTasks = await ActiveMsgClient.listAllTasks();
                   for (const task of remoteTasks) {
                       if (typeof task?.uuid !== 'string') continue;
                       const owner = typeof task?.charId === 'string' ? task.charId : '';
                       if (owner && knownCharIds.has(owner)) continue;
+                      if (owner) orphanCharIds.add(owner);
                       // 「导入即放弃旧数据」：这条任务的主人在新档里已经不存在了（连主人是谁
                       // 都没投影出来的同理），它正属于该一起放弃的部分，取消就是对的。
                       await ActiveMsgClient.cancelTask(task.uuid).catch(() => {});
+                  }
+                  // 凭据清单是另一条线索：只配过 API、没排过任务的角色在任务表里根本不露面，
+                  // 但 credId 的形状是 `char:<charId>/<用途>`，角色身份就编在那个字符串里。
+                  try {
+                      for (const { credId } of await ActiveMsgClient.listLlmCredentials()) {
+                          const parsed = parseCharCredId(credId);
+                          if (parsed && !knownCharIds.has(parsed.charId)) orphanCharIds.add(parsed.charId);
+                      }
+                  } catch (e) {
+                      console.warn('[amsg2] 导入后读云端凭据清单失败，孤儿角色可能漏清', e);
+                  }
+                  // 取消任务只解决「还会不会响」。旧档角色在云端那份上下文（完整角色卡 +
+                  // 最近 30 条对话原文，一个角色 32KB 起步）和那几行 API 凭据还留着，而且
+                  // 新档里已经没有这个角色，再没有任何一条路会去刷新它或清掉它——角色命名
+                  // 空间在 worker 侧没有 TTL，不在这里清就是永久留着。
+                  for (const charId of orphanCharIds) {
+                      await purgeCloudCharById(charId).catch(() => {});
                   }
                   // 留下来的角色逐个刷云端快照，同时把导入进来的实时感知凭据传上去。
                   // 走同一个入口：云端提示词是按凭据裁过的，两者必须同进同退。
@@ -5362,7 +5526,38 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       options: { replaceForkStoresOnAuthorPackage?: boolean } = {},
   ) => importSystem(fileOrJson, { forkImport: true, ...options });
 
-  const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
+  /**
+   * 把这台设备和它名下的云端数据一起归零。
+   *
+   * 云端那一步必须排在删库**之前**：2.0 的连接信息（worker 地址、主密钥、用户 id）
+   * 就住在马上要删掉的 ActiveMsg 库里，删完就再也够不着那台 worker 了——而云端留着的
+   * 任务会继续到点跑、继续烧 API 额度、继续往这台设备推消息。
+   *
+   * 「重置全部数据」是用户明确表达过毁灭意图的操作，所以这里可以真删云端；换地址、
+   * 清空地址那几个没有这层意味的操作一律只提示、不动手。
+   *
+   * 云端没清干净就先不删本地（除非调用方 force）：本地一删，用户连重试的入口都没有了。
+   * 判据只看任务和角色上下文这两样——前者不清会继续烧钱，后者是聊天原文；凭据行和推送
+   * 订阅没清成只记一笔，不拦着用户重置（老 worker 上压根没有凭据表，拿它当判据会把
+   * 一批根本没东西可清的人堵在门口）。
+   */
+  const resetSystem = async (options?: { force?: boolean }): Promise<ResetSystemResult> => {
+    try {
+      const cleanup = await wipeAmsgCloudDataForReset();
+      if (!options?.force && cleanup.status === 'failed') {
+        return { status: 'cloud-cleanup-failed', workerUrl: cleanup.workerUrl, detail: cleanup.detail };
+      }
+      await DB.deleteDB();
+      await ActiveMsgStore.deleteDB();
+      localStorage.clear();
+      window.location.reload();
+      return { status: 'done' };
+    } catch (e) {
+      console.error(e);
+      addToast('重置失败，请手动清除浏览器数据', 'error');
+      return { status: 'failed' };
+    }
+  };
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
   // 从聊天直接进入某角色的见面：切换当前角色 + 标记自动进入 + 打开见面 App
@@ -5552,6 +5747,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     saveAppearancePreset,
     applyAppearancePreset,
     deleteAppearancePreset,
+    replaceAppearancePreset,
     renameAppearancePreset,
     exportAppearancePreset,
     importAppearancePreset,
