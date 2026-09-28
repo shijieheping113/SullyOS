@@ -93,3 +93,15 @@ xiaohongshu-skills/
 /art/acid-orbit/preview.bundle.js
 /art/acid-orbit/preview.bundle.css
 /public/instant-worker.bundle.js
+
+# 私人工作记录：只在本地留着，不再上传到仓库。
+# WORKLOG.md 之前是被 git 跟踪的，加这行不会自动生效——还需要
+# `git rm --cached WORKLOG.md`（只从索引摘掉，本地文件不动）再提交。
+# 历史版本里已上传的旧内容不受这条影响，清历史要另外走 filter-repo。
+WORKLOG.md
+
+# 猫儿人格与私人草稿：从未提交过，列在这里防止以后 `git add -A` 手滑带上。
+SULLY.md
+.workbuddy/
+HANDOFF-spark-*.md
+dev-https*.tmp.mjs
