@@ -25,7 +25,8 @@ import { resolveMiniMaxApiKey } from './minimaxApiKey';
 
 export type { TtsResult };
 
-type SynthOptions = { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean };
+// volumeDb 目前只有电话（CallApp）会传；聊天/约会/语音设计器不传，行为不变。
+type SynthOptions = { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; volumeDb?: number };
 
 /** 粤语并非三家所有模型都支持；在发起计费请求前给出明确错误。 */
 export const assertTtsLanguageSupported = (

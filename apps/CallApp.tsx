@@ -54,6 +54,9 @@ import {
   type AvatarPerformanceDirection,
   type AvatarStageFraming,
 } from '../utils/avatarPerformance';
+import type { SpeechTimeline } from '../utils/callSpeechTimeline';
+import { synthesizeFishWithTimestamp, resolveFishCallRefs } from '../utils/fishTimestampTts';
+import { loadCallTtsTimestampProxy, saveCallTtsTimestampProxy } from '../utils/callTtsProxy';
 import {
   AVATAR_PERFORMANCE_PERSONA_MAX_CHARS,
   AVATAR_PERFORMANCE_PERSONA_MAX_TOKENS,
@@ -72,6 +75,9 @@ import {
   markCallUpdateAnnouncementSeen,
   saveCallPreferences,
   shouldShowCallUpdateAnnouncement,
+  loadCallVolumeDb,
+  saveCallVolumeDb,
+  CALL_VOLUME_STEPS,
   type CallPreferences,
 } from '../utils/callPreferences';
 import {
@@ -140,6 +146,8 @@ type CallBubble = {
   performanceTimeline?: AvatarPerformanceCue[];
   cameraSnapshotRef?: string;
   cameraSnapshotExpired?: boolean;
+  /** 鱼声 with-timestamp 返回的逐字时间（秒）。没有就退回估算。 */
+  speechTimeline?: SpeechTimeline | null;
 };
 type CallRecord = {
   id: string;
@@ -610,6 +618,11 @@ const CallApp: React.FC = () => {
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
   const [generatingAudioBubbleId, setGeneratingAudioBubbleId] = useState<string | null>(null);
   const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<{ bubble: CallBubble; charId: string; charName: string } | null>(null);
+  // 电话专用音量增益（dB）。只影响本 App 的电话合成，聊天/约会/语音设计器不读它。
+  const [callVolumeDb, setCallVolumeDb] = useState(loadCallVolumeDb);
+  // 字幕精确对位用的中转地址（只有电话用；留空 = 不启用，字幕照旧按估算走）。
+  const [callTtsProxy, setCallTtsProxy] = useState(loadCallTtsTimestampProxy);
+  const [ttsProxyDraft, setTtsProxyDraft] = useState(callTtsProxy);
   const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
   const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
   const [showHangupConfirm, setShowHangupConfirm] = useState(false);
@@ -1278,15 +1291,46 @@ const CallApp: React.FC = () => {
     return !!selectedChar && canSynthesizeSpeech(selectedChar, apiConfig);
   };
   const canSpeakVoice = (): boolean => isSpeakerOn && hasConfiguredVoice();
+  // 鱼声「带时间轴」优先路：只有电话、只有鱼声、且用户填了中转地址时才启用。
+  // 拿不到就返回 null，由下面的老路照旧合成 —— 字幕退回估算，不会更差。
+  const tryFishTimestampAudio = async (rawText: string): Promise<{ url: string; timeline: SpeechTimeline } | null> => {
+    if (activeTtsProvider !== 'fishaudio') return null;
+    if (!selectedChar) return null;
+    const refs = resolveFishCallRefs(apiConfig, selectedChar);
+    if (!refs.proxy) return null;            // 没填中转 → 完全不动老路
+    const vp = selectedChar.voiceProfile;
+    const speed = (typeof vp?.speed === 'number' && vp.speed > 0) ? vp.speed : 0.9;
+    return synthesizeFishWithTimestamp({
+      text: rawText,
+      referenceId: refs.referenceId,
+      apiKey: refs.apiKey,
+      model: refs.model,
+      proxyBase: refs.proxy,
+      speed,
+      volumeDb: callVolumeDb,
+    });
+  };
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
   // MiniMax：缓存命中 → 单发合成 → 失败再分段兜底；Fish / ElevenLabs：共享 router 直接合成。
   // 抛错或返回空 url 都表示没有可播放音频，由调用方降级为纯文字。
-  const synthesizeCallAudioUrl = async (rawText: string, emotion?: string, skipCache = false): Promise<{ url: string; traceIds: string[] }> => {
+  const synthesizeCallAudioUrl = async (rawText: string, emotion?: string, skipCache = false): Promise<{ url: string; traceIds: string[]; timeline?: SpeechTimeline }> => {
     if (activeTtsProvider !== 'minimax') {
       if (!selectedChar) throw new Error('未选择角色');
+      // 鱼声 + 用户填了中转 → 先试带时间轴的接口（字幕能精确对位）。
+      // 拿不到（没配 / 请求失败 / 没时间点）就静默走下面那条老路，行为与从前一致。
+      if (activeTtsProvider === 'fishaudio') {
+        try {
+          const ts = await tryFishTimestampAudio(rawText);
+          if (ts && ts.url) return { url: ts.url, traceIds: ['fish-timestamp'], timeline: ts.timeline };
+        } catch (e) {
+          console.warn('[call] 时间轴合成未生效，用普通合成:', (e as any)?.message || e);
+        }
+      }
       const { url } = await synthesizeSpeechRoutedDetailed(rawText, selectedChar, apiConfig, {
         languageBoost: voiceLang || undefined,
         emotion,
+        // 电话专用音量增益：只有这一岔传，聊天/约会不传 = 音量不变。
+        volumeDb: callVolumeDb,
       });
       return { url: url || '', traceIds: [] };
     }
@@ -1435,7 +1479,8 @@ const CallApp: React.FC = () => {
     void promise.catch(() => undefined);
     prefetchedCallAudioRef.current.set(key, promise);
   };
-  const takeOrSynthesizeCallAudio = (rawText: string, emotion?: string, skipCache = false) => {
+  const takeOrSynthesizeCallAudio = (rawText: string, emotion?: string, skipCache = false):
+    Promise<{ url: string; traceIds: string[]; timeline?: SpeechTimeline }> => {
     if (skipCache) return synthesizeCallAudioUrl(rawText, emotion, true);
     const key = callAudioPrefetchKey(rawText, emotion);
     const prefetched = prefetchedCallAudioRef.current.get(key);
@@ -2182,7 +2227,7 @@ ${sentencePlan}`;
   const pendingCueScheduleRef = useRef<{ cues: AvatarPerformanceCue[]; fallbackMs: number } | null>(null);
   const silentSpeechTimerRef = useRef<number | null>(null);
   // 逐句跟读：正在朗读的气泡 id + 播放进度 p（0~1）。timeupdate 驱动，ended/pause 清除。
-  const [speakingTrack, setSpeakingTrack] = useState<{ bubbleId: string; p: number } | null>(null);
+  const [speakingTrack, setSpeakingTrack] = useState<{ bubbleId: string; p: number; t: number } | null>(null);
   const clearPerformanceCueTimers = () => {
     performanceCueTimersRef.current.forEach(timer => window.clearTimeout(timer));
     performanceCueTimersRef.current = [];
@@ -2260,7 +2305,8 @@ ${sentencePlan}`;
       const d = audio.duration;
       if (!Number.isFinite(d) || d <= 0) return;
       const p = Math.min(1, audio.currentTime / d);
-      setSpeakingTrack(prev => prev ? { ...prev, p } : prev);
+      // t = 当前播放到第几秒。鱼声逐字时间轴要拿它去查「现在该高亮哪一行」。
+      setSpeakingTrack(prev => prev ? { ...prev, p, t: audio.currentTime } : prev);
     };
     for (const audio of elements) {
       audio.addEventListener('play', handlePlay);
@@ -2361,14 +2407,14 @@ ${sentencePlan}`;
   };
   const startReplyPlayback = (url: string, cues: AvatarPerformanceCue[] | undefined, text: string, bubbleId: string) => {
     playAudio(url, cues, estimateSpeechMs(text), true, bubbleId);
-    setSpeakingTrack({ bubbleId, p: 0 });
+    setSpeakingTrack({ bubbleId, p: 0, t: 0 });
   };
   const flushPendingCallAudio = () => {
     const pending = pendingAutoPlayRef.current;
     if (!pending) return;
     pendingAutoPlayRef.current = null;
     playAudio(pending.url, pending.cues, pending.fallbackMs, true, pending.bubbleId);
-    if (pending.bubbleId) setSpeakingTrack({ bubbleId: pending.bubbleId, p: 0 });
+    if (pending.bubbleId) setSpeakingTrack({ bubbleId: pending.bubbleId, p: 0, t: 0 });
   };
   const ensureCallBubbleAudio = async (bubble: CallBubble, forceRegenerate = false): Promise<string | null> => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return null;
@@ -2381,7 +2427,7 @@ ${sentencePlan}`;
     setErrorMessage('');
     try {
       const voiceTag = extractVoiceTag(bubble.text);
-      const { url, traceIds } = await takeOrSynthesizeCallAudio(
+      const { url, traceIds, timeline } = await takeOrSynthesizeCallAudio(
         // 只喂该念的那一半：译文不进 TTS（见 callSpeechSource）。
         callSpeechSource(bubble.text),
         voiceTag.emotion || bubble.performance?.emotion,
@@ -2391,10 +2437,10 @@ ${sentencePlan}`;
       trackBlobUrl(url);
       setAudioUrl(url);
       setTraceId(traceIds.filter(Boolean).join(' | '));
-      setBubbles(previous => previous.map(item => item.id === bubble.id ? { ...item, audioUrl: url } : item));
+      setBubbles(previous => previous.map(item => item.id === bubble.id ? { ...item, audioUrl: url, speechTimeline: timeline ?? item.speechTimeline } : item));
       setCallRecords(previous => previous.map(record => ({
         ...record,
-        transcript: record.transcript.map(item => item.id === bubble.id ? { ...item, audioUrl: url } : item),
+        transcript: record.transcript.map(item => item.id === bubble.id ? { ...item, audioUrl: url, speechTimeline: timeline ?? item.speechTimeline } : item),
       })));
       return url;
     } catch (error: any) {
@@ -2412,7 +2458,7 @@ ${sentencePlan}`;
     if (bubble.audioUrl) {
       if (!isSpeakerOn) setIsSpeakerOn(true);
       playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true, bubble.id);
-      setSpeakingTrack({ bubbleId: bubble.id, p: 0 });
+      setSpeakingTrack({ bubbleId: bubble.id, p: 0, t: 0 });
       trackEvent('重播一条通话语音');
       return;
     }
@@ -2424,7 +2470,7 @@ ${sentencePlan}`;
     if (!url) return;
     if (!isSpeakerOn) setIsSpeakerOn(true);
     playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
-    setSpeakingTrack({ bubbleId: bubble.id, p: 0 });
+    setSpeakingTrack({ bubbleId: bubble.id, p: 0, t: 0 });
     trackEvent('按需生成并播放通话语音');
   };
   // 用户语音消息回放（语音输入的原声，会话内有效；挂断/重置随 sessionBlobUrls 一起回收）
@@ -2603,11 +2649,11 @@ ${sentencePlan}`;
         let playbackStarted = false;
         if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
           try {
-            const { url } = await takeOrSynthesizeCallAudio(callSpeechSource(greetingText), greetingReply.speechEmotion);
+            const { url, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(greetingText), greetingReply.speechEmotion);
             if (url) {
               trackBlobUrl(url);
               setAudioUrl(url);
-              setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url } : bubble));
+              setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? bubble.speechTimeline } : bubble));
               startReplyPlayback(url, greetingReply.performanceCues, greetingText, greetingBubble.id);
               playbackStarted = true;
             }
@@ -2925,12 +2971,12 @@ ${sentencePlan}`;
     }
     setGeneratingAudioBubbleId(assistantBubbleId);
     try {
-      const { url: finalUrl, traceIds } = await takeOrSynthesizeCallAudio(callSpeechSource(assistantText), turnSpeechEmotion);
+      const { url: finalUrl, traceIds, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(assistantText), turnSpeechEmotion);
       if (!finalUrl) throw new Error('未获得可播放音频');
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
       setTraceId(traceIds.filter(Boolean).join(' | '));
-      setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: finalUrl } : b)));
+      setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: finalUrl, speechTimeline: timeline ?? b.speechTimeline } : b)));
       if (assistantDbId) {
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
@@ -3026,7 +3072,7 @@ ${sentencePlan}`;
       return;
     }
     playAudio(url, target.performanceTimeline, estimateSpeechMs(stored), true);
-    setSpeakingTrack({ bubbleId: target.id, p: 0 });
+    setSpeakingTrack({ bubbleId: target.id, p: 0, t: 0 });
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
     if (!selectedChar || bubble.role !== 'assistant') return;
@@ -3076,11 +3122,11 @@ ${sentencePlan}`;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
           setCallState('thinking');
-          const { url: rerollAudioUrl } = await takeOrSynthesizeCallAudio(callSpeechSource(rerolled), rerollReply.speechEmotion);
+          const { url: rerollAudioUrl, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(rerolled), rerollReply.speechEmotion);
           if (rerollAudioUrl) {
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
-            setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
+            setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl, speechTimeline: timeline ?? b.speechTimeline } : b));
             startReplyPlayback(rerollAudioUrl, rerollReply.performanceCues, rerolled, bubble.id);
             rerollAudioPlayed = true;
           }
@@ -3152,11 +3198,11 @@ ${sentencePlan}`;
       let playbackStarted = false;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
-          const { url } = await takeOrSynthesizeCallAudio(callSpeechSource(reply.text), reply.speechEmotion);
+          const { url, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(reply.text), reply.speechEmotion);
           if (url) {
             trackBlobUrl(url);
             setAudioUrl(url);
-            setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url } : bubble));
+            setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? bubble.speechTimeline } : bubble));
             startReplyPlayback(url, reply.performanceCues, reply.text, nudgeBubble.id);
             playbackStarted = true;
           }
@@ -3321,6 +3367,19 @@ ${sentencePlan}`;
             preferences={callPreferences}
             accentColor={accentColor}
             lightTheme={lightTheme}
+            volumeDb={callVolumeDb}
+            onVolumeDb={db => {
+              const clamped = Math.max(CALL_VOLUME_STEPS[0], Math.min(CALL_VOLUME_STEPS[CALL_VOLUME_STEPS.length - 1], db));
+              setCallVolumeDb(clamped);
+              saveCallVolumeDb(clamped);
+            }}
+            ttsProxy={ttsProxyDraft}
+            onTtsProxyDraft={setTtsProxyDraft}
+            onSaveTtsProxy={() => {
+              const saved = saveCallTtsTimestampProxy(ttsProxyDraft);
+              setCallTtsProxy(saved);
+              addToast(saved ? '已保存，下次合成生效' : '已清空，字幕继续按估算走', 'info');
+            }}
             onChange={next => {
               setCallPreferences(next);
               trackEvent('设置通话偏好', {

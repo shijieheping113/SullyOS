@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>鱼声时间轴 · 原始数据实测</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; padding:16px 14px 60px; background:#141416; color:#f2f2f7;
+    font:15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  h1 { font-size:17px; margin:0 0 4px; }
+  .sub { color:#8e8e93; font-size:12px; margin-bottom:16px; }
+  .card { background:#1c1c1e; border:1px solid #2c2c2e; border-radius:12px; padding:12px; margin-bottom:12px; }
+  label { display:block; font-size:12px; color:#98989d; margin:10px 0 4px; }
+  input, textarea, select { width:100%; box-sizing:border-box; padding:9px 10px; font-size:14px;
+    background:#2c2c2e; color:#fff; border:1px solid #3a3a3c; border-radius:8px; font-family:inherit; }
+  input[type=checkbox] { width:auto; }
+  button { width:100%; margin-top:14px; padding:12px; font-size:15px; font-weight:600;
+    background:#0a84ff; color:#fff; border:0; border-radius:10px; cursor:pointer; }
+  button:disabled { opacity:.45; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .row input[type=checkbox] { flex:0 0 auto; }
+  .status { margin-top:12px; padding:10px; border-radius:8px; font-size:13px; white-space:pre-wrap; word-break:break-word; }
+  .st-ok { background:#14361f; color:#7ee2a8; }
+  .st-err { background:#3a1c1e; color:#ff9f9f; }
+  .st-run { background:#1c2b3a; color:#9fd0ff; }
+  pre { background:#0c0c0e; border:1px solid #2c2c2e; border-radius:8px; padding:10px;
+    font-size:11px; line-height:1.45; overflow-x:auto; max-height:340px; overflow-y:auto;
+    white-space:pre-wrap; word-break:break-all; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  td, th { border-bottom:1px solid #2c2c2e; padding:5px 4px; text-align:left; vertical-align:top; }
+  th { color:#8e8e93; font-weight:600; }
+  .verdict { font-size:13px; padding:10px; border-radius:8px; background:#2a2410; color:#ffd479; margin-top:8px; }
+  .hint { font-size:11px; color:#6e6e73; margin-top:6px; }
+  audio { width:100%; margin-top:10px; }
+</style>
+</head>
+<body>
+<h1>鱼声时间轴 · 原始数据实测</h1>
+<div class="sub">在<b>你自己的手机浏览器</b>里跑。Key 只存在这台设备上，不上传、不经过猫儿。</div>
+
+<div class="card">
+  <label>你的鱼声 Key（fish.audio API Key）</label>
+  <input id="key" type="password" placeholder="粘贴 Key" autocomplete="off" />
+  <div class="hint">填一次，存在这台设备的浏览器里（localStorage），下次自动带出。</div>
+
+  <label>音色 reference_id（32 位）</label>
+  <input id="ref" type="text" placeholder="例如 98655a12fa944e26b274c535e5e03842" autocomplete="off" />
+  <div class="hint">在你 App 里把角色卡的鱼声音色 ID 复制过来。也可以直接粘 fish.audio 网页链接，页面会自动抠出 ID。</div>
+
+  <label>要念的中文句子</label>
+  <textarea id="text" rows="3">嗯。今天天气真不错啊。你要不要一起出去走走？</textarea>
+  <div class="hint">故意用「短句 + 长句」混排，好看出时间轴是按字、按词还是按句切。</div>
+
+  <label>模型</label>
+  <select id="model">
+    <option value="s2.1-pro">s2.1-pro（默认）</option>
+    <option value="s2-pro">s2-pro</option>
+    <option value="s2.1-pro-free">s2.1-pro-free（免费档）</option>
+    <option value="s1">s1（旧，可能不支持时间轴）</option>
+  </select>
+
+  <div class="row" style="margin-top:12px">
+    <input id="useWorker" type="checkbox" />
+    <label style="margin:0">经过中转服务器（填下面那个地址）</label>
+  </div>
+  <input id="worker" type="text" placeholder="https://你的worker.workers.dev（留空=直连，多数情况会被浏览器拦）" />
+</div>
+
+<button id="run">开始实测（会扣一次鱼声费用）</button>
+<div id="status" class="status st-run">还没跑。填好上面的东西，点按钮。</div>
+
+<div class="card" id="reqcard" style="display:none">
+  <b>① 实际发出去的请求（Key 已打码）</b>
+  <div class="hint" style="margin:4px 0 8px">失败也照样显示。报错时请把这段和下面的报错文字一起给猫儿。</div>
+  <pre id="reqdump"></pre>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+  <div class="verdict" id="verdict"></div>
+  <audio id="player" controls></audio>
+  <div style="margin-top:12px"><b>逐段时间轴（鱼声原样返回）</b></div>
+  <table><thead><tr><th style="width:34px">#</th><th>原文</th><th style="width:62px">起(秒)</th><th style="width:62px">止(秒)</th><th style="width:56px">时长</th></tr></thead>
+  <tbody id="rows"></tbody></table>
+  <div style="margin-top:12px"><b>鱼声返回的原始 JSON（第一段，请整段复制给猫儿）</b></div>
+  <pre id="raw"></pre>
+</div>
+
+<script>
+const LS_KEY = 'fish-ts-probe-key', LS_REF = 'fish-ts-probe-ref';
+const $ = (id) => document.getElementById(id);
+$('key').value = localStorage.getItem(LS_KEY) || '';
+// 过去存进去过 "undefined" 这类脏值（那正是 400 Reference not found 的真凶）。
+// 载入时就洗一次，洗不干净直接扔掉。
+{
+  const saved = localStorage.getItem(LS_REF) || '';
+  const ok = /[0-9a-f]{32}/i.exec(saved);
+  $('ref').value = ok ? ok[0].toLowerCase() : '';
+  if (!ok && saved) localStorage.removeItem(LS_REF);
+}
+
+// 从 fish.audio 链接里抠 reference_id。
+// ⚠️ 过去的 bug：这里原来只做「匹配到就替换」，但**输入框仍然可以拿到 undefined**——
+// 一旦抠取失败或输入框里本来就是脏值，页面会把 "undefined" 当成合法 ID 发给鱼声
+// （鱼声回 400 Reference not found，看起来像"ID 不存在"，其实是页面自己编的）。
+// 现在：抠取 + 严格校验 + 无效就**清空并提示**，绝不让脏值发出去。
+const HEX32 = /^[0-9a-f]{32}$/i;
+const stripRef = (v) => {
+  const t = (v || '').trim();
+  if (!t) return '';
+  if (/^(undefined|null|nan|false)$/i.test(t)) return '';
+  const byQuery = t.match(/[?&]modelId=([0-9a-f]{32})/i);
+  if (byQuery) return byQuery[1].toLowerCase();
+  const byHex = t.match(/[0-9a-f]{32}/i);
+  if (byHex) return byHex[0].toLowerCase();
+  return '';
+};
+$('ref').addEventListener('input', () => {
+  // 每敲一个字符就尝试规范化：链接会边打边被抠成纯 ID；无效就保持原样让人继续改。
+  const cleaned = stripRef($('ref').value);
+  if (cleaned && cleaned !== $('ref').value.trim()) $('ref').value = cleaned;
+});
+$('ref').addEventListener('blur', () => {
+  const cleaned = stripRef($('ref').value);
+  // 抠不出来就清空——宁可让你重填，也不要留个脏值等着被发出去。
+  $('ref').value = cleaned;
+  if (!cleaned) setStatus('st-err', '音色 ID 无效：需要 32 位十六进制（0-9a-f），或直接粘 fish.audio 音色的网页链接。已帮你清空，请重新填。');
+});
+
+const setStatus = (cls, text) => { $('status').className = 'status ' + cls; $('status').textContent = text; };
+
+$('run').addEventListener('click', async () => {
+  const key = $('key').value.trim();
+  const ref = stripRef($('ref').value);
+  const text = $('text').value.trim();
+  $('ref').value = ref;
+  if (!key) return setStatus('st-err', '请先填 Key');
+  if (!ref) return setStatus('st-err', '音色 ID 无效。请填 32 位十六进制（0-9a-f），或直接粘 fish.audio 音色的网页链接。\n'
+    + '（之前那个 "undefined" 就是这个框没填对——现在无效值根本发不出去。）');
+  if (!text) return setStatus('st-err', '请先填要念的句子');
+  localStorage.setItem(LS_KEY, key);
+  localStorage.setItem(LS_REF, ref);
+
+  const model = $('model').value;
+  const payload = { text, reference_id: ref, format: 'mp3', normalize: true, latency: 'normal' };
+
+  let url = 'https://api.fish.audio/v1/tts/stream/with-timestamp';
+  const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'model': model };
+  if ($('useWorker').checked) {
+    const w = $('worker').value.trim().replace(/\/+$/, '');
+    if (!w) return setStatus('st-err', '勾了中转但没填地址');
+    url = w + '/fishaudio/tts-timestamp?model=' + encodeURIComponent(model);
+    delete headers['model'];
+  }
+
+  $('run').disabled = true;
+  $('resultCard').style.display = 'none';
+  $('reqcard').style.display = '';
+  setStatus('st-run', '正在请求鱼声…（流式，可能要几秒）');
+
+  // 请求体先摆出来：哪怕请求失败，也能看到到底发了什么。
+  try {
+    const shownKey = key.length > 8 ? key.slice(0, 4) + '****' + key.slice(-4) : '****';
+    $('reqdump').textContent = [
+      'URL: ' + url,
+      'method: POST',
+      'headers: ' + JSON.stringify(
+        Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, k.toLowerCase() === 'authorization' ? 'Bearer ' + shownKey : v])),
+        null, 2),
+      'body: ' + JSON.stringify(payload, null, 2),
+    ].join('\n');
+  } catch {}
+
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return setStatus('st-err', 'HTTP ' + res.status + '\n' + t.slice(0, 500));
+    }
+    const ctype = res.headers.get('content-type') || '';
+    if (!/event-stream|text\/plain/i.test(ctype)) {
+      const t = await res.text();
+      return setStatus('st-err', '返回的不是流式数据（content-type: ' + ctype + '）\n'
+        + '多半是浏览器 CORS 拦了。勾上「经过中转服务器」并填 worker 地址。\n\n' + t.slice(0, 400));
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    const audioChunks = [], events = [];
+    const alignMap = new Map(), order = [], offsetMap = new Map();
+
+    // base64 → Uint8Array。**鱼声/Cloudflare 传的是 URL-safe base64**（`-` `_`），
+    // atob 只吃标准 base64（`+` `/`），所以要先换字符再补 =。不做这步就会 atob 报错。
+    const b64ToBytes = (b64) => {
+      let s = (b64 || '').replace(/-/g, '+').replace(/_/g, '/').replace(/\s+/g, '');
+      const pad = s.length % 4;
+      if (pad === 1) throw new Error('base64 长度非法（余 1，无法补齐）');
+      if (pad) s += '='.repeat(4 - pad);
+      const bin = atob(s);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return u8;
+    };
+
+    const take = (ev) => {
+      if (ev.audio_base64) audioChunks.push(ev.audio_base64);
+      if (typeof ev.chunk_audio_offset_sec === 'number') offsetMap.set(ev.chunk_seq, ev.chunk_audio_offset_sec);
+      if (ev.alignment && typeof ev.chunk_seq === 'number') {
+        if (!alignMap.has(ev.chunk_seq)) order.push(ev.chunk_seq);
+        alignMap.set(ev.chunk_seq, ev.alignment);
+      }
+      events.push(ev);
+    };
+
+    // SSE 解析：**按「空行」分隔事件块**（每块可能跨多次 read），
+    // 块内逐行取 `data:` 行（去掉 `data:` 与其后一个可选空格），跳过空行/注释行。
+    const feed = (block) => {
+      const lines = block.split(/\r?\n/);
+      const dataParts = [];
+      for (const line of lines) {
+        if (!line) continue;                 // 空行
+        if (line.startsWith(':')) continue;  // SSE 注释（心跳）
+        if (line.startsWith('data:')) {
+          dataParts.push(line.slice(5).replace(/^ /, ''));   // 去掉 "data:" 与一个可选空格
+        }
+      }
+      if (!dataParts.length) return;
+      const payloadStr = dataParts.join('\n');
+      try { take(JSON.parse(payloadStr)); }
+      catch (e) { console.warn('[probe] 事件解析失败:', e, payloadStr.slice(0, 200)); }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // 用 \n\n 作为事件分隔（容忍 \r\n\r\n：先统一换行）
+      const normalized = buf.replace(/\r\n/g, '\n');
+      const parts = normalized.split('\n\n');
+      buf = parts.pop() || '';              // 最后一段不完整，留到下一轮
+      for (const part of parts) feed(part);
+    }
+    if (buf.trim()) feed(buf.replace(/\r\n/g, '\n'));
+
+    // 先把前 3 条原始数据摆出来（**先别管播放**）——这轮就是要看鱼声到底回了什么。
+    // audio_base64 只显示前 50 个字符，其余用长度标注。
+    const shrink = (v) => (typeof v === 'string' && v.length > 50) ? (v.slice(0, 50) + '…(' + v.length + ' chars)') : v;
+    const firstThree = events.slice(0, 3).map((ev, i) => {
+      const copy = Object.assign({}, ev);
+      if (typeof copy.audio_base64 === 'string') {
+        copy.audio_base64 = shrink(copy.audio_base64);
+      }
+      if (copy.alignment && Array.isArray(copy.alignment.segments)) {
+        copy.alignment = Object.assign({}, copy.alignment, {
+          segments: copy.alignment.segments.map(s => Object.assign({}, s)),
+        });
+      }
+      return '── 第 ' + (i + 1) + ' 条（共 ' + events.length + ' 条）──\n'
+        + JSON.stringify(copy, null, 2);
+    }).join('\n\n');
+    $('raw').textContent = firstThree || '（一个事件都没解析出来）';
+    $('resultCard').style.display = '';
+
+    // 播放是次要的：解码失败也不要打断上面的结果展示。
+    let blob = null;
+    let b64Error = '';
+    if (audioChunks.length) {
+      try {
+        const parts = audioChunks.map(b64ToBytes);
+        const totalLen = parts.reduce((a, u) => a + u.length, 0);
+        const merged = new Uint8Array(totalLen);
+        let at = 0;
+        for (const u of parts) { merged.set(u, at); at += u.length; }
+        blob = new Blob([merged], { type: 'audio/mpeg' });
+        $('player').src = URL.createObjectURL(blob);
+      } catch (e) {
+        b64Error = (e && e.message) ? e.message : String(e);
+      }
+    }
+
+    const segs = [];
+    for (const seq of order) {
+      const a = alignMap.get(seq); if (!a) continue;
+      const off = offsetMap.get(seq) || 0;
+      for (const s of (a.segments || [])) {
+        segs.push({ text: s.text, start: s.start + off, end: s.end + off });
+      }
+    }
+
+    const tbody = $('rows'); tbody.innerHTML = '';
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i];
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + (i + 1) + '</td><td>' + String(s.text).replace(/</g, '&lt;')
+        + '</td><td>' + s.start.toFixed(3) + '</td><td>' + s.end.toFixed(3) + '</td><td>'
+        + (s.end - s.start).toFixed(3) + '</td>';
+      tbody.appendChild(tr);
+    }
+
+    const chars = text.replace(/\s/g, '').length;
+    const out = [];
+    out.push('共解析出 ' + events.length + ' 条事件。');
+    if (b64Error) out.push('⚠️ 音频解码失败（不影响你看时间轴）：' + b64Error);
+    else if (blob) out.push('音频 ' + blob.size + ' 字节，可以播放。');
+    if (!segs.length) out.push('❌ 一个时间轴都没拿到（鱼声可能没给，或被中转吞了）');
+    else {
+      out.push('你念的句子去掉空白后共 ' + chars + ' 字，鱼声切了 ' + segs.length + ' 段。');
+      if (segs.length === chars) out.push('→ 段数＝字数，【按字】');
+      else if (segs.length > chars) out.push('→ 段数比字数还多，【比字更细】（可能含标点/空白单独成段）');
+      else out.push('→ 段数比字数少，【不是逐字】，是按更大的单位（词/短语/句）');
+      const avg = segs.reduce((a, s) => a + (s.end - s.start), 0) / segs.length;
+      out.push('平均每段 ' + avg.toFixed(3) + ' 秒');
+    }
+    out.push('');
+    out.push('请把下面「前 3 条原始数据」整段复制给猫儿。');
+    $('verdict').textContent = out.join('\n');
+    setStatus('st-ok', '跑完了。事件 ' + events.length + ' 条，时间轴 ' + segs.length + ' 段。');
+  } catch (e) {
+    setStatus('st-err', '出错了：' + (e && e.message ? e.message : e));
+  } finally {
+    $('run').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

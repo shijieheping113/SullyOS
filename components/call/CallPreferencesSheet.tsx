@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChatCircleDots, Gear, Phone, SpeakerHigh, X } from '@phosphor-icons/react';
 import type { CallPreferences } from '../../utils/callPreferences';
+import { CALL_VOLUME_STEPS as VOLUME_STEPS } from '../../utils/callPreferences';
 
 interface CallPreferencesSheetProps {
   preferences: CallPreferences;
@@ -9,6 +10,13 @@ interface CallPreferencesSheetProps {
   onChange: (preferences: CallPreferences) => void;
   onOpenSystemSettings: () => void;
   onClose: () => void;
+  /** 通话音量增益（dB）。只影响电话，聊天/约会不读它。 */
+  volumeDb: number;
+  onVolumeDb: (db: number) => void;
+  /** 字幕对位用的中转地址草稿（留空 = 不启用）。 */
+  ttsProxy: string;
+  onTtsProxyDraft: (value: string) => void;
+  onSaveTtsProxy: () => void;
 }
 
 const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
@@ -18,6 +26,11 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
   onChange,
   onOpenSystemSettings,
   onClose,
+  volumeDb,
+  onVolumeDb,
+  ttsProxy,
+  onTtsProxyDraft,
+  onSaveTtsProxy,
 }) => {
   return (
     <div
@@ -149,6 +162,86 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
                 style={{ left: 3, transform: preferences.idleNudgeEnabled ? 'translateX(20px)' : 'translateX(0)' }}
               />
             </button>
+          </div>
+        </div>
+
+        {/* ── 音量增益（dB）：只影响电话，聊天/约会的语音音量不变 ── */}
+        <div className={`mt-4 py-3 ${lightTheme ? 'border-t border-[#262239]/10' : 'border-t border-white/10'}`}>
+          <div className="flex items-center gap-3">
+            <span
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${lightTheme ? 'border-[#262239]/12 bg-[#262239]/[0.04] text-[#262239]/60' : 'border-white/12 bg-white/[0.04] text-white/55'}`}
+            >
+              <SpeakerHigh size={17} weight="fill" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={`block text-[13px] font-medium ${lightTheme ? 'text-[#262239]/90' : 'text-white/85'}`}>通话音量</span>
+              <span className={`mt-0.5 block text-[10px] leading-4 ${lightTheme ? 'text-[#262239]/55' : 'text-white/38'}`}>
+                电话里角色说话太小声时调大。只影响通话，聊天和约会的音量不变。
+              </span>
+            </span>
+            <span className={`shrink-0 text-[11px] tabular-nums ${lightTheme ? 'text-[#262239]/60' : 'text-white/50'}`}>
+              {volumeDb > 0 ? `+${volumeDb} dB` : '不变'}
+            </span>
+          </div>
+          <div className="ml-12 mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="通话音量小一点"
+              disabled={volumeDb <= VOLUME_STEPS[0]}
+              onClick={() => onVolumeDb(volumeDb - 1)}
+              className={`h-8 w-9 rounded-lg border text-sm transition active:scale-95 disabled:opacity-30 ${lightTheme ? 'border-[#262239]/12 text-[#262239]/70' : 'border-white/12 text-white/70'}`}
+            >−</button>
+            <div className="flex-1 text-center text-[10px] tabular-nums" style={{ color: accentColor }}>
+              {VOLUME_STEPS.map(step => (
+                <span
+                  key={step}
+                  className="mx-0.5"
+                  style={{ opacity: volumeDb === step ? 1 : 0.25 }}
+                >{step === 0 ? '·' : '•'}</span>
+              ))}
+            </div>
+            <button
+              type="button"
+              aria-label="通话音量大一点"
+              disabled={volumeDb >= VOLUME_STEPS[VOLUME_STEPS.length - 1]}
+              onClick={() => onVolumeDb(volumeDb + 1)}
+              className={`h-8 w-9 rounded-lg border text-sm transition active:scale-95 disabled:opacity-30 ${lightTheme ? 'border-[#262239]/12 text-[#262239]/70' : 'border-white/12 text-white/70'}`}
+            >＋</button>
+          </div>
+        </div>
+
+        {/* ── 字幕对位（选填）：留空 = 完全不启用，字幕照旧按估算走 ── */}
+        <div className={`py-3 ${lightTheme ? 'border-t border-[#262239]/10' : 'border-t border-white/10'}`}>
+          <div className="flex items-center gap-3">
+            <span
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${lightTheme ? 'border-[#262239]/12 bg-[#262239]/[0.04] text-[#262239]/60' : 'border-white/12 bg-white/[0.04] text-white/55'}`}
+            >
+              <ChatCircleDots size={17} weight="fill" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={`block text-[13px] font-medium ${lightTheme ? 'text-[#262239]/90' : 'text-white/85'}`}>字幕对位</span>
+              <span className={`mt-0.5 block text-[10px] leading-4 ${lightTheme ? 'text-[#262239]/55' : 'text-white/38'}`}>
+                填上你自己那台中转的地址，字幕就能用鱼声返回的真实时间轴。留空就不启用，行为和现在一样。
+              </span>
+            </span>
+          </div>
+          <div className="ml-12 mt-3 flex items-center gap-2">
+            <input
+              value={ttsProxy}
+              onChange={event => onTtsProxyDraft(event.target.value)}
+              placeholder="https://你的中转.workers.dev"
+              aria-label="字幕对位中转地址"
+              className={`min-w-0 flex-1 rounded-lg border px-2.5 py-1.5 text-[11px] outline-none ${lightTheme ? 'border-[#262239]/12 bg-[#262239]/[0.03] text-[#262239]/80 placeholder:text-[#262239]/30' : 'border-white/12 bg-white/[0.03] text-white/80 placeholder:text-white/25'}`}
+            />
+            <button
+              type="button"
+              onClick={onSaveTtsProxy}
+              className="shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-medium transition active:scale-95"
+              style={{ color: accentColor, border: `1px solid ${accentColor}66`, background: `${accentColor}18` }}
+            >保存</button>
+          </div>
+          <div className={`ml-12 mt-1.5 text-[9px] leading-4 ${lightTheme ? 'text-[#262239]/40' : 'text-white/28'}`}>
+            只影响通话字幕。搜索、备份、聊天语音等照旧走原来的线路，不受影响。
           </div>
         </div>
 

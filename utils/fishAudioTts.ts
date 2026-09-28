@@ -427,7 +427,10 @@ export async function synthesizeSpeechFishDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean },
+  // volumeDb：**只有电话这一岔会传**，聊天语音条 / 约会 / 语音设计器都不传。
+  // 不传 = payload 里根本没有 volume 字段 = 行为与改动前逐字节一致。
+  // （鱼声 prosody.volume 单位是 dB；不传时我们连字段都不写。）
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; volumeDb?: number },
 ): Promise<TtsResult> {
   const apiKey = resolveFishAudioApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少鱼声 Fish Audio API Key');
@@ -473,6 +476,14 @@ export async function synthesizeSpeechFishDetailed(
   // 尤其外语长段落容易"一口气念完"，稍微放慢更像真人说话、段落停顿也更听得出。
   const speed = (typeof vp?.speed === 'number' && vp.speed > 0) ? vp.speed : 0.9;
   payload.prosody = { speed: Math.max(0.5, Math.min(2, speed)) };
+  // 电话专用音量增益（dB）。**只在显式传了 volumeDb 时才写这个字段**——
+  // 聊天语音条 / 约会 / 语音设计器不传，payload 与改动前完全一致，不会有任何音量变化。
+  const volumeDb = typeof options?.volumeDb === 'number' && Number.isFinite(options.volumeDb)
+    ? Math.max(0, Math.min(12, options.volumeDb))
+    : null;
+  if (volumeDb !== null && volumeDb > 0) {
+    payload.prosody.volume = volumeDb;
+  }
 
   const cacheKey = hashTtsParams({
     kind: 'fishaudio-tts',

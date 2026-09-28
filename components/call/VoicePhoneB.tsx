@@ -12,6 +12,7 @@ import {
 import TokenImg from '../os/TokenImg';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from './AvatarTouchFeedback';
 import { resolveSpeakingLineIndex } from '../../utils/callSpeechTiming';
+import { buildLineTimings, resolveLineIndexByTimeline, type SpeechTimeline } from '../../utils/callSpeechTimeline';
 import './voicePhoneB.css';
 
 export type VoicePhoneBubble = {
@@ -22,9 +23,11 @@ export type VoicePhoneBubble = {
   audioUrl?: string;
   thinkingChain?: string;
   timestamp?: number;
+  /** 鱼声 with-timestamp 返回的逐字时间（秒）。没有就退回估算。 */
+  speechTimeline?: SpeechTimeline | null;
 };
 
-type SpeakingTrack = { bubbleId: string; p: number } | null;
+type SpeakingTrack = { bubbleId: string; p: number; t: number } | null;
 
 const WAVE = [10, 18, 26, 14, 30, 12, 22, 32, 16, 24, 12, 28, 18, 10, 26, 20];
 const DELAYS = [0, 0.07, 0.16, 0.04, 0.24, 0.11, 0.29, 0.06, 0.2, 0.14, 0.26, 0.09];
@@ -272,8 +275,13 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
     if (!useLines.length) return -1;
     if (!tracking) return useLines.length - 1;
-    // 按每句的预计念多久定位（标点停顿 + 拉丁词音节），再叠加用户的字幕偏移。
-    // 旧实现按字数占比算，真实 TTS 时长和字数不成正比，字幕推进就会忽快忽慢。
+    // 优先用鱼声返回的逐字时间（已归并成每行起始秒数）；没有/对不上就退回估算。
+    const byTimeline = resolveLineIndexByTimeline(
+      buildLineTimings(useLines, bubble.speechTimeline),
+      tracking.t,
+    );
+    if (byTimeline >= 0) return byTimeline;
+    // 退回：按每句的预计念多久定位（标点停顿 + 拉丁词音节），再叠加用户的字幕偏移。
     return resolveSpeakingLineIndex(useLines, tracking.p, speedOffset);
   };
 
