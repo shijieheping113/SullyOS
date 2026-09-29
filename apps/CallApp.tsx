@@ -319,6 +319,12 @@ const extractVoiceTag = (text: string): { display: string; speech: string; voice
   const display = text.replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '').trim();
   return { display, speech: voiceText, voiceText, emotion };
 };
+/** 开场白的输入种子。开场白生成 与「换个说法」共用同一份，避免两处写歪、也避免
+ *  开场白那条「换个说法」因为前面没有用户发言而静默失败（点了没反应）。 */
+const CALL_OPENING_SEED = '（电话刚接通。你先开口——像平时接到这个人电话一样自然地说第一句话。不要解释规则，就是最自然的那个“喂”“诶”或者符合你性格的开场。）';
+const buildCallOpeningSeed = (incomingLaunch: { line?: string } | null | undefined, userName: string): string =>
+  incomingLaunch ? incomingCallGreetingPrompt(userName, incomingLaunch.line || '') : CALL_OPENING_SEED;
+
 /** TTS 该念的正文：语音标签里优先，其次标签外正文。
  *
  *  ⚠️ 这是双语通话那句「听到的是译文」的病根：以前这里直接把整条 bubble.text 交给 TTS，
@@ -540,6 +546,7 @@ ${currentVoiceActingGuide()}
 
 只输出你在电话里会**说出口**的话。不要输出 [通话]、[聊天]、[约会] 这类系统标记，不要输出时间戳。`;
   const langLabel = voiceLang ? voiceLanguagePromptLabel(voiceLang) : '';
+  // 这份提示词对所有 TTS 引擎一视同仁：不按引擎分岔，也不做「非鱼声简化版」（Ann 2026-09-29 定）。
   const voiceLangPrompt = voiceLang ? `### 语音语种翻译
 
 用户开启了语音语种功能，选择的语种是：${langLabel}（${voiceLang}）。
@@ -556,10 +563,11 @@ ${currentVoiceActingGuide()}
 <语音 emotion="surprised">Wait... are you serious? That's insane.</语音>
 
 要求：
-- <语音> 里的翻译要自然口语化，不要机翻味，要符合你的角色性格
+- <语音> 里是中文那段的**逐句翻译**，必须一比一：句子顺序、句子数量、每句的意思都要和中文完全对上。
+- **严禁自由发挥**：不许增删内容、不许换顺序、不许合并或拆句、不许自己加话、不许改写或润色原意。系统靠「中文第几句 ↔ 语音标签第几句」把字幕和声音对齐，翻译一跑偏，字幕就会错位。
+- 在保证一比一的前提下，用${langLabel}本地人真会说的口语写，读起来自然、不像机翻；**忠实永远优先于好听**。
 - <语音> 里只写会被朗读的文字；演出标记继续遵守上方「当前引擎规则」，不要混用其它引擎语法，也不要写中文舞台旁白
 - 每条消息只有一个 <语音> 标签，emotion 属性可选；情绪不强就别加
-- 中文部分和 <语音> 部分表达的意思要一致
 
 ### 标点必须和中文一模一样（重要）
 
@@ -2628,9 +2636,7 @@ ${sentencePlan}`;
       try {
         setCallState('connecting');
         const incomingLaunch = incomingFromChatRef.current || incomingCallHandoff;
-        const greetingSeed = incomingLaunch
-          ? incomingCallGreetingPrompt(userProfile?.name?.trim() || '用户', incomingLaunch.line)
-          : '（电话刚接通。你先开口——像平时接到这个人电话一样自然地说第一句话。不要解释规则，就是最自然的那个“喂”“诶”或者符合你性格的开场。）';
+        const greetingSeed = buildCallOpeningSeed(incomingLaunch, userProfile?.name?.trim() || '用户');
         const greetingReply = prepareCallAssistantReply(
           await requestAssistantReply(greetingSeed),
           callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
@@ -3098,9 +3104,22 @@ ${sentencePlan}`;
   const handleRerollAssistant = async (bubble: CallBubble) => {
     if (!selectedChar || bubble.role !== 'assistant') return;
     const idx = bubbles.findIndex(b => b.id === bubble.id);
-    if (idx <= 0) return;
-    const prevUser = bubbles[idx - 1];
-    if (!prevUser || prevUser.role !== 'user') return;
+    if (idx < 0) {
+      addToast('这条已经不在通话里了', 'error');
+      return;
+    }
+    // 输入 = 往前最近的一条「我说的话」。开场白 / 主动开口这类前面根本没有用户消息时，
+    // 退回开场白种子（和开场白生成共用同一份）。
+    // ⚠️ 旧写法是「idx <= 0」或「上一条不是 user」直接 return —— 点了没反应也没提示，
+    //    看上去就是「换个说法坏了」。别再回到那种静默死路。
+    let rerollSeed = '';
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      const prev = bubbles[i];
+      if (prev && prev.role === 'user') { rerollSeed = prev.text; break; }
+    }
+    if (!rerollSeed.trim()) {
+      rerollSeed = buildCallOpeningSeed(incomingFromChatRef.current || incomingCallHandoff, userProfile?.name?.trim() || '用户');
+    }
     try {
       stopPlayback();
       setRerollingBubbleId(bubble.id);
@@ -3108,7 +3127,7 @@ ${sentencePlan}`;
       addToast('正在换一种说法…', 'info');
       trackEvent('重掷角色的通话台词');
       const rerollReply = prepareCallAssistantReply(
-        await requestAssistantReply(prevUser.text, bubble.dbId),
+        await requestAssistantReply(rerollSeed, bubble.dbId),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
       const rerolled = rerollReply.text;
