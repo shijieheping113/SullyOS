@@ -11,7 +11,7 @@ import {
 } from '@phosphor-icons/react';
 import TokenImg from '../os/TokenImg';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from './AvatarTouchFeedback';
-import { resolveSpeakingLineIndex } from '../../utils/callSpeechTiming';
+import { estimateLinesTotalMs, resolveSpeakingLineIndex } from '../../utils/callSpeechTiming';
 import { buildLineTimings, resolveLineIndexByTimeline, type SpeechTimeline } from '../../utils/callSpeechTimeline';
 import './voicePhoneB.css';
 
@@ -44,14 +44,13 @@ const THEME_KEY = 'sully-voice-b-theme';
 //   · 字幕跑太快（声音还在上一句，高亮已经跳到下一句）→ 要把字幕**往后拖** → ▲ → 数字变**负**
 //   · 字幕跟不上（声音已经念下一句了，高亮还停在这句）→ 要把字幕**往前赶** → ▼ → 数字变**正**
 // 所以「负号＝太早、正号＝太晚」，看数字就知道该往哪边调。
-// 数值侧：正 offset = 进度往前推 = 字幕提前（resolveSpeakingLineIndex 里 p + offset）。
-// -6 ~ +6 共 13 档，0 是「按估算原样走」。存本机，刷新后还在。
-const SPEED_KEY = 'sully-voice-b-speed';
-const SPEED_MIN = -6;
-const SPEED_MAX = 6;
-// 每档挪 4% 播放进度 → 满档 ±24%。作用于「进度」而不是每句权重，
-// 之前错在拿它去缩放权重（所有句子同比缩放 = 位置不变 = 白调）。
-const SPEED_PER_STEP = 0.04;
+// ⚠️ 单位是**秒**：一档 0.5 秒、满档 ±5.0 秒。
+//    以前一档 = 总时长的 4%（10 秒音频点一下 0.4 秒、60 秒音频点一下 2.4 秒，同一个按钮两种手感）。
+//    key 升到 v2：老值存的是「档」不是秒，换算不出 → 自动重置 0，只发生一次。
+const SPEED_KEY = 'sully-voice-b-speed-v2';
+const SPEED_MIN = -10;
+const SPEED_MAX = 10;
+const SPEED_STEP_SEC = 0.5;
 const readSpeedStep = () => {
   try {
     const n = Number(window.localStorage.getItem(SPEED_KEY));
@@ -59,8 +58,8 @@ const readSpeedStep = () => {
   } catch (e) { /* ignore */ }
   return 0;
 };
-/** 档位 → 进度偏移量。正数＝字幕提前，负数＝字幕拖后。 */
-const speedStepToOffset = (step: number) => step * SPEED_PER_STEP;
+/** 档位 → 秒偏移。正数＝字幕提前（往前赶），负数＝字幕拖后。 */
+const speedStepToOffsetSec = (step: number) => step * SPEED_STEP_SEC;
 const readTheme = () => {
   try {
     const t = window.localStorage.getItem(THEME_KEY) || '';
@@ -158,7 +157,7 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   // 跟读偏移档位：长按某一句 → 旁边浮出上下箭头，点箭头一档一档调。
   const [speedStep, setSpeedStep] = useState(readSpeedStep);
   const [tuningKey, setTuningKey] = useState<string | null>(null);
-  const speedOffset = speedStepToOffset(speedStep);
+  const speedOffsetSec = speedStepToOffsetSec(speedStep);
   const setSpeed = (step: number) => {
     const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, step));
     setSpeedStep(next);
@@ -271,28 +270,80 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     },
   });
 
-  const lineIndex = (bubble: VoicePhoneBubble, useLines: string[]) => {
+  // 双语专用切句：换行当空气，只看标点。
+  //   · 断句符号 ＝ 。！？!? 和省略号 …（**分号不算**——它不是句末）
+  //   · 连着写的一串符号（……。 ／ ！？ ／ 。……）算一处，只在最后一个符号后面切
+  //   · 只有符号、没有实字的碎片直接丢（不会切出单独一行的「…」或「。」）
+  // 单语 / 视频仍走 CallApp 那套老切法，一个字没动。
+  const BILINGUAL_CUT_RE = /[。！？!?…]/;
+  const BILINGUAL_REAL_RE = /[^。！？!?\s…]/;
+  const splitBilingualLines = (text: string): string[] => {
+    const src = (text || '').replace(/[\r\n]+/g, '');
+    const out: string[] = [];
+    let buf = '';
+    for (let i = 0; i < src.length; i += 1) {
+      buf += src.charAt(i);
+      if (!BILINGUAL_CUT_RE.test(src.charAt(i))) continue;
+      while (i + 1 < src.length && BILINGUAL_CUT_RE.test(src.charAt(i + 1))) {
+        i += 1;
+        buf += src.charAt(i);
+      }
+      const piece = buf.trim();
+      if (piece && BILINGUAL_REAL_RE.test(piece)) out.push(piece);
+      buf = '';
+    }
+    const tail = buf.trim();
+    if (tail && BILINGUAL_REAL_RE.test(tail)) out.push(tail);
+    if (out.length) return out;
+    const fallback = src.trim();
+    return fallback ? [fallback] : [];
+  };
+
+  /**
+   * 现在该亮第几句。
+   *
+   * 双语（<语音> 里是原文、标签外是字幕）时，算「第几句」用**原文**算，亮的还是同序号的字幕句：
+   *   · 有鱼声真秒数 + 两边句数相同 → 用原文的句子去对秒数（同一个语言，字字对得上）
+   *   · 没真秒数 + 两边句数相同 → 估算也按原文算（声音念的就是原文）
+   *   · 两边句数不同 → 完全退回原来的做法（拿字幕算），不硬凑
+   * 单语时和从前逐字一致。
+   */
+  const lineIndex = (bubble: VoicePhoneBubble, useLines: string[], spokenLines?: string[]) => {
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
     if (!useLines.length) return -1;
     if (!tracking) return useLines.length - 1;
+    const aligned = !!spokenLines && spokenLines.length > 0 && spokenLines.length === useLines.length;
+    const source = aligned ? (spokenLines as string[]) : useLines;
     // 优先用鱼声返回的逐字时间（已归并成每行起始秒数）；没有/对不上就退回估算。
     const byTimeline = resolveLineIndexByTimeline(
-      buildLineTimings(useLines, bubble.speechTimeline),
-      tracking.t,
+      buildLineTimings(source, bubble.speechTimeline),
+      tracking.t + speedOffsetSec,
     );
     if (byTimeline >= 0) return byTimeline;
     // 退回：按每句的预计念多久定位（标点停顿 + 拉丁词音节），再叠加用户的字幕偏移。
-    return resolveSpeakingLineIndex(useLines, tracking.p, speedOffset);
+    // 偏移的单位是秒，估算吃的是「进度」，所以按整段预计秒数换算一次。
+    const totalSec = estimateLinesTotalMs(source) / 1000;
+    const offsetProgress = totalSec > 0 ? speedOffsetSec / totalSec : 0;
+    return resolveSpeakingLineIndex(source, tracking.p, offsetProgress);
   };
 
   const bubbleLines = (bubble: VoicePhoneBubble) => {
     const parsed = props.parseVoice(bubble.text);
-    const body = (parsed.display && parsed.display.trim()) || parsed.voiceText || bubble.text || '';
-    const lines = body ? props.splitSpeakLines(body) : [];
-    const useLines = lines.length ? lines : (body ? [body] : []);
     const bilingual = !!(parsed.display && parsed.display.trim() && parsed.voiceText && parsed.voiceText.trim());
+    const body = (parsed.display && parsed.display.trim()) || parsed.voiceText || bubble.text || '';
+    // 双语：字幕按「句」切（只看标点），一句一行，和声音的推进单位一致。
+    // 单语：保持原来那套切法（含换行那一刀），行为一个字没变。
+    let useLines: string[];
+    if (bilingual) {
+      useLines = splitBilingualLines(body);
+    } else {
+      const lines = body ? props.splitSpeakLines(body) : [];
+      useLines = lines.length ? lines : (body ? [body] : []);
+    }
+    // 原文的句子：只用来算时间，不参与显示。
+    const spokenLines = bilingual ? splitBilingualLines(parsed.voiceText) : undefined;
     const clean = bilingual ? props.stripVoice(parsed.voiceText) : '';
-    return { parsed, clean, useLines };
+    return { parsed, clean, useLines, spokenLines };
   };
 
   const centerCapLine = (el: HTMLElement, smooth: boolean) => {
@@ -335,8 +386,8 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   if (trackIdx >= 0) {
     const tracked = props.bubbles[trackIdx];
     if (tracked && tracked.role === 'assistant') {
-      const { useLines } = bubbleLines(tracked);
-      const idx = lineIndex(tracked, useLines);
+      const { useLines, spokenLines } = bubbleLines(tracked);
+      const idx = lineIndex(tracked, useLines, spokenLines);
       if (idx >= 0) followKey = tracked.id + ':' + idx;
     }
   }
@@ -408,7 +459,7 @@ const VoicePhoneB: React.FC<Props> = (props) => {
           disabled={speedStep <= SPEED_MIN}
           onClick={(event) => { event.stopPropagation(); setSpeed(speedStep - 1); }}
         ><span aria-hidden="true">▲</span></button>
-        <span className="vb-speed-num" title="负数＝字幕太早，往正数调；正数＝字幕太晚，往负数调">{speedStep > 0 ? '+' + speedStep : speedStep}</span>
+        <span className="vb-speed-num" title="负数＝字幕太早，往正数调；正数＝字幕太晚，往负数调">{speedOffsetSec > 0 ? '+' + speedOffsetSec.toFixed(1) : speedOffsetSec.toFixed(1)}s</span>
         <button
           type="button"
           className="vb-speed-btn"
@@ -421,9 +472,9 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   );
 
   const renderKeysAi = (bubble: VoicePhoneBubble, index: number) => {
-    const { clean, useLines } = bubbleLines(bubble);
+    const { clean, useLines, spokenLines } = bubbleLines(bubble);
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
-    const activeIdx = tracking ? lineIndex(bubble, useLines) : -1;
+    const activeIdx = tracking ? lineIndex(bubble, useLines, spokenLines) : -1;
     return (
       <div className="vb-k-body">
         {useLines.map((line, i) => {
@@ -453,9 +504,9 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   };
 
   const renderLogKaraoke = (bubble: VoicePhoneBubble) => {
-    const { clean, useLines } = bubbleLines(bubble);
+    const { clean, useLines, spokenLines } = bubbleLines(bubble);
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
-    const activeIdx = tracking ? lineIndex(bubble, useLines) : -1;
+    const activeIdx = tracking ? lineIndex(bubble, useLines, spokenLines) : -1;
     return (
       <div className="vb-body">
         {bubble.thinkingChain && (

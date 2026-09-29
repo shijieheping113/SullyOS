@@ -559,7 +559,26 @@ ${currentVoiceActingGuide()}
 - <语音> 里的翻译要自然口语化，不要机翻味，要符合你的角色性格
 - <语音> 里只写会被朗读的文字；演出标记继续遵守上方「当前引擎规则」，不要混用其它引擎语法，也不要写中文舞台旁白
 - 每条消息只有一个 <语音> 标签，emotion 属性可选；情绪不强就别加
-- 中文部分和 <语音> 部分表达的意思要一致` : '';
+- 中文部分和 <语音> 部分表达的意思要一致
+
+### 标点必须和中文一模一样（重要）
+
+中文和 <语音> 里的${langLabel}是同一句话的两个版本，**标点必须完全一样**：
+1. 中文用什么标点，${langLabel}就用**同样的标点**：问号对问号、句号对句号、感叹号对感叹号、省略号对省略号。禁止换成别的标点（比如中文用问号、${langLabel}写成逗号）。
+2. 标点的**数量和位置**也要一样：中文在第几句末尾用什么标点，${langLabel}的第几句末尾就是同一个标点。
+3. 中文分几句，${langLabel}就分几句：不许把两句中文并成一句${langLabel}，也不许把一句中文拆成两句。
+
+✅ 正确（两边各 2 句，标点一模一样）
+你说真的？那也太离谱了吧。
+<语音>Wait, really? That's insane.</语音>
+
+❌ 错误（标点不一样：中文是问号，${langLabel}写成了逗号）
+你说真的？那也太离谱了吧。
+<语音>Wait, really, that's insane.</语音>
+
+❌ 错误（中文是感叹号，${langLabel}用了句号）
+你终于回来了！
+<语音>You're finally back.</语音>` : '';
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
@@ -2437,10 +2456,12 @@ ${sentencePlan}`;
       trackBlobUrl(url);
       setAudioUrl(url);
       setTraceId(traceIds.filter(Boolean).join(' | '));
-      setBubbles(previous => previous.map(item => item.id === bubble.id ? { ...item, audioUrl: url, speechTimeline: timeline ?? item.speechTimeline } : item));
+      // 重新合成拿不到新秒数时把旧的清掉：旧秒数是按旧台词生成的，配新台词会亮错行；
+      // 没有秒数就是「按估算走」，比「拿错的时间轴硬走」安全。
+      setBubbles(previous => previous.map(item => item.id === bubble.id ? { ...item, audioUrl: url, speechTimeline: timeline ?? null } : item));
       setCallRecords(previous => previous.map(record => ({
         ...record,
-        transcript: record.transcript.map(item => item.id === bubble.id ? { ...item, audioUrl: url, speechTimeline: timeline ?? item.speechTimeline } : item),
+        transcript: record.transcript.map(item => item.id === bubble.id ? { ...item, audioUrl: url, speechTimeline: timeline ?? null } : item),
       })));
       return url;
     } catch (error: any) {
@@ -2653,7 +2674,7 @@ ${sentencePlan}`;
             if (url) {
               trackBlobUrl(url);
               setAudioUrl(url);
-              setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? bubble.speechTimeline } : bubble));
+              setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? null } : bubble));
               startReplyPlayback(url, greetingReply.performanceCues, greetingText, greetingBubble.id);
               playbackStarted = true;
             }
@@ -2976,7 +2997,7 @@ ${sentencePlan}`;
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
       setTraceId(traceIds.filter(Boolean).join(' | '));
-      setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: finalUrl, speechTimeline: timeline ?? b.speechTimeline } : b)));
+      setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: finalUrl, speechTimeline: timeline ?? null } : b)));
       if (assistantDbId) {
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
@@ -3126,7 +3147,7 @@ ${sentencePlan}`;
           if (rerollAudioUrl) {
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
-            setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl, speechTimeline: timeline ?? b.speechTimeline } : b));
+            setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl, speechTimeline: timeline ?? null } : b));
             startReplyPlayback(rerollAudioUrl, rerollReply.performanceCues, rerolled, bubble.id);
             rerollAudioPlayed = true;
           }
@@ -3202,7 +3223,7 @@ ${sentencePlan}`;
           if (url) {
             trackBlobUrl(url);
             setAudioUrl(url);
-            setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? bubble.speechTimeline } : bubble));
+            setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? null } : bubble));
             startReplyPlayback(url, reply.performanceCues, reply.text, nudgeBubble.id);
             playbackStarted = true;
           }

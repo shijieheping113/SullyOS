@@ -32,6 +32,16 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
   onTtsProxyDraft,
   onSaveTtsProxy,
 }) => {
+  // 合法档位只有 VOLUME_STEPS 里那几个（0/4/6/8/10），所以加减必须跳「邻档」。
+  // 以前是 ±1：6 按一下变 7 —— parseCallVolumeDb 认不出 7，刷新就被打回默认 6（按一下白按）。
+  // 当前值不在档位里（老数据）时，从最近的档位接着走。
+  const volumeStepIndex = (() => {
+    let best = 0;
+    for (let i = 1; i < VOLUME_STEPS.length; i += 1) {
+      if (Math.abs(VOLUME_STEPS[i] - volumeDb) < Math.abs(VOLUME_STEPS[best] - volumeDb)) best = i;
+    }
+    return best;
+  })();
   return (
     <div
       className="absolute inset-0 z-[80] flex items-end bg-black/60 backdrop-blur-sm"
@@ -48,7 +58,15 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
       `}</style>
       <section
         className={`sully-call-settings-sheet w-full rounded-t-[1.75rem] border-t px-5 pt-4 shadow-2xl ${lightTheme ? 'border-[#262239]/10 bg-[#f7f5fb]' : 'border-white/12 bg-[#120c22]'}`}
-        style={{ paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))' }}
+        style={{
+          paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))',
+          // 选项一多就超过屏高：外层是 flex items-end（贴底），没有限高就会把顶部顶出
+          // 可视区、而且滑不回来。限高 + 可滚，解决「加了新选项就不能滑动、上半段显示不全」。
+          maxHeight: '85vh',
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+        }}
         onClick={event => event.stopPropagation()}
       >
         <div className={`mx-auto mb-4 h-1 w-10 rounded-full ${lightTheme ? 'bg-[#262239]/15' : 'bg-white/15'}`} aria-hidden />
@@ -188,7 +206,7 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
               type="button"
               aria-label="通话音量小一点"
               disabled={volumeDb <= VOLUME_STEPS[0]}
-              onClick={() => onVolumeDb(volumeDb - 1)}
+              onClick={() => onVolumeDb(VOLUME_STEPS[Math.max(0, volumeStepIndex - 1)])}
               className={`h-8 w-9 rounded-lg border text-sm transition active:scale-95 disabled:opacity-30 ${lightTheme ? 'border-[#262239]/12 text-[#262239]/70' : 'border-white/12 text-white/70'}`}
             >−</button>
             <div className="flex-1 text-center text-[10px] tabular-nums" style={{ color: accentColor }}>
@@ -204,7 +222,7 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
               type="button"
               aria-label="通话音量大一点"
               disabled={volumeDb >= VOLUME_STEPS[VOLUME_STEPS.length - 1]}
-              onClick={() => onVolumeDb(volumeDb + 1)}
+              onClick={() => onVolumeDb(VOLUME_STEPS[Math.min(VOLUME_STEPS.length - 1, volumeStepIndex + 1)])}
               className={`h-8 w-9 rounded-lg border text-sm transition active:scale-95 disabled:opacity-30 ${lightTheme ? 'border-[#262239]/12 text-[#262239]/70' : 'border-white/12 text-white/70'}`}
             >＋</button>
           </div>
