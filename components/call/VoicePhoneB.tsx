@@ -11,8 +11,8 @@ import {
 } from '@phosphor-icons/react';
 import TokenImg from '../os/TokenImg';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from './AvatarTouchFeedback';
-import { estimateLinesTotalMs, resolveSpeakingLineIndex } from '../../utils/callSpeechTiming';
-import { buildLineTimings, resolveLineIndexByTimeline, type SpeechTimeline } from '../../utils/callSpeechTimeline';
+import { estimateLinesTotalMs, resolveSpeakingLineProgress } from '../../utils/callSpeechTiming';
+import { buildLineTimings, lineProgressAt, mapLineAcross, resolveLineIndexByTimeline, type SpeechTimeline } from '../../utils/callSpeechTimeline';
 import './voicePhoneB.css';
 
 export type VoicePhoneBubble = {
@@ -102,6 +102,9 @@ type Props = {
   splitSpeakLines: (text: string) => string[];
   parseVoice: (text: string) => { display: string; voiceText: string };
   stripVoice: (text: string) => string;
+  /** 送 TTS 前那套清洗（按当前服务商）。对号用的字表要和音频**同一套规则**，
+   *  否则音频删了、字表还留着，字表比音频多字 → 游标卡住 → 整段退回估算。 */
+  cleanSpeechLine: (text: string) => string;
   onVoiceView: (view: 'keys' | 'log') => void;
   onSheetOpen: (open: boolean) => void;
   onSpeaker: () => void;
@@ -151,6 +154,10 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   const logHold = useRef(false);
   const logDrag = useRef(false);
   const logStartY = useRef(0);
+  /** 「按住」是从哪一刻开始的。手指/鼠标如果在框外松开，框上的 onPointerUp 收不到，
+   *  按住状态就会一直挂着——而跟读滚动第一件事就是看它，于是永久不动。
+   *  这里记个时间，配下面那条全局兜底一起用。 */
+  const holdAt = useRef(0);
   const lingerLine = useRef<string | null>(null);
   const nameHold = useRef<number | null>(null);
   const didInitScroll = useRef(false);
@@ -207,6 +214,69 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     };
   }, [tuningKey]);
 
+  /**
+   * 让一个框滚到指定位置。
+   *
+   * 只写 `scrollTo({ …, behavior: 'smooth' })` 在有些内核上是**静默失败**的：不报错、也不动。
+   * 所以平滑之后再留一手——过一小会儿看位置有没有真的动过，没动就直接赋值硬滚过去。
+   * （老内核连字典参数都不认，那一下 try 会抛，catch 里直接跳。）
+   */
+  const scrollBoxTo = (box: HTMLElement | null, next: number) => {
+    if (!box || !Number.isFinite(next)) return;
+    const before = box.scrollTop;
+    try {
+      box.scrollTo({ top: next, behavior: 'smooth' });
+    } catch (e) {
+      box.scrollTop = next;
+    }
+    window.setTimeout(() => {
+      if (Math.abs(box.scrollTop - before) < 1 && Math.abs(box.scrollTop - next) > 1) box.scrollTop = next;
+    }, 360);
+  };
+
+  /** 「按住」还作数吗。手指不可能按十分钟，真按着最久也就是长按调速那一下。
+   *  超过 10 秒一律算已经松手，顺手把四个状态清干净——一次漏接不该把跟读永久锁死。 */
+  const holdAlive = (hold: { current: boolean }) => {
+    if (!hold.current) return false;
+    if (Date.now() - holdAt.current > 10000) {
+      capHold.current = false;
+      capDrag.current = false;
+      logHold.current = false;
+      logDrag.current = false;
+      return false;
+    }
+    return true;
+  };
+
+  /** 按 data-k-line 找行。key 里有冒号，选择器万一写坏整个查询会抛，所以套一层壳。 */
+  const lineByKey = (box: HTMLElement | null, key: string) => {
+    if (!box || !key) return null;
+    try {
+      return box.querySelector('[data-k-line="' + key + '"]') as HTMLElement | null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // 全局兜底：不管手指/鼠标在哪松手、窗口失焦、页面被藏起来，一律把「按住」解开。
+  // 光靠框上那几个 onPointerUp / onPointerCancel，漏一次就够把跟读拦死。
+  useEffect(() => {
+    const release = () => {
+      capHold.current = false;
+      capDrag.current = false;
+      logHold.current = false;
+      logDrag.current = false;
+    };
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      window.removeEventListener('blur', release);
+    };
+  }, []);
+
   const bubbleLen = props.bubbles.length;
   const prevView = useRef(props.voiceView);
   const prevLen = useRef(bubbleLen);
@@ -218,16 +288,20 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     prevLen.current = bubbleLen;
     if (props.voiceView === 'keys') {
       if (grew && last && last.role === 'user') {
-        const node = capBox.current && capBox.current.querySelector('[data-k-line="' + last.id + ':u"]');
-        if (node) centerCapLine(node as HTMLElement, true);
+        const node = lineByKey(capBox.current, last.id + ':u');
+        if (node) {
+          centerCapLine(node, true);
+          // 新气泡刚进 DOM，行高可能还没量准；下一帧再对一次，第二次多半就正了。
+          window.requestAnimationFrame(() => centerCapLine(node, true));
+        }
       }
       return;
     }
     const el = (props.scrollRef && props.scrollRef.current) || readBox.current;
     if (!el) return;
-    if (logHold.current) return;
+    if (holdAlive(logHold)) return;
     if (switched || grew) {
-      try { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); } catch (e) { el.scrollTop = el.scrollHeight; }
+      scrollBoxTo(el, el.scrollHeight);
     }
   }, [bubbleLen, props.voiceView]);
 
@@ -329,29 +403,38 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   /**
    * 现在该亮第几句。
    *
-   * 双语（<语音> 里是原文、标签外是字幕）时，算「第几句」用**原文**算，亮的还是同序号的字幕句：
-   *   · 有鱼声真秒数 + 两边句数相同 → 用原文的句子去对秒数（同一个语言，字字对得上）
-   *   · 没真秒数 + 两边句数相同 → 估算也按原文算（声音念的就是原文）
-   *   · 两边句数不同 → 完全退回原来的做法（拿字幕算），不硬凑
-   * 单语时和从前逐字一致。
+   * 双语（<语音> 里是原文、标签外是字幕）时：**位置永远按原文算**（声音念的就是原文），
+   * 算出来的「原文第几句 + 这一句念到几成」再摊到字幕行上（`mapLineAcross`）：
+   *   · 有鱼声真秒数 → 用真秒数定位原文第几句，句内进度按「下一句的起始时间」算
+   *   · 没真秒数 → 按原文每句的预计念多久定位，句内进度用同一套权重算
+   *   · 两边句数相同（单语，或字幕正好一句对一句）→ 摊行这步原样返回，逐字一致
+   * ⚠️ 以前句数不同就整个放弃、改拿**中文字数**猜进度 —— 声音念的是外语，
+   *    中文译文字数占比和音频占比对不上 → 整段越走越慢。别再退回那种做法。
    */
   const lineIndex = (bubble: VoicePhoneBubble, useLines: string[], spokenLines?: string[]) => {
     const tracking = props.speakingTrack && props.speakingTrack.bubbleId === bubble.id ? props.speakingTrack : null;
     if (!useLines.length) return -1;
     if (!tracking) return useLines.length - 1;
-    const aligned = !!spokenLines && spokenLines.length > 0 && spokenLines.length === useLines.length;
-    const source = aligned ? (spokenLines as string[]) : useLines;
-    // 优先用鱼声返回的逐字时间（已归并成每行起始秒数）；没有/对不上就退回估算。
-    const byTimeline = resolveLineIndexByTimeline(
-      buildLineTimings(source, bubble.speechTimeline),
-      tracking.t + speedOffsetSec,
-    );
-    if (byTimeline >= 0) return byTimeline;
-    // 退回：按每句的预计念多久定位（标点停顿 + 拉丁词音节），再叠加用户的字幕偏移。
-    // 偏移的单位是秒，估算吃的是「进度」，所以按整段预计秒数换算一次。
-    const totalSec = estimateLinesTotalMs(source) / 1000;
+    // 声音念的那份（原文）；没有就退回字幕自己。
+    const spoken = (spokenLines && spokenLines.length) ? spokenLines : useLines;
+    const spread = spoken.length !== useLines.length;   // 要不要摊到字幕行上
+    const atSec = tracking.t + speedOffsetSec;
+    // —— 1) 鱼声真时间轴：拿原文去对逐字秒数（同一个语言，字字对得上）
+    const timings = buildLineTimings(spoken, bubble.speechTimeline, props.cleanSpeechLine);
+    const atLine = resolveLineIndexByTimeline(timings, atSec);
+    if (atLine >= 0) {
+      if (!spread) return atLine;
+      const ratio = lineProgressAt(timings, atLine, atSec, bubble.speechTimeline ? bubble.speechTimeline.durationSec : undefined);
+      return mapLineAcross(atLine, spoken.length, useLines.length, ratio);
+    }
+    // —— 2) 没有真秒数：按原文每句的预计念多久定位（标点停顿 + 拉丁词音节），
+    //        再叠加用户的字幕偏移。偏移的单位是秒，估算吃的是「进度」，所以按整段预计秒数换算一次。
+    const totalSec = estimateLinesTotalMs(spoken) / 1000;
     const offsetProgress = totalSec > 0 ? speedOffsetSec / totalSec : 0;
-    return resolveSpeakingLineIndex(source, tracking.p, offsetProgress);
+    const at = resolveSpeakingLineProgress(spoken, tracking.p, offsetProgress);
+    if (at.index < 0) return -1;
+    if (!spread) return at.index;
+    return mapLineAcross(at.index, spoken.length, useLines.length, at.ratio);
   };
 
   const bubbleLines = (bubble: VoicePhoneBubble) => {
@@ -381,10 +464,11 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     const boxRect = box.getBoundingClientRect();
     const lineRect = el.getBoundingClientRect();
     const delta = (lineRect.top + lineRect.height / 2) - (boxRect.top + boxRect.height / 2);
+    if (!Number.isFinite(delta)) return;
     if (Math.abs(delta) < 3) return;
     const next = box.scrollTop + delta;
     if (smooth) {
-      try { box.scrollTo({ top: next, behavior: 'smooth' }); } catch (e) { box.scrollTop = next; }
+      scrollBoxTo(box, next);
     } else {
       box.scrollTop = next;
     }
@@ -427,10 +511,11 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     const boxRect = box.getBoundingClientRect();
     const lineRect = el.getBoundingClientRect();
     const delta = (lineRect.top + lineRect.height / 2) - (boxRect.top + boxRect.height / 2);
+    if (!Number.isFinite(delta)) return;
     if (Math.abs(delta) < 3) return;
     const next = box.scrollTop + delta;
     if (smooth) {
-      try { box.scrollTo({ top: next, behavior: 'smooth' }); } catch (e) { box.scrollTop = next; }
+      scrollBoxTo(box, next);
     } else {
       box.scrollTop = next;
     }
@@ -454,23 +539,37 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   useEffect(() => {
     if (props.voiceView !== 'keys') return;
     if (!followKey) return;
-    if (capHold.current) return;
-    if (lingerLine.current === followKey) return;
-    lingerLine.current = null;
-    const box = capBox.current;
-    const el = box ? (box.querySelector('[data-k-now]') as HTMLElement | null) : null;
-    if (el) centerCapLine(el, true);
+    const follow = () => {
+      if (holdAlive(capHold)) return;
+      if (lingerLine.current === followKey) return;
+      lingerLine.current = null;
+      const box = capBox.current;
+      // 先找「正在念」那一行；万一标记没贴上，就按 key 直接找——别整段放弃。
+      const el = box
+        ? ((box.querySelector('[data-k-now]') || lineByKey(box, followKey)) as HTMLElement | null)
+        : null;
+      if (el) centerCapLine(el, true);
+    };
+    follow();
+    // 行刚换，换行/字号要下一帧才量得准：再对一次。
+    const raf = window.requestAnimationFrame(follow);
+    return () => window.cancelAnimationFrame(raf);
   }, [props.voiceView, followKey]);
 
   useEffect(() => {
     if (props.voiceView !== 'log') return;
     if (!followKey) return;
-    if (logHold.current) return;
-    if (lingerLine.current === followKey) return;
-    lingerLine.current = null;
-    const box = readBox.current;
-    const el = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
-    if (el) centerLogLine(el, true);
+    const follow = () => {
+      if (holdAlive(logHold)) return;
+      if (lingerLine.current === followKey) return;
+      lingerLine.current = null;
+      const box = readBox.current;
+      const el = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
+      if (el) centerLogLine(el, true);
+    };
+    follow();
+    const raf = window.requestAnimationFrame(follow);
+    return () => window.cancelAnimationFrame(raf);
   }, [props.voiceView, followKey]);
 
   // 长按某句后浮在旁边的小控件：上下两个小三角 + 中间偏移数字。
@@ -715,6 +814,7 @@ const VoicePhoneB: React.FC<Props> = (props) => {
                 capHold.current = true;
                 capDrag.current = false;
                 capStartY.current = event.clientY;
+                holdAt.current = Date.now();
               }}
               onPointerMove={(event) => {
                 if (!capHold.current) return;
@@ -790,6 +890,7 @@ const VoicePhoneB: React.FC<Props> = (props) => {
               logHold.current = true;
               logDrag.current = false;
               logStartY.current = event.clientY;
+              holdAt.current = Date.now();
             }}
             onPointerMove={(event) => {
               if (!logHold.current) return;

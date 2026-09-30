@@ -29,22 +29,69 @@ const isMatchableChar = (ch: string): boolean => {
 };
 
 /**
+ * 送 TTS 前会被删掉的全角括号内容（舞台指示）。这条规则**和音频那边是同一条**
+ * （`utils/fishAudioTts.ts` 的 `（[^）]{0,48}）`；MiniMax 同款，ElevenLabs 是 80）。
+ * 只在调用方传了清洗函数时才用；不传 = 完全保持从前的行为。
+ */
+const SPEECH_PAREN_RE = /（[^）]{0,48}）/g;
+
+/**
  * 把显示用的行拆成「参与配对的字符流」：逐行扫描，剥掉 [xxx] 标签、空格和标点，
  * 其余字符按顺序排成一条流，并记住每个字符属于第几行。
  * 这是「鱼声给的字」和「界面显示的字」之间唯一的对齐依据。
+ *
+ * 传了 `cleanLine`（送 TTS 前那套清洗，由调用方按当前服务商给）时：
+ *   · **逐行**先清洗一遍 —— 逐行不会改变行数，每个字属于第几行照旧；
+ *   · 再把**跨行**的全角括号也剔掉 —— 音频那边是拿**整条文本**清洗的，括号能跨行删
+ *     （切句只看标点，不管括号闭没闭，「（丸まって。受話器を持つ）」会被切成两行各剩半括号），
+ *     只按行删就漏；一漏，字表就比音频多字，游标卡住 → 整段退回估算。
+ * 显示不受影响：屏幕上照样显示括号原样（这里只管「对号用的字表」）。
  */
-export function buildMatchableStream(lines: string[]): { chars: string[]; lineOf: number[] } {
+export function buildMatchableStream(
+  lines: string[],
+  cleanLine?: (text: string) => string,
+): { chars: string[]; lineOf: number[] } {
+  const cleaned = lines.map(line => {
+    const raw = line || '';
+    // 先整块剥掉 [xxx] 标签（鱼声会把 cue 演绎掉但不一定回时间，所以不参与配对）。
+    return (cleanLine ? cleanLine(raw) : raw).replace(/\[[^\[\]]{1,40}\]/g, '');
+  });
+
   const chars: string[] = [];
   const lineOf: number[] = [];
-  for (let li = 0; li < lines.length; li += 1) {
-    const line = lines[li] || '';
-    // 先整块剥掉 [xxx] 标签（鱼声会把 cue 演绎掉但不一定回时间，所以不参与配对）。
-    const withoutTags = line.replace(/\[[^\[\]]{1,40}\]/g, '');
-    for (const ch of withoutTags) {
-      if (!isMatchableChar(ch)) continue;
-      chars.push(ch);
-      lineOf.push(li);
+  if (!cleanLine) {
+    for (let li = 0; li < cleaned.length; li += 1) {
+      for (const ch of cleaned[li]) {
+        if (!isMatchableChar(ch)) continue;
+        chars.push(ch);
+        lineOf.push(li);
+      }
     }
+    return { chars, lineOf };
+  }
+
+  // 接回一整条（行间补一个换行，作用只是让括号规则能跨行匹配；换行本身不参与配对）。
+  const joinedChars: string[] = [];
+  const joinedLine: number[] = [];
+  for (let li = 0; li < cleaned.length; li += 1) {
+    if (li > 0) { joinedChars.push('\n'); joinedLine.push(li); }
+    for (const ch of cleaned[li]) { joinedChars.push(ch); joinedLine.push(li); }
+  }
+  const joined = joinedChars.join('');
+  const doomed = new Array<boolean>(joined.length).fill(false);
+  SPEECH_PAREN_RE.lastIndex = 0;
+  let m = SPEECH_PAREN_RE.exec(joined);
+  while (m) {
+    for (let i = m.index; i < m.index + m[0].length; i += 1) doomed[i] = true;
+    if (m.index === SPEECH_PAREN_RE.lastIndex) SPEECH_PAREN_RE.lastIndex += 1; // 防零宽死循环
+    m = SPEECH_PAREN_RE.exec(joined);
+  }
+  for (let i = 0; i < joined.length; i += 1) {
+    if (doomed[i]) continue;
+    const ch = joined[i];
+    if (!isMatchableChar(ch)) continue;
+    chars.push(ch);
+    lineOf.push(joinedLine[i]);
   }
   return { chars, lineOf };
 }
@@ -61,12 +108,16 @@ export type LineTimings = (number | null)[];
  * 匹配规则：字符流与 segments 顺序对读；相等就记下行起始时间，不等就跳过这一个字继续
  * （容忍模型加的 [cue]、清洗差异等）。全部走完仍一行没对上 → null。
  */
-export function buildLineTimings(lines: string[], timeline?: SpeechTimeline | null): LineTimings | null {
+export function buildLineTimings(
+  lines: string[],
+  timeline?: SpeechTimeline | null,
+  cleanLine?: (text: string) => string,
+): LineTimings | null {
   if (!lines.length) return null;
   const segs = timeline?.segments;
   if (!segs || !segs.length) return null;
 
-  const { chars, lineOf } = buildMatchableStream(lines);
+  const { chars, lineOf } = buildMatchableStream(lines, cleanLine);
   if (!chars.length) return null;
 
   const starts: LineTimings = new Array(lines.length).fill(null);
@@ -92,6 +143,53 @@ export function buildLineTimings(lines: string[], timeline?: SpeechTimeline | nu
   // 命中率过低 → 视为对不上，退回估算（宁可猜，也别用错的时间轴）。
   if (hit * 2 < lines.length) return null;
   return starts;
+}
+
+/**
+ * 双语「摊行」：把**原文**的行号摊到**字幕**的行号上。
+ *
+ * 场景：声音念的是日语 3 句，屏幕上的中文字幕 10 句（一句译文摊成了好几句）。
+ * 以前两边句数不同就整个放弃真时间轴、拿中文字数硬猜 → 字幕整段偏慢、越到后面越对不上。
+ * 现在把原文第 index 句摊到它管的字幕区间 [index*M/N, (index+1)*M/N) 上，
+ * ratio（这一句念到几成，0~1）在区间里插值——字幕跟着声音连续往前走，不会一句卡死再猛跳。
+ *
+ * 句数相同直接原样返回：单语、以及两边句数一致的路径一个字不变。
+ */
+export function mapLineAcross(index: number, fromCount: number, toCount: number, ratio: number): number {
+  if (!Number.isFinite(index) || fromCount <= 0 || toCount <= 0) return 0;
+  const from = Math.floor(fromCount);
+  const to = Math.floor(toCount);
+  if (from === to) return Math.max(0, Math.min(to - 1, Math.floor(index)));
+  const start = (index * to) / from;
+  const span = to / from;
+  const r = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 1;
+  return Math.max(0, Math.min(to - 1, Math.floor(start + span * r)));
+}
+
+/**
+ * 原文这一句念到几成了（0~1）。终点取「下一句的起始时间」；
+ * 最后一句没有下一句，就用整段总时长；都没有就按「念完了」算。
+ */
+export function lineProgressAt(
+  timings: LineTimings | null,
+  index: number,
+  currentSec: number,
+  durationSec?: number,
+): number {
+  if (!timings || index < 0 || index >= timings.length) return 1;
+  if (!Number.isFinite(currentSec)) return 0;
+  const start = timings[index];
+  if (start === null || !Number.isFinite(start as number)) return 1;
+  let end: number | null = null;
+  for (let i = index + 1; i < timings.length; i += 1) {
+    const t = timings[i];
+    if (t !== null && Number.isFinite(t as number)) { end = t as number; break; }
+  }
+  if (end === null && durationSec !== undefined && Number.isFinite(durationSec) && durationSec > (start as number)) {
+    end = durationSec;
+  }
+  if (end === null || end <= (start as number)) return 1;
+  return Math.max(0, Math.min(1, (currentSec - (start as number)) / (end - (start as number))));
 }
 
 /**

@@ -6,6 +6,7 @@ import {
     estimateLineMs,
     estimateLinesTotalMs,
     resolveSpeakingLineIndex,
+    resolveSpeakingLineProgress,
 } from './callSpeechTiming';
 
 describe('countLatinSyllables', () => {
@@ -146,5 +147,36 @@ describe('resolveSpeakingLineIndex', () => {
     it('a non-finite offset is ignored rather than producing NaN', () => {
         expect(resolveSpeakingLineIndex(lines, 0.5, NaN))
             .toBe(resolveSpeakingLineIndex(lines, 0.5, 0));
+    });
+});
+
+describe('resolveSpeakingLineProgress（双语摊行要的句内进度）', () => {
+    const lines = ['嗯。', '今天天气真不错啊。', '你要不要一起出去走走？'];
+
+    it('index 与 resolveSpeakingLineIndex 逐点一致（后者就是取它的 index）', () => {
+        for (const p of [0, 0.05, 0.1, 0.5, 0.9, 1]) {
+            for (const off of [0, 0.2, -0.2]) {
+                expect(resolveSpeakingLineProgress(lines, p, off).index)
+                    .toBe(resolveSpeakingLineIndex(lines, p, off));
+            }
+        }
+    });
+
+    it('句内进度从 0 往 1 走', () => {
+        const early = resolveSpeakingLineProgress(lines, 0.02);
+        expect(early.index).toBe(0);
+        expect(early.ratio).toBeGreaterThanOrEqual(0);
+        expect(early.ratio).toBeLessThan(0.5);
+        const late = resolveSpeakingLineProgress(lines, 0.99);
+        expect(late.index).toBe(2);
+        expect(late.ratio).toBeGreaterThan(0.5);
+        expect(late.ratio).toBeLessThanOrEqual(1);
+    });
+
+    it('边界：空数组 / 进度越界 / 非法偏移都不炸', () => {
+        expect(resolveSpeakingLineProgress([], 0.5)).toEqual({ index: -1, ratio: 0 });
+        expect(resolveSpeakingLineProgress(lines, -1)).toEqual({ index: 0, ratio: 0 });
+        expect(resolveSpeakingLineProgress(lines, 2)).toEqual({ index: 2, ratio: 1 });
+        expect(Number.isFinite(resolveSpeakingLineProgress(lines, 0.5, NaN).ratio)).toBe(true);
     });
 });

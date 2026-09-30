@@ -100,13 +100,28 @@ export function estimateLinesTotalMs(lines: string[]): number {
  * 彼此的比例不变，定位结果也完全不变（等于没调）。偏移必须作用在**进度**上。
  */
 export function resolveSpeakingLineIndex(lines: string[], p: number, offset = 0): number {
+  return resolveSpeakingLineProgress(lines, p, offset).index;
+}
+
+/**
+ * 同 resolveSpeakingLineIndex，但额外给出「这一句念到几成」（0~1）。
+ *
+ * 双语用：原文（声音念的那份）和字幕句数不一样时，光知道「第几句」不够——
+ * 要把这一句按比例摊到它管的字幕行上（见 `callSpeechTimeline.mapLineAcross`），
+ * 靠的就是这个句内进度。定位规则与上面完全同源，上面那个函数就是取它的 index。
+ */
+export function resolveSpeakingLineProgress(
+  lines: string[],
+  p: number,
+  offset = 0,
+): { index: number; ratio: number } {
   const n = lines.length;
-  if (!n) return -1;
+  if (!n) return { index: -1, ratio: 0 };
   // 偏移先作用在进度上，再钳到 0~1。
   const shifted = Math.max(0, Math.min(1, p + (Number.isFinite(offset) ? offset : 0)));
   // 进度越界时钳到首/末句，跟原来的行为一致。
-  if (!(shifted > 0)) return 0;
-  if (shifted >= 1) return n - 1;
+  if (!(shifted > 0)) return { index: 0, ratio: 0 };
+  if (shifted >= 1) return { index: n - 1, ratio: 1 };
   const weights: number[] = [];
   let total = 0;
   for (let i = 0; i < n; i += 1) {
@@ -114,12 +129,15 @@ export function resolveSpeakingLineIndex(lines: string[], p: number, offset = 0)
     weights.push(w);
     total += w;
   }
-  if (total <= 0) return n - 1;
+  if (total <= 0) return { index: n - 1, ratio: 1 };
   const target = shifted * total;
   let acc = 0;
   for (let i = 0; i < n; i += 1) {
     acc += weights[i];
-    if (target < acc) return i;
+    if (target < acc) {
+      const w = weights[i] > 0 ? weights[i] : 1;
+      return { index: i, ratio: Math.max(0, Math.min(1, (target - (acc - w)) / w)) };
+    }
   }
-  return n - 1;
+  return { index: n - 1, ratio: 1 };
 }

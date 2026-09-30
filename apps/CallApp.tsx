@@ -10,9 +10,10 @@ import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, getMiniMaxParamVersion, prepareMiniMaxSpeechText, VALID_EMOTIONS, stripEmotionTags, VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
+import { replaceVoiceTagSpeech } from '../utils/chatVoiceTagFormat';
 import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
-import { canSynthesizeSpeech, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
+import { canSynthesizeSpeech, cleanTextForTtsProvider, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS, voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
 import { startVoiceInput, isSttSupported, type SttSession } from '../utils/volcStt';
 import { ContextBuilder } from '../utils/context';
@@ -2234,7 +2235,11 @@ ${sentencePlan}`;
     );
     if (!parsed.text.trim()) throw new Error('文本接口返回为空，或只返回了思考内容');
     const preparedForAudio = prepareCallAssistantReply(parsed);
-    prefetchCallAudio(preparedForAudio.text, preparedForAudio.speechEmotion);
+    // ⚠️ 预取的文本必须和真正播放时**一模一样**：播放那一步用的是 `callSpeechSource(...)`
+    // （只取 <语音> 里那半，见下面 takeOrSynthesizeCallAudio(callSpeechSource(assistantText), …)），
+    // 而这里以前传的是**整条回复**（含标签外的中文）→ 两份文本不同 → 预取结果永远取不中 →
+    // 每次通话白合成一遍（还多发一份请求去挤中转）。只改这里，喂给 TTS 的文本不受影响。
+    prefetchCallAudio(callSpeechSource(preparedForAudio.text), preparedForAudio.speechEmotion);
     if (highQualityPerformance) {
       try {
         const cues = await requestHighQualityPerformance(parsed.text, allowedModelActions);
@@ -3073,12 +3078,12 @@ ${sentencePlan}`;
     const reread = editAsReread && target.role === 'assistant';
     let stored = next;
     if (reread) {
-      // 只替换 <语音> 标签里的那半，标签外的原文照旧保留。
-      // （查证：译文本来就在标签外，这一步并没有丢它。真正让人听到译文、
-      //  重读变原文的病根在 TTS 喂了整条 bubble.text，已由 callSpeechSource 治根。
-      //  这里保持原样，不加额外改写逻辑。）
-      const replaced = target.text.replace(/(<[语語]音[^>]*>)([\s\S]*?)(<\/\s*[语語]音\s*>)/, '$1' + next + '$3');
-      if (replaced !== target.text) stored = replaced;
+      // 只替换 <语音> 标签里的那半，标签外的原文（中文字幕/对照）照旧保留。
+      // ⚠️ 判据必须是「有没有成对的标签」，**不能**是「替换完和原文一不一样」：
+      //    用户点重读、一个字都没改时，两者完全相同——旧写法会跳过写回，
+      //    于是把「纯口白」当成新内容写进气泡，标签外的中文字幕当场被覆盖掉。
+      const swapped = replaceVoiceTagSpeech(target.text, next);
+      if (swapped !== null) stored = swapped;
     }
     setBubbles(prev => prev.map(b => b.id === target.id ? { ...b, text: stored, ...(reread ? { audioUrl: undefined } : {}) } : b));
     if (target.dbId) await DB.updateMessage(target.dbId, stored);
@@ -3098,7 +3103,9 @@ ${sentencePlan}`;
       addToast('合成失败，字已改好', 'info');
       return;
     }
-    playAudio(url, target.performanceTimeline, estimateSpeechMs(stored), true);
+    // 时长估算按「念出来的那半」算（合成用的也是 next）：拿整条 stored 算会把标签外
+    // 的中文字幕一起数进去，估出来的时长偏长 → 进度圈和跟读节奏都被拖慢。
+    playAudio(url, target.performanceTimeline, estimateSpeechMs(next), true);
     setSpeakingTrack({ bubbleId: target.id, p: 0, t: 0 });
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
@@ -3919,6 +3926,7 @@ ${sentencePlan}`;
           splitSpeakLines={splitSpeakLines}
           parseVoice={extractVoiceTag}
           stripVoice={(text) => stripTtsMarkupForDisplay(text, apiConfig)}
+          cleanSpeechLine={(text) => cleanTextForTtsProvider(text, apiConfig)}
           onVoiceView={(view) => { setVoiceView(view); setVoiceSheetOpen(false); }}
           onSheetOpen={setVoiceSheetOpen}
           onSpeaker={() => {

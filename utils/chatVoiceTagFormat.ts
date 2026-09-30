@@ -40,6 +40,26 @@ export function wrapSpokenWithOriginalChinese(
     return `${formatChatVoiceOpenTag(emotion)}${inner}</语音>\n<字幕>${subtitle}</字幕>`;
 }
 
+/**
+ * 只替换 `<语音>` 标签里的那半，标签外（字幕／中文对照）一个字不动。
+ *
+ * 通话「编辑后重读」用它：用户改的是念出来的那半，标签外的中文对照必须留着。
+ *
+ * ⚠️ 千万别用「替换完和原文比一比，不一样才写回」当判据——用户点重读、一个字都没改时，
+ * 前后**完全一样**，那条判据会跳过写回，于是把「带标签的原文」当成新内容写进去，
+ * 中文字幕那半截当场消失，气泡里只剩外语口白（Ann 实测踩到过）。
+ * 判据只能是「有没有成对的标签」。
+ *
+ * 找不到成对的标签就返回 null，退路交给调用方（通话那边是整条覆盖）。
+ */
+export function replaceVoiceTagSpeech(text: string, speech: string): string | null {
+    const src = text || '';
+    const re = /(<[语語]音[^>]*>)([\s\S]*?)(<\/\s*[语語]音\s*>)/;
+    if (!re.test(src)) return null;
+    // 用函数式替换：口白里自带 $1 / $& 时不会被当成占位符吃掉。
+    return src.replace(re, (_match, open: string, _inner: string, close: string) => open + speech + close);
+}
+
 /** 猫儿修格式 / 手改模板注入：与 chatPrompts 语音段同一套开标签规则 */
 export const CHAT_VOICE_TAG_FORMAT_RULES = `
 【语音开标签 — 与主聊天一致，修语音时必须遵守】
