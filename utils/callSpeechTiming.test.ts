@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
+import { cleanTextForTtsFish } from './fishAudioTts';
 import {
     countLatinSyllables,
     estimateLineMs,
@@ -178,5 +179,32 @@ describe('resolveSpeakingLineProgress（双语摊行要的句内进度）', () =
         expect(resolveSpeakingLineProgress(lines, -1)).toEqual({ index: 0, ratio: 0 });
         expect(resolveSpeakingLineProgress(lines, 2)).toEqual({ index: 2, ratio: 1 });
         expect(Number.isFinite(resolveSpeakingLineProgress(lines, 0.5, NaN).ratio)).toBe(true);
+    });
+});
+
+describe('估算必须先清洗舞台指示（它根本不会被念出来）', () => {
+    // Ann 实机那句日语原文：开头 47 字的（…）是舞台描写，音频里没有它。
+    const jp = '（「仕事」という言葉を聞いて、耳がシュッと立ち、わがままを言ってた柔らかいお腹を急いでしまう）……あ、じゃあアン、先に仕事して！ねこちゃんもう騒がないよ。';
+
+    it('不清洗 → 这一句被撑大好几倍（实测占比 23% → 42%）', () => {
+        const raw = estimateLineMs(jp);
+        const cleaned = estimateLineMs(cleanTextForTtsFish(jp));
+        // 括号里的舞台描写（只有它含「急いでしまう」）整个被删掉了
+        expect(cleanTextForTtsFish(jp)).not.toContain('急いでしまう');
+        expect(cleaned).toBeLessThan(raw / 1.5);
+    });
+
+    it('清洗前后同一进度会指向不同的句子（这就是「前面拖、后面追」的来源）', () => {
+        const lines = [jp, 'ねこちゃん、アンが仕事終わるまで待ってるから、早く戻ってきてね。'];
+        const cleaned = lines.map((line) => cleanTextForTtsFish(line));
+        const raw = resolveSpeakingLineProgress(lines, 0.3);
+        const fixed = resolveSpeakingLineProgress(cleaned, 0.3);
+        expect(raw.index).toBeLessThanOrEqual(fixed.index);
+    });
+
+    it('钉住：VoicePhoneB 的估算路必须过 cleanSpeechLine（读源码）', () => {
+        const src = readFileSync(path.join(process.cwd(), 'components/call/VoicePhoneB.tsx'), 'utf8');
+        expect(src).toContain('const estimateLines = spoken.map(line => props.cleanSpeechLine');
+        expect(src).toContain('resolveSpeakingLineProgress(estimateLines, tracking.p, offsetProgress)');
     });
 });

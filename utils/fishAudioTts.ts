@@ -182,7 +182,9 @@ export const cleanTextForTtsFish = (raw: string): string => {
   text = text
     .replace(/\[\[.*?\]\]/g, '')                 // [[系统标记]]（双层，先于单层 cue 处理）
     .replace(/%%BILINGUAL%%[\s\S]*/i, '')        // 双语分隔及之后
-    .replace(/（[^）]{0,48}）/g, '')              // 中文圆括号舞台指示，一律删
+    .replace(/（[^）]{0,80}）/g, '')              // 中文圆括号舞台指示，一律删（上限 80 与 ElevenLabs 同口径；
+    // ⚠️ 改这个数字必须同时改 utils/callSpeechTimeline.ts 的 SPEECH_PAREN_RE ——
+    //    电话对号用的字表要和这里**逐字一致**，两边不一样就会对不上（有测试钉着）
     .replace(/<#\s*[\d.]+\s*#>/g, '')            // MiniMax 停顿标记，鱼声不认
     // 西文圆括号（模型按 MiniMax 习惯写的 (laughs)/(sighs) 等）→ 先转成方括号，交给下面归一
     .replace(/\(([^)]{1,40})\)/g, '[$1]')

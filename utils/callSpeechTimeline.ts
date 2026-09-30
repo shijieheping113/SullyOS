@@ -29,11 +29,13 @@ const isMatchableChar = (ch: string): boolean => {
 };
 
 /**
- * 送 TTS 前会被删掉的全角括号内容（舞台指示）。这条规则**和音频那边是同一条**
- * （`utils/fishAudioTts.ts` 的 `（[^）]{0,48}）`；MiniMax 同款，ElevenLabs 是 80）。
+ * 送 TTS 前会被删掉的全角括号内容（舞台指示）。这条规则**和音频那边是同一条**：
+ * 上限 80，`utils/fishAudioTts.ts` 的 `（[^）]{0,80}）`、ElevenLabs 也是 80
+ * （MiniMax 那边是 48，但 MiniMax 没有时间轴，两边不会碰面）。
+ * ⚠️ 两边的数字必须一致（有测试钉着）：音频删了、字表还留着 → 字表比音频多字 → 游标卡住 → 整段退回估算。
  * 只在调用方传了清洗函数时才用；不传 = 完全保持从前的行为。
  */
-const SPEECH_PAREN_RE = /（[^）]{0,48}）/g;
+const SPEECH_PAREN_RE = /（[^）]{0,80}）/g;
 
 /**
  * 把显示用的行拆成「参与配对的字符流」：逐行扫描，剥掉 [xxx] 标签、空格和标点，

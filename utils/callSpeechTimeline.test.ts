@@ -69,10 +69,11 @@ describe('对号用的字表要和音频同一套清洗（传 cleanLine 时）',
         // 剩下的字仍然记得自己属于第 2 行（行结构没乱）
         expect(s.lineOf).toEqual([1, 1, 1]);
     });
-    it('超过 48 字的括号不删（音频那边会念出来，两边都留）', () => {
-        const long = 'あ'.repeat(60);
-        const s = buildMatchableStream(['（' + long + '）うん'], cleanTextForTtsFish);
-        expect(s.chars.join('')).toBe(long + 'うん');
+    it('上限 80：括号里 80 字以内删掉，超过 80 的两边都留（关键仍是两边规则一致）', () => {
+        const atLimit = 'あ'.repeat(80);   // 内容正好 80 字 → 删
+        const over = 'あ'.repeat(81);      // 超过 80 → 两边都留着
+        expect(buildMatchableStream(['（' + atLimit + '）うん'], cleanTextForTtsFish).chars.join('')).toBe('うん');
+        expect(buildMatchableStream(['（' + over + '）うん'], cleanTextForTtsFish).chars.join('')).toBe(over + 'うん');
     });
     it('钉住：算出来的字表 == 把整条交给音频清洗函数之后的字表', () => {
         const cases: string[][] = [
@@ -246,10 +247,28 @@ describe('钉住：双语摊行的接线（直接读 VoicePhoneB 源码）', () 
 
     it('位置一律按原文算，再 mapLineAcross 摊到字幕行', () => {
         expect(src).toContain('mapLineAcross(atLine, spoken.length, useLines.length');
-        expect(src).toContain('resolveSpeakingLineProgress(spoken');
+        expect(src).toContain('resolveSpeakingLineProgress(estimateLines');
     });
 
     it('不许退回「句数相同才敢用原文、否则拿中文字数猜」的老写法', () => {
         expect(src).not.toContain('const aligned = !!spokenLines');
+    });
+});
+
+describe('括号上限：音频侧与对位侧必须同一条（Ann 定为 80）', () => {
+    const fish = readFileSync(path.join(process.cwd(), 'utils/fishAudioTts.ts'), 'utf8');
+    const align = readFileSync(path.join(process.cwd(), 'utils/callSpeechTimeline.ts'), 'utf8');
+
+    it('两边都写 80，不许只改单边（单边一改字表就和音频不一致）', () => {
+        expect(fish).toContain('（[^）]{0,80}）');
+        expect(align).toContain('（[^）]{0,80}）');
+    });
+
+    it('60 字的舞台指示会被删掉（以前 48 上限漏掉它 → 没被念的字留在字表里 → 整条时间轴作废）', () => {
+        const long = '（' + 'あ'.repeat(58) + '）';   // 60 字：48 的上限删不掉，80 能
+        expect(long.length).toBe(60);
+        expect(cleanTextForTtsFish(long)).toBe('');
+        const s = buildMatchableStream([long + 'うわあ'], cleanTextForTtsFish);
+        expect(s.chars.join('')).toBe('うわあ');
     });
 });
