@@ -10,6 +10,7 @@ import HtmlCard from '../../components/chat/HtmlCard';
 import { MIAOMIAO_BIG_FOLD_DEFAULT, MIAOMIAO_FOLD_KEEP_DEFAULT, MIAOMIAO_FOLD_N_DEFAULT, STARTER_HINT, STARTER_LABEL, type MiaomiaoArchiveMode, type MiaomiaoMessage, type MiaomiaoQuoteStyle, type MiaomiaoSettings, type MiaomiaoStarter } from './types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { countUnfoldedRounds, relocateSummaries } from './foldSession';
+import { decideStick, shouldFollowBottom } from './stageStick';
 import { splitIntoBubbles } from './speakQuoted';
 import { MiaomiaoBoxDB } from './miaomiaoBoxDb';
 import TokenImg from '../../components/os/TokenImg';
@@ -360,6 +361,11 @@ const MiaomiaoBoxHost: React.FC = () => {
   const listRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   const pinningRef = useRef(false);
+  const touchingRef = useRef(false);
+  const fingerEndRef = useRef<(() => void) | null>(null);
+  // 上次程序钉住时的位置。用来分辨「人往上翻了」和「内容变高了」。
+  const seenTop = useRef(0);
+  const seenHeight = useRef(0);
   const pinTimer = useRef<number | null>(null);
   const pinObserver = useRef<ResizeObserver | null>(null);
   const pinRaf = useRef<number | null>(null);
@@ -391,8 +397,27 @@ const MiaomiaoBoxHost: React.FC = () => {
       if (!stickToBottom.current) stopChase();
       return;
     }
+    const follow = shouldFollowBottom({
+      stuck: stickToBottom.current,
+      touching: touchingRef.current,
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      seenTop: seenTop.current,
+      seenHeight: seenHeight.current,
+    });
+    if (!follow) {
+      // 手指还按着：先别跟，也先别松开，等滚动事件自己判断。
+      // 手指已经松开、人却停在更上面：立刻停止贴底，别再按回最底。
+      if (!touchingRef.current) {
+        stickToBottom.current = false;
+        stopChase();
+      }
+      return;
+    }
     pinningRef.current = true;
     el.scrollTop = el.scrollHeight;
+    seenTop.current = el.scrollTop;
+    seenHeight.current = el.scrollHeight;
     if (pinRelease.current) window.cancelAnimationFrame(pinRelease.current);
     pinRelease.current = window.requestAnimationFrame(() => {
       pinRelease.current = null;
@@ -400,7 +425,10 @@ const MiaomiaoBoxHost: React.FC = () => {
     });
   };
 
-  // 程序追底时 onScroll 不许关掉贴底。内容变高用 ResizeObserver 跟着走，定时只是短保险。
+  const gapFromBottom = (el: HTMLDivElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
+
+  // 内容变高用 ResizeObserver 跟着走，定时只是短保险。
+  // 人已经往上离开几像素时，pinToEnd 会自己停下，不再按回最底。
   const chaseBottom = (retryIfEmpty = true) => {
     const el = stageRef.current;
     if (!el) {
@@ -447,6 +475,34 @@ const MiaomiaoBoxHost: React.FC = () => {
     }, 120);
   };
 
+  const applyStick = (gap: number) => {
+    const action = decideStick(stickToBottom.current, gap);
+    if (action === 'release') {
+      stickToBottom.current = false;
+      stopChase();
+    } else if (action === 'resume') {
+      stickToBottom.current = true;
+      chaseBottom();
+    }
+  };
+
+  const noteFingerDown = () => {
+    if (touchingRef.current) return;
+    touchingRef.current = true;
+    const end = () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      if (fingerEndRef.current === end) fingerEndRef.current = null;
+      touchingRef.current = false;
+      const el = stageRef.current;
+      if (!el || pinningRef.current) return;
+      applyStick(gapFromBottom(el));
+    };
+    fingerEndRef.current = end;
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  };
+
   // 进对话、换一场、或从小窗点开回浮窗：画出来之前先钉在最底，避免首帧停在半截。
   // showFloat 也要看进来：缩成小窗时对话区整个被拿掉、点开才重新画出来，
   // 而那一下 page 和这一场都没变，光靠原来两个依赖这段根本不会重跑，
@@ -461,6 +517,8 @@ const MiaomiaoBoxHost: React.FC = () => {
     if (el) {
       pinningRef.current = true;
       el.scrollTop = el.scrollHeight;
+      seenTop.current = el.scrollTop;
+      seenHeight.current = el.scrollHeight;
     }
     chaseBottom();
     return () => stopChase();
@@ -472,7 +530,15 @@ const MiaomiaoBoxHost: React.FC = () => {
     chaseBottom();
   }, [box.messages, box.liveText, box.liveThinking, box.typing, box.foldNote, box.foldBusy, box.page]);
 
-  useEffect(() => () => stopChase(), []);
+  useEffect(() => () => {
+    stopChase();
+    const end = fingerEndRef.current;
+    if (!end) return;
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    fingerEndRef.current = null;
+    touchingRef.current = false;
+  }, []);
   useEffect(() => {
     if (!showFloat || !hasShow) return;
     setOpenAnim(true);
@@ -780,14 +846,21 @@ const MiaomiaoBoxHost: React.FC = () => {
               <div
                 className="stage"
                 ref={stageRef}
+                onPointerDown={noteFingerDown}
                 onScroll={e => {
-                  if (pinningRef.current) return;
                   const el = e.currentTarget;
-                  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-                  const wasNear = stickToBottom.current;
-                  stickToBottom.current = near;
-                  if (!near) stopChase();
-                  else if (!wasNear) chaseBottom();
+                  const gap = gapFromBottom(el);
+                  // 程序自己钉底时，离底几乎是 0。真被手挪开就停，哪怕这一下和钉底撞在同一帧。
+                  if (pinningRef.current && decideStick(true, gap) !== 'release') return;
+                  // 手指还在划时只松开、不重新贴上，避免划到一半被拉回最底。
+                  if (touchingRef.current) {
+                    if (decideStick(stickToBottom.current, gap) === 'release') {
+                      stickToBottom.current = false;
+                      stopChase();
+                    }
+                    return;
+                  }
+                  applyStick(gap);
                 }}
                 onClickCapture={e => {
                   // 长按松手后浏览器补发的那下点击：整笔吞掉，
