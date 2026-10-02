@@ -21,7 +21,13 @@ describe('视频通话回复分流', () => {
 
   it('兼容 content 分块与 reasoning-only 中转', () => {
     expect(parseCallAssistantMessage({ content: [{ type: 'text', text: '分块正文' }] }, true).text).toBe('分块正文');
-    expect(parseCallAssistantMessage({ content: '', reasoning_content: '代理塞错位置的最终台词' }, true)).toEqual({ text: '代理塞错位置的最终台词' });
+    // reasoning 顶上来的这份仍然返回（要显示给你看），但**标记出来**：打电话时不许念（见 callSpeechGuard）。
+    expect(parseCallAssistantMessage({ content: '', reasoning_content: '代理塞错位置的最终台词' }, true)).toEqual({
+      text: '代理塞错位置的最终台词',
+      usedReasoningOnly: true,
+    });
+    // 正文非空时不算 reasoning-only
+    expect(parseCallAssistantMessage({ content: '正常台词', reasoning_content: '思考' }, true).usedReasoningOnly).toBeUndefined();
   });
 
   it('演出参数做枚举归一与强度限幅', () => {

@@ -3,6 +3,8 @@ import { extractAvatarPerformanceTimeline, type AvatarPerformanceCue, type Avata
 export interface ParsedCallReply {
   text: string;
   thinkingChain?: string;
+  /** 正文为空、只有思考被顶上来当台词（打电话时这属于格式不对：文字照常显示，但不念）。 */
+  usedReasoningOnly?: boolean;
   /** 第一条演出指令（立即生效）。 */
   performance?: AvatarPerformanceDirection;
   /** 完整演出时间轴：正文中穿插的所有指令，按位置比例调度。 */
@@ -57,6 +59,8 @@ export const parseCallAssistantMessage = (message: any, keepThinking = false): P
   const uniqueChains = [...new Set([nativeChain, ...inlineChains].map(item => item.trim()).filter(Boolean))];
   return {
     text,
+    // 正文是空的、拿 reasoning 顶上来的：留着文字给你看，但打电话时**不许念**（见 callSpeechGuard）。
+    ...(!directContent && nativeReasoning ? { usedReasoningOnly: true } : {}),
     ...(keepThinking && uniqueChains.length ? { thinkingChain: uniqueChains.join('\n\n') } : {}),
     ...(cues.length ? { performance: cues[0].direction, performanceCues: cues } : {}),
   };

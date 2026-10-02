@@ -116,6 +116,13 @@ import { markAmsgStateDirty } from '../utils/amsgStateSync';
 import { trackEvent } from '../utils/analytics';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { getPendingReplyText } from '../utils/pendingReply';
+import {
+  CALL_TTS_NO_RETRY_CHARS,
+  callSpeechBlockReason,
+  isCallSpeechBlocked,
+  makeCallSpeechBlockedError,
+  type CallSpeechGuardInput,
+} from '../utils/callSpeechGuard';
 import { findExpiredCallSnapshots } from '../utils/callSnapshotRetention';
 import {
   companionAvatarSource,
@@ -149,6 +156,8 @@ type CallBubble = {
   cameraSnapshotExpired?: boolean;
   /** 鱼声 with-timestamp 返回的逐字时间（秒）。没有就退回估算。 */
   speechTimeline?: SpeechTimeline | null;
+  /** 这一条被 TTS 闸门拦下、没有生成音频（格式不对 / 只有思考）。文字照常显示与入库。 */
+  ttsSkipped?: boolean;
 };
 type CallRecord = {
   id: string;
@@ -292,6 +301,8 @@ const prepareCallAssistantReply = (reply: ParsedCallReply, enhanceBasicTimeline 
   return {
     text,
     thinkingChain: reply.thinkingChain,
+    // 只有思考顶上来的那种，闸门要靠它拦下（文字照常显示，不念）。
+    usedReasoningOnly: reply.usedReasoningOnly,
     speechEmotion,
     performance,
     performanceCues,
@@ -696,7 +707,18 @@ const CallApp: React.FC = () => {
   const localCallAudioRef = useRef(audioRef.current);
   const remoteCallAudioRef = useRef<HTMLAudioElement | null>(null);
   if (!remoteCallAudioRef.current && typeof Audio !== 'undefined') remoteCallAudioRef.current = new Audio();
-  const pendingAutoPlayRef = useRef<{ url: string; cues?: AvatarPerformanceCue[]; fallbackMs?: number; bubbleId?: string } | null>(null);
+  const pendingAutoPlayRef = useRef<{ url: string; cues?: AvatarPerformanceCue[]; fallbackMs?: number; bubbleId?: string; seq?: number } | null>(null);
+  /**
+   * 「这一轮音频」的编号（Bug 3）。每做一次"要让某个音频成为当前音频"的动作就 +1；
+   * 音频回来准备播时如果号已经不对（用户静音了、挂断了、或已经换了下一轮）⇒ 直接丢掉。
+   * ⚠️ 只靠一个"停止开关"是不够的：开关忘了复位会把下一轮正常回复也弄哑，编号没这个问题。
+   */
+  const audioSeqRef = useRef(0);
+  /** 取一个新号（= 作废之前所有在途/存货的音频）。 */
+  const nextAudioSeq = () => {
+    audioSeqRef.current += 1;
+    return audioSeqRef.current;
+  };
   const nativeCallAudioOnly = useMemo(() => shouldKeepNativeCallAudio(), []);
   const userCameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const userCameraStreamRef = useRef<MediaStream | null>(null);
@@ -1341,7 +1363,21 @@ const CallApp: React.FC = () => {
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
   // MiniMax：缓存命中 → 单发合成 → 失败再分段兜底；Fish / ElevenLabs：共享 router 直接合成。
   // 抛错或返回空 url 都表示没有可播放音频，由调用方降级为纯文字。
-  const synthesizeCallAudioUrl = async (rawText: string, emotion?: string, skipCache = false): Promise<{ url: string; traceIds: string[]; timeline?: SpeechTimeline }> => {
+  const synthesizeCallAudioUrl = async (
+    rawText: string,
+    emotion?: string,
+    skipCache = false,
+    guard?: CallSpeechGuardInput,
+    seq?: number,
+  ): Promise<{ url: string; traceIds: string[]; timeline?: SpeechTimeline }> => {
+    // ── 唯一闸门：格式不对（语音标签没闭合）/ 只有思考顶上来 ⇒ 直接拦，**不发任何合成请求**。
+    //    文字照常显示、照常入库，只是不念；想听可以手动点播放（手动会再走这里，判据一样）。
+    //    六个入口（回合 / 开场白 / 换个说法 / 冷场 / 手动播 / 重读）和预取都汇到这一个函数。
+    const blockedReason = callSpeechBlockReason(guard);
+    if (blockedReason) {
+      console.warn('[call] TTS 闸门拦下：', blockedReason);
+      throw makeCallSpeechBlockedError(blockedReason);
+    }
     if (activeTtsProvider !== 'minimax') {
       if (!selectedChar) throw new Error('未选择角色');
       // 鱼声 + 用户填了中转 → 先试带时间轴的接口（字幕能精确对位）。
@@ -1353,6 +1389,11 @@ const CallApp: React.FC = () => {
         } catch (e) {
           console.warn('[call] 时间轴合成未生效，用普通合成:', (e as any)?.message || e);
         }
+      }
+      // 同一段别付两次钱：内容长得离谱时，第一遍没成就不再自动换路重试（手动重试照样可以）。
+      if (!guard?.manual && rawText.length > CALL_TTS_NO_RETRY_CHARS) {
+        console.warn('[call] tts 过长且第一遍未成，不再自动换路重试');
+        throw makeCallSpeechBlockedError('too-long-no-retry');
       }
       const { url } = await synthesizeSpeechRoutedDetailed(rawText, selectedChar, apiConfig, {
         languageBoost: voiceLang || undefined,
@@ -1460,6 +1501,11 @@ const CallApp: React.FC = () => {
         throw new Error('未获得可播放音频');
       }
     } catch (singleErr: any) {
+      // 同一段别付两次钱：又长又失败 ⇒ 不再把整段切块重念一遍（提示你手动重试）。
+      if (speechText.length > CALL_TTS_NO_RETRY_CHARS) {
+        console.warn('[call] tts 过长且单发失败，不再自动分块重试');
+        throw makeCallSpeechBlockedError('too-long-no-retry');
+      }
       const textChunks = splitTextForTts(speechText, 120);
       if (!textChunks.length) throw singleErr;
       if (textChunks.length > 1) addToast('语音生成中，稍等一下', 'info');
@@ -1467,6 +1513,11 @@ const CallApp: React.FC = () => {
       console.warn('[call] tts single-shot failed, fallback to chunk mode', singleErr?.message || singleErr);
 
       for (let idx = 0; idx < textChunks.length; idx += 1) {
+        // 已经被叫停（静音 / 挂断 / 换了下一轮）⇒ 立刻停手，剩下的块不再花钱（Bug 3）。
+        if (seq !== undefined && seq !== audioSeqRef.current) {
+          console.warn('[call] tts 分块已被叫停，剩余块不再请求');
+          throw makeCallSpeechBlockedError('stopped');
+        }
         const result = await synthesizeChunk(textChunks[idx], idx, textChunks.length);
         if (result.traceId) traceIds.push(result.traceId);
         if (result.remoteUrl) {
@@ -1488,7 +1539,7 @@ const CallApp: React.FC = () => {
     return { url: finalUrl, traceIds };
   };
   const callAudioPrefetchKey = (rawText: string, emotion?: string) => `${emotion || ''}\u0000${rawText}`;
-  const prefetchCallAudio = (rawText: string, emotion?: string) => {
+  const prefetchCallAudio = (rawText: string, emotion?: string, guard?: CallSpeechGuardInput) => {
     if (!callPreferences.voiceAutoPlay || !canSpeakVoice()) return;
     const key = callAudioPrefetchKey(rawText, emotion);
     if (prefetchedCallAudioRef.current.has(key)) return;
@@ -1498,7 +1549,7 @@ const CallApp: React.FC = () => {
       const oldestKey = prefetchedCallAudioRef.current.keys().next().value;
       if (oldestKey) prefetchedCallAudioRef.current.delete(oldestKey);
     }
-    const promise = synthesizeCallAudioUrl(rawText, emotion).then(result => {
+    const promise = synthesizeCallAudioUrl(rawText, emotion, false, guard).then(result => {
       trackBlobUrl(result.url);
       return result;
     });
@@ -1507,12 +1558,17 @@ const CallApp: React.FC = () => {
     void promise.catch(() => undefined);
     prefetchedCallAudioRef.current.set(key, promise);
   };
-  const takeOrSynthesizeCallAudio = (rawText: string, emotion?: string, skipCache = false):
-    Promise<{ url: string; traceIds: string[]; timeline?: SpeechTimeline }> => {
-    if (skipCache) return synthesizeCallAudioUrl(rawText, emotion, true);
+  const takeOrSynthesizeCallAudio = (
+    rawText: string,
+    emotion?: string,
+    skipCache = false,
+    guard?: CallSpeechGuardInput,
+    seq?: number,
+  ): Promise<{ url: string; traceIds: string[]; timeline?: SpeechTimeline }> => {
+    if (skipCache) return synthesizeCallAudioUrl(rawText, emotion, true, guard, seq);
     const key = callAudioPrefetchKey(rawText, emotion);
     const prefetched = prefetchedCallAudioRef.current.get(key);
-    if (!prefetched) return synthesizeCallAudioUrl(rawText, emotion);
+    if (!prefetched) return synthesizeCallAudioUrl(rawText, emotion, false, guard, seq);
     prefetchedCallAudioRef.current.delete(key);
     return prefetched;
   };
@@ -1924,6 +1980,9 @@ const CallApp: React.FC = () => {
     addToast('通话记录已保存', 'success');
   };
   const handleHangup = () => {
+    // Bug 3：挂断就换号 —— 还在路上/已经在排队的音频一律作废，挂了之后不会再冒出来。
+    nextAudioSeq();
+    pendingAutoPlayRef.current = null;
     setShowHangupConfirm(true);
   };
   // 与聊天 / 约会完全同一条历史管线（ChatPrompts.buildMessageHistory，约会的
@@ -2239,7 +2298,10 @@ ${sentencePlan}`;
     // （只取 <语音> 里那半，见下面 takeOrSynthesizeCallAudio(callSpeechSource(assistantText), …)），
     // 而这里以前传的是**整条回复**（含标签外的中文）→ 两份文本不同 → 预取结果永远取不中 →
     // 每次通话白合成一遍（还多发一份请求去挤中转）。只改这里，喂给 TTS 的文本不受影响。
-    prefetchCallAudio(callSpeechSource(preparedForAudio.text), preparedForAudio.speechEmotion);
+    prefetchCallAudio(callSpeechSource(preparedForAudio.text), preparedForAudio.speechEmotion, {
+      source: preparedForAudio.text,
+      thinkingOnly: preparedForAudio.usedReasoningOnly,
+    });
     if (highQualityPerformance) {
       try {
         const cues = await requestHighQualityPerformance(parsed.text, allowedModelActions);
@@ -2395,7 +2457,12 @@ ${sentencePlan}`;
     return playbackAttempt;
   };
 
-  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false, bubbleId?: string) => {
+  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false, bubbleId?: string, seq?: number) => {
+    // 编号对不上 = 这条音频已经过期（用户静音了 / 挂断了 / 已经换了下一轮）⇒ 直接丢，不出声。
+    if (seq !== undefined && seq !== audioSeqRef.current) {
+      console.warn('[call] 丢弃过期音频（编号不符）');
+      return;
+    }
     const targetUrl = url || audioUrl;
     const estimatedDurationMs = fallbackMs || 4000;
     setSpeakingTrack(null); // 换音频先清旧跟踪，调用方需要跟读时紧跟 setSpeakingTrack({bubbleId, p:0})
@@ -2423,7 +2490,7 @@ ${sentencePlan}`;
       pendingCueScheduleRef.current = null;
       const blocked = (error as { name?: string })?.name === 'NotAllowedError';
       if (blocked && targetUrl) {
-        pendingAutoPlayRef.current = { url: targetUrl, cues, fallbackMs: estimatedDurationMs, bubbleId };
+        pendingAutoPlayRef.current = { url: targetUrl, cues, fallbackMs: estimatedDurationMs, bubbleId, seq };
         addToast('点一下就能听', 'info');
         setSpeakingTrack(null);
         setCallState('listening');
@@ -2437,18 +2504,23 @@ ${sentencePlan}`;
       addToast(voicePlaybackErrorMessage(error, '重播语音'), 'info');
     });
   };
-  const startReplyPlayback = (url: string, cues: AvatarPerformanceCue[] | undefined, text: string, bubbleId: string) => {
-    playAudio(url, cues, estimateSpeechMs(text), true, bubbleId);
+  const startReplyPlayback = (url: string, cues: AvatarPerformanceCue[] | undefined, text: string, bubbleId: string, seq?: number) => {
+    playAudio(url, cues, estimateSpeechMs(text), true, bubbleId, seq);
     setSpeakingTrack({ bubbleId, p: 0, t: 0 });
   };
   const flushPendingCallAudio = () => {
     const pending = pendingAutoPlayRef.current;
     if (!pending) return;
     pendingAutoPlayRef.current = null;
-    playAudio(pending.url, pending.cues, pending.fallbackMs, true, pending.bubbleId);
+    // 存货也要对编号：换过轮/静音过的存货直接扔掉，不再放出来（Bug 3）。
+    if (pending.seq !== undefined && pending.seq !== audioSeqRef.current) {
+      console.warn('[call] 丢弃过期的「点一下再播」存货');
+      return;
+    }
+    playAudio(pending.url, pending.cues, pending.fallbackMs, true, pending.bubbleId, pending.seq);
     if (pending.bubbleId) setSpeakingTrack({ bubbleId: pending.bubbleId, p: 0, t: 0 });
   };
-  const ensureCallBubbleAudio = async (bubble: CallBubble, forceRegenerate = false): Promise<string | null> => {
+  const ensureCallBubbleAudio = async (bubble: CallBubble, forceRegenerate = false, seq?: number): Promise<string | null> => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return null;
     if (bubble.audioUrl && !forceRegenerate) return bubble.audioUrl;
     if (!hasConfiguredVoice()) {
@@ -2464,6 +2536,9 @@ ${sentencePlan}`;
         callSpeechSource(bubble.text),
         voiceTag.emotion || bubble.performance?.emotion,
         forceRegenerate,
+        // 手动播放 / 编辑后重读：**人自己点的就放行**（判据只拦自动回合那几处）。
+        { source: bubble.text, manual: true },
+        seq,
       );
       if (!url) throw new Error('未获得可播放音频');
       trackBlobUrl(url);
@@ -2488,10 +2563,12 @@ ${sentencePlan}`;
   };
   const handlePlayBubbleAudio = async (bubble: CallBubble) => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return;
+    // 主动点播放 = 明确"我要听这条"：换新号（之前在路上的一律作废），这条不会被自己挡。
+    const seq = nextAudioSeq();
     pendingAutoPlayRef.current = null;
     if (bubble.audioUrl) {
       if (!isSpeakerOn) setIsSpeakerOn(true);
-      playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true, bubble.id);
+      playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true, bubble.id, seq);
       setSpeakingTrack({ bubbleId: bubble.id, p: 0, t: 0 });
       trackEvent('重播一条通话语音');
       return;
@@ -2500,10 +2577,11 @@ ${sentencePlan}`;
     // after this point when automatic voice is disabled.
     if (isAudioPlaying) pauseAudio();
     primeCallAudioFromGesture(true);
-    const url = await ensureCallBubbleAudio(bubble);
+    const url = await ensureCallBubbleAudio(bubble, false, seq);
     if (!url) return;
+    if (seq !== audioSeqRef.current) return;   // 期间被静音/挂断 ⇒ 不播
     if (!isSpeakerOn) setIsSpeakerOn(true);
-    playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+    playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true, bubble.id, seq);
     setSpeakingTrack({ bubbleId: bubble.id, p: 0, t: 0 });
     trackEvent('按需生成并播放通话语音');
   };
@@ -2584,12 +2662,42 @@ ${sentencePlan}`;
   };
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
+    nextAudioSeq();   // "我要听这条"也算一次：之前还没回来的音频作废
     startCallAudioElement(audioRef.current).catch(() => addToast('继续播放失败，请点击重播', 'error'));
   };
+  /** 暂停当前音频。Bug 1：自己把「正在播放」状态归位，不等 pause 事件回来（事件可能被别的路径吃掉）。 */
   const pauseAudio = () => {
     if (!audioRef.current) return;
     audioRef.current.pause();
+    setIsAudioPlaying(false);
+    setSpeakingTrack(null);
+    clearSilentSpeechTimer();
     setCallState('listening');
+  };
+  /**
+   * 停止**全部**通话音频（Bug 3）：
+   *  · 三个音频元素一起停（当前 / 本地 / 远端）—— 不只当前那条；
+   *  · 丢掉「点一下再播」的存货；
+   *  · 换一个音频编号 ⇒ 还在路上的合成结果回来时对不上号，自动作废（多余的就丢了）。
+   * 气泡上的播放键不受影响：重放本回合那条对的音频随时可以。
+   */
+  const stopAllCallAudio = () => {
+    nextAudioSeq();
+    pendingAutoPlayRef.current = null;
+    pendingCueScheduleRef.current = null;
+    for (const element of [audioRef.current, localCallAudioRef.current, remoteCallAudioRef.current]) {
+      if (!element) continue;
+      try {
+        element.pause();
+        element.removeAttribute('src');
+        element.load();
+      } catch (e) { /* 元素已卸载/内核不支持也无所谓 */ }
+    }
+    setIsAudioPlaying(false);
+    setSpeakingTrack(null);
+    clearSilentSpeechTimer();
+    clearPerformanceCueTimers();
+    setCallState(previous => (previous === 'speaking' ? 'listening' : previous));
   };
 
   useEffect(() => {
@@ -2681,16 +2789,24 @@ ${sentencePlan}`;
         let playbackStarted = false;
         if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
           try {
-            const { url, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(greetingText), greetingReply.speechEmotion);
-            if (url) {
+            const seq = nextAudioSeq();
+            const { url, timeline } = await takeOrSynthesizeCallAudio(
+              callSpeechSource(greetingText),
+              greetingReply.speechEmotion,
+              false,
+              { source: greetingText, thinkingOnly: greetingReply.usedReasoningOnly },
+              seq,
+            );
+            if (url && seq === audioSeqRef.current) {
               trackBlobUrl(url);
               setAudioUrl(url);
               setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? null } : bubble));
-              startReplyPlayback(url, greetingReply.performanceCues, greetingText, greetingBubble.id);
+              startReplyPlayback(url, greetingReply.performanceCues, greetingText, greetingBubble.id, seq);
               playbackStarted = true;
             }
-          } catch {
-            // 语音失败不抹掉角色已经说出的文字。
+          } catch (error: any) {
+            // 语音失败不抹掉角色已经说出的文字；被闸门拦下的话给一句人话提示。
+            if (isCallSpeechBlocked(error)) addToast(String(error?.message || '这条没念'), 'info');
           }
         }
         if (!playbackStarted) {
@@ -2870,28 +2986,34 @@ ${sentencePlan}`;
     let userDbId: number | undefined = isRetry ? userBubble.dbId : undefined;
     if (selectedChar?.id) {
       if (!userDbId) {
-        userDbId = await DB.saveMessage({
-          charId: selectedChar.id,
-          role: 'user',
-          type: 'text',
-          content: input,
-          metadata: {
-            source: 'call',
-            callSessionId: currentSessionId,
-            callMode,
-            ...(newSnapshotRef ? { cameraSnapshotRef: newSnapshotRef } : {}),
-            ...(pendingTouchesForTurn.length ? {
-              avatarTouches: pendingTouchesForTurn.map(({ zone, part, rawAreas, timestamp }) => ({
-                zone,
-                ...(part ? { part } : {}),
-                rawAreas,
-                timestamp,
-              })),
-            } : {}),
-          },
-        });
-        setBubbles(prev => prev.map(b => (b.id === userBubble.id ? { ...b, dbId: userDbId } : b)));
-        markCallTurnDirty();
+        // Bug 1：这一步失败**不许**把整轮拖死。以前它抛出去没人接 ⇒ 界面停在这里：
+        // 消息已经在屏幕上、却没有回复也没有提示。现在失败只提示、照样继续去要回复。
+        try {
+          userDbId = await DB.saveMessage({
+            charId: selectedChar.id,
+            role: 'user',
+            type: 'text',
+            content: input,
+            metadata: {
+              source: 'call',
+              callSessionId: currentSessionId,
+              callMode,
+              ...(newSnapshotRef ? { cameraSnapshotRef: newSnapshotRef } : {}),
+              ...(pendingTouchesForTurn.length ? {
+                avatarTouches: pendingTouchesForTurn.map(({ zone, part, rawAreas, timestamp }) => ({
+                  zone,
+                  ...(part ? { part } : {}),
+                  rawAreas,
+                  timestamp,
+                })),
+              } : {}),
+            },
+          });
+          setBubbles(prev => prev.map(b => (b.id === userBubble.id ? { ...b, dbId: userDbId } : b)));
+          markCallTurnDirty();
+        } catch (saveErr: any) {
+          addToast(`这条消息没存上（还能继续聊）：${saveErr?.message || '未知错误'}`, 'error');
+        }
       } else if (newSnapshotRef) {
         const previousSnapshotRef = retryBubble?.cameraSnapshotRef;
         try {
@@ -2916,7 +3038,12 @@ ${sentencePlan}`;
           console.warn('[camera-snapshot] failed to update the retried call turn:', error);
         }
       }
-      await pruneCallSnapshots(selectedChar.id, currentSessionId);
+      // Bug 1：快照裁剪只是记账，失败也不许挡住这一轮去要回复。
+      try {
+        await pruneCallSnapshots(selectedChar.id, currentSessionId);
+      } catch (pruneErr: any) {
+        console.warn('[call] 按轮清理快照失败（不影响这一轮）:', pruneErr?.message || pruneErr);
+      }
     }
     if (!callStartedAt) setCallStartedAt(Date.now());
     setCallState('connecting');
@@ -2925,6 +3052,7 @@ ${sentencePlan}`;
     let assistantText = '';
     let assistantThinkingChain: string | undefined;
     let turnSpeechEmotion: string | undefined;
+    let turnReasoningOnly = false;
     let turnPerformance = DEFAULT_AVATAR_PERFORMANCE;
     let turnPerformanceCues: AvatarPerformanceCue[] = [];
     try {
@@ -2943,6 +3071,7 @@ ${sentencePlan}`;
       }
       assistantText = reply.text;
       assistantThinkingChain = reply.thinkingChain;
+      turnReasoningOnly = !!reply.usedReasoningOnly;
       turnSpeechEmotion = reply.speechEmotion;
       turnPerformance = reply.performance;
       turnPerformanceCues = reply.performanceCues;
@@ -3003,8 +3132,22 @@ ${sentencePlan}`;
     }
     setGeneratingAudioBubbleId(assistantBubbleId);
     try {
-      const { url: finalUrl, traceIds, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(assistantText), turnSpeechEmotion);
+      // 这一轮的音频编号：静音 / 挂断 / 下一轮都会让它作废（迟到的音频自动丢）。
+      const seq = nextAudioSeq();
+      const { url: finalUrl, traceIds, timeline } = await takeOrSynthesizeCallAudio(
+        callSpeechSource(assistantText),
+        turnSpeechEmotion,
+        false,
+        { source: assistantText, thinkingOnly: turnReasoningOnly },
+        seq,
+      );
       if (!finalUrl) throw new Error('未获得可播放音频');
+      // 已经叫停/换轮 ⇒ 这条不播，**并且把状态放出来**（不然界面会一直卡在「思考中」）。
+      if (seq !== audioSeqRef.current) {
+        console.warn('[call] 这一轮音频已过期（被叫停 / 换了下一轮），不播');
+        setCallState(previous => (previous === 'thinking' ? 'listening' : previous));
+        return;
+      }
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
       setTraceId(traceIds.filter(Boolean).join(' | '));
@@ -3013,8 +3156,19 @@ ${sentencePlan}`;
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
       }
-      startReplyPlayback(finalUrl, turnPerformanceCues, assistantText, assistantBubbleId);
+      startReplyPlayback(finalUrl, turnPerformanceCues, assistantText, assistantBubbleId, seq);
     } catch (e: any) {
+      // 被闸门拦下（语音标签没闭合 / 只有思考）：文字照常留着，只给人话提示，不报红。
+      if (isCallSpeechBlocked(e)) {
+        // 「已经停了」是我们自己叫停的，不是这条内容有问题 ⇒ 不标「没念」。
+        if ((e as { reason?: string }).reason !== 'stopped') {
+          setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, ttsSkipped: true } : b)));
+        }
+        if (callMode === 'video') playSilentAvatarSpeech(assistantText, turnPerformanceCues);
+        else setCallState('listening');
+        addToast(String(e?.message || '这条没念'), 'info');
+        return;
+      }
       setErrorMessage(e?.message || '语音生成失败');
       if (callMode === 'video') playSilentAvatarSpeech(assistantText, turnPerformanceCues);
       else setCallState('listening');
@@ -3098,14 +3252,16 @@ ${sentencePlan}`;
     stopPlayback();
     addToast('正在按新稿合成…', 'info');
     trackEvent('编辑后重读通话语音');
-    const url = await ensureCallBubbleAudio({ ...target, text: stored, audioUrl: undefined }, true);
+    const rereadSeq = nextAudioSeq();
+    const url = await ensureCallBubbleAudio({ ...target, text: stored, audioUrl: undefined }, true, rereadSeq);
     if (!url) {
       addToast('合成失败，字已改好', 'info');
       return;
     }
+    if (rereadSeq !== audioSeqRef.current) return;   // 期间被静音/挂断 ⇒ 不播
     // 时长估算按「念出来的那半」算（合成用的也是 next）：拿整条 stored 算会把标签外
     // 的中文字幕一起数进去，估出来的时长偏长 → 进度圈和跟读节奏都被拖慢。
-    playAudio(url, target.performanceTimeline, estimateSpeechMs(next), true);
+    playAudio(url, target.performanceTimeline, estimateSpeechMs(next), true, undefined, rereadSeq);
     setSpeakingTrack({ bubbleId: target.id, p: 0, t: 0 });
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
@@ -3169,17 +3325,24 @@ ${sentencePlan}`;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
           setCallState('thinking');
-          const { url: rerollAudioUrl, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(rerolled), rerollReply.speechEmotion);
-          if (rerollAudioUrl) {
+          const seq = nextAudioSeq();
+          const { url: rerollAudioUrl, timeline } = await takeOrSynthesizeCallAudio(
+            callSpeechSource(rerolled),
+            rerollReply.speechEmotion,
+            false,
+            { source: rerolled, thinkingOnly: rerollReply.usedReasoningOnly },
+            seq,
+          );
+          if (rerollAudioUrl && seq === audioSeqRef.current) {
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
             setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl, speechTimeline: timeline ?? null } : b));
-            startReplyPlayback(rerollAudioUrl, rerollReply.performanceCues, rerolled, bubble.id);
+            startReplyPlayback(rerollAudioUrl, rerollReply.performanceCues, rerolled, bubble.id, seq);
             rerollAudioPlayed = true;
           }
         } catch (ttsErr: any) {
           console.warn('[call] reroll TTS failed:', ttsErr?.message);
-          addToast('语音合成失败，已保留文本', 'info');
+          addToast(isCallSpeechBlocked(ttsErr) ? String(ttsErr?.message || '这条没念') : '语音合成失败，已保留文本', 'info');
         }
       }
       if (!rerollAudioPlayed && callMode === 'video' && callPreferences.voiceAutoPlay) {
@@ -3245,16 +3408,24 @@ ${sentencePlan}`;
       let playbackStarted = false;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
-          const { url, timeline } = await takeOrSynthesizeCallAudio(callSpeechSource(reply.text), reply.speechEmotion);
-          if (url) {
+          const seq = nextAudioSeq();
+          const { url, timeline } = await takeOrSynthesizeCallAudio(
+            callSpeechSource(reply.text),
+            reply.speechEmotion,
+            false,
+            { source: reply.text, thinkingOnly: reply.usedReasoningOnly },
+            seq,
+          );
+          if (url && seq === audioSeqRef.current) {
             trackBlobUrl(url);
             setAudioUrl(url);
             setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url, speechTimeline: timeline ?? null } : bubble));
-            startReplyPlayback(url, reply.performanceCues, reply.text, nudgeBubble.id);
+            startReplyPlayback(url, reply.performanceCues, reply.text, nudgeBubble.id, seq);
             playbackStarted = true;
           }
-        } catch {
-          // 主动开口拿不到语音时保留文字，并按当前播放偏好降级。
+        } catch (error: any) {
+          // 主动开口拿不到语音时保留文字，并按当前播放偏好降级；被闸门拦下的话给一句人话提示。
+          if (isCallSpeechBlocked(error)) addToast(String(error?.message || '这条没念'), 'info');
         }
       }
       if (!playbackStarted) {
@@ -3932,7 +4103,8 @@ ${sentencePlan}`;
           onSpeaker={() => {
             const next = !isSpeakerOn;
             setIsSpeakerOn(next);
-            if (!next && isAudioPlaying) pauseAudio();
+            // Bug 3：关外放 = 停掉**全部**通话音频（当前那条 + 排队/在途的），不只是当前一条。
+            if (!next) stopAllCallAudio();
             if (next) primeCallAudioFromGesture(true);
           }}
           onMic={() => { void toggleStt(); }}
@@ -3942,7 +4114,7 @@ ${sentencePlan}`;
           onTranslateTap={() => setTranslateVisible(v => !v)}
           onTranslateHold={() => setShowLangPicker(true)}
           onHangup={handleHangup}
-          onSend={() => { void handleTurn(); }}
+          onSend={() => { void handleTurn().catch((err: any) => addToast(`发送失败：${err?.message || '未知错误'}`, 'error')); }}
           onDraft={setDraftInput}
           onPlayAssistant={(bubble) => { void handlePlayBubbleAudio(bubble as CallBubble); }}
           onDownload={(bubble) => { void handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp); }}
@@ -4522,7 +4694,7 @@ ${sentencePlan}`;
                   className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
                   placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
                 />
-                <button onClick={() => handleTurn()} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
+                <button onClick={() => { void handleTurn().catch((err: any) => addToast(`发送失败：${err?.message || '未知错误'}`, 'error')); }} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
               </>
             )}
           </div>
@@ -4576,7 +4748,8 @@ ${sentencePlan}`;
             onClick={() => {
               const next = !isSpeakerOn;
               setIsSpeakerOn(next);
-              if (!next && isAudioPlaying) pauseAudio();
+              // Bug 3：关外放 = 停掉**全部**通话音频（当前那条 + 排队/在途的）。
+              if (!next) stopAllCallAudio();
               if (next) primeCallAudioFromGesture(true);
             }}
             title={isSpeakerOn ? '外放开启' : '外放关闭'}
