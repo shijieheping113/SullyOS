@@ -381,6 +381,12 @@ export interface APIConfig {
 export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
 export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
 
+export interface ActiveMsg2ApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface ActiveMsg2GlobalConfig {
   userId: string;
   /** 单用户 Cloudflare Worker 地址，例如 https://amsg.your-worker.dev */
@@ -518,6 +524,8 @@ export interface ActiveMsg2CharacterConfig {
   allowSelfRecurring?: boolean;
   /** 角色能不能自己排「到点必发」（用户正在聊天也照发）的消息。没设 = 不能。 */
   allowSelfForce?: boolean;
+  useSecondaryApi?: boolean;
+  secondaryApi?: ActiveMsg2ApiConfig;
   lastSyncedAt?: number;
   lastError?: string;
 }
@@ -3100,6 +3108,12 @@ export interface CharacterProfile {
   proactiveConfig?: {
     enabled: boolean;
     intervalMinutes: number; // 30, 60, 120, 240, etc.
+    useSecondaryApi?: boolean;
+    secondaryApi?: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
   };
 
   // 情绪Buff系统
