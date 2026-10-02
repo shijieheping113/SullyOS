@@ -6,6 +6,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import https from 'node:https';
 import crypto from 'node:crypto';
 import { bakeVoiceMiddleware } from './server/bake-voice-middleware';
+import { staticCachePlugin } from './scripts/static-cache-build';
+import { APP_VERSION_TAG } from './utils/appVersion';
 
 // MiniMax 国服 / 海外是两套域名，前端每个请求都带 X-MiniMax-Region 头说明走哪边。
 // Vite 的开发代理底层是 http-proxy，不认 router 选项，所以在 configure 里包一层 proxy.web，
@@ -64,6 +66,8 @@ function readCommit(): string {
 
 const gitInfo = { branch: readBranch(), commit: readCommit() };
 const buildTime = formatBuildTimeUtc8();
+// 开头是构建时间（36 进制），网页更新靠它比较两个版本谁新谁旧，别改掉这个前缀。
+const appBuildId = `${Date.now().toString(36)}-${gitInfo.commit}`;
 const isReleaseBranch = RELEASE_BRANCHES.has(gitInfo.branch);
 let showBuildBadge = false; // Ann 2026-09-16：永久关闭右下角测试版本号（想看时挂 VITE_SHOW_BUILD_BADGE=1）
 if (process.env.VITE_HIDE_BUILD_BADGE === '1') showBuildBadge = false;
@@ -97,6 +101,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    staticCachePlugin({ buildId: appBuildId, appVersion: APP_VERSION_TAG }),
     {
       name: 'bake-voice-middleware',
       configureServer(server) {
@@ -162,6 +167,7 @@ export default defineConfig({
     __BUILD_TIME__: JSON.stringify(buildTime),
     __BUILD_BADGE_VISIBLE__: JSON.stringify(showBuildBadge),
     __FORK_BACKUP_UI_VISIBLE__: JSON.stringify(forkBackupUiVisible),
+    __APP_BUILD_ID__: JSON.stringify(appBuildId),
   },
   // GitHub Pages 发布时使用相对路径，避免仓库子路径导致资源 404
   base: process.env.GITHUB_PAGES ? './' : '/',
@@ -264,7 +270,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    assetsDir: 'assets',
+    assetsDir: 'assets/build',
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
       // 关键修复：将这些包排除在打包之外，让浏览器通过 index.html 的 importmap 加载

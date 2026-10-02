@@ -276,6 +276,8 @@ const defaultRealtimeConfig: RealtimeConfig = {
 // 记忆宫殿全局配置（所有角色共用 embedding、副 LLM 和 rerank）
 export interface MemoryPalaceGlobalConfig {
   relativeTimeAnnotations?: boolean;
+  manualMaintenance?: boolean;
+  maintenanceIntervalSeconds?: number;
   embedding: {
     baseUrl: string;
     apiKey: string;
@@ -310,6 +312,8 @@ const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
 
 const normalizeMemoryPalaceConfig = (value?: Partial<MemoryPalaceGlobalConfig> | null): MemoryPalaceGlobalConfig => ({
   relativeTimeAnnotations: value?.relativeTimeAnnotations === true,
+  manualMaintenance: value?.manualMaintenance === true,
+  maintenanceIntervalSeconds: Math.max(1, Math.min(3600, Number(value?.maintenanceIntervalSeconds) || 60)),
   embedding: { ...defaultMemoryPalaceConfig.embedding, ...(value?.embedding || {}) },
   lightLLM: { ...defaultMemoryPalaceConfig.lightLLM, ...(value?.lightLLM || {}) },
   rerank: { ...defaultMemoryPalaceConfig.rerank, ...(value?.rerank || {}) },
@@ -2370,10 +2374,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return;
           }
 
-          // Determine which API to use
-          const pCfg = char.proactiveConfig;
-          const useSecondary = pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl;
-          const api = useSecondary ? pCfg!.secondaryApi! : currentApiConfig;
+          // 页面内主动消息也统一使用聊天主 API，忽略旧备份中的副 API 配置。
+          const api = currentApiConfig;
           if (!api.baseUrl) {
               drainQueuedProactive();
               return;
@@ -2381,7 +2383,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           proactiveRunningRef.current = true;
           setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
-          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
+          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}`);
 
           try {
               // 1. Calculate time gap

@@ -1,3 +1,4 @@
+import { stoppedReplyStateEntries } from './amsgStoppedReplyClient';
 import { loadCharacterContextMessages } from './chatContextRange';
 import { ReiClient } from '@rei-standard/amsg-client';
 import {
@@ -565,9 +566,8 @@ const initializeClient = (config: ActiveMsg2GlobalConfig) => {
   return promise;
 };
 
-const resolveApiConfig = (char: CharacterProfile, config: ActiveMsg2CharacterConfig, apiConfig: APIConfig) => {
-  const useSecondary = config.useSecondaryApi && config.secondaryApi?.baseUrl;
-  const source = useSecondary ? config.secondaryApi! : apiConfig;
+const resolveApiConfig = (_char: CharacterProfile, _config: ActiveMsg2CharacterConfig, apiConfig: APIConfig) => {
+  const source = apiConfig;
 
   if (!source.baseUrl || !source.apiKey || !source.model) {
     throw new Error('主动消息 2.0 缺少可用的 API URL / Key / Model。');
@@ -576,12 +576,7 @@ const resolveApiConfig = (char: CharacterProfile, config: ActiveMsg2CharacterCon
   return source;
 };
 
-/**
- * 一个角色的 AI 任务此刻该用的凭据补丁（update-message 载荷）。
- * 生效凭据的算法与排程时同一份 resolveApiConfig：角色开了单独 API 就写单独 API 的值，
- * 没开才用全局聊天 API——凭据刷新绝不能把单独 API 的任务盖成全局凭据。
- * 凭据配不齐（比如单独 API 缺字段）沿用 resolveApiConfig 的抛错，调用方按角色记失败。
- */
+/** 存量内联任务的凭据补丁，与新排程一样取聊天主 API。 */
 const resolveTaskCredentialUpdates = (
   char: CharacterProfile,
   config: ActiveMsg2CharacterConfig,
@@ -1414,6 +1409,7 @@ const buildCharStateEntries = async (
   firePack: AmsgFirePack,
   updatedAt: number,
 ) => [
+  ...(await stoppedReplyStateEntries(char.id)).map(entry => ({ ...entry, namespace: amsgStateNamespace(char.id), updatedAt })),
   buildLimitsEntry(char, updatedAt),
   {
     namespace: amsgStateNamespace(char.id),
@@ -2410,8 +2406,9 @@ export const ActiveMsgClient = {
   },
 
   async scheduleCharacterTask(params: {
+    signal?: AbortSignal;
     char: CharacterProfile;
-    /** 角色级共享设置（secondaryApi / maxTokens）。 */
+    /** 角色级共享设置（maxTokens）。 */
     config: ActiveMsg2CharacterConfig;
     /** 本次要排的任务。 */
     task: {
@@ -2562,9 +2559,11 @@ export const ActiveMsgClient = {
     if (credRow) await putLlmCredentialRows([credRow]);
 
     const postSchedule = async () => {
+      params.signal?.throwIfAborted();
       const encrypted = await encryptPayload(client, payload);
       return fetchWithAuth('schedule-message', globalConfig, {
         method: 'POST',
+        signal: params.signal,
         headers: {
           'Content-Type': 'application/json',
           'X-Payload-Encrypted': 'true',
@@ -2805,13 +2804,13 @@ export const ActiveMsgClient = {
    * 绝不退回本地生成——静默分流那种查无可查的坑踩过一次就够了。
    */
   async sendInstantChat(params: {
+    uuid?: string;
+    signal?: AbortSignal;
     char: CharacterProfile;
     /** 本地生成会 POST 给 /chat/completions 的那串 fullMessages，原样带上去。 */
     chatMessages: Array<{ role: string; content: unknown }>;
     /**
      * 这一轮该用的聊天凭据——**必须是本地生成那一轮会用的同一份**（effectiveApi）。
-     * 换成主动消息的「角色单独 API」的话，同一句话开不开即时对话会由不同的模型来答，
-     * 而用户完全看不出这件事发生过。
      */
     api: { baseUrl: string; apiKey: string; model: string };
     /**
@@ -2843,11 +2842,13 @@ export const ActiveMsgClient = {
     /** 上一条还没被认领的即时对话任务，连发两条时用它顶掉（合并成一起回）。 */
     supersedesUuid?: string;
   }): Promise<{ uuid: string; clientTaskId: string }> {
+    params.signal?.throwIfAborted();
     const { char, chatMessages, api, userProfile, groups, realtimeConfig } = params;
     if (!api.baseUrl || !api.model) throw new Error('即时对话没发出去：聊天 API 地址或模型没配齐。');
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
 
+    params.signal?.throwIfAborted();
     const now = Date.now();
     const tzId = resolveCharTimeZone(char) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     // 模板只有定时任务那条路才渲染：角色 2.0 关着（云端 fire 不注入排程工具，排不出
@@ -2864,6 +2865,7 @@ export const ActiveMsgClient = {
 
     const clientTaskId = crypto.randomUUID();
 
+    params.signal?.throwIfAborted();
     // ── 这一轮的凭据走引用还是内联 ──
     //
     // 走引用时两行一起登记：
@@ -2902,6 +2904,7 @@ export const ActiveMsgClient = {
 
     const remoteAvatarUrl = toRemoteAvatarUrl(char.avatar);
     const taskPayload: Record<string, unknown> = {
+      ...(params.uuid ? { uuid: params.uuid } : {}),
       contactName: char.name,
       ...(remoteAvatarUrl ? { avatarUrl: remoteAvatarUrl } : {}),
       // 用 'auto' 而不是 'instant'：'instant' 在上游是「当场跑完」的行型，走不到 fire hooks，
@@ -2991,16 +2994,22 @@ export const ActiveMsgClient = {
     // 旧 bundle 的 worker 不认 credPayload，凭据行还得靠这一步单独登记（上游建任务前会
     // 挨个查引用）。只有值跟底账不一样才真的发请求，常态下是零请求；新 bundle 上它最多是
     // 值刚变的那一轮多写一遍。
+    params.signal?.throwIfAborted();
     if (credRows.length > 0) await putLlmCredentialRows(credRows);
 
-    const postInstantChat = () => fetchWithAuthRaw('instant-chat', globalConfig, {
-      method: 'POST',
-      // 外壳是明文：里头两个信封已经加密好，别再给外壳挂加密头（包装层会当它是整体密文）。
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ statePayload, taskPayload: encryptedTask, ...(credPayload ? { credPayload } : {}) }),
-    }, '即时对话');
+    const postInstantChat = () => {
+      params.signal?.throwIfAborted();
+      // 已发出的受理请求读完 UUID 后再取消，避免请求断开却留下不知道身份的任务。
+      return fetchWithAuthRaw('instant-chat', globalConfig, {
+        method: 'POST',
+        // 外壳是明文：里头两个信封已经加密好，别再给外壳挂加密头（包装层会当它是整体密文）。
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ statePayload, taskPayload: encryptedTask, ...(credPayload ? { credPayload } : {}) }),
+      }, '即时对话');
+    };
 
     let { status, body } = await postInstantChat();
+    if (status !== 202) params.signal?.throwIfAborted();
     // 云端说引用的凭据不存在（本地底账脏了）：绕过指纹强传一次再发一次，只自愈一次。
     // 包装层把上游那份原样塞在 error.upstream 里，所以要往里再剥一层看错误码。
     if (status !== 202 && credRows.length > 0 && isCredentialNotFound(body)) {
@@ -3242,7 +3251,7 @@ export const ActiveMsgClient = {
    * 列出云端 client_state 里有哪些命名空间，各占多少。给「云端数据」清点用。
    *
    * 这是唯一一条能发现「本地已经没有、云端只剩一份上下文」的角色的线索：任务表和凭据
-   * 表都问不到它们（没排过任务、没配过单独 API），而角色命名空间在 worker 侧没有 TTL，
+   * 表都问不到它们（还没创建过任务或凭据行），而角色命名空间在 worker 侧没有 TTL，
    * 不主动去看就永远不知道它在那儿。
    *
    * 要用户那台 worker 更新到带 `client-state-namespaces` 的版本。老 worker 上那条路由
@@ -3544,6 +3553,8 @@ export const ActiveMsgClient = {
     config: ActiveMsg2CharacterConfig;
     apiConfig: APIConfig;
     tasks: ActiveMsg2TaskRecord[];
+    /** 全局刷新已读过列表时复用，避免每个角色再读一遍。 */
+    remoteTasks?: any[];
   }): Promise<{
     status: 'no-tasks' | 'ok' | 'partial';
     updated: number;
@@ -3554,57 +3565,88 @@ export const ActiveMsgClient = {
       .map((t) => t.taskUuid);
     if (aiTaskUuids.length === 0) return { status: 'no-tasks', updated: 0, failed: 0 };
 
-    const updates = resolveTaskCredentialUpdates(params.char, params.config, params.apiConfig);
-    const { updated, failed } = await this.updatePendingTasksRemote(aiTaskUuids, updates);
-    return { status: failed.length ? 'partial' : 'ok', updated, failed: failed.length };
+    const inlineUpdates = resolveTaskCredentialUpdates(params.char, params.config, params.apiConfig);
+    const remoteTasks = params.remoteTasks ?? await this.listAllTasks();
+    const remoteByUuid = new Map(remoteTasks.map((task) => [task.uuid, task]));
+    const credRow = buildCharChatCredRow(params.char, params.config, params.apiConfig)!;
+    // 引用任务不能写内联凭据；先确保主 API 行存在，再改 chat 引用。其它 purpose 原样保留。
+    if (aiTaskUuids.some((uuid) => remoteByUuid.get(uuid)?.credRefs?.chat)) {
+      await this.putLlmCredentials([credRow]);
+    }
+    let updated = 0;
+    let failed = 0;
+    for (const uuid of aiTaskUuids) {
+      const refs = remoteByUuid.get(uuid)?.credRefs;
+      const updates = refs?.chat
+        ? { credRefs: { ...refs, chat: credRow.credId } }
+        : inlineUpdates;
+      const result = await this.updatePendingTasksRemote([uuid], updates);
+      updated += result.updated;
+      failed += result.failed.length;
+    }
+    return { status: failed ? 'partial' : 'ok', updated, failed };
   },
 
   /**
-   * 聊天 API 配置保存后，把新凭据写回还会响的远端 AI 任务（设置页保存路径调）。
-   * 任务体里的 apiUrl / apiKey / primaryModel 是排程那一刻冻结的——换了 Key、
-   * 旧 Key 吊销后，已排程任务到点全部 401，用户只看到「主动消息怎么不来了」。
-   *
-   * 范围：开着 2.0（enabled:true）且有 pending AI 任务（mode !== 'fixed'）的
-   * 角色。fixed 不走 LLM 用不到凭据；关掉 2.0 的角色残留任务是「待取消」而不是
-   * 「待续命」，不给它们续新凭据。生效凭据按 resolveTaskCredentialUpdates 算——
-   * 开了单独 API 的角色写的是单独 API 的值，不会被全局配置覆盖。
+   * 主 API 变更 / 启动时同步存量任务。远端列表补齐关闭页面期间角色自己排的任务；
+   * 即时对话和后台作业各有自己的凭据生命周期，不在这里改它们的请求终值。
    */
   async refreshApiCredentialsForPendingTasks(apiConfig: APIConfig): Promise<{
     status: 'no-tasks' | 'ok' | 'partial';
     updated: number;
     failed: number;
   }> {
-    const now = Date.now();
-    const targets = (await DB.getAllCharacters())
-      .filter((char) => isAmsg2EnabledForChar(char))
-      .map((char) => ({
-        char,
-        config: char.activeMsg2Config ?? { enabled: true },
-        aiTaskUuids: getPendingTasks(char.activeMsg2Config, now)
-          .filter((t) => t.mode !== 'fixed')
-          .map((t) => t.taskUuid),
-      }))
-      .filter((item) => item.aiTaskUuids.length > 0);
-    // 没有要刷的任务直接返回：没配 2.0 的用户每次保存 API 不该多打一个请求。
-    if (targets.length === 0) return { status: 'no-tasks', updated: 0, failed: 0 };
-
+    const characters = (await DB.getAllCharacters()).filter(isAmsg2EnabledForChar);
+    if (!characters.length) return { status: 'no-tasks', updated: 0, failed: 0 };
+    const remoteTasks = await this.listAllTasks();
     let updated = 0;
     let failed = 0;
-    for (const item of targets) {
-      let updates: Record<string, unknown>;
-      try {
-        updates = resolveTaskCredentialUpdates(item.char, item.config, apiConfig);
-      } catch (error) {
-        // 这个角色的凭据配不齐（多半是单独 API 缺字段），整组记失败，别拦着其他角色。
-        console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 角色凭据解析失败，跳过其任务的凭据刷新`, item.char.id, error);
-        failed += item.aiTaskUuids.length;
-        continue;
+    let hasTasks = false;
+    for (const char of characters) {
+      const tasksByUuid = new Map(getPendingTasks(char.activeMsg2Config, Date.now())
+        .filter((task) => task.mode !== 'fixed').map((task) => [task.taskUuid, task]));
+      for (const remote of remoteTasks) {
+        if (remote.charId !== char.id || remote.status !== 'pending') continue;
+        if (remote.messageType !== 'auto' && remote.messageType !== 'prompted') continue;
+        if (remote.messageSubtype === AMSG_INSTANT_CHAT_SUBTYPE) {
+          // 上游自排会继承父任务的 subtype。只看标签会漏掉从即时对话排出的子任务；
+          // 读 metadata 确认是自排任务，不能改用户正在等待的那一轮即时回复。
+          try {
+            const globalConfig = await ensureWorkerReady();
+            const response = await fetchWithAuth(`message?id=${encodeURIComponent(remote.uuid)}`, globalConfig, {
+              method: 'GET',
+              headers: { 'X-Response-Encrypted': 'true', 'X-Encryption-Version': '1' },
+            }, '查询任务凭据');
+            if (!response?.success) {
+              const code = response?.error?.code;
+              if (code === 'TASK_NOT_FOUND' || code === 'TASK_ALREADY_COMPLETED') continue;
+              throw new Error(response?.error?.message || '读取任务失败');
+            }
+            const client = await initializeClient(globalConfig);
+            const metadata = (await decryptPayload(client, response.data))?.task?.metadata;
+            if (metadata?.amsgInstantChat || metadata?.amsgSelfScheduled !== true) continue;
+          } catch {
+            failed += 1;
+            continue;
+          }
+        } else if (remote.messageSubtype && remote.messageSubtype !== 'chat') continue;
+        tasksByUuid.set(remote.uuid, { taskUuid: remote.uuid, mode: remote.messageType } as ActiveMsg2TaskRecord);
       }
-      const result = await this.updatePendingTasksRemote(item.aiTaskUuids, updates);
-      updated += result.updated;
-      failed += result.failed.length;
+      const tasks = [...tasksByUuid.values()];
+      if (!tasks.length) continue;
+      hasTasks = true;
+      try {
+        const result = await this.refreshCharPendingAiTaskCredentials({
+          char, config: char.activeMsg2Config!, apiConfig, tasks, remoteTasks,
+        });
+        updated += result.updated;
+        failed += result.failed;
+      } catch (error) {
+        console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 任务凭据同步失败，下次重试`, char.id, error);
+        failed += tasks.length;
+      }
     }
-    return { status: failed ? 'partial' : 'ok', updated, failed };
+    return { status: failed ? 'partial' : hasTasks ? 'ok' : 'no-tasks', updated, failed };
   },
 
   /**
