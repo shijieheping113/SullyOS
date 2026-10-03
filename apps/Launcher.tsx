@@ -66,7 +66,7 @@ const DesktopClock = React.memo(() => {
     }
 
     return (
-        <div className="flex flex-col mb-5 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
+        <div className="launcher-clock flex flex-col mb-5 mt-5 relative animate-fade-in min-w-0 max-w-full" style={{ color: contentColor }}>
             {/* 顶部装饰 — 状态胶囊 + 细线 */}
             <div className="flex items-center gap-2 mb-3 opacity-90">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
@@ -87,9 +87,9 @@ const DesktopClock = React.memo(() => {
             </div>
 
             {/* 主时钟 */}
-            <div className="flex items-end gap-4">
-                <div className="relative">
-                    <div className={`${serifClock ? 'text-[5.65rem] font-semibold tracking-[-0.055em] drop-shadow-[0_2px_0_rgba(255,255,255,0.34)]' : 'text-[6.25rem] font-black tracking-tighter drop-shadow-2xl'} leading-[0.84]`}
+            <div className="flex items-end gap-4 min-w-0 max-w-full">
+                <div className="relative min-w-0">
+                    <div className={`${serifClock ? 'text-[5.65rem] font-semibold tracking-[-0.055em] drop-shadow-[0_2px_0_rgba(255,255,255,0.34)]' : 'launcher-clock-bold font-black tracking-tighter drop-shadow-2xl'} leading-[0.84]`}
                         style={{ fontFamily: clockStyle === 'system' ? 'inherit' : serifClock ? `'Iowan Old Style', 'Baskerville', 'Times New Roman', serif` : `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
                         <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
@@ -100,7 +100,7 @@ const DesktopClock = React.memo(() => {
                         style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />}
                 </div>
 
-                <div className="flex flex-col justify-end pb-2.5 gap-0.5">
+                <div className="flex flex-col justify-end pb-2.5 gap-0.5 shrink-0">
                     <div className="text-[10px] font-bold tracking-[0.22em] opacity-85">{dayName}</div>
                     <div className="flex items-baseline gap-1">
                         <div className="text-2xl font-black leading-none" style={{ fontFamily: `'Space Grotesk', sans-serif` }}>{dateNum}</div>
@@ -973,7 +973,13 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
     >
       <style>{`
         .launcher-pages { min-height: 0; }
+        .launcher-clock { container-type: inline-size; }
+        .launcher-clock-bold {
+          font-size: 6.25rem;
+          font-size: min(6.25rem, calc((100cqi - 5.25rem) / 2.46));
+        }
         .launcher-page {
+          overflow-x: hidden;
           overflow-y: auto;
           overscroll-behavior-y: contain;
           padding-top: max(3rem, calc(var(--chrome-top, 24px) + 12px));
