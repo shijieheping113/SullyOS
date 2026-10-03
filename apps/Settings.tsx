@@ -43,6 +43,7 @@ import McpConnectionConsole from '../components/settings/McpConnectionConsole';
 import { DB } from '../utils/db';
 import { getBackupReminderState, setBackupReminderIntervalDays, daysSinceLastBackup, BACKUP_REMINDER_MIN_DAYS, BACKUP_REMINDER_MAX_DAYS } from '../utils/backupReminder';
 import { isForkBackupUiVisible } from '../utils/forkBackupUiVisible';
+import CharacterMoveCard from '../components/settings/CharacterMoveCard';
 import {
     createAvatarModelBackup,
     getAvatarModelBackupInventory,
@@ -2380,6 +2381,8 @@ const Settings: React.FC = () => {
                     </p>
                 </div>
             )}
+
+            <CharacterMoveCard characters={characters} addToast={addToast} />
 
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
                 • <b>整合导出</b>: 一次性导出文字与图片媒体；VRM / Live2D 模型请使用下方独立备份。<br/>
