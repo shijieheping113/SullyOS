@@ -3947,6 +3947,7 @@ export default {
     }
 
     // 火山：双向流式语音识别的 WebSocket 中转（浏览器 ⇄ Worker ⇄ 火山）
+    // 必须先连上火山再把手机接进来。先接手机再连火山会把启动包和声音包排乱，表现为连上了但识别不到字。
     if (url.pathname === '/volc-ws') {
       const key = (url.searchParams.get('key') || '').trim();
       const reqId = (url.searchParams.get('request_id') || crypto.randomUUID()).trim();
@@ -3972,10 +3973,14 @@ export default {
       }
       // 两端对吹：任意一边的消息 / 关闭 / 错误都转给另一边。半开是刻意的 ——
       // 火山收到负包后会自己收尾关闭，客户端也要收到那次关闭。
+      // compatibility_date >= 2026-03-17 时，二进制帧默认是 Blob。豆包整条协议都是二进制，
+      // 不在 accept 前改成 arraybuffer，send 会失败并被下面的空 catch 丢掉，表现为连上了但没识别出字。
+      upstreamWs.binaryType = "arraybuffer";
       upstreamWs.accept({ allowHalfOpen: true });
       const pair = Object.values(new WebSocketPair());
       const client = pair[0];
       const server = pair[1];
+      server.binaryType = "arraybuffer";
       server.accept();
       upstreamWs.addEventListener('message', (event) => { try { server.send(event.data); } catch (e) { /* ignore */ } });
       upstreamWs.addEventListener('close', (event) => { try { server.close(event.code, event.reason); } catch (e) { /* ignore */ } });

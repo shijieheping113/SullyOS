@@ -29,6 +29,40 @@ export interface SttCallbacks {
 
 export type SttStatus = 'connecting' | 'recording' | 'muted' | 'stopping' | 'done';
 
+/** 启动还没完成时用户关掉录音条：麦克风和火山连接都要立刻停，不能等连上再改界面。 */
+export interface SttAbort {
+  aborted: boolean;
+  cancel: () => void;
+  onAbort: (fn: () => void) => void;
+}
+
+export function createSttAbort(): SttAbort {
+  const fns: Array<() => void> = [];
+  const abort: SttAbort = {
+    aborted: false,
+    onAbort: (fn) => {
+      if (abort.aborted) fn();
+      else fns.push(fn);
+    },
+    cancel: () => {
+      if (abort.aborted) return;
+      abort.aborted = true;
+      const pending = fns.splice(0, fns.length);
+      for (const fn of pending) {
+        try { fn(); } catch { /* ignore */ }
+      }
+    },
+  };
+  return abort;
+}
+
+export class SttCancelled extends Error {
+  constructor() {
+    super('已取消');
+    this.name = 'SttCancelled';
+  }
+}
+
 export interface SttSession {
   /** 停止录音并收尾（发负包/切尾段），返回后可安全开始下一次。 */
   stop: () => Promise<void>;
@@ -227,7 +261,10 @@ export const sttDebug = (msg: string) => { if (STT_DEBUG) { try { window.alert(`
 export async function startVoiceInput(
   cfg: SttApiConfig,
   cb: SttCallbacks,
+  abort?: SttAbort,
+  isFeedPaused?: () => boolean,
 ): Promise<SttSession> {
+  if (abort?.aborted) throw new SttCancelled();
   if (!isSttSupported()) throw new Error('当前浏览器不支持录音（需要 HTTPS + 麦克风权限）');
 
   const engine: SttEngineId = cfg.engine || 'doubao';
@@ -241,7 +278,19 @@ export async function startVoiceInput(
 
   // 公共录音链路
   sttDebug(`1/4 准备申请麦克风（engine=${engine}）…`);
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  let stream: MediaStream | null = null;
+  let releaseAudio = () => {};
+  const stopHardware = () => {
+    releaseAudio();
+    stream?.getTracks().forEach(t => t.stop());
+    stream = null;
+  };
+  abort?.onAbort(stopHardware);
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (abort?.aborted) {
+    stopHardware();
+    throw new SttCancelled();
+  }
   sttDebug('2/4 麦克风已拿到 ✓（权限通过了）');
   const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
   const rate = ctx.sampleRate;
@@ -258,13 +307,20 @@ export async function startVoiceInput(
     try { proc.disconnect(); } catch { /* ignore */ }
     try { muteGain.disconnect(); } catch { /* ignore */ }
     try { ctx.close(); } catch { /* ignore */ }
-    stream.getTracks().forEach(t => t.stop());
+    stream?.getTracks().forEach(t => t.stop());
+    stream = null;
   };
+  releaseAudio = cleanupAudio;
+  if (abort?.aborted) {
+    stopHardware();
+    throw new SttCancelled();
+  }
   const ec: EngineCtx = {
     proc, rate,
     getStopped: () => stopped,
     setStop: (fn) => { stopExecutor = fn; },
     pauseFlag: { paused: false },
+    feedPaused: isFeedPaused,
     recChunks: [],
     recSamples: 0,
     pushRec: (d16: Float32Array) => {
@@ -277,7 +333,7 @@ export async function startVoiceInput(
 
   try {
     if (engine === 'doubao') {
-      await startDoubao(cfg, cb, ec);
+      await startDoubao(cfg, cb, ec, abort);
     } else {
       await startSegmentEngine(engine, cfg, cb, hotwords, emotionOn, ec);
     }
@@ -285,6 +341,12 @@ export async function startVoiceInput(
     // 引擎启动失败（Key 体检不过、连接超时等）：立刻释放麦克风，别让录音灯一直亮
     cleanupAudio();
     throw err;
+  }
+  if (abort?.aborted) {
+    stopped = true;
+    try { await stopExecutor?.(); } catch { /* ignore */ }
+    cleanupAudio();
+    throw new SttCancelled();
   }
 
   return {
@@ -354,13 +416,15 @@ interface EngineCtx {
   setStop: (fn: () => Promise<void>) => void;
   /** 暂停喂引擎（录音继续）：打电话防回声用 */
   pauseFlag: { paused: boolean };
+  /** 聊天外放语音时由界面提供。每帧都问，避免播放声被送去计费。 */
+  feedPaused?: () => boolean;
   /** 完整录音缓存（16k，含静音段）：聊天语音消息回放用。引擎喂帧回调里顺手调 pushRec。 */
   recChunks: Float32Array[];
   recSamples: number;
   pushRec: (d16: Float32Array) => void;
 }
 
-async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): Promise<void> {
+async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx, abort?: SttAbort): Promise<void> {
   const key = (cfg.volcApiKey || '').trim();
   const reqId = uuid();
   const emotionOn = cfg.emotionEnabled !== false;
@@ -378,24 +442,8 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
   let sendChain: Promise<void> = Promise.resolve();
   const loggedKeys = new Set<string>();    // 定句去重（服务端每封回信带全量分句）
 
-  // --- Key 体检：让 vite 替咱们向火山做一次真实握手，拒绝理由拿到明面上 ---
-  let verdict: { ok: boolean; status?: number; body?: string } | null = null;
-  try {
-    sttDebug('3/4 正在做火山 Key 体检（本地代理 → 自建 Worker）…');
-    const checkPath = `/volc-check?key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`;
-    const probeInit: RequestInit = { method: 'GET' };
-    const r = await fetchViaProxy({
-      local: { url: `/api${checkPath}`, init: probeInit },
-      worker: { url: workerProxyUrl(checkPath), init: probeInit },
-    });
-    verdict = await r.json();
-    sttDebug(`Key 体检结果: ok=${verdict?.ok} status=${verdict?.status ?? '-'}`);
-  } catch (e: any) {
-    throw new Error('连不上语音识别中转（' + (e?.message || e) + '）：本地开发请确认电脑上的服务在跑；部署后的站点请到「设置 → 网络代理 (Worker)」填对自己的 Worker 地址');
-  }
-  if (verdict && !verdict.ok) {
-    throw new Error(`火山拒绝握手：HTTP ${verdict.status} ${verdict.body || ''}（检查 Key 是否有效、是否开通「豆包流式语音识别2.0」）`);
-  }
+  // 不再在正式通道之前做一次火山握手体检。那一次会单独连上再关掉，
+  // 聊天和电话每次开录都要白等好几秒。钥匙不对时，下面的正式通道会直接失败。
 
   // --- 喂帧队列：必须在 WS 建立之前定义！---
   // onopen 一触发就会同步调用 enqueue 发启动包；如果把它定义在
@@ -407,35 +455,48 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
   // --- 建立 WS 语音通道 ---
   const volcQuery = `key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`;
   await new Promise<void>((resolve, reject) => {
+    if (abort?.aborted) { reject(new SttCancelled()); return; }
     // 本地开发走同源转发；部署成静态站点后没有那层转发，自动改用自建 Worker。
     const candidates = voiceSocketUrls(`/api/volc-ws?${volcQuery}`, `/volc-ws?${volcQuery}`);
     let settled = false;
+    let sock: WebSocket | null = null;
+
+    const giveUp = () => {
+      try { sock?.close(); } catch { /* ignore */ }
+      if (settled) return;
+      settled = true;
+      reject(new SttCancelled());
+    };
+    abort?.onAbort(giveUp);
 
     const connect = (index: number) => {
+      if (abort?.aborted) { giveUp(); return; }
       const isLast = index >= candidates.length - 1;
-      const sock = new WebSocket(candidates[index]);
+      sock = new WebSocket(candidates[index]);
+      const current = sock;
       let active = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
-      sock.binaryType = 'arraybuffer';
+      current.binaryType = 'arraybuffer';
       const clearTimer = () => { if (timer !== null) { clearTimeout(timer); timer = null; } };
       // 这条候选连不上就换下一条：先本地开发服务器，再自建 Worker。
       const fail = (reason: string) => {
         clearTimer();
-        if (settled) return;
+        if (settled || abort?.aborted) return;
         if (isLast) { settled = true; reject(new Error(reason)); return; }
         connect(index + 1);
       };
       timer = setTimeout(() => {
-        try { sock.close(); } catch { /* ignore */ }
+        try { current.close(); } catch { /* ignore */ }
         fail('连接火山超时（8秒）');
       }, 8000);
 
-      sock.onopen = () => {
+      current.onopen = () => {
+        if (abort?.aborted) { giveUp(); return; }
         clearTimer();
         settled = true;
         active = true;
         sttDebug('4/4 火山语音通道已连上 ✓ 开始录音');
-        ws = sock;
+        ws = current;
         const sendFull = async () => {
           const json = new TextEncoder().encode(JSON.stringify({
             audio: { format: 'pcm', codec: 'raw', rate: 16000, bits: 16, channel: 1 },
@@ -450,14 +511,16 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
             },
           }));
           const body = hasCS ? await dbGzip(json) : json;
-          ws!.send(dbFrame(0x01, 0x01, 0x01, hasCS ? 0x01 : 0x00, 1, body));
+          if (abort?.aborted || !ws || ws.readyState !== 1) return;
+          ws.send(dbFrame(0x01, 0x01, 0x01, hasCS ? 0x01 : 0x00, 1, body));
         };
         enqueue(sendFull);
         resolve();
       };
-      sock.onmessage = (e) => { if (active) void dbOnMessage(e.data); };
-      sock.onerror = () => { fail('语音通道连接出错（体检已过，多半是这台设备的浏览器拦了 WSS）'); };
-      sock.onclose = () => {
+      current.onmessage = (e) => { if (active) void dbOnMessage(e.data); };
+      current.onerror = () => { fail('语音通道连接出错（多半是这台设备的浏览器拦了 WSS，或 Worker 地址填错）'); };
+      current.onclose = () => {
+        if (abort?.aborted) return;
         if (!active) { fail('语音通道被关闭（部署后本地没有代理，自建 Worker 地址填错时会这样）'); return; }
         ws = null;
         if (!done && !ec.getStopped()) cb.onError?.('豆包连接被服务端/网络关闭（非正常收尾），已发送部分文字保留');
@@ -467,6 +530,7 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
     connect(0);
   });
 
+  if (abort?.aborted) throw new SttCancelled();
   cb.onStatus?.('recording');
 
   // --- 服务端回信解析 ---
@@ -574,12 +638,12 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
   }
 
   ec.proc.onaudioprocess = (e) => {
-    if (done || lastPacketSent || ec.getStopped()) return;
+    if (done || lastPacketSent || ec.getStopped() || abort?.aborted) return;
     const d = e.inputBuffer.getChannelData(0);
     const rms = frameRms(d);
     const d16 = ec.rate === 16000 ? new Float32Array(d) : downsampleTo16k(d, ec.rate);
     ec.pushRec(d16);
-    if (ec.pauseFlag.paused) return; // 通话防回声：AI 正在说话，这段不喂引擎
+    if (ec.pauseFlag.paused || ec.feedPaused?.()) return; // 外放语音不喂引擎，避免把播放声按说话计费
 
     // 前置环形缓存：保留最近 ~0.5s
     preRoll.push(d16);
@@ -689,7 +753,7 @@ async function startSegmentEngine(
   ec.proc.onaudioprocess = (e) => {
     const d = e.inputBuffer.getChannelData(0);
     ec.pushRec(ec.rate === 16000 ? new Float32Array(d) : downsampleTo16k(d, ec.rate));
-    if (ec.pauseFlag.paused) return; // 通话防回声：AI 正在说话，这段不喂引擎
+    if (ec.pauseFlag.paused || ec.feedPaused?.()) return; // 外放语音不喂引擎
     const rms = frameRms(d);
     let zc = 0;
     for (let i = 1; i < d.length; i++) { if ((d[i] >= 0) !== (d[i - 1] >= 0)) zc++; }

@@ -37,7 +37,9 @@ export const isLocalProxyMissing = (): boolean => localProxyMissing;
  */
 export async function fetchViaProxy(route: ProxyRoute): Promise<Response> {
   const attempts: ProxyAttempt[] = [];
-  if (!localProxyMissing) attempts.push(route.local);
+  // 成品网站没有 vite 那层同源转发。先打自己会得到 405，日志里就像识别接口坏了。
+  const publicSite = typeof window !== 'undefined' && !isDevVoiceHost(window.location.host);
+  if (!localProxyMissing && !publicSite) attempts.push(route.local);
   attempts.push(route.worker);
 
   let lastResponse: Response | null = null;
@@ -66,14 +68,37 @@ export const proxyWorkerWsBase = (): string => {
   return base ? base.replace(/^http/i, 'ws') : '';
 };
 
+/** 本机开发（localhost / 局域网预览）才有 vite 的同源转发。成品域名上先敲自己会白等。 */
+const isDevVoiceHost = (host: string): boolean => {
+  let name = host.trim().toLowerCase();
+  if (name.startsWith('[')) {
+    const end = name.indexOf(']');
+    name = end >= 0 ? name.slice(1, end) : name;
+  } else {
+    const colon = name.lastIndexOf(':');
+    if (colon > -1 && /^\d+$/.test(name.slice(colon + 1))) name = name.slice(0, colon);
+  }
+  if (name === 'localhost' || name === '127.0.0.1' || name === '::1') return true;
+  if (/^10\.\d+\.\d+\.\d+$/.test(name)) return true;
+  if (/^192\.168\.\d+\.\d+$/.test(name)) return true;
+  const priv = /^172\.(\d+)\.\d+\.\d+$/.exec(name);
+  if (priv) {
+    const n = Number(priv[1]);
+    return n >= 16 && n <= 31;
+  }
+  return false;
+};
+
 /**
- * WebSocket 候选地址：先试本机开发服务器上的同源转发，再试自建 Worker。
- * 电话/聊天语音识别连接失败时会按顺序换下一个候选。
+ * WebSocket 候选地址。
+ * 本机开发：先同源转发，再自建 Worker。
+ * 成品网站：直接自建 Worker。同源 /api 在静态站点上不存在，先敲它每次都要白等。
  */
 export const voiceSocketUrls = (localPath: string, workerPath: string): string[] => {
   const urls: string[] = [];
   const wsBase = proxyWorkerWsBase();
-  if (!localProxyMissing && typeof window !== 'undefined') {
+  const devHost = typeof window !== 'undefined' && isDevVoiceHost(window.location.host);
+  if (!localProxyMissing && devHost) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     urls.push(`${proto}//${window.location.host}${localPath}`);
   }

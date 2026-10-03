@@ -762,7 +762,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 <div className="sully-chat-composer p-3 px-4 flex gap-3 items-end relative">
                     {onToggleVoice && voiceState !== 'idle' ? (
                         <>
-                            <button onClick={onCancelVoice} title="取消本次语音" className={`sully-chat-actions-button ${actionButtonClass}`}>
+                            <button type="button" onClick={onCancelVoice} title="取消本次语音" className={`sully-chat-actions-button ${actionButtonClass}`}>
                                 <X className="w-6 h-6" weight="bold" />
                             </button>
                             <div className={`flex-1 min-w-0 h-11 flex items-center justify-center gap-2.5 px-2 ${inputWrapClass}`}>
@@ -781,6 +781,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 </span>
                             </div>
                             <button
+                                type="button"
                                 onClick={onToggleVoice}
                                 title="完成并发送语音消息"
                                 disabled={voiceState === 'stopping'}
@@ -818,6 +819,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         </button>
                         {onToggleVoice && (
                             <button
+                                type="button"
                                 onClick={onToggleVoice}
                                 title={voiceState === 'idle' ? '语音输入' : voiceState === 'recording' ? '正在听，点一下结束' : voiceState === 'muted' ? '静音中（没说话不扣费），开口继续识别' : '处理中…'}
                                 className={`p-2 shrink-0 transition-all ${voiceState === 'recording' ? 'text-red-500 animate-pulse' : voiceState === 'muted' ? 'text-slate-300 dark:text-slate-600' : voiceState !== 'idle' ? 'text-primary animate-pulse' : isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}

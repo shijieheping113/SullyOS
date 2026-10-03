@@ -82,6 +82,19 @@ describe('fetchViaProxy', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('成品网站不再先打自己，避免把 405 记成识别失败', async () => {
+    vi.stubGlobal('window', { location: { protocol: 'https:', host: 'app.example.com' } });
+    const fetchMock = vi.fn(async () => jsonRes({ from: 'worker' }));
+    vi.stubGlobal('fetch', fetchMock);
+    setProxyWorkerUrl('https://proxy.example.com');
+
+    const res = await fetchViaProxy(route());
+
+    expect(await res.json()).toEqual({ from: 'worker' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://proxy.example.com/fishaudio/tts');
+  });
+
   it('两边都连不上时，把 Worker 那次的错误抛出去（本地那次不算数）', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       throw new Error(String(url).indexOf('https://') === 0 ? 'worker offline' : 'local offline');
@@ -102,11 +115,19 @@ describe('voiceSocketUrls', () => {
     setProxyWorkerUrl('');
   });
 
-  it('先本机同源、再自建 Worker（https → wss）', () => {
+  it('成品域名直接走自建 Worker，不再先敲自己', () => {
     vi.stubGlobal('window', { location: { protocol: 'https:', host: 'app.example.com' } });
 
     expect(voiceSocketUrls('/api/volc-ws?k=1', '/volc-ws?k=1')).toEqual([
-      'wss://app.example.com/api/volc-ws?k=1',
+      'wss://proxy.example.com/volc-ws?k=1',
+    ]);
+  });
+
+  it('局域网预览仍先走本机同源', () => {
+    vi.stubGlobal('window', { location: { protocol: 'https:', host: '192.168.0.103:5173' } });
+
+    expect(voiceSocketUrls('/api/volc-ws?k=1', '/volc-ws?k=1')).toEqual([
+      'wss://192.168.0.103:5173/api/volc-ws?k=1',
       'wss://proxy.example.com/volc-ws?k=1',
     ]);
   });

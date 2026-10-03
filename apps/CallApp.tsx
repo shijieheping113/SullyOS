@@ -15,7 +15,7 @@ import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptO
 import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
 import { canSynthesizeSpeech, cleanTextForTtsProvider, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS, voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
-import { startVoiceInput, isSttSupported, type SttSession } from '../utils/volcStt';
+import { startVoiceInput, isSttSupported, createSttAbort, SttCancelled, type SttAbort, type SttSession } from '../utils/volcStt';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -639,6 +639,8 @@ const CallApp: React.FC = () => {
   const [draftInput, setDraftInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const sttSessionRef = useRef<SttSession | null>(null);
+  const sttAbortRef = useRef<SttAbort | null>(null);
+  const sttRunRef = useRef(0);
   const sttSupported = useMemo(() => isSttSupported(), []);
   const [audioUrl, setAudioUrl] = useState<string>('');
   const [traceId, setTraceId] = useState<string>('');
@@ -1606,6 +1608,8 @@ const CallApp: React.FC = () => {
   }, [suspendedCall]);
   useEffect(() => () => {
     revokeSessionBlobs();
+    sttRunRef.current += 1;
+    sttAbortRef.current?.cancel();
     sttSessionRef.current?.stop();
   }, []);
   // Voice input: 三引擎语音识别（跟聊天语音消息同一套 设置→语音识别 配置）。
@@ -1631,6 +1635,10 @@ const CallApp: React.FC = () => {
     sttSessionRef.current?.setPaused?.(isAudioPlaying);
   }, [isAudioPlaying]);
   const cancelStt = async () => {
+    sttRunRef.current += 1;
+    const abort = sttAbortRef.current;
+    sttAbortRef.current = null;
+    abort?.cancel();
     const sess = sttSessionRef.current;
     sttSessionRef.current = null;
     sttAccumRef.current = '';
@@ -1644,25 +1652,39 @@ const CallApp: React.FC = () => {
     }
   };
   const toggleStt = async () => {
-    if (isListening || sttSessionRef.current) {
+    if (isListening || sttSessionRef.current || sttAbortRef.current) {
       // 停止 → 等尾句识别完 → 整段直接发成一句话（打电话不打字）
+      // 还在连接时没有会话：只掐断，不提示「没听到」，也不能等它自己连上。
       const sess = sttSessionRef.current;
+      const abort = sttAbortRef.current;
+      sttAbortRef.current = null;
+      if (!sess) {
+        sttRunRef.current += 1;
+        abort?.cancel();
+        sttSessionRef.current = null;
+        sttAccumRef.current = '';
+        setIsListening(false);
+        setSttStarting(false);
+        setSttPreview('');
+        trackEvent('切换语音输入', { action: 'stop' });
+        return;
+      }
       sttSessionRef.current = null;
       setIsListening(false);
+      setSttStarting(false);
       trackEvent('切换语音输入', { action: 'stop' });
       // ⚠️ 顺序关键：必须先 await stop()（负包/尾段会把最后一句吐回来）再抄字。
       //   写反了会把没来得及上屏的尾句丢掉（曾致"听到第一句了但提示没听到内容"）。
-      if (sess) {
-        try { await sess.stop(); } catch { /* ignore */ }
-        const rec = sess.takeRecording?.() || null;
-        if (rec) {
-          const url = URL.createObjectURL(rec.wav);
-          trackBlobUrl(url);
-          pendingUserVoiceUrlRef.current = url;
-        }
+      try { await sess.stop(); } catch { /* ignore */ }
+      const rec = sess.takeRecording?.() || null;
+      if (rec) {
+        const url = URL.createObjectURL(rec.wav);
+        trackBlobUrl(url);
+        pendingUserVoiceUrlRef.current = url;
       }
       const text = sttAccumRef.current.trim();
       sttAccumRef.current = '';
+      sttRunRef.current += 1;
       setSttPreview('');
       if (text) {
         try {
@@ -1683,24 +1705,37 @@ const CallApp: React.FC = () => {
       return;
     }
     try {
+      const run = ++sttRunRef.current;
+      const abort = createSttAbort();
+      sttAbortRef.current = abort;
       sttAccumRef.current = '';
       setSttPreview('');
       setIsListening(true);
       setSttStarting(true);
       trackEvent('切换语音输入', { action: 'start' });
-      sttSessionRef.current = await startVoiceInput(sttCfg, {
-        onPartial: (t) => { setSttPreview(t.slice(-60)); }, // 实时预览：引擎听到了什么
+      const session = await startVoiceInput(sttCfg, {
+        onPartial: (t) => { if (sttRunRef.current === run) setSttPreview(t.slice(-60)); },
         onFinal: (t, emo) => {
+          if (sttRunRef.current !== run) return;
           sttAccumRef.current += (sttAccumRef.current ? '\n' : '') + (emo || '') + t;
           setSttPreview(((emo || '') + t).slice(-60));
         },
-        onError: (m) => { if (m) addToast(m, 'error'); },
-      });
+        onError: (m) => { if (m && sttRunRef.current === run) addToast(m, 'error'); },
+      }, abort);
+      if (sttRunRef.current !== run || abort.aborted) {
+        try { await session.stop(); } catch { /* ignore */ }
+        session.takeRecording?.();
+        return;
+      }
+      sttAbortRef.current = null;
+      sttSessionRef.current = session;
       setSttStarting(false);
     } catch (e: any) {
       setIsListening(false);
       setSttStarting(false);
       sttSessionRef.current = null;
+      sttAbortRef.current = null;
+      if (e instanceof SttCancelled || e?.name === 'SttCancelled') return;
       addToast(e?.message || '无法启动语音输入', 'error');
     }
   };
@@ -2928,7 +2963,11 @@ ${sentencePlan}`;
   }, []);
   const handleTurn = async (overrideText?: string) => {
     if (isListening && typeof overrideText !== 'string') {
+      sttRunRef.current += 1;
+      sttAbortRef.current?.cancel();
+      sttAbortRef.current = null;
       sttSessionRef.current?.stop();
+      sttSessionRef.current = null;
       setIsListening(false);
       sttAccumRef.current = '';
     }
@@ -4108,8 +4147,8 @@ ${sentencePlan}`;
             if (next) primeCallAudioFromGesture(true);
           }}
           onMic={() => { void toggleStt(); }}
-          onHoldRecordStart={() => { if (!isListening && !sttSessionRef.current) void toggleStt(); }}
-          onHoldRecordEnd={() => { if (isListening || sttSessionRef.current) void toggleStt(); }}
+          onHoldRecordStart={() => { if (!isListening && !sttSessionRef.current && !sttAbortRef.current) void toggleStt(); }}
+          onHoldRecordEnd={() => { if (isListening || sttSessionRef.current || sttAbortRef.current) void toggleStt(); }}
           onCancelStt={() => { void cancelStt(); }}
           onTranslateTap={() => setTranslateVisible(v => !v)}
           onTranslateHold={() => setShowLangPicker(true)}
