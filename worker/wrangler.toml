@@ -1,0 +1,11 @@
+# 二改：主代理 Worker 的部署配置（自己账号部署用）。
+#
+# 这是 worker/index.js 的**独立部署**入口 —— 和站点那份 wrangler.jsonc 没关系：
+# 站点只发静态资源（assets-only），代理 Worker 单独存在，两者互不干扰。
+# 用法：在自己账号里连这个仓库、根目录选仓库根、部署命令用
+#   npx wrangler deploy --config worker/wrangler.toml
+# 然后把拿到的地址填进 SullyOS「设置 → 网络代理 (Worker)」。
+name = "sullyos-proxy"
+main = "index.js"
+compatibility_date = "2026-08-13"
+workers_dev = true

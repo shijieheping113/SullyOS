@@ -15,7 +15,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, xi-api-key, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Xhs-Platform, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, X-CF-Method, Mcp-Session-Id, Accept, Range",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, xi-api-key, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Xhs-Platform, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, X-CF-Method, Mcp-Session-Id, Accept, Range, X-MiniMax-Region, X-MiniMax-Group-Id, X-MiniMax-Api-Key",
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Access-Control-Max-Age": "86400",
   };
@@ -30,6 +30,47 @@ function jsonResponse(obj, { status = 200, origin } = {}) {
     },
   });
 }
+
+// ================================================================
+//  二改：语音链路代理用的小工具
+// ================================================================
+
+// 火山（豆包流式语音识别 2.0）WebSocket 握手头。Key 走 X-Api-Key 而不是 URL，
+// 浏览器自己发不了自定义头，所以这一步只能由 Worker 替它做。
+function volcUpgradeHeaders(key, requestId) {
+  return {
+    "Upgrade": "websocket",
+    "X-Api-Key": key,
+    "X-Api-Resource-Id": "volc.seedasr.sauc.duration",
+    "X-Api-Request-Id": requestId,
+    "X-Api-Sequence": "-1",
+  };
+}
+
+function encodeUtf8(text) {
+  return new TextEncoder().encode(text);
+}
+
+function concatBytes(parts) {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { merged.set(part, offset); offset += part.length; }
+  return merged;
+}
+
+// MiniMax 的合成音频既可能给 URL，也可能给十六进制串（两种都见过）。
+function hexStringToBytes(hex) {
+  const clean = String(hex).replace(/[^0-9a-fA-F]/g, "");
+  const even = clean.length - (clean.length % 2);
+  const bytes = new Uint8Array(even / 2);
+  for (let i = 0; i < even; i += 2) bytes[i / 2] = parseInt(clean.substr(i, 2), 16);
+  return bytes;
+}
+
+// 音色烘焙的克隆源文本 —— 与 api/minimax/bake-voice.ts、server/bake-voice-middleware.ts 一致。
+const BAKE_CLONE_SOURCE_TEXT = "在一个阳光明媚的早晨，小鸟在枝头欢快地歌唱，微风轻轻拂过脸庞，带来了花朵的芬芳。远处的山峦在薄雾中若隐若现，宛如一幅水墨画。人们漫步在林荫小道上，享受着这难得的宁静时光。孩子们在草地上奔跑嬉戏，笑声回荡在空气中，让人感到无比温暖和幸福。";
 
 // ---- /fetch-webpage 用: SSRF 防护 + body 大小上限 ----
 // 网页分享代理只抓用户粘贴的公网网页, 拒绝 loopback / 私有网段 / link-local / 内网后缀。
@@ -3812,6 +3853,230 @@ export default {
         });
       } catch (e) {
         return jsonResponse({ error: 'Replicate upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
+    // ========== 二改：语音识别（STT）中转 ==========
+    // 这几条只在「静态部署」下才被前端用到：本地开发走 vite 的 dev proxy（/api/xxx），
+    // 部署后那层代理不存在，前端会按「本地 → 本 Worker」的顺序改走这里。
+    // Worker 不读不存任何 key，只做 CORS + 转发。
+
+    // 硅基流动：音频转写（TeleASR / SenseVoice）
+    if (url.pathname === '/sf-stt/transcriptions') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (SiliconFlow API key)' }, { status: 401, origin });
+      }
+      try {
+        const upstream = await fetch('https://api.siliconflow.cn/v1/audio/transcriptions', {
+          method: 'POST',
+          // multipart 的 boundary 写在原始 Content-Type 里，必须原样带过去
+          headers: {
+            'Authorization': auth,
+            'Content-Type': request.headers.get('Content-Type') || 'application/octet-stream',
+          },
+          body: await request.arrayBuffer(),
+        });
+        const text = await upstream.text();
+        return new Response(text, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') || 'application/json',
+            ...corsHeaders(origin),
+          },
+        });
+      } catch (e) {
+        return jsonResponse({ error: 'SiliconFlow upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
+    // 硅基流动：Qwen3-Omni 多模态转写（走聊天补全接口）
+    if (url.pathname === '/sf-chat/completions') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (SiliconFlow API key)' }, { status: 401, origin });
+      }
+      try {
+        const upstream = await fetch('https://api.siliconflow.cn/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': auth, 'Content-Type': 'application/json' },
+          body: await request.text(),
+        });
+        const text = await upstream.text();
+        return new Response(text, {
+          status: upstream.status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders(origin) },
+        });
+      } catch (e) {
+        return jsonResponse({ error: 'SiliconFlow upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
+    // 火山（豆包流式语音识别 2.0）：Key 体检
+    // 替浏览器做一次真实的 WS 升级握手，把火山的原话（401 Invalid X-Api-Key /
+    // 403 未开通服务等）带回给前端 —— 浏览器的 WebSocket onerror 不带任何细节。
+    if (url.pathname === '/volc-check') {
+      const key = (url.searchParams.get('key') || '').trim();
+      const reqId = (url.searchParams.get('request_id') || crypto.randomUUID()).trim();
+      if (!key) {
+        return jsonResponse({ ok: false, status: 0, body: '缺少 key' }, { status: 400, origin });
+      }
+      try {
+        const probe = await fetch('https://openspeech.bytedance.com/api/v3/sauc/bigmodel_async', {
+          headers: volcUpgradeHeaders(key, reqId),
+        });
+        const ws = probe.webSocket;
+        if (ws) {
+          // Key 有效、火山放行握手 → 立刻断开（0 秒音频不计费）
+          try { ws.accept(); } catch (e) { /* ignore */ }
+          try { ws.close(1000, 'probe'); } catch (e) { /* ignore */ }
+          return jsonResponse({ ok: true }, { origin });
+        }
+        let body = '';
+        try { body = (await probe.text()).slice(0, 300); } catch (e) { /* ignore */ }
+        return jsonResponse({ ok: false, status: probe.status, body }, { origin });
+      } catch (e) {
+        return jsonResponse({ ok: false, status: 0, body: '网络错误: ' + String(e && e.message || e) }, { origin });
+      }
+    }
+
+    // 火山：双向流式语音识别的 WebSocket 中转（浏览器 ⇄ Worker ⇄ 火山）
+    if (url.pathname === '/volc-ws') {
+      const key = (url.searchParams.get('key') || '').trim();
+      const reqId = (url.searchParams.get('request_id') || crypto.randomUUID()).trim();
+      if (!key) {
+        return jsonResponse({ error: 'Missing key' }, { status: 400, origin });
+      }
+      if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
+        return jsonResponse({ error: 'Expected WebSocket upgrade' }, { status: 426, origin });
+      }
+      let upstream;
+      try {
+        upstream = await fetch('https://openspeech.bytedance.com/api/v3/sauc/bigmodel_async', {
+          headers: volcUpgradeHeaders(key, reqId),
+        });
+      } catch (e) {
+        return jsonResponse({ error: 'Volcengine upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+      const upstreamWs = upstream.webSocket;
+      if (!upstreamWs) {
+        let detail = '';
+        try { detail = (await upstream.text()).slice(0, 300); } catch (e) { /* ignore */ }
+        return jsonResponse({ error: 'Volcengine refused the WebSocket handshake', status: upstream.status, detail }, { status: 502, origin });
+      }
+      // 两端对吹：任意一边的消息 / 关闭 / 错误都转给另一边。半开是刻意的 ——
+      // 火山收到负包后会自己收尾关闭，客户端也要收到那次关闭。
+      upstreamWs.accept({ allowHalfOpen: true });
+      const pair = Object.values(new WebSocketPair());
+      const client = pair[0];
+      const server = pair[1];
+      server.accept();
+      upstreamWs.addEventListener('message', (event) => { try { server.send(event.data); } catch (e) { /* ignore */ } });
+      upstreamWs.addEventListener('close', (event) => { try { server.close(event.code, event.reason); } catch (e) { /* ignore */ } });
+      upstreamWs.addEventListener('error', () => { try { server.close(1011, 'upstream error'); } catch (e) { /* ignore */ } });
+      server.addEventListener('message', (event) => { try { upstreamWs.send(event.data); } catch (e) { /* ignore */ } });
+      server.addEventListener('close', (event) => { try { upstreamWs.close(event.code, event.reason); } catch (e) { /* ignore */ } });
+      server.addEventListener('error', () => { try { upstreamWs.close(1011, 'client error'); } catch (e) { /* ignore */ } });
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    // ========== 二改：MiniMax 音色烘焙（合成长音频 → 上传 → 克隆）==========
+    // 移植自 api/minimax/bake-voice.ts + server/bake-voice-middleware.ts（那两份只在
+    // Vercel / 本地开发里存在）。前端 POST JSON，Worker 串完三步返回。
+    if (url.pathname === '/minimax/bake-voice') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      let body = {};
+      try { body = await request.json(); } catch (e) {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400, origin });
+      }
+      const apiKey = String(body.apiKey || '').trim();
+      const voiceId = String(body.voiceId || '').trim();
+      const model = String(body.model || '').trim() || 'speech-2.8-hd';
+      const ttsPayload = body.ttsPayload;
+      const groupId = String(body.groupId || '').trim();
+      const region = String(body.region || request.headers.get('X-MiniMax-Region') || '').trim().toLowerCase();
+      const base = region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
+      if (!apiKey) return jsonResponse({ error: 'Missing apiKey' }, { status: 400, origin });
+      if (!voiceId) return jsonResponse({ error: 'Missing voiceId' }, { status: 400, origin });
+      if (!ttsPayload) return jsonResponse({ error: 'Missing ttsPayload' }, { status: 400, origin });
+      try {
+        // 步骤 1：用 timber_weights 合成一段够长的音频（克隆需要足够的语音素材）
+        const t2aBody = Object.assign({}, ttsPayload, {
+          text: BAKE_CLONE_SOURCE_TEXT,
+          stream: false,
+          output_format: 'url',
+          audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
+        });
+        if (groupId) t2aBody.group_id = groupId;
+        const t2aRes = await fetch(base + '/v1/t2a_v2', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+          body: JSON.stringify(t2aBody),
+        });
+        const t2aData = await t2aRes.json();
+        const t2aStatus = t2aData && t2aData.base_resp ? t2aData.base_resp.status_code : undefined;
+        if (typeof t2aStatus === 'number' && t2aStatus !== 0) {
+          const msg = (t2aData && t2aData.base_resp && t2aData.base_resp.status_msg) || 'unknown';
+          throw new Error('T2A failed: ' + msg);
+        }
+        const audioRaw = t2aData && t2aData.data ? t2aData.data.audio : null;
+        if (!audioRaw || typeof audioRaw !== 'string') throw new Error('T2A returned no audio');
+        let audioBytes;
+        const raw = audioRaw.trim();
+        if (/^https?:\/\//i.test(raw)) {
+          const audioRes = await fetch(raw);
+          if (!audioRes.ok) throw new Error('Audio download failed: HTTP ' + audioRes.status);
+          audioBytes = new Uint8Array(await audioRes.arrayBuffer());
+        } else {
+          audioBytes = hexStringToBytes(raw.replace(/^0x/i, ''));
+        }
+        // 步骤 2：把音频传上去换 file_id
+        const boundary = '----BakeVoice' + Date.now();
+        const headPart = '--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="voice_sample.mp3"\r\nContent-Type: audio/mpeg\r\n\r\n';
+        const purposePart = '\r\n--' + boundary + '\r\nContent-Disposition: form-data; name="purpose"\r\n\r\nvoice_clone\r\n';
+        const tailPart = '--' + boundary + '--\r\n';
+        const multipart = concatBytes([encodeUtf8(headPart), audioBytes, encodeUtf8(purposePart), encodeUtf8(tailPart)]);
+        const uploadRes = await fetch(base + '/v1/files/upload', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'multipart/form-data; boundary=' + boundary },
+          body: multipart,
+        });
+        const uploadData = await uploadRes.json();
+        const fileId = uploadData && uploadData.file ? uploadData.file.file_id : null;
+        if (!fileId) {
+          const msg = (uploadData && uploadData.base_resp && uploadData.base_resp.status_msg) || JSON.stringify(uploadData).slice(0, 300);
+          throw new Error('Upload failed: ' + msg);
+        }
+        // 步骤 3：正式克隆出一个永久 voice_id
+        const cloneRes = await fetch(base + '/v1/voice_clone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+          body: JSON.stringify({
+            file_id: fileId,
+            voice_id: voiceId,
+            model: model,
+            text: '你好，这是固定后的声音，听听看效果怎么样？',
+            need_noise_reduction: false,
+            need_volumn_normalization: true,
+          }),
+        });
+        const cloneData = await cloneRes.json();
+        const cloneStatus = cloneData && cloneData.base_resp ? cloneData.base_resp.status_code : undefined;
+        if (typeof cloneStatus === 'number' && cloneStatus !== 0) {
+          const msg = (cloneData && cloneData.base_resp && cloneData.base_resp.status_msg) || JSON.stringify(cloneData).slice(0, 300);
+          throw new Error('Clone failed: ' + msg);
+        }
+        return jsonResponse({ success: true, file_id: fileId, voice_id: voiceId, clone_data: cloneData }, { origin });
+      } catch (e) {
+        return jsonResponse({ error: String(e && e.message || e) }, { status: 500, origin });
       }
     }
 

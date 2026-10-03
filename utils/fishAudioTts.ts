@@ -16,6 +16,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 import { normalizeApiKey } from './minimaxApiKey';
 import { getProxyWorkerUrl } from './proxyWorker';
+import { fetchViaProxy, workerProxyUrl } from './proxyFallback';
 import type { TtsResult } from './minimaxTts';
 import { isStaticWebDeployment } from './staticWebDeployment';
 import { emitAppToast } from './appToast';
@@ -364,29 +365,34 @@ const fishFetchAudioOnce = async (
     return blob;
   }
 
-  // 静态部署（github.io / file:）没有 /api serverless 代理，直连 api.fish.audio 会被浏览器
-  // CORS 挡（Fish 不发 ACAO 头）。走项目通用 sfworker 代理 /fishaudio/tts（带 CORS 头）。
+  // 静态部署（github.io / file: / 自建域名）没有 /api serverless 代理，直连 api.fish.audio
+  // 会被浏览器 CORS 挡（Fish 不发 ACAO 头）。走项目通用 Worker 代理 /fishaudio/tts（带 CORS 头）。
   // model 放 query，避免自定义 model 头触发预检失败；只留 Authorization（worker 已允许）。
-  let url: string;
-  let headers: Record<string, string>;
-  if (shouldBypassWebProxy()) {
-    url = `${getProxyWorkerUrl()}/fishaudio/tts?model=${encodeURIComponent(model)}`;
-    headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
-  } else {
-    url = FISH_PROXY_PATH;
-    headers = jsonHeaders;
-  }
+  const bodyText = JSON.stringify(payload);
+  const workerPath = `/fishaudio/tts?model=${encodeURIComponent(model)}`;
+  const workerInit: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: bodyText,
+  };
   let res: Response;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FISH_TTS_TIMEOUT_MS);
     try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      if (shouldBypassWebProxy()) {
+        // 已知这个部署没有同源代理（github.io / file:）：直接用 Worker，不白跑一趟。
+        res = await fetch(`${getProxyWorkerUrl()}${workerPath}`, { ...workerInit, signal: controller.signal });
+      } else {
+        // 本地开发走同源 /api 代理；自建域名部署没有那层代理，自动改走自建 Worker。
+        res = await fetchViaProxy({
+          local: {
+            url: FISH_PROXY_PATH,
+            init: { method: 'POST', headers: jsonHeaders, body: bodyText, signal: controller.signal },
+          },
+          worker: { url: workerProxyUrl(workerPath), init: { ...workerInit, signal: controller.signal } },
+        });
+      }
     } finally {
       clearTimeout(timer);
     }

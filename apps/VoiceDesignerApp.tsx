@@ -8,6 +8,7 @@ import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { trackEvent } from '../utils/analytics';
 import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, getMiniMaxParamVersion, type MiniMaxParamVersion } from '../utils/minimaxTts';
+import { fetchViaProxy, workerProxyUrl } from '../utils/proxyFallback';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
 // 多语言试听样例：点一下切换试听文本 + 对应 language_boost，方便听不同语种下的发音
@@ -313,7 +314,7 @@ const VoiceDesignerApp: React.FC = () => {
 
       const groupId = (apiConfig.minimaxGroupId || '').trim();
       const region = apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic';
-      const res = await fetch('/api/minimax/bake-voice', {
+      const bakeInit: RequestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -328,6 +329,11 @@ const VoiceDesignerApp: React.FC = () => {
           groupId: groupId || undefined,
           region,
         }),
+      };
+      // 本地开发走同源中间件；部署成静态站点后没有那层中间件，自动改走自建 Worker。
+      const res = await fetchViaProxy({
+        local: { url: '/api/minimax/bake-voice', init: bakeInit },
+        worker: { url: workerProxyUrl('/minimax/bake-voice'), init: bakeInit },
       });
       const data = await safeResponseJson(res);
       if (!res.ok || data?.error) {

@@ -12,6 +12,7 @@
 // 计费记账：本机 localStorage（stt_usage_stats_v1），设置页展示。
 // ============================================================
 import type { SttApiConfig, SttEngineId, SttUsageStats } from '../types';
+import { fetchViaProxy, voiceSocketUrls, workerProxyUrl } from './proxyFallback';
 
 // ---------- 对外回调与句柄 ----------
 
@@ -194,10 +195,15 @@ async function sfStt(wavBlob: Blob, model: string, apiKey: string): Promise<any>
   const form = new FormData();
   form.append('file', wavBlob, 'speech.wav');
   form.append('model', model);
-  const res = await fetch('/api/sf-stt/transcriptions', {
+  const init: RequestInit = {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + apiKey },
     body: form,
+  };
+  // 本地开发走同源 /api 代理；部署成静态站点后没有那层代理，自动改走自建 Worker。
+  const res = await fetchViaProxy({
+    local: { url: '/api/sf-stt/transcriptions', init },
+    worker: { url: workerProxyUrl('/sf-stt/transcriptions'), init },
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} ${text.slice(0, 100)}`);
@@ -375,12 +381,17 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
   // --- Key 体检：让 vite 替咱们向火山做一次真实握手，拒绝理由拿到明面上 ---
   let verdict: { ok: boolean; status?: number; body?: string } | null = null;
   try {
-    sttDebug('3/4 正在做火山 Key 体检（连本机服务）…');
-    const r = await fetch(`/api/volc-check?key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`);
+    sttDebug('3/4 正在做火山 Key 体检（本地代理 → 自建 Worker）…');
+    const checkPath = `/volc-check?key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`;
+    const probeInit: RequestInit = { method: 'GET' };
+    const r = await fetchViaProxy({
+      local: { url: `/api${checkPath}`, init: probeInit },
+      worker: { url: workerProxyUrl(checkPath), init: probeInit },
+    });
     verdict = await r.json();
     sttDebug(`Key 体检结果: ok=${verdict?.ok} status=${verdict?.status ?? '-'}`);
   } catch (e: any) {
-    throw new Error('连不上本机服务（' + e.message + '），电脑上的开发服务可能停了');
+    throw new Error('连不上语音识别中转（' + (e?.message || e) + '）：本地开发请确认电脑上的服务在跑；部署后的站点请到「设置 → 网络代理 (Worker)」填对自己的 Worker 地址');
   }
   if (verdict && !verdict.ok) {
     throw new Error(`火山拒绝握手：HTTP ${verdict.status} ${verdict.body || ''}（检查 Key 是否有效、是否开通「豆包流式语音识别2.0」）`);
@@ -394,41 +405,66 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx): 
   const enqueue = (fn: () => Promise<void>) => { sendChain = sendChain.then(fn).catch(e => cb.onError?.('豆包发送失败: ' + e.message)); };
 
   // --- 建立 WS 语音通道 ---
+  const volcQuery = `key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`;
   await new Promise<void>((resolve, reject) => {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const sock = new WebSocket(`${proto}//${location.host}/api/volc-ws?key=${encodeURIComponent(key)}&request_id=${encodeURIComponent(reqId)}`);
-    sock.binaryType = 'arraybuffer';
-    const timer = setTimeout(() => { reject(new Error('连接火山超时（8秒）')); try { sock.close(); } catch { /* ignore */ } }, 8000);
+    // 本地开发走同源转发；部署成静态站点后没有那层转发，自动改用自建 Worker。
+    const candidates = voiceSocketUrls(`/api/volc-ws?${volcQuery}`, `/volc-ws?${volcQuery}`);
+    let settled = false;
 
-    sock.onopen = () => {
-      clearTimeout(timer);
-      sttDebug('4/4 火山语音通道已连上 ✓ 开始录音');
-      ws = sock;
-      const sendFull = async () => {
-        const json = new TextEncoder().encode(JSON.stringify({
-          audio: { format: 'pcm', codec: 'raw', rate: 16000, bits: 16, channel: 1 },
-          request: {
-            model_name: 'bigmodel',
-            enable_itn: true, enable_punc: true, enable_ddc: false,
-            enable_nonstream: true,          // 二遍识别：实时上屏 + definite 最终句
-            enable_emotion_detection: emotionOn,
-            show_utterances: true, show_speech_rate: true, show_volume: true,
-            result_type: 'full', end_window_size: 800, force_to_speech_time: 1000,
-            ...(hotwords.length ? { corpus: { context: JSON.stringify({ hotwords: hotwords.map(w => ({ word: w })) }) } } : {}),
-          },
-        }));
-        const body = hasCS ? await dbGzip(json) : json;
-        ws!.send(dbFrame(0x01, 0x01, 0x01, hasCS ? 0x01 : 0x00, 1, body));
+    const connect = (index: number) => {
+      const isLast = index >= candidates.length - 1;
+      const sock = new WebSocket(candidates[index]);
+      let active = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      sock.binaryType = 'arraybuffer';
+      const clearTimer = () => { if (timer !== null) { clearTimeout(timer); timer = null; } };
+      // 这条候选连不上就换下一条：先本地开发服务器，再自建 Worker。
+      const fail = (reason: string) => {
+        clearTimer();
+        if (settled) return;
+        if (isLast) { settled = true; reject(new Error(reason)); return; }
+        connect(index + 1);
       };
-      enqueue(sendFull);
-      resolve();
+      timer = setTimeout(() => {
+        try { sock.close(); } catch { /* ignore */ }
+        fail('连接火山超时（8秒）');
+      }, 8000);
+
+      sock.onopen = () => {
+        clearTimer();
+        settled = true;
+        active = true;
+        sttDebug('4/4 火山语音通道已连上 ✓ 开始录音');
+        ws = sock;
+        const sendFull = async () => {
+          const json = new TextEncoder().encode(JSON.stringify({
+            audio: { format: 'pcm', codec: 'raw', rate: 16000, bits: 16, channel: 1 },
+            request: {
+              model_name: 'bigmodel',
+              enable_itn: true, enable_punc: true, enable_ddc: false,
+              enable_nonstream: true,          // 二遍识别：实时上屏 + definite 最终句
+              enable_emotion_detection: emotionOn,
+              show_utterances: true, show_speech_rate: true, show_volume: true,
+              result_type: 'full', end_window_size: 800, force_to_speech_time: 1000,
+              ...(hotwords.length ? { corpus: { context: JSON.stringify({ hotwords: hotwords.map(w => ({ word: w })) }) } } : {}),
+            },
+          }));
+          const body = hasCS ? await dbGzip(json) : json;
+          ws!.send(dbFrame(0x01, 0x01, 0x01, hasCS ? 0x01 : 0x00, 1, body));
+        };
+        enqueue(sendFull);
+        resolve();
+      };
+      sock.onmessage = (e) => { if (active) void dbOnMessage(e.data); };
+      sock.onerror = () => { fail('语音通道连接出错（体检已过，多半是这台设备的浏览器拦了 WSS）'); };
+      sock.onclose = () => {
+        if (!active) { fail('语音通道被关闭（部署后本地没有代理，自建 Worker 地址填错时会这样）'); return; }
+        ws = null;
+        if (!done && !ec.getStopped()) cb.onError?.('豆包连接被服务端/网络关闭（非正常收尾），已发送部分文字保留');
+      };
     };
-    sock.onmessage = (e) => { void dbOnMessage(e.data); };
-    sock.onerror = () => { reject(new Error('语音通道连接出错（体检已过，多半是这台设备的浏览器拦了 WSS）')); };
-    sock.onclose = () => {
-      ws = null;
-      if (!done && !ec.getStopped()) cb.onError?.('豆包连接被服务端/网络关闭（非正常收尾），已发送部分文字保留');
-    };
+
+    connect(0);
   });
 
   cb.onStatus?.('recording');
@@ -681,7 +717,7 @@ async function startSegmentEngine(
         const prompt = emotionOn
           ? ((cfg.qwenEmotionPrompt || '').trim() || defaultQwenEmotionPrompt(hotwords))
           : plainQwenPrompt(hotwords);
-        const res = await fetch('/v1/chat/completions', {
+        const omniInit: RequestInit = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sfKey },
           body: JSON.stringify({
@@ -694,6 +730,11 @@ async function startSegmentEngine(
               ],
             }],
           }),
+        };
+        // 本地开发走同源 /v1 代理；静态部署没有那层代理，改走自建 Worker 的 /sf-chat/completions。
+        const res = await fetchViaProxy({
+          local: { url: '/v1/chat/completions', init: omniInit },
+          worker: { url: workerProxyUrl('/sf-chat/completions'), init: omniInit },
         });
         const text = await res.text();
         if (!res.ok) throw new Error(`HTTP ${res.status} ${text.slice(0, 100)}`);
