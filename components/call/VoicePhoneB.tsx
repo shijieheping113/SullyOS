@@ -965,15 +965,17 @@ const VoicePhoneB: React.FC<Props> = (props) => {
             {action.role === 'assistant' ? (
               <>
                 <h3>这条语音</h3>
-                <p>重播、下载、换个说法、收藏</p>
+                <p>{props.bubbles[props.bubbles.length - 1]?.id === action.id ? '重播、下载、换个说法、收藏' : '重播、下载、收藏'}</p>
                 <div className="row">
                   <button type="button" onClick={() => { props.onPlayAssistant(action); setAction(null); }}>
                     {props.generatingId === action.id ? '生成语音…' : action.audioUrl ? '重播语音' : '播放语音'}
                   </button>
                   <button type="button" onClick={() => { props.onDownload(action); setAction(null); }}>下载</button>
-                  <button type="button" onClick={() => { props.onReroll(action); setAction(null); }} disabled={!!props.rerollingId}>
-                    {props.rerollingId === action.id ? '换一种说法…' : '换个说法'}
-                  </button>
+                  {props.bubbles[props.bubbles.length - 1]?.id === action.id && (
+                    <button type="button" onClick={() => { props.onReroll(action); setAction(null); }} disabled={!!props.rerollingId}>
+                      {props.rerollingId === action.id ? '换一种说法…' : '换个说法'}
+                    </button>
+                  )}
                   <button type="button" onClick={() => { props.onFavorite(action); setAction(null); }}>收藏</button>
                   <button type="button" onClick={() => { props.onEditReread(action); setAction(null); }}>编辑后重读</button>
                   <button type="button" onClick={() => setAction(null)}>取消</button>

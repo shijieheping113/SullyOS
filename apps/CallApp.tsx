@@ -125,6 +125,14 @@ import {
 } from '../utils/callSpeechGuard';
 import { findExpiredCallSnapshots } from '../utils/callSnapshotRetention';
 import {
+  CALL_IDLE_NUDGE_SEED,
+  decorateKeptCallUserMessage,
+  filterMessagesForCallReroll,
+  keptCallTurnExtras,
+  planCallReroll,
+  type CallRerollHistoryRequest,
+} from '../utils/callReroll';
+import {
   companionAvatarSource,
   companionExpressionKey,
   hasDatePortraits,
@@ -2028,16 +2036,31 @@ const CallApp: React.FC = () => {
     input: string,
     skipDbId?: number,
     touchContext = '',
+    reroll?: CallRerollHistoryRequest,
   ): Promise<any[]> => {
     if (!selectedChar?.id) return [{ role: 'user', content: input }];
     const [allMsgs, emojis] = await Promise.all([
       loadCharacterContextMessages(selectedChar),
       DB.getEmojis().catch(() => []),
     ]);
-    const filtered = allMsgs.filter(m => !(skipDbId && m.id === skipDbId));
+    const filtered = reroll
+      ? filterMessagesForCallReroll(allMsgs, reroll)
+      : allMsgs.filter(m => !(skipDbId && m.id === skipDbId));
     const { apiMessages } = ChatPrompts.buildMessageHistory(
       filtered, Math.max(1, filtered.length), selectedChar, userProfile || ({} as any), emojis,
     );
+    // 重说已经存上的用户句：历史里有这一句，不再追加。时间提示和摸头贴回这一句。
+    if (reroll && !reroll.appendInput) {
+      const extras = keptCallTurnExtras(
+        filtered,
+        reroll.keptUserDbId,
+        selectedChar.name || '对方',
+        userProfile?.name?.trim() || '用户',
+      );
+      if (extras) return decorateKeptCallUserMessage(apiMessages, extras.userText, extras);
+      // 这句已经不在上下文窗口里时，只把原文追加一次，避免模型什么都看不见。
+      if (!input.trim()) return apiMessages;
+    }
     const lastMsg = filtered[filtered.length - 1];
     const timeGapHint = ChatPrompts.getTimeGapHint(lastMsg, Date.now());
     // 现场这句也带上与历史一致的 [通话] 标——裸着的输入容易被模型接到
@@ -2232,6 +2255,7 @@ ${sentencePlan}`;
     pendingTouches: AvatarTouchRecord[] = [],
     includeUserCameraContext = false,
     userCameraSnapshotForTurn?: string,
+    reroll?: CallRerollHistoryRequest,
   ): Promise<ParsedCallReply> => {
     const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
     if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
@@ -2240,10 +2264,10 @@ ${sentencePlan}`;
       const callMsgs = await loadCharacterContextMessages(selectedChar);
       await injectMemoryPalace(selectedChar, callMsgs);
     }
-    const touchContext = selectedChar
+    const touchContext = selectedChar && !(reroll && !reroll.appendInput)
       ? buildPendingAvatarTouchContext(pendingTouches, selectedChar.name, userName)
       : '';
-    const messages = await buildHistoryMessages(input, skipDbId, touchContext);
+    const messages = await buildHistoryMessages(input, skipDbId, touchContext, reroll);
     const thinkingPrompt = selectedChar?.showThinkingChain
       ? [
           buildThinkingChainPrompt(selectedChar.name, userName),
@@ -3305,22 +3329,16 @@ ${sentencePlan}`;
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
     if (!selectedChar || bubble.role !== 'assistant') return;
-    const idx = bubbles.findIndex(b => b.id === bubble.id);
-    if (idx < 0) {
-      addToast('这条已经不在通话里了', 'error');
+    const plan = planCallReroll({
+      bubbles,
+      targetId: bubble.id,
+      openingSeed: buildCallOpeningSeed(incomingFromChatRef.current || incomingCallHandoff, userProfile?.name?.trim() || '用户'),
+      nudgeSeed: CALL_IDLE_NUDGE_SEED,
+    });
+    if (!plan.ok) {
+      if (plan.reason === 'missing') addToast('这条已经不在通话里了', 'error');
+      else if (plan.reason === 'not-latest') addToast('只能换刚刚那一句', 'error');
       return;
-    }
-    // 输入 = 往前最近的一条「我说的话」。开场白 / 主动开口这类前面根本没有用户消息时，
-    // 退回开场白种子（和开场白生成共用同一份）。
-    // ⚠️ 旧写法是「idx <= 0」或「上一条不是 user」直接 return —— 点了没反应也没提示，
-    //    看上去就是「换个说法坏了」。别再回到那种静默死路。
-    let rerollSeed = '';
-    for (let i = idx - 1; i >= 0; i -= 1) {
-      const prev = bubbles[i];
-      if (prev && prev.role === 'user') { rerollSeed = prev.text; break; }
-    }
-    if (!rerollSeed.trim()) {
-      rerollSeed = buildCallOpeningSeed(incomingFromChatRef.current || incomingCallHandoff, userProfile?.name?.trim() || '用户');
     }
     try {
       stopPlayback();
@@ -3329,7 +3347,21 @@ ${sentencePlan}`;
       addToast('正在换一种说法…', 'info');
       trackEvent('重掷角色的通话台词');
       const rerollReply = prepareCallAssistantReply(
-        await requestAssistantReply(rerollSeed, bubble.dbId),
+        await requestAssistantReply(
+          plan.appendText ?? plan.keptUserText,
+          undefined,
+          [],
+          false,
+          undefined,
+          {
+            skipDbIds: plan.skipDbIds,
+            appendInput: plan.appendInput,
+            keptUserDbId: plan.keptUserDbId,
+            keptUserText: plan.keptUserText,
+            dropCallSessionId: currentSessionId,
+            dropCallAfter: plan.dropCallAfter,
+          },
+        ),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
       const rerolled = rerollReply.text;
@@ -3407,9 +3439,7 @@ ${sentencePlan}`;
     try {
       setCallState('thinking');
       const reply = prepareCallAssistantReply(
-        await requestAssistantReply(
-          '（电话里安静了好一会儿，对方一直没说话。你不是客服，不用干等——像真实通话里那样自然地开口：可以随口说说你这边正在做的事、把刚才的话题往下接一点，或者问问ta是不是在忙。一两句就好，别重复上一句。）',
-        ),
+        await requestAssistantReply(CALL_IDLE_NUDGE_SEED),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
       const nudgeTs = Date.now();
