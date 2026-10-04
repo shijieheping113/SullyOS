@@ -212,11 +212,11 @@
   justify-content: center;
   padding: 12px 28px;
   text-align: center;
+  overflow: hidden;
 }
 .sully-voice-b .vb-caption-scroll {
-  flex: 0 0 auto;
-  height: 16em;
-  max-height: 16em;
+  flex: 1 1 0%;
+  width: 100%;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
