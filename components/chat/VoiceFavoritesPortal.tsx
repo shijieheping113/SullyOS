@@ -4,6 +4,7 @@ import {
     CaretLeft,
     CaretRight,
     ChatCircleDots,
+    DownloadSimple,
     Image,
     MagnifyingGlass,
     Pause,
@@ -12,6 +13,8 @@ import {
     Waveform,
     X,
 } from '@phosphor-icons/react';
+import { useOS } from '../../context/OSContext';
+import { shareOrDownloadBlob } from '../../utils/shareExport';
 import {
     CONTENT_FAVORITES_CHANGED_EVENT,
     listContentFavorites,
@@ -70,6 +73,7 @@ const messageTypeLabel = (type?: string): string => ({
 }[type || ''] || '聊天消息');
 
 const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose, onJumpToMessage }) => {
+    const { addToast } = useOS();
     const [tab, setTab] = useState<FavoriteTab>('chat');
     const [contentItems, setContentItems] = useState<ContentFavorite[]>([]);
     const [voiceItems, setVoiceItems] = useState<VoiceFavorite[]>([]);
@@ -82,6 +86,7 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose, onJumpToMess
     const [loading, setLoading] = useState(true);
     const [resolving, setResolving] = useState(false);
     const [playingId, setPlayingId] = useState<string | null>(null);
+    const [downloadingId, setDownloadingId] = useState<string | null>(null);
     const [audioError, setAudioError] = useState<string | null>(null);
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -238,6 +243,33 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose, onJumpToMess
         }
     };
 
+    const downloadVoice = async (item: VoiceFavorite) => {
+        if (downloadingId) return;
+        setDownloadingId(item.id);
+        setAudioError(null);
+        try {
+            const blob = await getVoiceFavoriteBlob(item.id);
+            if (!blob) {
+                setAudioError('这条收藏的音频文件缺失，请回到来源重新收藏。');
+                return;
+            }
+            const safeName = (item.charName || '语音').replace(/[\\/:*?"<>|]/g, '_');
+            const fileName = `${safeName}_收藏语音_${item.sourceTimestamp || Date.now()}.mp3`;
+            const result = await shareOrDownloadBlob({
+                blob,
+                fileName,
+                shareTitle: `${item.charName || '角色'}的语音`,
+            });
+            if (result === 'cancelled') return;
+            addToast(result === 'shared' ? '已打开系统保存/分享' : '语音已开始下载', 'success');
+        } catch (error) {
+            console.error('[favorites] download voice failed', error);
+            setAudioError('这条语音暂时下不来，请再试一次。');
+        } finally {
+            setDownloadingId(null);
+        }
+    };
+
     const removeVoice = async (item: VoiceFavorite) => {
         if (playingId === item.id) stopPlayback();
         await removeVoiceFavoriteById(item.id);
@@ -317,7 +349,10 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose, onJumpToMess
                     <p className="mt-2 text-[14px] leading-6 text-slate-800 whitespace-pre-wrap break-words">{item.originalText || item.spokenText || '（无文字）'}</p>
                     {showSecondary && <p className="mt-1 text-[12px] leading-5 text-slate-500 whitespace-pre-wrap break-words"><span className="mr-1.5 text-[10px] font-bold text-amber-700">{item.translation ? '翻译' : '语音'}</span>{secondary}</p>}
                 </div>
-                <button type="button" onClick={() => void removeVoice(item)} className="self-start shrink-0 w-9 h-9 grid place-items-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-500" aria-label="取消收藏">
+                <button type="button" onClick={() => void downloadVoice(item)} disabled={downloadingId === item.id} className="self-start shrink-0 w-10 h-10 grid place-items-center rounded-full text-slate-400 active:bg-slate-100 active:text-slate-700 disabled:opacity-40" aria-label="下载这条语音">
+                    <DownloadSimple size={16} />
+                </button>
+                <button type="button" onClick={() => void removeVoice(item)} className="self-start shrink-0 w-10 h-10 grid place-items-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-500" aria-label="取消收藏">
                     <Trash size={16} />
                 </button>
             </article>

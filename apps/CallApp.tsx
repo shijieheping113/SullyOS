@@ -125,6 +125,12 @@ import {
 } from '../utils/callSpeechGuard';
 import { findExpiredCallSnapshots } from '../utils/callSnapshotRetention';
 import {
+  findLatestUnfinishedCall,
+  unfinishedCallEndCard,
+  unfinishedKeepsakeLine,
+  type UnfinishedCallSession,
+} from '../utils/unfinishedCall';
+import {
   CALL_IDLE_NUDGE_SEED,
   decorateKeptCallUserMessage,
   filterMessagesForCallReroll,
@@ -675,6 +681,13 @@ const CallApp: React.FC = () => {
   const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
   const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
   const [showHangupConfirm, setShowHangupConfirm] = useState(false);
+  const [unfinishedPrompt, setUnfinishedPrompt] = useState<{
+    charId: string;
+    charName: string;
+    session: UnfinishedCallSession;
+    next: 'dial' | 'redial';
+  } | null>(null);
+  const [unfinishedBusy, setUnfinishedBusy] = useState(false);
   const [deleteConfirmRecord, setDeleteConfirmRecord] = useState<CallRecord | null>(null);
   const [voiceLang, setVoiceLang] = useState('');
   const [showLangPicker, setShowLangPicker] = useState(false);
@@ -963,6 +976,7 @@ const CallApp: React.FC = () => {
   const callLongPressTriggeredRef = useRef(false);
   const callTouchStartPos = useRef({ x: 0, y: 0 });
   const idleNudgeCountRef = useRef(0);
+  const greetingFiredRef = useRef<string | null>(null);
   // VRM 模型的自定义表情名（加载时由画布回传），喂给基础版主模型或高质量导演。
   const vrmExpressionsRef = useRef<string[]>([]);
   const selectedChar = useMemo(() => characters.find(c => c.id === selectedCharId) || null, [characters, selectedCharId]);
@@ -1962,7 +1976,7 @@ const CallApp: React.FC = () => {
     }
     void startUserCamera(cameraMode);
   };
-  const requestSelectedCall = () => {
+  const startFreshSelectedCall = () => {
     if (callMode === 'video') {
       let guideCompleted = false;
       try { guideCompleted = localStorage.getItem(CALL_SETUP_GUIDE_KEY) === 'complete'; } catch { /* private WebView */ }
@@ -1972,6 +1986,156 @@ const CallApp: React.FC = () => {
       }
     }
     beginSelectedCall('off');
+  };
+  const startAnotherCall = (charId: string) => {
+    if (charId) setSelectedCharId(charId);
+    resetCurrentCall();
+    primeCallAudioFromGesture();
+    setCallStartedAt(Date.now());
+    setCallState('listening');
+    setViewMode('in-call');
+    trackEvent('再打一通电话');
+  };
+  const bubblesFromUnfinished = (session: UnfinishedCallSession): CallBubble[] => session.lines.map(line => {
+    const performance = line.performance && typeof line.performance === 'object'
+      && typeof (line.performance as { emotion?: unknown }).emotion === 'string'
+      ? line.performance as AvatarPerformanceDirection
+      : undefined;
+    const cues = Array.isArray(line.performanceCues) ? line.performanceCues as AvatarPerformanceCue[] : undefined;
+    return {
+      id: line.id != null ? `db-${line.id}` : `restored-${line.timestamp}`,
+      dbId: line.id,
+      role: line.role,
+      text: line.text,
+      time: formatTimeByTs(line.timestamp),
+      timestamp: line.timestamp,
+      ...(line.thinkingChain ? { thinkingChain: line.thinkingChain } : {}),
+      ...(performance ? { performance } : {}),
+      ...(cues ? { performanceTimeline: cues } : {}),
+      ...(line.cameraSnapshotRef ? { cameraSnapshotRef: line.cameraSnapshotRef } : {}),
+      ...(line.cameraSnapshotExpired ? { cameraSnapshotExpired: true } : {}),
+    };
+  });
+  const resumeUnfinishedCall = (session: UnfinishedCallSession, charId: string) => {
+    const restored = bubblesFromUnfinished(session);
+    if (!restored.length) return false;
+    stopPlayback();
+    revokeSessionBlobs();
+    pendingAvatarTouchesRef.current = [];
+    setPendingAvatarTouchCount(0);
+    setAvatarTouchEffects([]);
+    avatarTouchEffectTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    avatarTouchEffectTimersRef.current = [];
+    idleNudgeCountRef.current = 0;
+    setSelectedCharId(charId);
+    setCallMode(session.callMode || callMode);
+    setBubbles(restored);
+    setCurrentSessionId(session.sessionId);
+    greetingFiredRef.current = session.sessionId;
+    setCallStartedAt(Date.now() - session.durationSec * 1000);
+    setElapsedSeconds(session.durationSec);
+    setDraftInput('');
+    setAudioUrl('');
+    setTraceId('');
+    setErrorMessage('');
+    setShowInputPanel(true);
+    setVoiceView('keys');
+    setVoiceSheetOpen(false);
+    setShowHangupConfirm(false);
+    const lastPerformance = [...restored].reverse().find(bubble => bubble.performance)?.performance;
+    if (lastPerformance) {
+      setAvatarPerformance(lastPerformance);
+      setAvatarEmotion(lastPerformance.emotion);
+    }
+    setCallState('listening');
+    setViewMode('in-call');
+    primeCallAudioFromGesture();
+    trackEvent('继续未挂断的电话');
+    return true;
+  };
+  const settleUnfinishedCall = async (session: UnfinishedCallSession, charId: string, charName: string) => {
+    const char = characters.find(item => item.id === charId);
+    const name = char?.name || charName || '对方';
+    const card = unfinishedCallEndCard({
+      charId,
+      charName: name,
+      charAvatar: char?.avatar,
+      session,
+      keepsakeLine: unfinishedKeepsakeLine(session.lines, name),
+      callMode: session.callMode || callMode,
+    });
+    await DB.saveMessage({
+      charId,
+      role: 'system',
+      type: 'system',
+      content: card.content,
+      metadata: card.metadata,
+    });
+    markCallTurnDirty();
+    if (char) runCallMemoryPalaceHook(char);
+    await loadCallRecords(charId);
+    trackEvent('补记一通未挂断的电话');
+  };
+  const openUnfinishedCallChoice = async (charId: string, charName: string, next: 'dial' | 'redial') => {
+    if (!charId) {
+      if (next === 'dial') startFreshSelectedCall();
+      else startAnotherCall(charId);
+      return;
+    }
+    try {
+      const all = await DB.getMessagesByCharId(charId, true);
+      const session = findLatestUnfinishedCall(all, charId);
+      if (!session) {
+        if (next === 'dial') startFreshSelectedCall();
+        else startAnotherCall(charId);
+        return;
+      }
+      setUnfinishedPrompt({ charId, charName, session, next });
+    } catch (error) {
+      console.error('[call] unfinished lookup failed', error);
+      addToast('没能确认上一通是否还没挂，这次先不拨', 'error');
+    }
+  };
+  const requestSelectedCall = () => {
+    // 先在这一下点击里解开声音。后面要查存档，查完再解就晚了，第一句会没声。
+    primeCallAudioFromGesture();
+    const char = selectedChar;
+    if (!char?.id) {
+      startFreshSelectedCall();
+      return;
+    }
+    void openUnfinishedCallChoice(char.id, char.name, 'dial');
+  };
+  const chooseContinueCall = () => {
+    if (!unfinishedPrompt || unfinishedBusy) return;
+    const continued = resumeUnfinishedCall(unfinishedPrompt.session, unfinishedPrompt.charId);
+    if (!continued) {
+      addToast('这通电话没有可接上的话', 'info');
+      return;
+    }
+    setUnfinishedPrompt(null);
+  };
+  const chooseFreshCall = async () => {
+    const prompt = unfinishedPrompt;
+    if (!prompt || unfinishedBusy) return;
+    primeCallAudioFromGesture();
+    setUnfinishedBusy(true);
+    try {
+      await settleUnfinishedCall(prompt.session, prompt.charId, prompt.charName);
+      setUnfinishedPrompt(null);
+      addToast('上一通已按挂断保存', 'success');
+      if (prompt.next === 'dial') startFreshSelectedCall();
+      else startAnotherCall(prompt.charId);
+    } catch (error) {
+      console.error('[call] settle unfinished failed', error);
+      addToast('上一通没能记进聊天，这次没有另开', 'error');
+    } finally {
+      setUnfinishedBusy(false);
+    }
+  };
+  const dismissUnfinishedCall = () => {
+    if (unfinishedBusy) return;
+    setUnfinishedPrompt(null);
   };
   const finishCallSetupGuide = () => {
     try { localStorage.setItem(CALL_SETUP_GUIDE_KEY, 'complete'); } catch { /* private WebView */ }
@@ -2798,7 +2962,6 @@ ${sentencePlan}`;
   // 接通后由角色先说第一句。它和后续静默主动接话共用一个显式通话偏好，
   // 默认开启；关闭后 CallApp 会等待用户先说，ChatApp 不受影响。
   // 聊天里接过来的来电：只加会话标记，不改全局「谁先开口」偏好。
-  const greetingFiredRef = useRef<string | null>(null);
   useEffect(() => {
     const forceIncomingFirst = !!incomingFromChatRef.current || !!incomingCallHandoff;
     if ((!forceIncomingFirst && !callPreferences.characterInitiative) || viewMode !== 'in-call' || bubbles.length > 0) return;
@@ -3602,6 +3765,22 @@ ${sentencePlan}`;
       onContinue={pendingVRoidImport.projectFile ? undefined : () => { void confirmVRoidImport(); }}
     />
   ) : null;
+  const unfinishedCallSheet = unfinishedPrompt ? (
+    <div className="sully-stage-dark absolute inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
+      <div className="w-full max-w-sm rounded-3xl border border-white/15 bg-[#2c2c2e] p-5 shadow-2xl" role="dialog" aria-labelledby="unfinished-call-title">
+        <div id="unfinished-call-title" className="text-lg font-semibold text-white">这通电话还没挂</div>
+        <p className="mt-2 text-sm text-white/65 leading-relaxed">上次和{unfinishedPrompt.charName || '对方'}的电话不是你挂的，话还留着。</p>
+        <div className="mt-5 space-y-2">
+          <button type="button" disabled={unfinishedBusy} onClick={chooseContinueCall} className="keep-white w-full min-h-10 py-2.5 rounded-2xl bg-emerald-500/80 text-white font-semibold disabled:opacity-50">继续这通</button>
+          <button type="button" disabled={unfinishedBusy} onClick={() => { void chooseFreshCall(); }} className="w-full min-h-10 py-2.5 rounded-2xl bg-rose-500/20 border border-rose-300/40 text-rose-200 font-semibold disabled:opacity-50">
+            <span>新开一通</span>
+            <span className="mt-0.5 block text-[11px] font-normal text-rose-100/70">上一通会按正常挂断写进聊天，然后另开</span>
+          </button>
+          <button type="button" disabled={unfinishedBusy} onClick={dismissUnfinishedCall} className="w-full min-h-10 py-2.5 rounded-2xl border border-white/20 text-white/80 disabled:opacity-50">先不打</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
   if (viewMode === 'role-select') {
     const groupChars = filterCharactersByGroup(characters, characterGroups, roleGroupId);
     const totalPages = Math.max(1, Math.ceil(groupChars.length / ROLES_PER_PAGE));
@@ -3953,6 +4132,7 @@ ${sentencePlan}`;
             />
           </div>
         )}
+        {unfinishedCallSheet}
       </div>
     );
   }
@@ -4009,7 +4189,7 @@ ${sentencePlan}`;
   }
   if (viewMode === 'record-detail' && recordDetail) {
     return (
-      <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
+      <div className={`relative h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         <div className="flex items-center justify-between">
           <button onClick={() => setViewMode('history')} className="text-sm text-white/45">← 返回</button>
@@ -4078,17 +4258,13 @@ ${sentencePlan}`;
         </div>
         <button
           onClick={() => {
-            setSelectedCharId(recordDetail.characterId || selectedCharId);
-            resetCurrentCall();
             primeCallAudioFromGesture();
-            setCallStartedAt(Date.now());
-            setCallState('listening');
-            setViewMode('in-call');
-            trackEvent('再打一通电话');
+            void openUnfinishedCallChoice(recordDetail.characterId || selectedCharId, recordDetail.characterName, 'redial');
           }}
           className="keep-white w-full py-3 rounded-2xl mt-4 font-medium text-white transition active:scale-[0.98]"
           style={{ backgroundColor: accentColor }}
         >再打一通</button>
+        {unfinishedCallSheet}
         <VoiceFavoriteActionSheet
           open={!!voiceFavoriteTarget}
           favorited={voiceFavoriteSaved}
