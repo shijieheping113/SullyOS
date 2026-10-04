@@ -12,6 +12,7 @@ export type SullyRepairPreviewContext = {
     userAvatar: string;
     moduleAlign?: 'anchor' | 'center';
     translationEnabled?: boolean;
+    translationExpanded?: boolean;
 };
 
 type Props = {
@@ -93,7 +94,9 @@ const SullyRepairPreviewPane: React.FC<Props> = ({
                             categories,
                             source: seg.source,
                         });
-                        return messages.map((pm, i) => (
+                        return messages.map((pm, i) => {
+                            const bilingual = /%%BILINGUAL%%/i.test(pm.content || '');
+                            return (
                             <div key={`${seg.key}-${i}`} className="pointer-events-none select-none mb-1">
                                 {seg.label && i === 0 && (
                                     <div className="text-[10px] text-violet-400 mb-0.5 px-1">{seg.label}</div>
@@ -107,7 +110,8 @@ const SullyRepairPreviewPane: React.FC<Props> = ({
                                     charName={char.name}
                                     userAvatar={preview.userAvatar}
                                     moduleAlign={preview.moduleAlign ?? 'center'}
-                                    translationEnabled={false}
+                                    translationEnabled={bilingual || !!preview.translationEnabled}
+                                    translationExpanded={bilingual || !!preview.translationExpanded}
                                     onLongPress={noop}
                                     onReply={noop}
                                     selectionMode={false}
@@ -116,7 +120,8 @@ const SullyRepairPreviewPane: React.FC<Props> = ({
                                     suppressEntranceAnimation
                                 />
                             </div>
-                        ));
+                            );
+                        });
                     })}
                 </div>
             )}

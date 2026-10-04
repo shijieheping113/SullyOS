@@ -1,5 +1,6 @@
 import type { CharacterProfile, Emoji, EmojiCategory, Message } from '../types';
 import { normalizeAssistantActionFormatting } from './assistantActionFormat';
+import { normalizeBilingualRepairSource } from './bilingualMarker';
 import { ChatParser } from './chatParser';
 import { extractHtmlBlocks } from './htmlPrompt';
 import type { SullyComposeKind } from './sullyAssistantCopy';
@@ -114,7 +115,9 @@ export function reprocessSourceToBubbles(opts: ReprocessOptions): RenderedBubble
         return reprocessPlainTextBubbles(opts);
     }
     const htmlOn = opts.htmlModeEnabled ?? !!(char as { htmlModeEnabled?: boolean }).htmlModeEnabled;
-    const normalizedSource = normalizeAssistantActionFormatting(opts.source || '');
+    const normalizedSource = normalizeBilingualRepairSource(
+        normalizeAssistantActionFormatting(opts.source || ''),
+    );
     const tidied = isSingleHtmlCardSource(normalizedSource)
         ? normalizedSource.trim()
         : sullyFormatTidy(normalizedSource, { scope: 'all' }).text;
@@ -174,6 +177,41 @@ export function reprocessSourceToBubbles(opts: ReprocessOptions): RenderedBubble
         }
     };
 
+    // 聊天认的双语不是 <翻译> 标签，而是原文和译文中间夹一行 %%BILINGUAL%%。
+    // 标签原样落库的话，显示时会被剥掉，看起来就像一条普通文字。
+    const pushBilingualOrText = (segment: string) => {
+        const re = /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>([\s\S]*?)<\/译文>\s*<\/翻译>/g;
+        if (!re.test(segment)) {
+            pushTextChunks(segment);
+            return;
+        }
+        re.lastIndex = 0;
+        let lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = re.exec(segment)) !== null) {
+            const before = segment.slice(lastIndex, match.index).trim();
+            if (before) pushTextChunks(before);
+            const originalText = ChatParser.sanitize(match[1].trim());
+            const translatedText = ChatParser.sanitize(match[2].trim());
+            if (originalText || translatedText) {
+                bubbles.push({
+                    charId: char.id,
+                    role,
+                    type: 'text',
+                    content: originalText && translatedText
+                        ? `${originalText}\n%%BILINGUAL%%\n${translatedText}`
+                        : (originalText || translatedText),
+                    replyTo: firstText ? replyTo : undefined,
+                    metadata: inheritMetadata ? { ...inheritMetadata } : undefined,
+                });
+                firstText = false;
+            }
+            lastIndex = match.index + match[0].length;
+        }
+        const after = segment.slice(lastIndex).replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim();
+        if (after) pushTextChunks(after);
+    };
+
     for (const part of ChatParser.splitResponse(rawRemainder)) {
         if (part.type === 'emoji') {
             const found = resolveEmojiForSend(part.content, scopedEmojis, categories);
@@ -197,13 +235,13 @@ export function reprocessSourceToBubbles(opts: ReprocessOptions): RenderedBubble
             firstText = false;
         } else {
             const sanitized = ChatParser.sanitize(part.content, { keepCitations: true }).trim();
-            if (sanitized) pushTextChunks(sanitized);
+            if (sanitized) pushBilingualOrText(sanitized);
         }
     }
 
     if (bubbles.length === 0 && rawRemainder) {
         const sanitized = ChatParser.sanitize(rawRemainder, { keepCitations: true }).trim();
-        if (sanitized) pushTextChunks(sanitized);
+        if (sanitized) pushBilingualOrText(sanitized);
     }
 
     if (opts.mergeAsSingle) {

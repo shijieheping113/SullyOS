@@ -71,7 +71,152 @@ describe('reprocessChatMessage', () => {
             source: original.content,
         });
         expect(preview.filter(p => p.type === 'emoji')).toHaveLength(1);
-        expect(preview[preview.length - 1].content).toBe('blob:sorry');
+        expect(preview.some(p => p.type === 'emoji' && p.content === 'blob:sorry')).toBe(true);
+        expect(preview.some(p => p.type === 'text' && p.content.includes('前言'))).toBe(true);
+    });
+
+    it('翻译标签落成双语气泡，不再变成普通文字', () => {
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: '<翻译><原文>能看到，就是每次消息前面系统塞的那一坨</原文><译文>見えてるよ、メッセージのたびにシステムが頭に詰め込んでくるあれでしょ</译文></翻译>',
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('text');
+        expect(bubbles[0].content).toBe(
+            '能看到，就是每次消息前面系统塞的那一坨\n%%BILINGUAL%%\n見えてるよ、メッセージのたびにシステムが頭に詰め込んでくるあれでしょ',
+        );
+    });
+
+    it('语音和字幕留在同一条里，字幕不会被丢掉', () => {
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: '<语音>見えてるよ</语音>\n<字幕>能看到</字幕>',
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content).toContain('<语音>見えてるよ</语音>');
+        expect(bubbles[0].content).toContain('<字幕>能看到</字幕>');
+    });
+
+    it('库里的双语记号再渲染时仍是一条，不会按行拆开', () => {
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: '能看到，就是每次消息前面系统塞的那一坨\n%%BILINGUAL%%\n見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ',
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content).toBe(
+            '能看到，就是每次消息前面系统塞的那一坨\n%%BILINGUAL%%\n見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ',
+        );
+    });
+
+    it('双语再改成语音时只留一条语音，不再带出 %%BILINGUAL%%', () => {
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: [
+                '<语音>見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</语音>',
+                '<字幕>能看到，就是每次消息前面系统塞的那一坨</字幕>',
+                '能看到，就是每次消息前面系统塞的那一坨',
+                '%%BILINGUAL%%',
+                '見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ',
+            ].join('\n'),
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content).toContain('<语音>見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</语音>');
+        expect(bubbles[0].content).toContain('<字幕>能看到，就是每次消息前面系统塞的那一坨</字幕>');
+        expect(bubbles[0].content).not.toContain('%%BILINGUAL%%');
+    });
+
+    it('记号被塞进字幕里时，字幕只留中文那半边', () => {
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: [
+                '<语音>見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</语音>',
+                '<字幕>能看到，就是每次消息前面系统塞的那一坨',
+                '%%BILINGUAL%%',
+                '見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</字幕>',
+            ].join('\n'),
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content).toContain('<字幕>能看到，就是每次消息前面系统塞的那一坨</字幕>');
+        expect(bubbles[0].content).not.toContain('%%BILINGUAL%%');
+    });
+
+    it('字幕里同一句写了两行，渲染后中文只留一遍', () => {
+        const cn = '能看到，就是每次消息前面系统塞的那一坨';
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: `<语音>見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</语音>\n<字幕>${cn}\n${cn}</字幕>`,
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content.split(cn).length - 1).toBe(1);
+    });
+
+    it('连着两枚字幕标签不会再拆出一条纯文字', () => {
+        const cn = '能看到，就是每次消息前面系统塞的那一坨';
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: [
+                '<语音>見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</语音>',
+                `<字幕>${cn}</字幕>`,
+                `<字幕>${cn}</字幕>`,
+            ].join('\n'),
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content.split(cn).length - 1).toBe(1);
+    });
+
+    it('语音前后各写一枚字幕，中文也只留一遍', () => {
+        const cn = '能看到，就是每次消息前面系统塞的那一坨';
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: [
+                `<字幕>${cn}</字幕>`,
+                '<语音>見えるよ、メッセージの前に毎回システムが詰め込んでるあれのことだよ</语音>',
+                `<字幕>${cn}</字幕>`,
+            ].join('\n'),
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].content.split(cn).length - 1).toBe(1);
+    });
+
+    it('语音旁边另一句不相关的双语还在', () => {
+        const bubbles = reprocessSourceToBubbles({
+            char,
+            emojis: [],
+            categories: [],
+            source: [
+                '<语音>おはよう</语音>',
+                '<字幕>早安</字幕>',
+                '<翻译><原文>另一句完全不同的话呀</原文><译文>これは別の文ですよ</译文></翻译>',
+            ].join('\n'),
+            role: 'assistant',
+        });
+        expect(bubbles).toHaveLength(2);
+        expect(bubbles.some(b => b.content.includes('<语音>おはよう</语音>'))).toBe(true);
+        expect(bubbles.some(b => b.content.includes('%%BILINGUAL%%') && b.content.includes('另一句完全不同的话呀'))).toBe(true);
     });
 
     it('plain composeKind 落纯 text', () => {

@@ -7,6 +7,7 @@ const AivenFishSaleReceipt = React.lazy(() => import('../../apps/vrWorld/AivenFi
 import { Message, ChatTheme } from '../../types';
 import { phoneFieldToText } from '../../utils/phoneEvidence';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
+import { dedupeRepeatedLines, spokenWithoutBilingualMarker, textBeforeBilingualMarker, visibleVoiceSubtitle } from '../../utils/bilingualMarker';
 import { VALID_INTERJECTION_TAGS, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
 import { stripFishCuesForDisplay } from '../../utils/fishAudioTts';
 import { formatStatCount } from '../../utils/videoParser';
@@ -3575,20 +3576,23 @@ const MessageItem = React.memo(({
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
     // 配对优先; 配不上 (未闭合) 就取开标签之后的全部内容。
-    const voiceTagText = hasVoiceTag ? cleanVoiceText((
+    const voiceTagText = hasVoiceTag ? cleanVoiceText(spokenWithoutBilingualMarker((
         voiceMarkupContent.match(/<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/)?.[1]
         ?? voiceMarkupContent.match(/<[语語]音[^>]*>([\s\S]*)$/)?.[1]
         ?? ''
-    ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
-    const voiceSubtitleText = cleanVoiceText(
-        voiceMarkupContent.match(/<字幕>([\s\S]*?)<\/字幕>/)?.[1] || '',
+    ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim())) : '';
+    const voiceSubtitleText = visibleVoiceSubtitle(
+        cleanVoiceText(textBeforeBilingualMarker(
+            voiceMarkupContent.match(/<字幕>([\s\S]*?)<\/字幕>/)?.[1] || '',
+        )),
+        voiceTagText,
     );
     const generatedVoiceText = showSarTruth && hasSarSurface && voiceTagText
         ? voiceTagText
         : cleanVoiceText(voiceData?.spokenText);
     const generatedVoiceSubtitle = showSarTruth && hasSarSurface
         ? voiceSubtitleText
-        : cleanVoiceText(voiceData?.originalText);
+        : (voiceSubtitleText || cleanVoiceText(voiceData?.originalText));
     // 新式用户语音记号：content 是纯文本（识别字在正文里，导出走正文），
     // 靠 metadata.stt 认出这是语音条——原声不在本机（换设备导入/资产丢失）也照旧认。
     const hasUserSttMarker = isUser && m.type === 'text' && !!(m.metadata as any)?.stt;
@@ -3662,7 +3666,7 @@ const MessageItem = React.memo(({
                 用户语音消息同样把文字收进语音条「转文字」，顶部不重复 */}
             {displayContent && !isUserVoiceMsg && !suppressVoiceDupTextBubble && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
-                {renderContent(displayContent)}
+                {renderContent(hasVoiceTag ? dedupeRepeatedLines(displayContent) : displayContent)}
                 {showExpandedTranslation && (
                     <div className="mt-2.5 pt-2 border-t border-current/15">
                         <div className="mb-1 text-[9px] font-bold tracking-[0.16em] opacity-40 select-none">翻译</div>
@@ -3881,7 +3885,7 @@ const MessageItem = React.memo(({
                                     <span className="text-[9px] shrink-0" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>语音</span>
                                 )}
                             </div>
-                            {showVoiceText && (voiceTagText || displayContent) && (
+                            {showVoiceText && (voiceTagText || voiceSubtitleText || displayContent) && (
                                 <div className="sully-voice-bar-transcript mt-1.5 px-3 py-2 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap"
                                     style={{
                                         backgroundColor: vbBg || 'rgba(0,0,0,0.02)',
@@ -3889,7 +3893,15 @@ const MessageItem = React.memo(({
                                         border: '1px solid rgba(0,0,0,0.04)',
                                     }}
                                 >
-                                    {voiceTagText || displayContent}
+                                    {voiceSubtitleText && (
+                                        <div className="whitespace-pre-wrap">{voiceSubtitleText}</div>
+                                    )}
+                                    {voiceTagText && (
+                                        <div className={`whitespace-pre-wrap ${voiceSubtitleText ? 'text-[10px] mt-1 pt-1 border-t border-current/10 opacity-70' : ''}`}>
+                                            {voiceTagText}
+                                        </div>
+                                    )}
+                                    {!voiceTagText && !voiceSubtitleText && displayContent}
                                 </div>
                             )}
                         </div>

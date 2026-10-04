@@ -5932,6 +5932,7 @@ const Chat: React.FC = () => {
                         userAvatar: userProfile.perCharAvatars?.[char.id] || userProfile.avatar,
                         moduleAlign: mergedFineTune.chatModuleAlign || 'center',
                         translationEnabled,
+                        translationExpanded,
                     }}
                     saving={sullyAiRepairSaving}
                     sourceMessages={sullyAiRepairPicks.length > 1 ? sullyAiRepairPicks : undefined}
@@ -5961,6 +5962,7 @@ const Chat: React.FC = () => {
                         userAvatar: userProfile.perCharAvatars?.[char.id] || userProfile.avatar,
                         moduleAlign: mergedFineTune.chatModuleAlign || 'center',
                         translationEnabled,
+                        translationExpanded,
                     }}
                     initialSource={formatEditorInitialSource}
                     batchMessages={formatEditorMessage
