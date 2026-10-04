@@ -17,6 +17,14 @@ describe('sullyRepairPrompt', () => {
     it('纯文字不修时不塞整段 HTML 审美', () => {
         const sys = buildSullyRepairSystemPrompt('Ann', '你好呀');
         expect(sys).not.toContain('视觉审美准则');
+        expect(sys).not.toContain('各自留在原位');
+    });
+
+    it('多条带位置标记时才要求按原位交回', () => {
+        const sys = buildSullyRepairSystemPrompt('Ann', '<<<SULLY_BUBBLE id="2">>>\n早安\n<<<SULLY_BUBBLE id="4">>>\n晚安');
+        expect(sys).toContain('各自留在原位');
+        expect(sys).toContain('<<<SULLY_BUBBLE id="new">>>');
+        expect(sys).toContain('禁止把多条并成一条');
     });
 
     it('涉及语音时注入与主聊天同源的语气规范', () => {

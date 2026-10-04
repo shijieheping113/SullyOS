@@ -4,7 +4,8 @@ import type { SullyRepairPreviewContext } from './SullyRepairPreviewPane';
 import TokenImg from '../os/TokenImg';
 import type { SullyRepairPreviewSegment } from '../../utils/sullyRepairPreview';
 import { messageToEditSource } from '../../utils/sullyMessageSource';
-import { mergeMessagesToEditSource } from '../../utils/sullyChatNeighbors';
+import { sortChatMessages } from '../../utils/chatMessageOrder';
+import { buildMarkedBubbleSource, resolveRepairSources } from '../../utils/sullyRepairPlace';
 import { resolveSullyAssistantChibi } from '../../utils/sullyAssistantAvatar';
 import {
     SULLY_AI_REPAIR_CANCEL,
@@ -36,6 +37,8 @@ const EMPTY_SOURCE_MESSAGES: Message[] = [];
 
 export type SullyAiRepairSavePayload = {
     source: string;
+    /** 多条时每条自己的稿。保存时按这个写回原来的位置。 */
+    parts?: { id: number | 'new'; source: string }[];
     insertAbove?: string;
     insertBelow?: string;
     resumeSession: SullyAiRepairResumeSession;
@@ -81,7 +84,7 @@ const SullyAiRepairModal: React.FC<Props> = ({
     resumeToken = 0,
 }) => {
     const chibi = useMemo(() => resolveSullyAssistantChibi(characters), [characters]);
-    const [draftSource, setDraftSource] = useState('');
+    const [slots, setSlots] = useState<{ id: number | 'new'; source: string }[]>([]);
     const [input, setInput] = useState('');
     const [bubbles, setBubbles] = useState<AiRepairChatBubble[]>([]);
     const [priorTurns, setPriorTurns] = useState<SullyRepairChatTurn[]>([]);
@@ -94,6 +97,9 @@ const SullyAiRepairModal: React.FC<Props> = ({
 
     const picks = sourceMessages && sourceMessages.length > 0 ? sourceMessages : EMPTY_SOURCE_MESSAGES;
     const mergedFromCount = picks.length > 1 ? picks.length : 0;
+    const draftSource = slots.length > 1
+        ? buildMarkedBubbleSource(slots)
+        : (slots[0]?.source ?? '');
     const pickIdsKey = mergedFromCount > 0
         ? picks.map(m => m.id).sort((a, b) => a - b).join(',')
         : '';
@@ -105,7 +111,9 @@ const SullyAiRepairModal: React.FC<Props> = ({
             && resumeSession.anchorMessageId === message.id
             && resumeSession.charId === char.id
         ) {
-            setDraftSource(resumeSession.draftSource);
+            setSlots(resumeSession.slotSources?.length
+                ? resumeSession.slotSources
+                : [{ id: message.id, source: resumeSession.draftSource }]);
             setPriorTurns(resumeSession.priorTurns);
             setBubbles(resumeSession.uiBubbles);
             setInsertAbove(resumeSession.insertAbove);
@@ -116,10 +124,8 @@ const SullyAiRepairModal: React.FC<Props> = ({
             setStreamPhase('idle');
             return;
         }
-        const source = mergedFromCount > 0
-            ? mergeMessagesToEditSource(picks, emojis)
-            : messageToEditSource(message, emojis);
-        setDraftSource(source);
+        const ordered = sortChatMessages(mergedFromCount > 0 ? picks : [message]);
+        setSlots(ordered.map(item => ({ id: item.id, source: messageToEditSource(item, emojis) })));
         setInput('');
         setBubbles([]);
         setPriorTurns([]);
@@ -131,7 +137,7 @@ const SullyAiRepairModal: React.FC<Props> = ({
     }, [open, message?.id, mergedFromCount, pickIdsKey, emojis.length, char.id, resumeToken, resumeSession]);
 
     const previewSegments = useMemo((): SullyRepairPreviewSegment[] => {
-        if (!message || !draftSource.trim()) return [];
+        if (!message) return [];
         const mk = (key: string, label: string, raw: string): SullyRepairPreviewSegment | null => {
             const trimmed = raw.trim();
             if (!trimmed) return null;
@@ -139,13 +145,18 @@ const SullyAiRepairModal: React.FC<Props> = ({
             const source = postProcessRepairedSource(trimmed, kind, { userGoal: lastUserGoal });
             return { key, label, source };
         };
-        const anchorLabel = mergedFromCount > 1 ? `合并锚点（${mergedFromCount} 条）` : '锚点泡';
+        const slotSegments = slots.map((slot, index) => {
+            const label = slot.id === 'new'
+                ? '新加的'
+                : (slots.length > 1 ? `第 ${index + 1} 条` : '这条');
+            return mk(`slot-${index}`, label, slot.source);
+        });
         return [
             mk('above', '上方新泡', insertAbove),
-            mk('anchor', anchorLabel, draftSource),
+            ...slotSegments,
             mk('below', '下方新泡', insertBelow),
         ].filter((s): s is SullyRepairPreviewSegment => s !== null);
-    }, [message, draftSource, insertAbove, insertBelow, mergedFromCount, lastUserGoal]);
+    }, [message, slots, insertAbove, insertBelow, lastUserGoal]);
 
     const sendGoal = useCallback(async () => {
         if (!message || loading) return;
@@ -190,16 +201,46 @@ const SullyAiRepairModal: React.FC<Props> = ({
             if (result.insertAbove) setInsertAbove(result.insertAbove);
             if (result.insertBelow) setInsertBelow(result.insertBelow);
             if (result.fixedSource) {
-                const kind = inferRepairFormatKind(draftSource);
-                const cleaned = postProcessRepairedSource(result.fixedSource, kind, { userGoal: goal });
-                if (kind !== 'html' || isRepairedSourcePlausible(cleaned, draftSource)) {
-                    setDraftSource(cleaned);
+                if (slots.length > 1) {
+                    const originals = slots
+                        .filter((slot): slot is { id: number; source: string } => typeof slot.id === 'number')
+                        .map(slot => ({ id: slot.id, source: slot.source }));
+                    const parts = resolveRepairSources(originals, result.fixedSource);
+                    let warned = false;
+                    const next = parts.map(part => {
+                        if (!part.source.trim()) return { id: part.id, source: '' };
+                        const kind = inferRepairFormatKind(part.source);
+                        const cleaned = postProcessRepairedSource(part.source, kind, { userGoal: goal });
+                        if (!cleaned.trim()) return { id: part.id, source: part.source };
+                        if (typeof part.id === 'number' && kind === 'html') {
+                            const prev = originals.find(item => item.id === part.id)?.source ?? '';
+                            if (prev && !isRepairedSourcePlausible(cleaned, prev)) {
+                                warned = true;
+                                return { id: part.id, source: prev };
+                            }
+                        }
+                        return { id: part.id, source: cleaned };
+                    });
+                    setSlots(next);
+                    if (warned) {
+                        setBubbles(prev => [...prev, {
+                            id: `a-warn-${Date.now()}`,
+                            role: 'assistant',
+                            text: '……有一条不像卡片源码……那条猫儿没敢动，再跟猫儿说一次？',
+                        }]);
+                    }
                 } else {
-                    setBubbles(prev => [...prev, {
-                        id: `a-warn-${Date.now()}`,
-                        role: 'assistant',
-                        text: '……这稿不像卡片源码……猫儿没敢动预览，再跟猫儿说一次？',
-                    }]);
+                    const kind = inferRepairFormatKind(draftSource);
+                    const cleaned = postProcessRepairedSource(result.fixedSource, kind, { userGoal: goal });
+                    if (kind !== 'html' || isRepairedSourcePlausible(cleaned, draftSource)) {
+                        setSlots([{ id: message.id, source: cleaned }]);
+                    } else {
+                        setBubbles(prev => [...prev, {
+                            id: `a-warn-${Date.now()}`,
+                            role: 'assistant',
+                            text: '……这稿不像卡片源码……猫儿没敢动预览，再跟猫儿说一次？',
+                        }]);
+                    }
                 }
             }
         } catch (e) {
@@ -213,14 +254,25 @@ const SullyAiRepairModal: React.FC<Props> = ({
             setLoading(false);
             setStreamPhase('idle');
         }
-    }, [message, loading, input, apiConfig, userName, draftSource, priorTurns, char, emojis, categories]);
+    }, [message, loading, input, apiConfig, userName, draftSource, slots, priorTurns, char, emojis, categories]);
 
     const handleSave = () => {
         if (!message) return;
-        const kind = inferRepairFormatKind(draftSource);
-        const cleaned = postProcessRepairedSource(draftSource, kind, { userGoal: lastUserGoal });
+        const parts = slots.map(slot => {
+            if (!slot.source.trim()) return { id: slot.id, source: '' };
+            const kind = inferRepairFormatKind(slot.source);
+            const cleaned = postProcessRepairedSource(slot.source, kind, { userGoal: lastUserGoal });
+            return {
+                id: slot.id,
+                source: cleaned.trim() ? cleaned : slot.source,
+            };
+        });
+        const source = parts.length > 1
+            ? buildMarkedBubbleSource(parts)
+            : (parts[0]?.source ?? '');
         void onSave({
-            source: cleaned,
+            source,
+            parts,
             insertAbove: insertAbove.trim() || undefined,
             insertBelow: insertBelow.trim() || undefined,
             resumeSession: {
@@ -228,7 +280,8 @@ const SullyAiRepairModal: React.FC<Props> = ({
                 anchorMessageId: message.id,
                 priorTurns,
                 uiBubbles: bubbles,
-                draftSource: cleaned,
+                draftSource: source,
+                slotSources: parts,
                 insertAbove: insertAbove.trim(),
                 insertBelow: insertBelow.trim(),
                 lastUserGoal,
@@ -241,7 +294,7 @@ const SullyAiRepairModal: React.FC<Props> = ({
     const sourceSnippet = draftSource.length > 120 ? `${draftSource.slice(0, 120)}…` : draftSource;
 
     return (
-        <div className="fixed inset-0 z-[510] flex flex-col bg-gradient-to-b from-violet-50 to-slate-50 animate-fade-in touch-manipulation">
+        <div className="fixed inset-0 z-[510] flex flex-col bg-gradient-to-b from-violet-50 to-slate-50 animate-fade-in touch-manipulation overflow-x-hidden max-w-[100vw]">
             <style>{`
                 @keyframes sullyPawTap {
                     0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -252,7 +305,7 @@ const SullyAiRepairModal: React.FC<Props> = ({
                 .sully-paw-busy:nth-child(3) { animation-delay: 0.24s; }
             `}</style>
             <div
-                className="shrink-0 px-4 py-3 border-b border-violet-100 bg-white/90 flex items-center gap-3"
+                className="shrink-0 px-4 py-3 border-b border-violet-100 bg-white/90 flex items-center gap-3 min-w-0 max-w-full"
                 style={{ paddingTop: 'max(0.75rem, var(--safe-top))' }}
             >
                 <TokenImg value={chibi.img} className="w-10 h-10 object-contain" alt="" />
@@ -282,10 +335,12 @@ const SullyAiRepairModal: React.FC<Props> = ({
                 </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+            <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-2">
                 {bubbles.length === 0 && (
                     <p className="text-center text-xs text-violet-400/80 py-6 leading-relaxed">
-                        跟猫儿说这次要修什么……也能说在锚点上下加表情或 HTML 卡
+                        {slots.length > 1
+                            ? '跟猫儿说这次要修什么……修好的每一条都会回到自己原来的位置'
+                            : '跟猫儿说这次要修什么……也能说在锚点上下加表情或 HTML 卡'}
                     </p>
                 )}
                 {bubbles.map(b => (
@@ -327,7 +382,10 @@ const SullyAiRepairModal: React.FC<Props> = ({
                 )}
             </div>
 
-            <div className="shrink-0 px-4 pb-2">
+            <div className="shrink-0 px-4 pb-2 w-full min-w-0 max-w-full">
+                {slots.some(slot => !slot.source.trim()) && slots.length > 1 && (
+                    <p className="text-[10px] text-amber-600 px-1 pb-1">空掉的那几条，保存后会从原来的位置拿掉。</p>
+                )}
                 {message && (
                     <SullyRepairPreviewPane
                         anchorMessage={message}
@@ -336,22 +394,22 @@ const SullyAiRepairModal: React.FC<Props> = ({
                         emojis={emojis}
                         categories={categories}
                         preview={preview}
-                        className="mb-2"
+                        className="mb-2 max-w-full"
                     />
                 )}
-                <div className="flex gap-2">
+                <div className="flex gap-2 w-full min-w-0">
                     <input
                         value={input}
                         onChange={e => setInput(e.target.value)}
                         placeholder={SULLY_AI_REPAIR_INPUT_PLACEHOLDER}
-                        className="flex-1 px-3 py-2.5 rounded-2xl border border-violet-200 bg-white text-sm"
+                        className="min-w-0 w-0 max-w-full flex-1 basis-0 overflow-hidden px-3 py-2.5 rounded-2xl border border-violet-200 bg-white text-sm"
                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendGoal(); } }}
                     />
                     <button
                         type="button"
                         disabled={loading}
                         onClick={sendGoal}
-                        className="shrink-0 px-4 py-2.5 rounded-2xl bg-violet-600 text-white text-sm font-bold disabled:opacity-50"
+                        className="shrink-0 whitespace-nowrap px-3 py-2.5 rounded-2xl bg-violet-600 text-white text-sm font-bold disabled:opacity-50"
                     >
                         {SULLY_AI_REPAIR_SEND}
                     </button>
@@ -359,17 +417,17 @@ const SullyAiRepairModal: React.FC<Props> = ({
             </div>
 
             <div
-                className="shrink-0 px-4 py-3 border-t border-slate-200 bg-white flex gap-3"
+                className="shrink-0 px-4 py-3 border-t border-slate-200 bg-white flex gap-3 w-full min-w-0 max-w-full"
                 style={{ paddingBottom: 'max(0.75rem, var(--safe-bottom))' }}
             >
-                <button type="button" onClick={onClose} className="flex-1 py-3 rounded-2xl bg-slate-100 text-slate-600 font-medium">
+                <button type="button" onClick={onClose} className="flex-1 min-w-0 py-3 rounded-2xl bg-slate-100 text-slate-600 font-medium">
                     {SULLY_AI_REPAIR_CANCEL}
                 </button>
                 <button
                     type="button"
-                    disabled={saving || (!draftSource.trim() && !insertAbove.trim() && !insertBelow.trim())}
+                    disabled={saving || (slots.length < 2 && !slots.some(slot => slot.source.trim()) && !insertAbove.trim() && !insertBelow.trim())}
                     onClick={handleSave}
-                    className="flex-1 py-3 rounded-2xl bg-violet-600 text-white font-bold disabled:opacity-50"
+                    className="flex-1 min-w-0 py-3 rounded-2xl bg-violet-600 text-white font-bold disabled:opacity-50"
                 >
                     {saving ? SULLY_AI_REPAIR_WORKING : SULLY_AI_REPAIR_SAVE}
                 </button>

@@ -76,7 +76,12 @@ export async function runSullyRepairRound(input: SullyRepairRoundInput): Promise
     const anchorKind = inferRepairFormatKind(input.draftSource);
     const reply = sanitizeRepairReplyForDisplay(parsed.reply);
     const fixedRaw = parsed.fixedSource.trim() || input.draftSource;
-    const fixedSource = postProcessRepairedSource(fixedRaw, anchorKind, { userGoal: input.userGoal });
+    // 多条一起修时，整段清洗会把位置标记和别的泡揉成一张卡。先原样交回去，按条再洗。
+    const keepBubbleMarks = (input.draftSource || '').includes('<<<SULLY_BUBBLE')
+        || fixedRaw.includes('<<<SULLY_BUBBLE');
+    const fixedSource = keepBubbleMarks
+        ? fixedRaw.trim()
+        : postProcessRepairedSource(fixedRaw, anchorKind, { userGoal: input.userGoal });
     const insertAbove = parsed.insertAbove
         ? postProcessRepairedSource(parsed.insertAbove, inferRepairFormatKind(parsed.insertAbove), { userGoal: input.userGoal })
         : '';

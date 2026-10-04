@@ -145,7 +145,19 @@ ${SULLY_REPAIR_BUILTIN_FORMAT_RULES}
 ${userRules}
 `.trim();
 
-    return [taskBlock, htmlDesignBlock, voiceDesignBlock, personaBlock, rulesBlock].filter(Boolean).join('\n\n');
+    const multiBubbleRule = draftSource && draftSource.includes('<<<SULLY_BUBBLE')
+        ? `
+【多条气泡 — 各自留在原位】
+- 原文里单独成行的 <<<SULLY_BUBBLE id="数字">>> 是每一条气泡的位置标记，不是正文，也不要拿去理顺。
+- ${SULLY_FIXED_MARK} 里必须原样保留这些标记行，顺序不许对调，id 不许改。
+- 每一条标记下面，只放这一条修好后的源码。这条不用改的话，也照原样放回它自己下面。
+- 要删掉某一条：保留它的标记行，下一行只写「无」。
+- 要在两条中间新增一条：在该处另起一行 <<<SULLY_BUBBLE id="new">>>，下面写新泡的源码。
+- 禁止把多条并成一条，禁止按卡片、表情、文字把几条重新排序。
+`.trim()
+        : '';
+
+    return [taskBlock, multiBubbleRule, htmlDesignBlock, voiceDesignBlock, personaBlock, rulesBlock].filter(Boolean).join('\n\n');
 }
 
 export function buildSullyRepairUserTurn(opts: {

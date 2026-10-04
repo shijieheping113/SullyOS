@@ -93,7 +93,7 @@ export type SullyQuickComposeTemplate = {
 export const SULLY_QUICK_COMPOSE_TEMPLATES: SullyQuickComposeTemplate[] = [];
 
 export const SULLY_ASSISTANT_TAP_CAT_HINT = '……点一下猫儿？去聊天里选要修的泡';
-export const SULLY_AI_REPAIR_MERGED_LABEL = (n: number) => `已合并 ${n} 个泡`;
+export const SULLY_AI_REPAIR_MERGED_LABEL = (n: number) => `已选 ${n} 条`;
 export const SULLY_AI_REPAIR_PICK_EMPTY = '还没选泡……点聊天里的气泡勾选';
 export const SULLY_AI_REPAIR_PICK_ROLE_MISMATCH = '选中的泡要同一边……都是角色发的，或都是你发的';
 

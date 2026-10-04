@@ -26,6 +26,7 @@ import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from './activeMsgSto
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
 import { editLibrary, VR_LIBRARY_RECORD, type LibraryEdit } from './vrWorld/library';
+import { compareChatMessages } from './chatMessageOrder';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -999,7 +1000,10 @@ export const DB = {
     });
   },
 
+  /** 聊天里排在这条前面的下一条。按时间，不按编号，免得插进去的泡跳位。 */
   getPreviousChatMessageBefore: async (charId: string, beforeId: number): Promise<Message | null> => {
+    const anchor = await DB.getMessageById(beforeId);
+    if (!anchor) return null;
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
@@ -1013,14 +1017,19 @@ export const DB = {
           return;
         }
         const m = cursor.value as Message;
-        if (!m.groupId && m.id < beforeId && (!prev || m.id > prev.id)) prev = m;
+        if (!m.groupId && m.id !== anchor.id && compareChatMessages(m, anchor) < 0 && (!prev || compareChatMessages(m, prev) > 0)) {
+          prev = m;
+        }
         cursor.continue();
       };
       req.onerror = () => reject(req.error);
     });
   },
 
+  /** 聊天里排在这条后面的下一条。按时间，不按编号。 */
   getNextChatMessageAfter: async (charId: string, afterId: number): Promise<Message | null> => {
+    const anchor = await DB.getMessageById(afterId);
+    if (!anchor) return null;
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
@@ -1034,7 +1043,35 @@ export const DB = {
           return;
         }
         const m = cursor.value as Message;
-        if (!m.groupId && m.id > afterId && (!next || m.id < next.id)) next = m;
+        if (!m.groupId && m.id !== anchor.id && compareChatMessages(m, anchor) > 0 && (!next || compareChatMessages(m, next) < 0)) {
+          next = m;
+        }
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  /** 这个角色全部私聊的时间顺序，只留编号和时间，给修格式放回原位用。 */
+  listChatTimeline: async (charId: string): Promise<{ id: number; timestamp: number }[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const index = transaction.objectStore(STORE_MESSAGES).index('charId');
+      const items: { id: number; timestamp: number }[] = [];
+      const req = index.openCursor(IDBKeyRange.only(charId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          items.sort((a, b) => compareChatMessages(
+            { id: a.id, timestamp: a.timestamp } as Message,
+            { id: b.id, timestamp: b.timestamp } as Message,
+          ));
+          resolve(items);
+          return;
+        }
+        const m = cursor.value as Message;
+        if (!m.groupId) items.push({ id: m.id, timestamp: m.timestamp ?? 0 });
         cursor.continue();
       };
       req.onerror = () => reject(req.error);
@@ -1064,7 +1101,7 @@ export const DB = {
       const b = list[i];
       const ts = typeof b.timestamp === 'number'
         ? b.timestamp
-        : (n <= 1 ? t0 : t0 + Math.floor(((tEnd - t0) * i) / n));
+        : (tEnd > t0 ? t0 + ((tEnd - t0) * i) / Math.max(n, 1) : t0 + i);
       const payload = {
         charId: original.charId,
         groupId: original.groupId,

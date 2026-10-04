@@ -51,12 +51,22 @@ export type SullyFormatUndoAiRepair = {
     savedAt: number;
 };
 
+/** 每条写回自己原来的位置。撤销时删掉新加的，再把改过的整条放回去。 */
+export type SullyFormatUndoInPlace = {
+    kind: 'in-place';
+    charId: string;
+    originals: Message[];
+    insertedIds: number[];
+    savedAt: number;
+};
+
 export type SullyFormatUndoPayload =
     | SullyFormatUndoReplace
     | SullyFormatUndoInsert
     | SullyFormatUndoMerge
     | SullyFormatUndoMultiReplace
-    | SullyFormatUndoAiRepair;
+    | SullyFormatUndoAiRepair
+    | SullyFormatUndoInPlace;
 
 /** @deprecated 兼容旧读取 */
 export type SullyFormatUndoPayloadLegacy = {
@@ -87,6 +97,9 @@ function normalizePayload(raw: unknown): SullyFormatUndoPayload | null {
     if (o.kind === 'ai-repair' && o.anchorOriginal && Array.isArray(o.replacedNewIds)) {
         return o as SullyFormatUndoAiRepair;
     }
+    if (o.kind === 'in-place' && Array.isArray(o.originals) && Array.isArray(o.insertedIds)) {
+        return o as SullyFormatUndoInPlace;
+    }
     if (o.original && Array.isArray(o.newIds)) {
         return {
             kind: 'replace',
@@ -104,7 +117,8 @@ export type SullyFormatUndoSaveInput =
     | Omit<SullyFormatUndoInsert, 'savedAt'>
     | Omit<SullyFormatUndoMerge, 'savedAt'>
     | Omit<SullyFormatUndoMultiReplace, 'savedAt'>
-    | Omit<SullyFormatUndoAiRepair, 'savedAt'>;
+    | Omit<SullyFormatUndoAiRepair, 'savedAt'>
+    | Omit<SullyFormatUndoInPlace, 'savedAt'>;
 
 export function saveSullyFormatUndo(payload: SullyFormatUndoSaveInput): void {
     try {
@@ -156,6 +170,11 @@ export async function applySullyFormatUndo(payload: SullyFormatUndoPayload): Pro
         if (delIds.length) await DB.deleteMessages(delIds);
         await DB.putMessagePreserveId(payload.anchorOriginal);
         for (const snap of payload.removedSnapshots) {
+            await DB.putMessagePreserveId(snap);
+        }
+    } else if (payload.kind === 'in-place') {
+        if (payload.insertedIds.length) await DB.deleteMessages(payload.insertedIds);
+        for (const snap of payload.originals) {
             await DB.putMessagePreserveId(snap);
         }
     } else {

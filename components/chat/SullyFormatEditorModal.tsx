@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CharacterProfile, Emoji, EmojiCategory, Message } from '../../types';
 import TokenImg from '../os/TokenImg';
+import { sortChatMessages } from '../../utils/chatMessageOrder';
 import { messageToEditSource } from '../../utils/sullyMessageSource';
 import { diagnoseMessageFormat, sullyFormatTidy, type FormatIssue, type SullyFormatTidyScope } from '../../utils/sullyMessageFormat';
 import { resolveSullyAssistantChibi } from '../../utils/sullyAssistantAvatar';
@@ -19,6 +20,8 @@ import type { SullyRepairPreviewSegment } from '../../utils/sullyRepairPreview';
 
 const UNDO_MAX = 20;
 
+type SourcePart = { id: number; source: string };
+
 type Props = {
     open: boolean;
     message: Message | null;
@@ -27,12 +30,14 @@ type Props = {
     emojis: Emoji[];
     categories: EmojiCategory[];
     onClose: () => void;
-    onSave: (source: string) => Promise<void>;
+    onSave: (parts: SourcePart[]) => Promise<void>;
     saving?: boolean;
     userName?: string;
     preview: SullyRepairPreviewContext;
-    /** 合并等场景预填源码，优先于 messageToEditSource */
+    /** 合并等场景预填源码，优先于 messageToEditSource。多条时不用这个。 */
     initialSource?: string | null;
+    /** 多选时按时间序逐条编辑，保存后各回原位。 */
+    batchMessages?: Message[] | null;
 };
 
 const QUICK_ACTIONS: { label: string; scope: SullyFormatTidyScope }[] = [
@@ -56,61 +61,98 @@ const SullyFormatEditorModal: React.FC<Props> = ({
     userName,
     preview,
     initialSource,
+    batchMessages,
 }) => {
     const chibi = useMemo(() => resolveSullyAssistantChibi(characters), [characters]);
-    const [source, setSource] = useState('');
-    const [undoStack, setUndoStack] = useState<string[]>([]);
+    const [parts, setParts] = useState<SourcePart[]>([]);
+    const [undoStack, setUndoStack] = useState<SourcePart[][]>([]);
     const [tidyHint, setTidyHint] = useState(SULLY_FORMAT_TIDY_OK);
-    const sourceRef = useRef<HTMLTextAreaElement>(null);
+    const sourceRef = useRef<HTMLTextAreaElement | null>(null);
+    const focusIndex = useRef(0);
+    const partsRef = useRef(parts);
+    partsRef.current = parts;
 
-    const pushUndo = useCallback((prev: string) => {
+    const pushUndo = useCallback((prev: SourcePart[]) => {
         setUndoStack(stack => {
-            const next = [...stack, prev];
+            const next = [...stack, prev.map(part => ({ ...part }))];
             if (next.length > UNDO_MAX) next.shift();
             return next;
         });
     }, []);
 
     const insertAtCursor = useCallback((snippet: string) => {
-        pushUndo(source);
+        const prev = partsRef.current;
+        if (!prev.length) return;
+        pushUndo(prev);
+        const index = Math.min(focusIndex.current, prev.length - 1);
+        const current = prev[index];
         const ta = sourceRef.current;
-        const start = ta?.selectionStart ?? source.length;
-        const end = ta?.selectionEnd ?? start;
-        setSource(source.slice(0, start) + snippet + source.slice(end));
-    }, [source, pushUndo]);
+        const value = current.source;
+        const start = ta ? (ta.selectionStart ?? value.length) : value.length;
+        const end = ta ? (ta.selectionEnd ?? start) : start;
+        const next = prev.slice();
+        next[index] = { ...current, source: value.slice(0, start) + snippet + value.slice(end) };
+        setParts(next);
+    }, [pushUndo]);
+
+    const batchKey = batchMessages?.map(item => item.id).join(',') ?? '';
 
     useEffect(() => {
         if (!open || !message) return;
-        const initial = initialSource != null && initialSource !== ''
-            ? initialSource
-            : messageToEditSource(message, emojis);
-        setSource(initial);
+        if (batchMessages && batchMessages.length > 1) {
+            const ordered = sortChatMessages(batchMessages);
+            setParts(ordered.map(item => ({ id: item.id, source: messageToEditSource(item, emojis) })));
+        } else {
+            const initial = initialSource != null && initialSource !== ''
+                ? initialSource
+                : messageToEditSource(message, emojis);
+            setParts([{ id: message.id, source: initial }]);
+        }
         setUndoStack([]);
         setTidyHint(SULLY_FORMAT_TIDY_OK);
-    }, [open, message, emojis, initialSource]);
+        focusIndex.current = 0;
+    }, [open, message, emojis.length, initialSource, batchKey]);
 
     const issues = useMemo(() => {
         if (!message) return [];
-        return diagnoseMessageFormat(source, message);
-    }, [source, message]);
+        return parts.flatMap((part, index) => (
+            diagnoseMessageFormat(part.source, message).map(issue => ({
+                ...issue,
+                id: `${issue.id}-${index}`,
+            }))
+        ));
+    }, [parts, message]);
 
     const previewSegments = useMemo((): SullyRepairPreviewSegment[] => {
-        if (!message || !source.trim()) return [];
-        return [{ key: 'main', label: '当前稿', source }];
-    }, [message, source]);
+        if (!message) return [];
+        return parts.flatMap((part, index) => (
+            part.source.trim()
+                ? [{
+                    key: `part-${part.id}`,
+                    label: parts.length > 1 ? `第 ${index + 1} 条` : '当前稿',
+                    source: part.source,
+                }]
+                : []
+        ));
+    }, [message, parts]);
 
-    const runTidy = (scope: SullyFormatTidyScope) => {
-        pushUndo(source);
-        const { text, issuesFixed } = sullyFormatTidy(source, { scope });
-        setSource(text);
-        setTidyHint(issuesFixed.length ? SULLY_FORMAT_TIDY_OK : SULLY_FORMAT_TIDY_NOOP);
+    const applyTidy = (scope?: SullyFormatTidyScope) => {
+        pushUndo(parts);
+        let fixed = 0;
+        const next = parts.map(part => {
+            const result = sullyFormatTidy(part.source, scope ? { scope } : undefined);
+            if (result.issuesFixed.length) fixed += 1;
+            return { ...part, source: result.text };
+        });
+        setParts(next);
+        setTidyHint(fixed ? SULLY_FORMAT_TIDY_OK : SULLY_FORMAT_TIDY_NOOP);
     };
 
     const handleUndo = () => {
         setUndoStack(stack => {
             if (!stack.length) return stack;
             const prev = stack[stack.length - 1];
-            setSource(prev);
+            setParts(prev.map(part => ({ ...part })));
             return stack.slice(0, -1);
         });
     };
@@ -118,9 +160,9 @@ const SullyFormatEditorModal: React.FC<Props> = ({
     if (!open || !message) return null;
 
     return (
-        <div className="fixed inset-0 z-[500] flex flex-col bg-slate-50 animate-fade-in touch-manipulation">
+        <div className="fixed inset-0 z-[500] flex flex-col bg-slate-50 animate-fade-in touch-manipulation overflow-x-hidden max-w-[100vw]">
             <div
-                className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white flex items-center gap-3"
+                className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white flex items-center gap-3 min-w-0 max-w-full"
                 style={{ paddingTop: 'max(0.75rem, var(--safe-top))' }}
             >
                 <TokenImg value={chibi.img} className="w-10 h-10 object-contain" alt="" />
@@ -130,7 +172,12 @@ const SullyFormatEditorModal: React.FC<Props> = ({
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4" style={{ paddingBottom: 'var(--safe-bottom)' }}>
+            <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-4" style={{ paddingBottom: 'var(--safe-bottom)' }}>
+                {parts.length > 1 && (
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                        每一条都会回到自己原来的位置。把某一格清空再保存，就是删掉那一条。
+                    </p>
+                )}
                 {issues.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                         {issues.map((issue: FormatIssue) => (
@@ -151,28 +198,37 @@ const SullyFormatEditorModal: React.FC<Props> = ({
                     </div>
                 )}
 
-                <div>
-                    <label className="text-xs font-medium text-slate-500 mb-1 block">源码</label>
-                    <textarea
-                        ref={sourceRef}
-                        value={source}
-                        onChange={e => setSource(e.target.value)}
-                        className="w-full min-h-[140px] text-sm p-3 rounded-2xl border border-slate-200 bg-white font-mono leading-relaxed resize-y"
-                        spellCheck={false}
-                    />
-                </div>
+                {parts.map((part, index) => (
+                    <div key={part.id} className="min-w-0">
+                        <label className="text-xs font-medium text-slate-500 mb-1 block">
+                            {parts.length > 1 ? `第 ${index + 1} 条` : '源码'}
+                        </label>
+                        <textarea
+                            ref={index === 0 ? sourceRef : undefined}
+                            value={part.source}
+                            onFocus={event => {
+                                focusIndex.current = index;
+                                sourceRef.current = event.currentTarget;
+                            }}
+                            onChange={event => {
+                                const value = event.target.value;
+                                setParts(prev => prev.map(item => item.id === part.id ? { ...item, source: value } : item));
+                            }}
+                            className="w-full min-w-0 max-w-full min-h-[140px] text-sm p-3 rounded-2xl border border-slate-200 bg-white font-mono leading-relaxed resize-y"
+                            spellCheck={false}
+                        />
+                        {parts.length > 1 && !part.source.trim() && (
+                            <p className="text-[10px] text-amber-600 mt-1">空着保存，这条会从原来的位置拿掉。</p>
+                        )}
+                    </div>
+                ))}
 
                 <SullyFormatSnippetsBar mode="advanced" onInsert={insertAtCursor} />
 
                 <div className="flex flex-wrap gap-2">
                     <button
                         type="button"
-                        onClick={() => {
-                            pushUndo(source);
-                            const { text, issuesFixed } = sullyFormatTidy(source);
-                            setSource(text);
-                            setTidyHint(issuesFixed.length ? SULLY_FORMAT_TIDY_OK : SULLY_FORMAT_TIDY_NOOP);
-                        }}
+                        onClick={() => applyTidy()}
                         className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold active:scale-[0.98]"
                     >
                         {SULLY_FORMAT_TIDY_ALL}
@@ -185,14 +241,14 @@ const SullyFormatEditorModal: React.FC<Props> = ({
                     >
                         撤销上一步
                     </button>
-                    {QUICK_ACTIONS.map(a => (
+                    {QUICK_ACTIONS.map(action => (
                         <button
-                            key={a.scope}
+                            key={action.scope}
                             type="button"
-                            onClick={() => runTidy(a.scope)}
+                            onClick={() => applyTidy(action.scope)}
                             className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 text-xs"
                         >
-                            {a.label}
+                            {action.label}
                         </button>
                     ))}
                 </div>
@@ -213,21 +269,21 @@ const SullyFormatEditorModal: React.FC<Props> = ({
             </div>
 
             <div
-                className="shrink-0 px-4 py-3 border-t border-slate-200 bg-white flex gap-3"
+                className="shrink-0 px-4 py-3 border-t border-slate-200 bg-white flex gap-3 w-full min-w-0 max-w-full"
                 style={{ paddingBottom: 'max(0.75rem, var(--safe-bottom))' }}
             >
                 <button
                     type="button"
                     onClick={onClose}
-                    className="flex-1 py-3 rounded-2xl bg-slate-100 text-slate-600 font-medium"
+                    className="flex-1 min-w-0 py-3 rounded-2xl bg-slate-100 text-slate-600 font-medium"
                 >
                     {SULLY_FORMAT_EDITOR_CANCEL}
                 </button>
                 <button
                     type="button"
-                    disabled={saving || !source.trim()}
-                    onClick={() => onSave(source)}
-                    className="flex-1 py-3 rounded-2xl bg-violet-600 text-white font-bold disabled:opacity-50"
+                    disabled={saving || (parts.length < 2 && parts.every(part => !part.source.trim()))}
+                    onClick={() => onSave(parts)}
+                    className="flex-1 min-w-0 py-3 rounded-2xl bg-violet-600 text-white font-bold disabled:opacity-50"
                 >
                     {saving ? '猫儿在存……' : SULLY_FORMAT_EDITOR_SAVE}
                 </button>

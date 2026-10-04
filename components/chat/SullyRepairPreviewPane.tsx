@@ -70,7 +70,7 @@ const SullyRepairPreviewPane: React.FC<Props> = ({
 
     return (
         <div
-            className={`rounded-2xl border border-violet-100/80 bg-[#f1f5f9] p-2 max-h-[32vh] overflow-y-auto shadow-inner ${className}`}
+            className={`rounded-2xl border border-violet-100/80 bg-[#f1f5f9] p-2 max-h-[32vh] max-w-full min-w-0 overflow-y-auto overflow-x-hidden shadow-inner ${className}`}
         >
             <p className="text-[10px] text-slate-500 mb-2 text-center leading-relaxed px-1">{hint}</p>
             {!hasAny ? (

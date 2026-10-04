@@ -68,7 +68,6 @@ import type { SullyAssistantFeatureId } from '../components/chat/SullyAssistantS
 import type { RenderedBubble } from '../utils/reprocessChatMessage';
 import {
     getChatNeighbors,
-    mergeMessagesToEditSource,
     mergeNeighborMessagesToBubbles,
     pickBatchRepairAnchor,
 } from '../utils/sullyChatNeighbors';
@@ -80,10 +79,10 @@ import {
     loadSullyFormatUndo,
     clearSullyFormatUndo,
     saveSullyFormatUndo,
-    saveAiRepairOutcome,
-    saveMergedFormatReplace,
     type SullyFormatUndoPayload,
 } from '../utils/sullyFormatUndo';
+import { commitRepairParts, messagesForRepairSave } from '../utils/sullyRepairCommit';
+import { resolveRepairSources } from '../utils/sullyRepairPlace';
 import {
     SULLY_FORMAT_PICK_REJECT,
     SULLY_FORMAT_SAVE_OK,
@@ -3918,31 +3917,26 @@ const Chat: React.FC = () => {
         setSullyAiRepairSaving(true);
         try {
             const anchor = sullyAiRepairMessage;
-            const role = anchor.role;
-            const reprocess = (source: string) => reprocessSourceToBubbles({
+            const parts = payload.parts?.length
+                ? payload.parts
+                : resolveRepairSources(
+                    messagesForRepairSave(sullyAiRepairPicks, anchor, [], messages)
+                        .map(item => ({ id: item.id, source: item.content || '' })),
+                    payload.source,
+                );
+            const batch = messagesForRepairSave(sullyAiRepairPicks, anchor, parts, messages);
+            await commitRepairParts({
                 char,
                 emojis,
                 categories,
-                source,
-                role,
-                replyTo: anchor.replyTo,
-                inheritMetadata: anchor.metadata,
-            });
-            const bubbles = reprocess(payload.source);
-            const insertAboveBubbles = payload.insertAbove ? reprocess(payload.insertAbove) : undefined;
-            const insertBelowBubbles = payload.insertBelow ? reprocess(payload.insertBelow) : undefined;
-            const batch = sullyAiRepairPicks.length > 0 ? sullyAiRepairPicks : [anchor];
-            const removed = batch.filter(m => m.id !== anchor.id);
-            const outcome = await saveAiRepairOutcome({
-                charId: char.id,
-                anchorId: anchor.id,
-                anchorBubbles: bubbles,
-                removed,
-                insertAboveBubbles,
-                insertBelowBubbles,
+                originals: batch,
+                parts,
+                aboveSource: payload.insertAbove,
+                belowSource: payload.insertBelow,
             });
             setPendingFormatUndo(loadSullyFormatUndo(char.id));
-            const anchorAfterSave = outcome.replacedNewIds[0] ?? anchor.id;
+            const kept = parts.find(part => typeof part.id === 'number' && part.source.trim());
+            const anchorAfterSave = typeof kept?.id === 'number' ? kept.id : anchor.id;
             setSullyAiRepairResume({
                 ...payload.resumeSession,
                 anchorMessageId: anchorAfterSave,
@@ -3952,10 +3946,23 @@ const Chat: React.FC = () => {
             setMessages(sortChatMessages(recent));
             setSullyAiRepairMessage(null);
             clearSullyAiRepairPicks();
-            const allBubbles = [...(insertAboveBubbles ?? []), ...bubbles, ...(insertBelowBubbles ?? [])];
-            const emojiFallback = allBubbles.some(
-                b => b.type === 'text' && /\[表情[：:]/.test(b.content),
-            );
+            const emojiFallback = [
+                ...parts.map(part => part.source),
+                payload.insertAbove,
+                payload.insertBelow,
+            ].filter((text): text is string => !!text && !!text.trim())
+                .some(text => {
+                    const bubbles = reprocessSourceToBubbles({
+                        char,
+                        emojis,
+                        categories,
+                        source: text,
+                        role: anchor.role,
+                        replyTo: anchor.replyTo,
+                        inheritMetadata: anchor.metadata,
+                    });
+                    return bubbles.some(b => b.type === 'text' && /\[表情[：:]/.test(b.content));
+                });
             addToast(emojiFallback ? SULLY_FORMAT_EMOJI_MISSING : SULLY_FORMAT_SAVE_OK, emojiFallback ? 'info' : 'success');
         } catch (e) {
             console.warn('[SullyAiRepair] save failed', e);
@@ -3963,7 +3970,7 @@ const Chat: React.FC = () => {
         } finally {
             setSullyAiRepairSaving(false);
         }
-    }, [sullyAiRepairMessage, char, emojis, categories, userProfile, groups, realtimeConfig, addToast, sullyAiRepairPicks, clearSullyAiRepairPicks]);
+    }, [sullyAiRepairMessage, char, emojis, categories, userProfile, groups, realtimeConfig, addToast, sullyAiRepairPicks, messages, clearSullyAiRepairPicks]);
 
     const handleSullyAssistantFeature = useCallback((featureId: SullyAssistantFeatureId) => {
         setSullyAssistantOpen(false);
@@ -4007,12 +4014,8 @@ const Chat: React.FC = () => {
         exitSullyPickMode();
         setFormatEditorMessage(anchor);
         setSullyFormatEditorMergeExtras(picked.filter(m => m.id !== anchor.id));
-        if (picked.length > 1) {
-            setFormatEditorInitialSource(mergeMessagesToEditSource(picked, emojis));
-        } else {
-            setFormatEditorInitialSource(null);
-        }
-    }, [resolveSullyFormatPicks, exitSullyPickMode, emojis, addToast]);
+        setFormatEditorInitialSource(null);
+    }, [resolveSullyFormatPicks, exitSullyPickMode, addToast]);
 
     const openBubbleCompose = useCallback((position: 'before' | 'after') => {
         if (sullyFormatPickAnchorId == null) return;
@@ -4090,30 +4093,39 @@ const Chat: React.FC = () => {
         }
     }, [bubbleCompose, char, messages, userProfile, groups, realtimeConfig, addToast, exitSullyPickMode]);
 
-    const confirmSullyFormatSave = useCallback(async (source: string) => {
+    const confirmSullyFormatSave = useCallback(async (parts: { id: number; source: string }[]) => {
         if (!formatEditorMessage || !char) return;
         setFormatEditorSaving(true);
         try {
-            const bubbles = reprocessSourceToBubbles({
+            const originals = sortChatMessages([
+                formatEditorMessage,
+                ...sullyFormatEditorMergeExtras,
+            ]);
+            await commitRepairParts({
                 char,
                 emojis,
                 categories,
-                source,
-                role: formatEditorMessage.role,
-                replyTo: formatEditorMessage.replyTo,
-                inheritMetadata: formatEditorMessage.metadata,
+                originals,
+                parts,
             });
-            const anchor = formatEditorMessage;
-            const removed = sullyFormatEditorMergeExtras;
-            await saveMergedFormatReplace(char.id, anchor.id, bubbles, removed);
             setPendingFormatUndo(loadSullyFormatUndo(char.id));
             markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
             const recent = await DB.getRecentMessagesByCharId(char.id, 200);
             setMessages(sortChatMessages(recent));
             closeFormatEditor();
-            const emojiFallback = bubbles.some(
-                b => b.type === 'text' && /\[表情[：:]/.test(b.content),
-            );
+            const emojiFallback = parts.some(part => {
+                const msg = originals.find(item => item.id === part.id);
+                const bubbles = reprocessSourceToBubbles({
+                    char,
+                    emojis,
+                    categories,
+                    source: part.source,
+                    role: msg?.role ?? formatEditorMessage.role,
+                    replyTo: msg?.replyTo,
+                    inheritMetadata: msg?.metadata,
+                });
+                return bubbles.some(b => b.type === 'text' && /\[表情[：:]/.test(b.content));
+            });
             addToast(emojiFallback ? SULLY_FORMAT_EMOJI_MISSING : SULLY_FORMAT_SAVE_OK, emojiFallback ? 'info' : 'success');
         } catch (e) {
             console.warn('[SullyFormat] save failed', e);
@@ -5951,6 +5963,9 @@ const Chat: React.FC = () => {
                         translationEnabled,
                     }}
                     initialSource={formatEditorInitialSource}
+                    batchMessages={formatEditorMessage
+                        ? sortChatMessages([formatEditorMessage, ...sullyFormatEditorMergeExtras])
+                        : null}
                 />,
                 document.body,
             )}
