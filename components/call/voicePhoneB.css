@@ -670,22 +670,37 @@
   color: var(--vb-read-name);
   min-height: 44px;
 }
+.sully-voice-b .vb-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
 .sully-voice-b .vb-dock-mic {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 56px;
   height: 56px;
-  margin: 8px auto 10px;
+  margin: 8px 0 10px;
   border: 0;
   border-radius: 50%;
   background: rgba(255,255,255,.16);
   color: #fff;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
 }
+.sully-voice-b .vb-dock-mic * { pointer-events: none; }
+.sully-voice-b .vb-dock-mic:focus { outline: none; }
 .sully-voice-b .vb-dock-mic.rec { background: #ff3b30; }
 /* 录音中绕按钮走一圈的进度圈：告诉用户「按住已经被认到了」，
    不用等到松手才知道有没有录上。320ms 走满一圈，与长按阈值一致。 */
-.sully-voice-b .vb-dock-mic { position: relative; }
 .sully-voice-b .vb-dock-ring {
   position: absolute;
   inset: -4px;
@@ -704,10 +719,16 @@
   .sully-voice-b .vb-dock-ring { animation: none; opacity: 0.6; }
 }
 .sully-voice-b .vb-dock-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  transform: translateY(calc(-100% - 4px));
+  margin: 0;
+  pointer-events: none;
   text-align: center;
   font-size: 11px;
   color: #ff8a80;
-  margin-bottom: 4px;
 }
 .sully-voice-b .vb-sheet-close {
   display: block;

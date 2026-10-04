@@ -14,6 +14,7 @@ import AvatarTouchFeedback, { type AvatarTouchEffect } from './AvatarTouchFeedba
 import { estimateLinesTotalMs, resolveSpeakingLineProgress } from '../../utils/callSpeechTiming';
 import { buildLineTimings, lineProgressAt, mapLineAcross, resolveLineIndexByTimeline, type SpeechTimeline } from '../../utils/callSpeechTimeline';
 import { splitBilingualLines } from '../../utils/callSpeechLines';
+import { dockMicOnArm, dockMicOnCancel, dockMicOnDown, dockMicOnUp, type DockMicPhase } from '../../utils/dockMicHold';
 import './voicePhoneB.css';
 
 export type VoicePhoneBubble = {
@@ -147,7 +148,12 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   const readBox = useRef<HTMLDivElement | null>(null);
   const capBox = useRef<HTMLDivElement | null>(null);
   const dockTimer = useRef<number | null>(null);
-  const dockHeld = useRef(false);
+  const dockPhase = useRef<DockMicPhase>('idle');
+  const dockPointerId = useRef<number | null>(null);
+  const dockMicEl = useRef<HTMLDivElement | null>(null);
+  const dockStopWatch = useRef<(() => void) | null>(null);
+  const dockApi = useRef(props);
+  dockApi.current = props;
   const sheetOpenedAt = useRef(0);
   const capHold = useRef(false);
   const capDrag = useRef(false);
@@ -276,6 +282,107 @@ const VoicePhoneB: React.FC<Props> = (props) => {
       window.removeEventListener('pointercancel', release);
       window.removeEventListener('blur', release);
     };
+  }, []);
+
+  const clearDockTimer = () => {
+    if (dockTimer.current) {
+      window.clearTimeout(dockTimer.current);
+      dockTimer.current = null;
+    }
+  };
+  const stopDockWatch = () => {
+    dockStopWatch.current?.();
+    dockStopWatch.current = null;
+  };
+  const releaseDockCapture = (pointerId: number | null) => {
+    const el = dockMicEl.current;
+    if (!el || pointerId == null) return;
+    try {
+      if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
+    } catch { /* 捕获已经不在了 */ }
+  };
+  const finishDockUp = () => {
+    const result = dockMicOnUp(dockPhase.current);
+    dockPhase.current = result.phase;
+    clearDockTimer();
+    releaseDockCapture(dockPointerId.current);
+    dockPointerId.current = null;
+    stopDockWatch();
+    if (result.action === 'send') dockApi.current.onHoldRecordEnd();
+    else if (result.action === 'open-sheet') {
+      sheetOpenedAt.current = Date.now();
+      dockApi.current.onSheetOpen(true);
+    }
+  };
+  const watchDockRelease = (pointerId: number) => {
+    stopDockWatch();
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return;
+      finishDockUp();
+    };
+    window.addEventListener('pointerup', onUp, true);
+    dockStopWatch.current = () => window.removeEventListener('pointerup', onUp, true);
+  };
+  const onDockPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary) return;
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* 个别内核拒绝捕获 */ }
+    event.preventDefault();
+    const prev = dockPhase.current;
+    dockPhase.current = dockMicOnDown(prev);
+    dockPointerId.current = event.pointerId;
+    watchDockRelease(event.pointerId);
+    clearDockTimer();
+    if (prev === 'recording') return;
+    dockTimer.current = window.setTimeout(() => {
+      dockTimer.current = null;
+      const armed = dockMicOnArm(dockPhase.current);
+      dockPhase.current = armed;
+      if (armed === 'recording') dockApi.current.onHoldRecordStart();
+    }, 320);
+  };
+  const onDockPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dockPointerId.current != null && event.pointerId !== dockPointerId.current) return;
+    finishDockUp();
+  };
+  const onDockPointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dockPointerId.current != null && event.pointerId !== dockPointerId.current) return;
+    const next = dockMicOnCancel(dockPhase.current);
+    dockPhase.current = next.phase;
+    if (next.action !== 'drop-pending') return;
+    clearDockTimer();
+    releaseDockCapture(dockPointerId.current);
+    dockPointerId.current = null;
+    stopDockWatch();
+  };
+  const onDockKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (event.repeat) return;
+    if (dockPhase.current === 'recording' || dockApi.current.isListening) {
+      dockPhase.current = 'idle';
+      clearDockTimer();
+      releaseDockCapture(dockPointerId.current);
+      dockPointerId.current = null;
+      stopDockWatch();
+      dockApi.current.onHoldRecordEnd();
+      return;
+    }
+    sheetOpenedAt.current = Date.now();
+    dockApi.current.onSheetOpen(true);
+  };
+  useEffect(() => {
+    const el = dockMicEl.current;
+    if (!el) return;
+    // React 挂在根上的触摸监听是被动的，拦不住系统长按。这里单独用不被动的监听把菜单按掉。
+    const blockMenu = (event: TouchEvent) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    el.addEventListener('touchstart', blockMenu, { passive: false });
+    return () => el.removeEventListener('touchstart', blockMenu);
+  }, [props.voiceView, props.sheetOpen]);
+  useEffect(() => () => {
+    clearDockTimer();
+    stopDockWatch();
   }, []);
 
   const bubbleLen = props.bubbles.length;
@@ -896,62 +1003,24 @@ const VoicePhoneB: React.FC<Props> = (props) => {
               </div>
             ) : (
               <>
-                {props.isListening ? <div className="vb-dock-hint">松手发送</div> : null}
-                <button
-                  type="button"
-                  className={'vb-dock-mic' + (props.isListening ? ' rec' : '')}
-                  aria-label="点按打开键盘，长按录音松开发送"
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    dockHeld.current = false;
-                    if (dockTimer.current) window.clearTimeout(dockTimer.current);
-                    dockTimer.current = window.setTimeout(() => {
-                      dockHeld.current = true;
-                      props.onHoldRecordStart();
-                    }, 320);
-                  }}
-                  onPointerUp={() => {
-                    if (dockTimer.current) {
-                      window.clearTimeout(dockTimer.current);
-                      dockTimer.current = null;
-                    }
-                    if (dockHeld.current) {
-                      dockHeld.current = false;
-                      props.onHoldRecordEnd();
-                      return;
-                    }
-                    sheetOpenedAt.current = Date.now();
-                    props.onSheetOpen(true);
-                  }}
-                  onPointerCancel={() => {
-                    if (dockTimer.current) {
-                      window.clearTimeout(dockTimer.current);
-                      dockTimer.current = null;
-                    }
-                    if (dockHeld.current) {
-                      dockHeld.current = false;
-                      props.onCancelStt();
-                    }
-                  }}
-                  // 手指按住时滑出按钮、或系统把这次触摸判成取消，原来只有
-                  // pointerup/cancel 两路，滑出去那次直接没人接手，录音就断了
-                  // （表现为「按半天录不上，要试几次」）。这两路补上后按着不松就能录完。
-                  onPointerLeave={() => {
-                    if (dockTimer.current) {
-                      window.clearTimeout(dockTimer.current);
-                      dockTimer.current = null;
-                    }
-                    // pointerleave 后浏览器仍会补 pointerup，但只在按钮外抬手时可能不到；
-                    // 这里不结束录音，只清掉「还没到 320ms 的误触」计时，录音照常在跑。
-                  }}
-                  onContextMenu={(event) => {
-                    // 长按会先弹系统菜单，onPointerCancel 会被提前打断；这里兜住。
-                    event.preventDefault();
-                  }}
-                >
-                  <Microphone size={22} weight="fill" />
-                  {props.isListening ? <span className="vb-dock-ring" aria-hidden="true" /> : null}
-                </button>
+                <div className="vb-dock">
+                  {props.isListening ? <div className="vb-dock-hint">松手发送</div> : null}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    ref={dockMicEl}
+                    className={'vb-dock-mic' + (props.isListening ? ' rec' : '')}
+                    aria-label="点按打开键盘，长按录音松开发送"
+                    onPointerDown={onDockPointerDown}
+                    onPointerUp={onDockPointerUp}
+                    onPointerCancel={onDockPointerCancel}
+                    onKeyDown={onDockKeyDown}
+                    onContextMenu={(event) => { event.preventDefault(); }}
+                  >
+                    <Microphone size={22} weight="fill" />
+                    {props.isListening ? <span className="vb-dock-ring" aria-hidden="true" /> : null}
+                  </div>
+                </div>
               </>
             )}
             <button type="button" className="vb-home" aria-label="切换配色" onClick={cycleTheme}><span /></button>
