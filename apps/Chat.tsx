@@ -188,12 +188,47 @@ import { upsertMountedWorldbooks } from '../utils/worldbook';
 import ChatInnerStatePeek from '../components/chat/ChatInnerStatePeek';
 import ChatInnerStatePeekEntry from '../components/chat/ChatInnerStatePeekEntry';
 import { getInnerStateDisplayText } from '../utils/innerStatePeek';
+import { chatRestingScrollTop, clampInnerPeekScrollTop, innerPeekMayEnter, innerPeekSettle } from '../utils/chatInnerPeekScroll';
 
 const CollaborationWindow = React.lazy(() => import('../features/collaboration/CollaborationWindow'));
 
 const CHAT_INNERSTATE_HINT_SEEN_KEY = 'chat_innerstate_hint_seen';
 const HISTORY_WINDOW_RADIUS = 25;
 const HISTORY_WINDOW_BATCH_SIZE = 30;
+
+/** 心里话那行的实际高度。藏起来或没有这行时是 0，滚动就跟原来一样贴到真底。 */
+const readChatInnerPeekHeight = (scroller: HTMLElement): number => {
+    const node = scroller.querySelector('[data-chat-inner-peek]');
+    return node instanceof HTMLElement ? node.offsetHeight : 0;
+};
+
+/** 消息本身已经超过一屏，才把心里话藏到正常底边下面。不满一屏就留在最后一句下面。 */
+const chatInnerPeekCanTuck = (scroller: HTMLElement, wrap: HTMLElement): boolean => {
+    const peekHeight = wrap.hidden ? 0 : wrap.offsetHeight;
+    return scroller.scrollHeight - peekHeight > scroller.clientHeight + 1;
+};
+
+/** 展开时不改当前看到的位置，这行先停在底边下面，等手指把它滑出来。 */
+const revealChatInnerPeek = (scroller: HTMLElement, wrap: HTMLElement) => {
+    if (!wrap.hidden) return;
+    const top = scroller.scrollTop;
+    wrap.hidden = false;
+    void wrap.offsetHeight;
+    scroller.scrollTop = top;
+};
+
+/** 这行已经完全在底边下面时，把它拿出滚动高度。画面上的消息不动。 */
+const tuckChatInnerPeek = (scroller: HTMLElement, wrap: HTMLElement) => {
+    if (wrap.hidden) return;
+    const peekHeight = wrap.offsetHeight;
+    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (peekHeight > 0 && distance < peekHeight - 1) return;
+    const top = scroller.scrollTop;
+    wrap.hidden = true;
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const next = Math.min(top, max);
+    if (scroller.scrollTop !== next) scroller.scrollTop = next;
+};
 
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
@@ -242,6 +277,19 @@ const Chat: React.FC = () => {
     const [newEmojiName, setNewEmojiName] = useState(''); // 表情包重命名输入框
 
     const scrollRef = useRef<HTMLDivElement>(null);
+    // 心里话默认不占滚动高度。滑到底停住；已经贴住再滑，才把它放进列表，跟着消息一起出来。
+    const innerPeekWrapRef = useRef<HTMLDivElement | null>(null);
+    const innerPeekPinRef = useRef<'hide' | 'show' | 'free'>('hide');
+    const innerPeekTouchingRef = useRef(false);
+    const innerPeekLockRef = useRef(false);
+    const innerPeekLockTokenRef = useRef(0);
+    const innerPeekTuckTokenRef = useRef(0);
+    const innerPeekSnapTimerRef = useRef<number | null>(null);
+    const innerPeekFollowQueuedRef = useRef(false);
+    // null 没有正在进行的手势。true 这一下开始时已经贴底，可以滑进心里话。
+    const innerPeekMayEnterRef = useRef<boolean | null>(null);
+    const innerPeekGestureStartTopRef = useRef(0);
+    const innerPeekLastPointRef = useRef<{ x: number; y: number; top: number } | null>(null);
     const lastMsgIdRef = useRef<number | null>(null);
     // 最新图片在移动端异步解码后会把消息列表继续向下撑开。记录这一条，等真实高度
     // 确定后再补一次贴底；用户一旦主动向上翻，就清掉它，绝不抢滚动位置。
@@ -1267,6 +1315,12 @@ const Chat: React.FC = () => {
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
+            innerPeekPinRef.current = 'hide';
+            innerPeekTouchingRef.current = false;
+            innerPeekLockRef.current = false;
+            innerPeekMayEnterRef.current = null;
+            innerPeekTuckTokenRef.current += 1;
+            if (innerPeekWrapRef.current) innerPeekWrapRef.current.hidden = true;
             scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
             setReplyTarget(null);
@@ -1461,22 +1515,142 @@ const Chat: React.FC = () => {
     // 卸载时兜底停录音，防止麦克风灯常亮
     useEffect(() => () => voiceInput.dispose(), []);
 
+    const bindInnerPeekWrap = useCallback((node: HTMLDivElement | null) => {
+        innerPeekWrapRef.current = node;
+        if (!node) return;
+        if (innerPeekPinRef.current === 'show' || innerPeekMayEnterRef.current === true) return;
+        node.hidden = true;
+    }, []);
+
+    // 程序自己滚的时候先锁住，松手吸附不要中途把心里话又拉出来。
+    const beginInnerPeekLock = useCallback((releaseMs: number) => {
+        innerPeekLockRef.current = true;
+        const token = ++innerPeekLockTokenRef.current;
+        window.setTimeout(() => {
+            if (innerPeekLockTokenRef.current === token) innerPeekLockRef.current = false;
+        }, releaseMs);
+    }, []);
+
+    const tuckInnerPeekIfBelow = useCallback(() => {
+        const scroller = scrollRef.current;
+        const wrap = innerPeekWrapRef.current;
+        if (!scroller || !wrap) return;
+        if (innerPeekTouchingRef.current || innerPeekMayEnterRef.current === true) return;
+        if (innerPeekPinRef.current === 'show') return;
+        if (!chatInnerPeekCanTuck(scroller, wrap)) {
+            wrap.hidden = false;
+            return;
+        }
+        tuckChatInnerPeek(scroller, wrap);
+    }, []);
+
+    const scheduleInnerPeekTuck = useCallback((delayMs: number) => {
+        const token = ++innerPeekTuckTokenRef.current;
+        window.setTimeout(() => {
+            if (innerPeekTuckTokenRef.current !== token) return;
+            tuckInnerPeekIfBelow();
+        }, delayMs);
+    }, [tuckInnerPeekIfBelow]);
+
+    const scrollInnerPeekTo = useCallback((pin: 'hide' | 'show', behavior: ScrollBehavior = 'auto') => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        if (innerPeekSnapTimerRef.current != null) {
+            window.clearTimeout(innerPeekSnapTimerRef.current);
+            innerPeekSnapTimerRef.current = null;
+        }
+        innerPeekMayEnterRef.current = null;
+        innerPeekPinRef.current = pin;
+        const wrap = innerPeekWrapRef.current;
+        // 手指往上收回去时，先让这行跟着列表滑出画面，再从滚动高度里拿掉。直接拿掉会跳。
+        const slideOut = pin === 'hide' && behavior === 'smooth' && !!wrap && !wrap.hidden;
+        if (pin === 'show') {
+            if (wrap) revealChatInnerPeek(scroller, wrap);
+        } else if (wrap && !slideOut) {
+            wrap.hidden = true;
+        }
+        const peekHeight = pin === 'hide' && wrap && !wrap.hidden ? readChatInnerPeekHeight(scroller) : 0;
+        const top = chatRestingScrollTop(scroller.scrollHeight, scroller.clientHeight, peekHeight);
+        beginInnerPeekLock(behavior === 'smooth' ? 700 : 50);
+        if (behavior === 'smooth') scroller.scrollTo({ top, behavior: 'smooth' });
+        else scroller.scrollTop = top;
+        if (slideOut) scheduleInnerPeekTuck(760);
+    }, [beginInnerPeekLock, scheduleInnerPeekTuck]);
+
+    const scheduleInnerPeekSnap = useCallback(() => {
+        if (innerPeekSnapTimerRef.current != null) window.clearTimeout(innerPeekSnapTimerRef.current);
+        innerPeekSnapTimerRef.current = window.setTimeout(() => {
+            innerPeekSnapTimerRef.current = null;
+            const mayEnter = innerPeekMayEnterRef.current === true;
+            innerPeekMayEnterRef.current = null;
+            const scroller = scrollRef.current;
+            if (selectionMode || !scroller || innerPeekTouchingRef.current || innerPeekLockRef.current) return;
+            const wrap = innerPeekWrapRef.current;
+            if (!wrap || !chatInnerPeekCanTuck(scroller, wrap)) {
+                if (wrap) wrap.hidden = false;
+                return;
+            }
+            const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+            if (wrap.hidden) {
+                innerPeekPinRef.current = distanceFromBottom <= 24 ? 'hide' : 'free';
+                return;
+            }
+            const peekHeight = wrap.offsetHeight;
+            if (!mayEnter) {
+                if (distanceFromBottom >= peekHeight - 1) tuckChatInnerPeek(scroller, wrap);
+                innerPeekPinRef.current = distanceFromBottom > peekHeight ? 'free' : 'hide';
+                return;
+            }
+            const decision = innerPeekSettle(
+                distanceFromBottom,
+                peekHeight,
+                scroller.scrollTop - innerPeekGestureStartTopRef.current,
+            );
+            if (decision === 'none') {
+                if (distanceFromBottom >= peekHeight - 1) tuckChatInnerPeek(scroller, wrap);
+                innerPeekPinRef.current = 'free';
+                return;
+            }
+            const top = chatRestingScrollTop(
+                scroller.scrollHeight,
+                scroller.clientHeight,
+                decision === 'hide' ? peekHeight : 0,
+            );
+            if (Math.abs(scroller.scrollTop - top) < 1) {
+                innerPeekPinRef.current = decision;
+                if (decision === 'hide') tuckChatInnerPeek(scroller, wrap);
+                return;
+            }
+            if (decision === 'hide') {
+                // 先跟着列表滑出画面，再拿掉，避免整行突然消失。
+                innerPeekPinRef.current = 'hide';
+                beginInnerPeekLock(700);
+                scroller.scrollTo({ top, behavior: 'smooth' });
+                scheduleInnerPeekTuck(760);
+                return;
+            }
+            // 只把没滑完的那一小段顺下去，跟消息列表同一个滚动。
+            scrollInnerPeekTo('show', 'smooth');
+        }, 120);
+    }, [selectionMode, scrollInnerPeekTo, beginInnerPeekLock, scheduleInnerPeekTuck]);
+
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
         // Only auto-scroll when a new message is appended (ID changes),
         // not when loading older history or updating existing messages in-place.
         // windowed 模式下用户在翻旧消息，不要被新消息打断滚走。
+        // 新消息停在心里话上沿，哪怕刚才展开着也收回去。
         if (currentLastId !== lastMsgIdRef.current) {
             if (windowedFocusMsgId === null) {
                 pendingMediaAutoScrollIdRef.current = currentLastId;
-                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+                scrollInnerPeekTo('hide');
             } else {
                 pendingMediaAutoScrollIdRef.current = null;
             }
             lastMsgIdRef.current = currentLastId;
         }
-    }, [messages, activeCharacterId, selectionMode, windowedFocusMsgId]);
+    }, [messages, activeCharacterId, selectionMode, windowedFocusMsgId, scrollInnerPeekTo]);
 
     const extendHistoryWindow = useCallback((direction: 'older' | 'newer') => {
         const scroller = scrollRef.current;
@@ -1509,11 +1683,32 @@ const Chat: React.FC = () => {
         const anchor = historyPrependAnchorRef.current;
         const scroller = scrollRef.current;
         if (anchor && scroller) {
+            beginInnerPeekLock(50);
             scroller.scrollTop = anchor.scrollTop + (scroller.scrollHeight - anchor.scrollHeight);
         }
         historyPrependAnchorRef.current = null;
         historyWindowLoadingRef.current = false;
-    }, [historyWindowRange]);
+    }, [historyWindowRange, beginInnerPeekLock]);
+
+    // 长聊天默认把心里话藏在底边下。不满一屏时留在最后一句下面，没有地方可藏。
+    useLayoutEffect(() => {
+        const scroller = scrollRef.current;
+        const wrap = innerPeekWrapRef.current;
+        if (!scroller || !wrap) return;
+        if (innerPeekTouchingRef.current || innerPeekMayEnterRef.current === true) return;
+        if (!chatInnerPeekCanTuck(scroller, wrap)) {
+            wrap.hidden = false;
+            return;
+        }
+        if (innerPeekPinRef.current === 'show') {
+            wrap.hidden = false;
+            return;
+        }
+        if (innerPeekPinRef.current !== 'hide' || wrap.hidden) return;
+        const peekHeight = wrap.offsetHeight;
+        const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        if (distance >= peekHeight - 1) tuckChatInnerPeek(scroller, wrap);
+    }, [messages, canPeekInnerState, activeCharacterId]);
 
     const handleChatScroll = useCallback(() => {
         const scroller = scrollRef.current;
@@ -1525,27 +1720,206 @@ const Chat: React.FC = () => {
             if (scroller.scrollTop <= 96) extendHistoryWindow('older');
             else if (distanceFromBottom <= 96) extendHistoryWindow('newer');
         }
-    }, [extendHistoryWindow]);
+        const peekHeight = readChatInnerPeekHeight(scroller);
+        // 已经展开给用户看时不要再往回拽。从上面滑下来时这行不在滚动高度里，这里只是兜底。
+        if (!innerPeekLockRef.current && innerPeekPinRef.current !== 'show' && peekHeight > 0 && innerPeekMayEnterRef.current !== true) {
+            const topped = clampInnerPeekScrollTop(
+                scroller.scrollTop,
+                scroller.scrollHeight,
+                scroller.clientHeight,
+                peekHeight,
+                false,
+            );
+            if (scroller.scrollTop > topped) scroller.scrollTop = topped;
+        }
+        if (!innerPeekTouchingRef.current && !innerPeekLockRef.current) scheduleInnerPeekSnap();
+    }, [extendHistoryWindow, scheduleInnerPeekSnap]);
 
     const handleMessageMediaLoad = useCallback((messageId: number) => {
         if (windowedFocusMsgId !== null || pendingMediaAutoScrollIdRef.current !== messageId) return;
         requestAnimationFrame(() => {
             if (pendingMediaAutoScrollIdRef.current !== messageId) return;
-            const scroller = scrollRef.current;
-            if (scroller) scroller.scrollTop = scroller.scrollHeight;
+            scrollInnerPeekTo('hide');
             pendingMediaAutoScrollIdRef.current = null;
         });
-    }, [windowedFocusMsgId]);
+    }, [windowedFocusMsgId, scrollInnerPeekTo]);
 
     useEffect(() => {
         if (isTyping && scrollRef.current && !selectionMode && windowedFocusMsgId === null) {
             const now = Date.now();
             if (now - scrollThrottleRef.current > 150) {
                 scrollThrottleRef.current = now;
-                scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+                scrollInnerPeekTo('hide', 'smooth');
             }
         }
-    }, [messages, isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, selectionMode, windowedFocusMsgId]);
+    }, [messages, isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, selectionMode, windowedFocusMsgId, scrollInnerPeekTo]);
+
+    useEffect(() => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+
+        const hasPointer = typeof window.PointerEvent === 'function';
+        let disposed = false;
+        let pendingFingerUp = 0;
+        const distanceFromBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        const eventPoint = (event: Event): { x: number; y: number } | null => {
+            if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
+                const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null;
+                if (!touch) return null;
+                return { x: touch.clientX, y: touch.clientY };
+            }
+            if ('clientX' in event && 'clientY' in event) {
+                const pointed = event as MouseEvent;
+                if (typeof pointed.clientX !== 'number' || typeof pointed.clientY !== 'number') return null;
+                return { x: pointed.clientX, y: pointed.clientY };
+            }
+            return null;
+        };
+        const markGesture = () => {
+            const wrap = innerPeekWrapRef.current;
+            innerPeekGestureStartTopRef.current = scroller.scrollTop;
+            if (!wrap || !chatInnerPeekCanTuck(scroller, wrap)) {
+                innerPeekMayEnterRef.current = false;
+                if (wrap) wrap.hidden = false;
+                return;
+            }
+            const collapsed = wrap.hidden;
+            const peekHeight = collapsed ? 0 : wrap.offsetHeight;
+            const canEnter = innerPeekMayEnter(distanceFromBottom(), peekHeight);
+            innerPeekMayEnterRef.current = canEnter;
+            if (canEnter) {
+                // 手指还没动就把这行放进底边下面。接下来的滑动跟消息是同一次滚动。
+                revealChatInnerPeek(scroller, wrap);
+                innerPeekGestureStartTopRef.current = scroller.scrollTop;
+                return;
+            }
+            if (!collapsed && distanceFromBottom() >= wrap.offsetHeight - 1) {
+                tuckChatInnerPeek(scroller, wrap);
+                if (innerPeekPinRef.current === 'show') innerPeekPinRef.current = 'free';
+            }
+        };
+        const cancelProgrammaticScroll = () => {
+            if (!innerPeekLockRef.current) return;
+            innerPeekLockTokenRef.current += 1;
+            innerPeekLockRef.current = false;
+            const top = scroller.scrollTop;
+            scroller.scrollTo({ top, behavior: 'auto' });
+        };
+        const stopContact = (event: Event) => {
+            if (!hasPointer && event.type.indexOf('touch') !== 0) return;
+            if (hasPointer && event.type.indexOf('touch') === 0) return;
+            if (!innerPeekTouchingRef.current) return;
+            innerPeekTouchingRef.current = false;
+            innerPeekLastPointRef.current = null;
+            scheduleInnerPeekSnap();
+        };
+        const startContact = (event: Event) => {
+            if (hasPointer && event.type === 'touchstart') return;
+            if (!hasPointer && event.type === 'pointerdown') return;
+            const target = event.target;
+            if (!(target instanceof Node) || !scroller.contains(target)) return;
+            innerPeekTuckTokenRef.current += 1;
+            markGesture();
+            innerPeekTouchingRef.current = true;
+            const point = eventPoint(event);
+            innerPeekLastPointRef.current = point ? { x: point.x, y: point.y, top: scroller.scrollTop } : null;
+            cancelProgrammaticScroll();
+            if (innerPeekSnapTimerRef.current != null) {
+                window.clearTimeout(innerPeekSnapTimerRef.current);
+                innerPeekSnapTimerRef.current = null;
+            }
+        };
+        // 浏览器这一下没把列表带走时，补上手指移动的距离，心里话仍然贴着手指走。
+        const followFinger = (event: Event) => {
+            if (!innerPeekTouchingRef.current || innerPeekMayEnterRef.current !== true) return;
+            const point = eventPoint(event);
+            const last = innerPeekLastPointRef.current;
+            if (!point || !last) {
+                if (point) innerPeekLastPointRef.current = { x: point.x, y: point.y, top: scroller.scrollTop };
+                return;
+            }
+            const fingerUp = last.y - point.y;
+            const fingerX = point.x - last.x;
+            innerPeekLastPointRef.current = { x: point.x, y: point.y, top: scroller.scrollTop };
+            if (fingerUp <= 0 || Math.abs(fingerX) > fingerUp) return;
+            pendingFingerUp += fingerUp;
+            if (innerPeekFollowQueuedRef.current) return;
+            const topAtQueue = scroller.scrollTop;
+            innerPeekFollowQueuedRef.current = true;
+            requestAnimationFrame(() => {
+                innerPeekFollowQueuedRef.current = false;
+                const want = pendingFingerUp;
+                pendingFingerUp = 0;
+                if (disposed || !innerPeekTouchingRef.current || innerPeekMayEnterRef.current !== true) return;
+                if (want <= 0) return;
+                const grew = scroller.scrollTop - topAtQueue;
+                if (grew >= want * 0.5) return;
+                const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+                const next = Math.min(max, scroller.scrollTop + (want - Math.max(0, grew)));
+                if (next > scroller.scrollTop) scroller.scrollTop = next;
+            });
+        };
+        const noteWheel = (event: Event) => {
+            const target = event.target;
+            if (!(target instanceof Node) || !scroller.contains(target)) return;
+            cancelProgrammaticScroll();
+            if (innerPeekMayEnterRef.current == null) {
+                const wrap = innerPeekWrapRef.current;
+                const wasHidden = !wrap || wrap.hidden;
+                markGesture();
+                if (wasHidden && wrap && !wrap.hidden && innerPeekMayEnterRef.current === true && event instanceof WheelEvent) {
+                    const deltaMode = event.deltaMode;
+                    const dy = deltaMode === 1 ? event.deltaY * 16 : deltaMode === 2 ? event.deltaY * scroller.clientHeight : event.deltaY;
+                    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+                    const before = innerPeekGestureStartTopRef.current;
+                    scroller.scrollTop = Math.max(0, Math.min(max, before + dy));
+                    event.preventDefault();
+                }
+            }
+            scheduleInnerPeekSnap();
+        };
+
+        window.addEventListener('pointerdown', startContact, true);
+        window.addEventListener('pointerup', stopContact, true);
+        window.addEventListener('pointercancel', stopContact, true);
+        window.addEventListener('touchstart', startContact, { capture: true, passive: true });
+        window.addEventListener('touchend', stopContact, { capture: true, passive: true });
+        window.addEventListener('touchcancel', stopContact, { capture: true, passive: true });
+        if (hasPointer) window.addEventListener('pointermove', followFinger, true);
+        else window.addEventListener('touchmove', followFinger, { capture: true, passive: true });
+        window.addEventListener('wheel', noteWheel, { passive: false });
+
+        let lastHeight = scroller.clientHeight;
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+            const nextHeight = scroller.clientHeight;
+            if (nextHeight === lastHeight) return;
+            lastHeight = nextHeight;
+            if (innerPeekTouchingRef.current) return;
+            const pin = innerPeekPinRef.current;
+            if (pin === 'free') return;
+            scrollInnerPeekTo(pin);
+        });
+        if (observer) observer.observe(scroller);
+
+        return () => {
+            window.removeEventListener('pointerdown', startContact, true);
+            window.removeEventListener('pointerup', stopContact, true);
+            window.removeEventListener('pointercancel', stopContact, true);
+            disposed = true;
+            window.removeEventListener('touchstart', startContact, true);
+            window.removeEventListener('touchend', stopContact, true);
+            window.removeEventListener('touchcancel', stopContact, true);
+            if (hasPointer) window.removeEventListener('pointermove', followFinger, true);
+            else window.removeEventListener('touchmove', followFinger, true);
+            window.removeEventListener('wheel', noteWheel);
+            if (observer) observer.disconnect();
+            if (innerPeekSnapTimerRef.current != null) {
+                window.clearTimeout(innerPeekSnapTimerRef.current);
+                innerPeekSnapTimerRef.current = null;
+            }
+            innerPeekLockTokenRef.current += 1;
+        };
+    }, [activeCharacterId, !!char, scheduleInnerPeekSnap, scrollInnerPeekTo]);
 
     // 白框提示音：当 char 新发的消息成为会话最后一条时播放一次（用户自己/历史/翻旧消息都不响）。
     // 声音配置编码在白框 CSS 注释里（角色 chromeCustomCss 覆盖全局 chatChromeCustomCss），随白框分享一起走。
@@ -3133,7 +3507,7 @@ const Chat: React.FC = () => {
         setVisibleCount(LOAD_BATCH_SIZE);
         await reloadMessages(LOAD_BATCH_SIZE);
         requestAnimationFrame(() => {
-            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+            scrollInnerPeekTo('hide', 'smooth');
         });
     };
 
@@ -4972,7 +5346,7 @@ const Chat: React.FC = () => {
                 ref={scrollRef}
                 onScroll={handleChatScroll}
                 onClick={() => { if (inputPreferences.autoReply) setShowPanel('none'); }}
-                className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar"
+                className="flex-1 overflow-y-auto overflow-x-hidden pt-6 no-scrollbar"
                 style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}
             >
                 {windowedFocusMsgId !== null && (
@@ -5195,8 +5569,12 @@ const Chat: React.FC = () => {
                         </div>
                     </div>
                 )}
+                {/* 正常底边空白。心里话先不占滚动，贴住底边再滑一下，才跟着这条列表出来。 */}
+                <div aria-hidden="true" className="h-6 shrink-0" />
                 {canPeekInnerState && (
-                    <ChatInnerStatePeekEntry onOpen={openInnerStatePeek} />
+                    <div ref={bindInnerPeekWrap} data-chat-inner-peek-wrap="" style={{ overflowAnchor: 'none' }}>
+                        <ChatInnerStatePeekEntry onOpen={openInnerStatePeek} />
+                    </div>
                 )}
             </div>
 
