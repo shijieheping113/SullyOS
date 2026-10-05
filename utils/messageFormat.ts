@@ -17,6 +17,7 @@ import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixi
 import { formatTransferRecord } from './transferFormat';
 import { formatStatCount } from './videoParser';
 import { formatSARModuleEventsForContext } from './vrWorld/sarModuleRuntime';
+import { formatChatGameForModel } from './chatGames/text';
 
 /**
  * 总结器只在输入确实含 SAR 双轨记录时收到这段硬边界；普通聊天/总结提示词保持原样。
@@ -133,7 +134,11 @@ export function normalizeMessageContent(
     // TODO(记录形态): 转账已迁到 [[记录:TRANSFER|...]] (见 transferFormat.ts 头注)，
     // 戳一戳等其他系统事件观察一段时间后再迁 —— sanitize 终线和幂等哨兵已按整个
     // 记录命名空间就位，迁移时只需要改这里的渲染。
-    if (type === 'interaction') return `[系统: ${userName}戳了${charName}一下]`;
+    if (type === 'interaction') {
+        const gameLine = formatChatGameForModel(msg, charName);
+        if (gameLine) return gameLine;
+        return `[系统: ${userName}戳了${charName}一下]`;
+    }
     if (type === 'transfer') {
         // 与私聊历史 (chatPrompts.buildMessageHistory) 共用同一渲染 —— 全链路一副面孔，
         // 记忆宫殿/归档的总结器看到的和角色平时看到的是同一形态。to 用固定词不写真名。

@@ -40,6 +40,7 @@ import { formatRelativeAge } from './groupChat/relativeTime';
 import { isBlobRef } from './blobRef';
 import { loadMomentsPostOn } from './sparkCircles';
 import { BOX_MATERIAL_GUIDE } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
+import { buildChatGamesGuide, formatChatGameForModel } from './chatGames/text';
 
 /**
  * 这个值是「一张图 / 一段媒体」而不是正文吗？认三种形态：内嵌 data URL、http(s) 外链、
@@ -681,6 +682,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         // - 本地生成：worker 不参与 → 照教。
         const scheduleMessageTagEnabled = !forFirePack
             && !(timelyByWorker && isAmsg2EnabledForChar(char));
+        const chatGamesGuide = (forFirePack || boxPlay || batterySlice) ? '' : buildChatGamesGuide();
 
         if (!boxPlay && !batterySlice) {
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
@@ -727,6 +729,7 @@ ${scheduleMessageTagEnabled ? `   - **定时发送消息**: 如果你想在未�
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 你的记忆本身是完整可靠的，回忆过去优先靠记忆和 \`[[RECALL]]\`，**不需要**靠翻日记来"想起"事情。只有当你**自己**特别想重温那天日记里写下的心情、措辞或私密小细节时，才翻阅: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 同上——回忆优先靠记忆和 \`[[RECALL]]\`，只有你自己想重温那天日记的内容时才用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}
+${chatGamesGuide}
 ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
    你拥有实时搜索互联网的能力！每次对话时，你可以自己决定是否需要搜索。
    - **使用方式**: 当你想搜索某个话题时，在回复开头单独一行输出: \`[[SEARCH: 搜索关键词]]\`
@@ -1254,7 +1257,10 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 }
                 else if (m.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE) content = `${timeStr} ${formatBlockFriendRequestRecord(m)}`;
                 else if (m.metadata?.source === BLOCK_PEEK_SOURCE) content = `${timeStr} ${formatBlockPeekRecord(m)}`;
-                else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
+                else if (m.type === 'interaction') {
+                    const gameLine = formatChatGameForModel(m, char.name);
+                    content = `${timeStr} ${gameLine || '[系统: 用户戳了你一下]'}`;
+                }
                 else if (m.type === 'collaboration_file') {
                     const fileName = String(m.metadata?.fileName || m.content || '未命名文件');
                     content = `${timeStr} [你在聊天界面向用户交付了协同文件：《${fileName}》]`;

@@ -18,6 +18,8 @@ import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcess
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
 import { BatteryReminderLogCard } from '../BatteryReminderCard';
+import { ChatGameCard } from './ChatGameCard';
+import { readChatGame } from '../../utils/chatGames/text';
 import VideoMessageBubble from './VideoMessageBubble';
 // v8c-1（Ann 2026-09-16）：Spark 卡片头像也走共用解析器（自定义 > 主聊天头像 > 快照 > 名字 hash）
 import { resolveSparkCharAvatar } from '../../utils/sparkAvatar';
@@ -1106,6 +1108,8 @@ interface MessageItemProps {
     isLatestMessage?: boolean;
     /** 图片完成解码并确定高度后，通知聊天列表重新校准贴底位置。 */
     onMediaLoad?: (messageId: number) => void;
+    /** 用户已经出过手，角色那张猜拳卡要翻开，即使落库的标记还没跟上。 */
+    gameRevealed?: boolean;
     onLongPress: (m: Message) => void;
     onReply: (m: Message) => void;
     selectionMode: boolean;
@@ -1171,6 +1175,7 @@ const MessageItem = React.memo(({
     userAvatar,
     isLatestMessage = false,
     onMediaLoad,
+    gameRevealed = false,
     onLongPress,
     onReply,
     selectionMode,
@@ -1770,6 +1775,23 @@ const MessageItem = React.memo(({
                         displayText.includes('转账') ? 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4b0.png' : 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f514.png'} alt="" className="w-4 h-4" />
                         <span className="text-[10px] font-medium tracking-wide">{displayText}</span>
                     </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (m.type === 'interaction' && readChatGame(m.metadata)) {
+        return (
+            <div className={`flex w-full justify-center px-6 ${marginBottom} animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
+                {selectionMode && (
+                    <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                            {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                        </div>
+                    </div>
+                )}
+                <div {...interactionProps}>
+                    <ChatGameCard message={m} charName={charName} revealed={gameRevealed} />
                 </div>
             </div>
         );

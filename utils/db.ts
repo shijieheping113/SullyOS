@@ -973,19 +973,33 @@ export const DB = {
     const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
     const store = transaction.objectStore(STORE_MESSAGES);
 
+    // 等事务落盘再返回。只等 get 成功就返回的话，下一瞬间重读会读到旧的盖牌状态。
     return new Promise((resolve, reject) => {
+        let settled = false;
+        const fail = (error: unknown) => {
+            if (settled) return;
+            settled = true;
+            reject(error instanceof Error ? error : new Error('updateMessageMetadata failed'));
+        };
         const req = store.get(id);
+        req.onerror = () => fail(req.error);
         req.onsuccess = () => {
             const data = req.result as Message | undefined;
-            if (data) {
-                (data as any).metadata = updater((data as any).metadata);
-                store.put(data);
-                resolve();
-            } else {
-                reject(new Error('Message not found'));
+            if (!data) {
+                fail(new Error('Message not found'));
+                return;
             }
+            (data as any).metadata = updater((data as any).metadata);
+            const put = store.put(data);
+            put.onerror = () => fail(put.error);
         };
-        req.onerror = () => reject(req.error);
+        transaction.oncomplete = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+        };
+        transaction.onerror = () => fail(transaction.error);
+        transaction.onabort = () => fail(transaction.error || new Error('updateMessageMetadata aborted'));
     });
   },
 

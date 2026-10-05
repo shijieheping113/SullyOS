@@ -23,6 +23,8 @@ import {
     extractBlockFriendRequestAction,
     extractBlockPeekAction,
 } from './block';
+import { loadRecentForGameDedupe, persistGameTagsFromText } from './chatGames/commit';
+import { stripGameTags } from './chatGames/text';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -184,6 +186,34 @@ export const ChatParser = {
             // 卡片自己的字段优先，inheritMeta 只补它没有的键（两边键名本来就不重叠，这里是防御）
             ...(inheritMeta ? { metadata: { ...inheritMeta, ...(msg.metadata || {}) } } : {}),
         });
+
+        // 小游戏记号。云端那一路不会自己接第二句，这里只负责摇完、落卡、把记号从正文里拿掉。
+        // 本地聊天在进这里之前已经摇过，正文里不再有记号，这段等于没看见。
+        if (/\[\[GAME:/i.test(content)) {
+            try {
+                const saveBare = (msg: Parameters<typeof DB.saveMessage>[0]) => (replyRun?.saveMessage ?? DB.saveMessage)({
+                    ...msg,
+                    ...(messageTimestamp != null ? { timestamp: messageTimestamp } : {}),
+                });
+                content = (await persistGameTagsFromText({
+                    content,
+                    charId,
+                    charName,
+                    persist,
+                    inheritMeta,
+                    loadRecent: () => loadRecentForGameDedupe(charId),
+                    timestamp: messageTimestamp,
+                    saveBare,
+                    persistText: async (text) => {
+                        await persist({ charId, role: 'assistant', type: 'text', content: text });
+                    },
+                })).content;
+            } catch (error) {
+                replyRun?.check();
+                console.warn('[chat-game] 落卡失败', error);
+                content = stripGameTags(content);
+            }
+        }
 
         // COLLAB_FILE — current-chat collaboration mode can hand the user an
         // existing file from the sidecar cabinet. The chat message stores only

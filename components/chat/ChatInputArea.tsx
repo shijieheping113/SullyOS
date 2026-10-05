@@ -9,6 +9,7 @@ import { AcnhActionTile } from '../os/acnhIcons';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 import { trackEvent } from '../../utils/analytics';
 import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
+import { DiceGlyph } from './ChatGameCard';
 
 const EMOJI_PAGE_SIZE = 40;
 const ACTION_PAGE_SIZE = 8;
@@ -51,6 +52,8 @@ interface ChatInputAreaProps {
     /** 提供时整体替换内置 actions 双页网格——群聊传自己的功能格。不传 = 原行为 */
     actionsContent?: React.ReactNode;
     onPanelAction: (type: string, payload?: any) => void;
+    /** 私聊加号里的小游戏入口。不传就是没有，群聊不要传。 */
+    showChatGames?: boolean;
     onImageSelect: (file: File) => void;
     /** 私聊发本地视频（打开半屏，不是视频通话） */
     onVideoFilePick?: (file: File) => void;
@@ -101,7 +104,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
     actionsContent,
     previewActionsPage=0,
-    onPanelAction, onImageSelect, onVideoFilePick, isSummarizing,
+    onPanelAction, showChatGames = false, onImageSelect, onVideoFilePick, isSummarizing,
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
@@ -533,6 +536,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 border-sky-400/20' : 'bg-sky-50 border-sky-100'}`}><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-6 h-6" /></div>)}
             <span className="text-xs font-bold">戳一戳</span>
         </button>,
+        ...(showChatGames ? [
+        <button key="chat-game" type="button" onClick={() => onPanelAction('chat-game-menu')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border border-[rgba(62,52,57,0.08)]" style={{ background: '#F7F5F3' }}>
+                <DiceGlyph size={26} />
+            </div>
+            <span className="text-xs font-bold">小游戏</span>
+        </button>,
+        ] : []),
         <button key="image" onClick={() => setCameraOpen(true)} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
             {acnh ? <AcnhActionTile kind="image" /> : (
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>

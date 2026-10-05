@@ -618,7 +618,7 @@ export const useChatAI = ({
     const triggerAI = async (
         currentMsgs: Message[],
         overrideApiConfig?: { baseUrl: string; apiKey: string; model: string },
-        opts?: { skipEmotionInjection?: boolean },
+        opts?: { skipEmotionInjection?: boolean; frozenGameNote?: string },
     ) => {
         if (isTyping || !char) return;
         const effectiveApi = overrideApiConfig || apiConfig;
@@ -630,6 +630,7 @@ export const useChatAI = ({
         // charForGen 只是本地浅拷贝（清空 buff 字段），不落 DB，不影响角色持久化的情绪状态——
         // 紧接着重跑的情绪评估会基于新回复覆写出新的 buff/innerState。
         const skipEmotionInjection = !!opts?.skipEmotionInjection;
+        const frozenGameNote = String(opts?.frozenGameNote || '').trim();
         const charForGen: CharacterProfile = skipEmotionInjection
             ? { ...char, buffInjection: '', activeBuffs: [] }
             : char;
@@ -922,9 +923,12 @@ export const useChatAI = ({
             const cleanedApiMessages = payload.cleanedApiMessages;
             // 在续说补丁和本地/即时对话分流前检查最终历史，不能用补出来的 user 掩盖空上下文。
             assertChatHasDialogue(payload.fullMessages);
-            const fullMessages = payload.flags.promptBuildSkipped
+            let fullMessages = payload.flags.promptBuildSkipped
                 ? payload.fullMessages
                 : withChatContinuation(payload.fullMessages, userProfile.name);
+            if (frozenGameNote) {
+                fullMessages = [...fullMessages, { role: 'user', content: frozenGameNote }];
+            }
             const promptBuildSkipped = payload.flags.promptBuildSkipped;
             if (payload.flags.mcdActive) {
                 console.log(`🍔 [MCD-MiniApp] 注入协同点餐上下文 step=${mcdMiniSnap?.step} cartItems=${mcdMiniSnap?.cart?.length || 0} menuItems=${mcdMiniSnap?.menuMeals ? Object.keys(mcdMiniSnap.menuMeals).length : 0} nutrition=${mcdMiniSnap?.nutritionData ? mcdMiniSnap.nutritionData.length : 0}字`);

@@ -10,6 +10,7 @@ import { DB } from '../utils/db';
 import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDeliveryFlags, peekNoticeKind, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
 import { expandBatteryDeleteIds } from '../utils/batteryReminder';
+import { expandChatGameDeleteIds, gameFollowUpNote, readChatGame } from '../utils/chatGames/text';
 import { purgeOrphanBatteryHints } from '../utils/batteryReminderRun';
 import { needsVoiceBackfill, computeBackfillContent, computeBackfillTaggedContent, hasVoiceShell, voiceShellInnerText, wrapVoiceShell } from '../utils/voiceContentBackfill';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
@@ -59,6 +60,7 @@ import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/VoiceFavoritesPortal';
 import ChatModals from '../components/chat/ChatModals';
+import ChatGameMenu from '../components/chat/ChatGameMenu';
 import SullyAssistantSheet from '../components/chat/SullyAssistantSheet';
 import SullyAiRepairModal from '../components/chat/SullyAiRepairModal';
 import SullyRepairPrefsSheet from '../components/chat/SullyRepairPrefsSheet';
@@ -142,6 +144,9 @@ import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { listChatGameMenu } from '../utils/chatGames/registry';
+import { CHAT_GAMES_CHANGED } from '../utils/chatGames/settings';
+import { saveUserChatGame } from '../utils/chatGames/userPlay';
 import { collectRelatedCallMessageIds, DEFAULT_INCOMING_CALL_PROMPT, isCallRecordCard } from '../utils/incomingCall';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
@@ -2333,26 +2338,43 @@ const Chat: React.FC = () => {
         if (lastMsg.role !== 'assistant') return;
 
         const toDeleteIds: number[] = [];
+        const keptRolls: Array<{ id: string; value: number | string }> = [];
         let index = messages.length - 1;
         while (index >= 0 && messages[index].role === 'assistant') {
-            toDeleteIds.push(messages[index].id);
+            const current = messages[index];
+            const game = readChatGame(current.metadata);
+            if (current.type === 'interaction' && game?.by === 'ai') {
+                keptRolls.push({ id: game.game, value: game.value });
+            } else {
+                toDeleteIds.push(current.id);
+            }
             index--;
         }
 
-        if (toDeleteIds.length === 0) return;
+        if (toDeleteIds.length === 0) {
+            addToast('这一把的结果留着，没有要重写的话', 'info');
+            return;
+        }
 
         await DB.deleteMessages(toDeleteIds);
         discardVoiceForMessages(toDeleteIds);
         // 重 roll 也删了消息：正常路径下这轮生成结束会再打脏一次，这里先打是兜住
         // 「触发失败没走到生成收尾」的路径，云端 fire_pack 不能停在删除前。
+        // 小游戏的卡不删。点数和手势已经定死，重写的是后面那句接话，不是再摇一次。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        const newHistory = messages.slice(0, index + 1);
+        const removed = new Set(toDeleteIds);
+        const newHistory = messages.filter(message => !removed.has(message.id));
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
         trackEvent('重新生成回复');
 
         // 重 roll：不注入上一轮残留的情绪 buff 与意识流（innerState），两边独立重新生成。
-        triggerAI(newHistory, undefined, { skipEmotionInjection: true });
+        // 留下的那张卡还在记录里。再补一句，免得这一轮只看见旧话、忘了自己出过什么，或者再写一次记号。
+        const frozenGameNote = gameFollowUpNote(keptRolls.reverse());
+        triggerAI(newHistory, undefined, {
+            skipEmotionInjection: true,
+            ...(frozenGameNote ? { frozenGameNote } : {}),
+        });
     };
 
     const handleVideoFilePick = (file: File) => {
@@ -2475,7 +2497,7 @@ const Chat: React.FC = () => {
             'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'favorites', 'collaboration', 'miaomiao-box',
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
             // send-emoji / select-category 这些是「挑哪一个」，不进名单。
-            'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end',
+            'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end', 'chat-game', 'chat-game-menu',
         ].includes(type)) {
             trackEvent('打开聊天功能面板项', { action: type });
         }
@@ -2546,6 +2568,37 @@ const Chat: React.FC = () => {
                 setShowThinkingChainModal(true);
                 break;
             }
+            case 'chat-game-menu':
+                setShowPanel('none');
+                setShowChatGameMenu(true);
+                break;
+            case 'chat-game': {
+                setShowPanel('none');
+                const playing = char;
+                if (!playing) break;
+                const gameId = String(payload?.gameId || '');
+                const picked = payload?.value != null ? String(payload.value) : undefined;
+                void (async () => {
+                    try {
+                        const result = await saveUserChatGame({
+                            charId: playing.id,
+                            charName: playing.name,
+                            gameId,
+                            picked,
+                        });
+                        if (!result.ok) {
+                            addToast(result.reason, 'info');
+                            return;
+                        }
+                        await reloadMessages(visibleCountRef.current);
+                        markAmsgStateDirty({ char: playing, userProfile, groups, realtimeConfig });
+                    } catch (error) {
+                        console.warn('[chat-game] 用户出手失败', error);
+                        addToast('这一下没记下来', 'error');
+                    }
+                })();
+                break;
+            }
         }
     };
 
@@ -2568,6 +2621,15 @@ const Chat: React.FC = () => {
         })().catch(() => {});
         return () => { cancelled = true; };
     }, [activeCharacterId]);
+    const [showChatGameMenu, setShowChatGameMenu] = useState(false);
+    const [chatGamesEpoch, setChatGamesEpoch] = useState(0);
+    useEffect(() => {
+        const bump = () => setChatGamesEpoch(n => n + 1);
+        window.addEventListener(CHAT_GAMES_CHANGED, bump);
+        return () => window.removeEventListener(CHAT_GAMES_CHANGED, bump);
+    }, []);
+    useEffect(() => { setShowChatGameMenu(false); }, [activeCharacterId]);
+    const miniGames = useMemo(() => listChatGameMenu(), [chatGamesEpoch]);
     // 拉黑确认弹窗里「连电话一起拉黑」的勾选
     const [blockCallsTooChecked, setBlockCallsTooChecked] = useState(false);
     const [mcdAppOpen, setMcdAppOpen] = useState(false);
@@ -3662,6 +3724,7 @@ const Chat: React.FC = () => {
         if (char?.id) {
             const stored = await DB.getMessagesByCharId(char.id, true);
             ids = expandBatteryDeleteIds(stored, ids);
+            ids = expandChatGameDeleteIds(stored, ids);
         }
         const idSet = new Set(ids);
         if (ids.length === 1) await DB.deleteMessage(ids[0]);
@@ -4241,6 +4304,7 @@ const Chat: React.FC = () => {
                 }
             }
             expandBatteryDeleteIds(all, Array.from(msgIdsToDelete)).forEach(id => msgIdsToDelete.add(id));
+            expandChatGameDeleteIds(all, Array.from(msgIdsToDelete)).forEach(id => msgIdsToDelete.add(id));
         }
         const ids = Array.from(msgIdsToDelete);
         if (ids.length > 0) {
@@ -4600,6 +4664,24 @@ const Chat: React.FC = () => {
         const pending = new Set(streamingHandoverIds);
         return displayMessages.filter(message => !pending.has(message.id));
     }, [displayMessages, streamingBubbles, streamingThinking, streamingHandoverIds, selectionMode]);
+
+    const revealedGameIds = useMemo(() => {
+        const ids = new Set<number>();
+        displayMessages.forEach((message, index) => {
+            const record = readChatGame(message.metadata);
+            if (!record || record.by !== 'user' || record.withAi == null) return;
+            for (let cursor = index - 1; cursor >= 0; cursor--) {
+                const previous = displayMessages[cursor];
+                if (previous.role === 'user') break;
+                const ai = readChatGame(previous.metadata);
+                if (previous.role === 'assistant' && ai?.by === 'ai' && ai.game === record.game) {
+                    ids.add(previous.id);
+                    break;
+                }
+            }
+        });
+        return ids;
+    }, [displayMessages]);
 
     useLayoutEffect(() => {
         publishReplyDisplay(activeCharacterId, renderedMessages.map(message => message.id), streamingBubbles);
@@ -4986,6 +5068,15 @@ const Chat: React.FC = () => {
                     onSend={handleSendLocalVideo}
                 />
              )}
+            <ChatGameMenu
+                open={showChatGameMenu}
+                games={miniGames}
+                onClose={() => setShowChatGameMenu(false)}
+                onPlay={(gameId, value) => {
+                    setShowChatGameMenu(false);
+                    handlePanelAction('chat-game', value != null ? { gameId, value } : { gameId });
+                }}
+            />
             <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
@@ -5451,6 +5542,7 @@ const Chat: React.FC = () => {
                             isLatestMessage={!nextMessage}
                             onMediaLoad={handleMessageMediaLoad}
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
+                            gameRevealed={revealedGameIds.has(m.id)}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
                             selectionMode={selectionMode || sullyPickActive}
@@ -5691,6 +5783,7 @@ const Chat: React.FC = () => {
                     customThemes={customThemes} onUpdateTheme={(id) => updateCharacter(char.id, { bubbleStyle: id })}
                     onRemoveTheme={removeCustomTheme} activeThemeId={currentThemeId}
                     onPanelAction={handlePanelAction}
+                    showChatGames
                     onImageSelect={handleImageSelect}
                     onVideoFilePick={handleVideoFilePick}
                     isSummarizing={isSummarizing}
