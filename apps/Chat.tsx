@@ -9,6 +9,8 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDeliveryFlags, peekNoticeKind, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
+import { expandBatteryDeleteIds } from '../utils/batteryReminder';
+import { purgeOrphanBatteryHints } from '../utils/batteryReminderRun';
 import { needsVoiceBackfill, computeBackfillContent, computeBackfillTaggedContent, hasVoiceShell, voiceShellInnerText, wrapVoiceShell } from '../utils/voiceContentBackfill';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, processImageToBlob } from '../utils/file';
@@ -1280,7 +1282,9 @@ const Chat: React.FC = () => {
             setPlayingMsgId(null);
             if (chatAudioRef.current) { try { stopVoiceAudio(chatAudioRef.current); } catch { /* ignore */ } }
 
-            reloadMessages(LOAD_BATCH_SIZE);
+            void purgeOrphanBatteryHints(activeCharacterId).finally(() => {
+                if (activeCharIdRef.current === activeCharacterId) reloadMessages(LOAD_BATCH_SIZE);
+            });
             loadEmojiData();
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
@@ -1401,10 +1405,14 @@ const Chat: React.FC = () => {
     // Load all messages when history-manager modal opens
     useEffect(() => {
         if (modalType === 'history-manager' && activeCharacterId) {
-            DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
-                // 范围管理必须使用 AI 可能读取的完整私聊序列，不能先按聊天界面显示偏好
-                // 隐掉系统/约会/通话消息，否则「最近 N 条」起点会与真实 prompt 发生偏移。
-                setAllHistoryMessages(allMsgs);
+            const charIdAtStart = activeCharacterId;
+            void purgeOrphanBatteryHints(charIdAtStart).finally(() => {
+                if (activeCharIdRef.current !== charIdAtStart) return;
+                DB.getMessagesByCharId(charIdAtStart, true).then(allMsgs => {
+                    // 范围管理必须使用 AI 可能读取的完整私聊序列，不能先按聊天界面显示偏好
+                    // 隐掉系统/约会/通话消息，否则「最近 N 条」起点会与真实 prompt 发生偏移。
+                    setAllHistoryMessages(allMsgs);
+                });
             });
         }
     }, [modalType, activeCharacterId]);
@@ -3651,6 +3659,10 @@ const Chat: React.FC = () => {
             const all = await DB.getMessagesByCharId(char.id, true);
             ids = collectRelatedCallMessageIds(all, selectedMessage);
         }
+        if (char?.id) {
+            const stored = await DB.getMessagesByCharId(char.id, true);
+            ids = expandBatteryDeleteIds(stored, ids);
+        }
         const idSet = new Set(ids);
         if (ids.length === 1) await DB.deleteMessage(ids[0]);
         else await DB.deleteMessages(ids);
@@ -3659,10 +3671,11 @@ const Chat: React.FC = () => {
         // 还会提起这条已经不存在的消息（快照的消息在 flush 时从 DB 重读，这里只管打脏）。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
         setMessages(prev => prev.filter(m => !idSet.has(m.id)));
+        setAllHistoryMessages(prev => prev.filter(m => !idSet.has(m.id)));
         setTotalMsgCount(prev => Math.max(0, prev - ids.length));
         setModalType('none');
         setSelectedMessage(null);
-        addToast(ids.length > 1 ? '这通通话记录已删除' : '消息已删除', 'success');
+        addToast(isCallRecordCard(selectedMessage) && ids.length > 1 ? '这通通话记录已删除' : '消息已删除', 'success');
         trackEvent('删除一条消息');
     };
 
@@ -4227,6 +4240,7 @@ const Chat: React.FC = () => {
                     collectRelatedCallMessageIds(all, m).forEach(id => msgIdsToDelete.add(id));
                 }
             }
+            expandBatteryDeleteIds(all, Array.from(msgIdsToDelete)).forEach(id => msgIdsToDelete.add(id));
         }
         const ids = Array.from(msgIdsToDelete);
         if (ids.length > 0) {
@@ -4235,6 +4249,7 @@ const Chat: React.FC = () => {
         }
 
         const migMap = new Map(migrations.map(m => [m.targetId, m.chain]));
+        setAllHistoryMessages(prev => prev.filter(m => !msgIdsToDelete.has(m.id)));
         setMessages(prev => prev
             .filter(m => !msgIdsToDelete.has(m.id))
             .map(m => {

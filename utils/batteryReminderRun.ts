@@ -3,8 +3,8 @@
  * 辅助失败就停，不再回头打主 API。
  * 这一层不读、不写「来回账本」。账本由监听电量的那边维护，测试台因此不会把真的一轮提前用掉。
  *
- * 请求里有人设、记忆、最近聊天记录，和电量那一句。
- * 不走主聊天那套提示词，所以没有语音格式、表情包清单、行为规范。
+ * 请求里拼主聊天的人设、世界、记忆、时间和说话原则，再附上最近聊天和电量底稿。
+ * 表情包、语音条、Spark 和暗号写法不带。底稿不是要照抄的台词。
  */
 import type { APIConfig, CharacterProfile, GroupProfile, Message, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
@@ -14,13 +14,14 @@ import { extractContent, safeFetchJson } from './safeApi';
 import { isSecondaryLlmReady } from './secondaryLlmApi';
 import { secondaryLlmCall } from './secondaryLlmCall';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
+import { ChatPrompts } from './chatPrompts';
 import { getChibi } from './vrWorld/chibi';
 import {
-    BATTERY_PLAIN_RULE,
     batteryFallbackText,
     batteryHintText,
     batteryHistoryTurns,
     batteryMemoryBlock,
+    orphanBatteryHintIds,
     batterySourceLine,
     batteryStandaloneSystem,
     batteryUserName,
@@ -43,11 +44,6 @@ export interface BatterySpeech {
 type ChatTurn = { role: string; content: unknown };
 
 const tidyReply = (raw: string): string => ChatParser.sanitize(pickBatterySentence(raw)).trim();
-
-const withPlainRule = (messages: ChatTurn[]): ChatTurn[] => ([
-    ...messages,
-    { role: 'system', content: `[系统提示：${BATTERY_PLAIN_RULE}]` },
-]);
 
 const asTextTurns = (messages: ChatTurn[]): { role: string; content: string }[] => (
     messages.map(message => ({
@@ -103,6 +99,21 @@ const callAux = async (
     if (!text) throw new Error('aux-empty');
     return text;
 };
+
+/** 卡片已经删掉、隐藏提示还留在库里的，清掉。不碰电量次数账本。 */
+export async function purgeOrphanBatteryHints(charId: string): Promise<number> {
+    if (!charId) return 0;
+    try {
+        const messages = await DB.getMessagesByCharId(charId, true);
+        const ids = orphanBatteryHintIds(messages);
+        if (!ids.length) return 0;
+        await DB.deleteMessages(ids);
+        return ids.length;
+    } catch (error) {
+        console.error('[电量提醒] 残留的隐藏提示没清掉', error);
+        return 0;
+    }
+}
 
 /** 跟主聊天同一个阅读范围。读不到就当没有记录，提醒本身还是要发。 */
 const loadBatteryHistory = async (char: CharacterProfile): Promise<Message[]> => {
@@ -176,12 +187,42 @@ export async function runBatteryReminder(opts: {
         await refreshBatteryMemory(char, historyMessages, userName);
         const memoryText = batteryMemoryBlock(char);
         const historyTurns = batteryHistoryTurns(historyMessages, char.name || '角色', userName);
-        let messages: ChatTurn[] = withPlainRule([
-            { role: 'system', content: batteryStandaloneSystem(char.name, char.systemPrompt || char.description || '') },
-            ...(memoryText ? [{ role: 'system', content: memoryText }] : []),
-            ...historyTurns,
-            { role: 'user', content: hint },
-        ]);
+        let messages: ChatTurn[];
+        try {
+            const parts = await ChatPrompts.buildSystemPromptParts(
+                char,
+                opts.userProfile,
+                opts.groups || [],
+                [],
+                [],
+                historyMessages,
+                opts.realtimeConfig,
+                undefined,
+                null,
+                false,
+                undefined,
+                null,
+                { forBatteryReminder: true },
+            );
+            const stable = (parts.stable || '').trim();
+            const volatileState = (parts.volatileState || '').trim();
+            const tail = (parts.recencyTail || '').trim();
+            messages = [
+                ...(stable ? [{ role: 'system', content: stable }] : []),
+                ...historyTurns,
+                ...(volatileState ? [{ role: 'system', content: volatileState }] : []),
+                ...(tail ? [{ role: 'system', content: tail }] : []),
+                { role: 'user', content: hint },
+            ];
+        } catch (error) {
+            console.error('[电量提醒] 主聊天上下文没拼上，退回人设和记忆', error);
+            messages = [
+                { role: 'system', content: batteryStandaloneSystem(char.name, char.systemPrompt || char.description || '') },
+                ...(memoryText ? [{ role: 'system', content: memoryText }] : []),
+                ...historyTurns,
+                { role: 'user', content: hint },
+            ];
+        }
         try {
             await DB.saveMessage({
                 charId: char.id,

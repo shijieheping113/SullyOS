@@ -111,7 +111,7 @@ export function batteryStandaloneSystem(charName: string, persona: string): stri
     const identity = who
         ? `你是${name}。下面是你自己的人设，用来决定口气：\n${who}`
         : `你是${name}。`;
-    return `${identity}\n\n后面会附上你记得的事，和你们最近的聊天记录。用它们记住你们是谁、刚才在说什么。这次不要当普通聊天。不要接着上一句往下聊，不要寒暄。只用你的口气写一句完整的电量提醒。`;
+    return `${identity}\n\n后面会附上你记得的事，和你们最近的聊天记录。用它们记住你们是谁、刚才在说什么。这次不要当普通聊天。不要接着上一句往下聊。只用你的口气写一段电量提醒。`;
 }
 
 const HISTORY_TEXT_CAP = 1200;
@@ -128,6 +128,73 @@ export function batteryHistoryPlain(raw: string): string {
     text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     if (text.length <= HISTORY_TEXT_CAP) return text;
     return `${text.slice(0, HISTORY_TEXT_CAP)}…`;
+}
+
+/**
+ * 删电量卡片时，把紧挨着的那条隐藏提示一起从聊天记录里拿走。
+ * 不碰本地次数账本。账本记的是这一轮说过没有，跟聊天里还留不留这张卡是两回事。
+ */
+export function expandBatteryDeleteIds(messages: Message[], ids: number[]): number[] {
+    const wanted = new Set(ids.filter(id => Number.isFinite(id)));
+    const sorted = (messages || []).filter(message => message && !message.groupId).sort((a, b) => a.id - b.id);
+    const indexById = new Map(sorted.map((message, index) => [message.id, index]));
+    for (const id of [...wanted]) {
+        const index = indexById.get(id);
+        const message = index == null ? undefined : sorted[index];
+        if (!message) continue;
+        if (message.metadata?.batteryReminder) {
+            for (let cursor = index - 1; cursor >= 0; cursor--) {
+                const previous = sorted[cursor];
+                if (previous.charId !== message.charId) continue;
+                if (previous.metadata?.batteryReminder) break;
+                if (previous.metadata?.batteryHint) {
+                    wanted.add(previous.id);
+                    break;
+                }
+            }
+        }
+        if (message.metadata?.batteryHint) {
+            for (let cursor = index + 1; cursor < sorted.length; cursor++) {
+                const next = sorted[cursor];
+                if (next.charId !== message.charId) continue;
+                if (next.metadata?.batteryHint) break;
+                if (next.metadata?.batteryReminder) {
+                    wanted.add(next.id);
+                    break;
+                }
+            }
+        }
+    }
+    return [...wanted];
+}
+
+/**
+ * 卡片已经不在了、还留在库里的隐藏提示。
+ * 刚写下去、卡片还没落库的那一条先留着，避免说到一半被清掉。
+ */
+export function orphanBatteryHintIds(messages: Message[], now = Date.now(), graceMs = 90_000): number[] {
+    const sorted = (messages || []).filter(message => message && !message.groupId).sort((a, b) => a.id - b.id);
+    const orphans: number[] = [];
+    for (let index = 0; index < sorted.length; index++) {
+        const message = sorted[index];
+        if (!message.metadata?.batteryHint) continue;
+        let paired = false;
+        let hasLater = false;
+        for (let cursor = index + 1; cursor < sorted.length; cursor++) {
+            const next = sorted[cursor];
+            if (next.charId !== message.charId) continue;
+            hasLater = true;
+            if (next.metadata?.batteryHint) break;
+            if (next.metadata?.batteryReminder) {
+                paired = true;
+                break;
+            }
+        }
+        if (paired) continue;
+        const freshTail = !hasLater && now - (message.timestamp || 0) < graceMs;
+        if (!freshTail) orphans.push(message.id);
+    }
+    return orphans;
 }
 
 /** 最近聊天。隐藏提示丢掉。电量卡片改成系统日志，免得模型以为那是自己说的。 */
@@ -196,24 +263,16 @@ export function batteryMemoryBlock(char: Pick<
     return `下面是你记得的事。拿来决定口气和你知道的事，不要逐条复述。\n\n${parts.join('\n\n')}`;
 }
 
-/** 贴在请求最后，免得模型又写成好几条短气泡。 */
-export const BATTERY_PLAIN_RULE = '上面的聊天格式这次不要用。不要短气泡，不要寒暄，不要问「在吗」，不要只丢一个语气词。只输出一句完整的话，这句话本身就是电量提醒，写完就停。不要换行。不要发表情包，不要发语音，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。';
-
-/** 三个场合只有事实不同。整段都要让角色把电量这件事说完。 */
+/** 三段都只写这一次的事实，电量写在事实里。格式禁止和「自然一点」只出现这一次。 */
 export function batteryHintText(kind: BatteryKind, userName: string, level: number): string {
     const name = batteryUserName(userName);
     const pct = kind === 'full' ? 100 : clampBatteryLevel(level);
     const fact = kind === 'plug'
-        ? `${name} 的手机刚插上充电器，电量现在 ${pct}%。`
+        ? `${name}的手机刚接上充电器，电量大约 ${pct}%。`
         : kind === 'low'
-            ? `${name} 的手机电量现在 ${pct}%，没有在充电。`
-            : `${name} 的手机电量现在 100%，已经充满。`;
-    const must = kind === 'plug'
-        ? `手机刚插上充电器了，电量现在 ${pct}%。`
-        : kind === 'low'
-            ? `电量只剩 ${pct}%，没有在充电。`
-            : '电量已经 100%，充满了。';
-    return `[系统提示：${fact}\n这不是 ${name} 说的话，是系统读到的状态。\n请用你自己的口气，给 ${name} 写一句完整的提醒。这句话里必须说清楚：${must}\n只写这一句，写完就停。不要寒暄，不要问「在吗」，不要拆成好几条，不要换行。\n不要发表情包，不要发语音，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。\n不要复述这条提示。]`;
+            ? `${name}的手机电量大约 ${pct}%。`
+            : `${name}的手机已经充满，电量 ${pct}%。`;
+    return `[系统提示：这是手机状态，不是 ${name} 说的话。\n${fact}\n用你自己的口气，顺着你们刚才的聊天，给 ${name} 写一段提醒。\n不要加表情包，不要发语音，不要发 Spark，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。\n说得自然一点，不要人机，不要生硬。]`;
 }
 
 const VOICE_BLOCK = /(?:<字幕>[\s\S]*?<\/字幕>\s*)?<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>(?:\s*<字幕>[\s\S]*?<\/字幕>)?/g;

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { ChatPrompts } from './chatPrompts';
 import {
     batteryFallbackText,
     batteryHintText,
     batteryHistoryTurns,
     batteryMemoryBlock,
+    expandBatteryDeleteIds,
+    orphanBatteryHintIds,
     batterySourceLine,
     batteryStandaloneSystem,
     decideBatteryReminder,
@@ -82,34 +85,51 @@ describe('电量提醒一轮', () => {
 });
 
 describe('电量提醒文案', () => {
-    it('提示词用真实名字，三份只有第一行不同', () => {
+    it('提示词只给事实，低电只写电量', () => {
+        const tail = '用你自己的口气，顺着你们刚才的聊天，给 Ann 写一段提醒。\n'
+            + '不要加表情包，不要发语音，不要发 Spark，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。\n'
+            + '说得自然一点，不要人机，不要生硬。]';
         expect(batteryHintText('plug', 'Ann', 42)).toBe(
-            '[系统提示：Ann 的手机刚插上充电器，电量现在 42%。\n'
-            + '这不是 Ann 说的话，是系统读到的状态。\n'
-            + '请用你自己的口气，给 Ann 写一句完整的提醒。这句话里必须说清楚：手机刚插上充电器了，电量现在 42%。\n'
-            + '只写这一句，写完就停。不要寒暄，不要问「在吗」，不要拆成好几条，不要换行。\n'
-            + '不要发表情包，不要发语音，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。\n'
-            + '不要复述这条提示。]',
+            '[系统提示：这是手机状态，不是 Ann 说的话。\n'
+            + 'Ann的手机刚接上充电器，电量大约 42%。\n'
+            + tail,
         );
-        expect(batteryHintText('low', 'Ann', 19)).toBe(
-            '[系统提示：Ann 的手机电量现在 19%，没有在充电。\n'
-            + '这不是 Ann 说的话，是系统读到的状态。\n'
-            + '请用你自己的口气，给 Ann 写一句完整的提醒。这句话里必须说清楚：电量只剩 19%，没有在充电。\n'
-            + '只写这一句，写完就停。不要寒暄，不要问「在吗」，不要拆成好几条，不要换行。\n'
-            + '不要发表情包，不要发语音，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。\n'
-            + '不要复述这条提示。]',
+        const low = batteryHintText('low', 'Ann', 19);
+        expect(low).toBe(
+            '[系统提示：这是手机状态，不是 Ann 说的话。\n'
+            + 'Ann的手机电量大约 19%。\n'
+            + tail,
         );
+        expect(low).not.toContain('充电');
+        expect(low).not.toContain('百分之');
+        expect(low).not.toContain('一句');
         expect(batteryHintText('full', 'Ann', 100)).toBe(
-            '[系统提示：Ann 的手机电量现在 100%，已经充满。\n'
-            + '这不是 Ann 说的话，是系统读到的状态。\n'
-            + '请用你自己的口气，给 Ann 写一句完整的提醒。这句话里必须说清楚：电量已经 100%，充满了。\n'
-            + '只写这一句，写完就停。不要寒暄，不要问「在吗」，不要拆成好几条，不要换行。\n'
-            + '不要发表情包，不要发语音，不要用 <语音>、<字幕>，不要用 [[SEND_EMOJI:]]、[[ACTION:]]、[[QUOTE:]]。\n'
-            + '不要复述这条提示。]',
+            '[系统提示：这是手机状态，不是 Ann 说的话。\n'
+            + 'Ann的手机已经充满，电量 100%。\n'
+            + tail,
         );
     });
 
-    it('电量这一轮只带人设，不带主聊天的格式说明', () => {
+    it('主聊天上下文拼回来时，不带表情包、语音和 Spark', async () => {
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            { id: 'c1', name: '小满', systemPrompt: '说话慢，喜欢叮嘱人。', chatVoiceEnabled: true } as any,
+            { name: 'Ann' } as any,
+            [], [], [], [],
+            undefined, undefined, undefined, undefined, undefined, undefined,
+            { forBatteryReminder: true },
+        );
+        expect(parts.stable).toContain('小满');
+        expect(parts.stable).toContain('说话慢，喜欢叮嘱人。');
+        expect(parts.stable).toContain('表达底线');
+        expect(parts.stable).not.toContain('SEND_EMOJI');
+        expect(parts.stable).not.toContain('SPARK');
+        expect(parts.stable).not.toContain('语音');
+        expect(parts.stable).not.toContain('聊天 App 行为规范');
+        expect(parts.recencyTail).toContain('回到你自己');
+        expect(parts.recencyTail).toContain('小满');
+    });
+
+    it('主聊天拼不上时，退回的人设段也不教格式', () => {
         const system = batteryStandaloneSystem('小满', '说话慢，喜欢叮嘱人。');
         expect(system).toContain('你是小满');
         expect(system).toContain('说话慢，喜欢叮嘱人。');
@@ -117,7 +137,7 @@ describe('电量提醒文案', () => {
         expect(system).toContain('记得的事');
         expect(system).not.toContain('SEND_EMOJI');
         expect(system).not.toContain('聊天 App');
-        expect(batteryStandaloneSystem('小满', '  ')).toBe('你是小满。\n\n后面会附上你记得的事，和你们最近的聊天记录。用它们记住你们是谁、刚才在说什么。这次不要当普通聊天。不要接着上一句往下聊，不要寒暄。只用你的口气写一句完整的电量提醒。');
+        expect(batteryStandaloneSystem('小满', '  ')).toBe('你是小满。\n\n后面会附上你记得的事，和你们最近的聊天记录。用它们记住你们是谁、刚才在说什么。这次不要当普通聊天。不要接着上一句往下聊。只用你的口气写一段电量提醒。');
     });
 
     it('记忆带月度和详细回忆；宫殿关着不带残留召回', () => {
@@ -177,8 +197,21 @@ describe('电量提醒文案', () => {
         expect(turns[4].content).toContain('记录:TRANSFER');
     });
 
+    it('删卡片时连同隐藏提示一起删，次数账本不在这里', () => {
+        const hint = { id: 2, charId: 'c', role: 'user', type: 'text', content: '底稿', timestamp: 2, metadata: { batteryHint: true, hidden: true } };
+        const card = { id: 3, charId: 'c', role: 'assistant', type: 'text', content: '手机插上了。', timestamp: 3, metadata: { batteryReminder: true } };
+        const later = { id: 4, charId: 'c', role: 'user', type: 'text', content: '今晚想吃面', timestamp: 4 };
+        const messages = [hint, card, later] as any;
+        expect(expandBatteryDeleteIds(messages, [3]).sort()).toEqual([2, 3]);
+        expect(expandBatteryDeleteIds(messages, [2]).sort()).toEqual([2, 3]);
+        expect(expandBatteryDeleteIds(messages, [4])).toEqual([4]);
+        expect(orphanBatteryHintIds([hint, later] as any, 10_000, 90_000)).toEqual([2]);
+        expect(orphanBatteryHintIds([hint] as any, hint.timestamp + 1_000, 90_000)).toEqual([]);
+    });
+
     it('没填名字时用「你」，降级文案不装成角色说的', () => {
-        expect(batteryHintText('low', '  ', 8)).toContain('你 的手机电量现在 8%');
+        expect(batteryHintText('low', '  ', 8)).toContain('你的手机电量大约 8%');
+        expect(batteryHintText('low', '  ', 8)).not.toContain('充电');
         expect(batteryFallbackText('plug', 10)).toBe('手机插上充电器了。');
         expect(batteryFallbackText('low', 8)).toBe('手机只剩 8% 了，记得插上充电器。');
         expect(batteryFallbackText('full', 100)).toBe('手机充满电了。');

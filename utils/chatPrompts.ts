@@ -170,6 +170,12 @@ export interface PromptBuildOptions {
     timelyByWorker?: boolean;
     /** 喵喵盒：整段替换「聊天 App 行为规范」，并跳过主聊天语音条教学。 */
     miaomiaoBoxPrompt?: string;
+    /**
+     * 电量提醒：要人设、世界书、记忆、实时状态和说话原则。
+     * 不要表情包清单、语音条、Spark，也不要短气泡和各种暗号写法。
+     * 普通聊天不传这个，主聊天提示词一个字不动。
+     */
+    forBatteryReminder?: boolean;
 }
 
 export const ChatPrompts = {
@@ -315,6 +321,8 @@ export const ChatPrompts = {
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
         const boxPlay = !!promptOptions?.miaomiaoBoxPrompt;
+        // 电量提醒只要角色和近况，不要教它怎么发表情包、语音、Spark 或别的暗号。
+        const batterySlice = promptOptions?.forBatteryReminder === true;
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
         const timings: Record<string, number> = {};
@@ -515,7 +523,7 @@ ${groupLogStr}\n`;
         // 7. 生活记录（档案 App）注入 — 总开关关闭时 buildLifeRecordInjection 直接返回 ''
         //    fire_pack 只要摘要数据，不要代记工具说明：后台生成时用户没在说话，那时候
         //    输出的 [[LIFE:...]] 只可能是把历史里早就记过的事再记一遍。
-        const lifeRecordPromise: Promise<string> = buildLifeRecordInjection(char, userProfile.name, { forFirePack })
+        const lifeRecordPromise: Promise<string> = buildLifeRecordInjection(char, userProfile.name, { forFirePack, factsOnly: batterySlice })
             .catch(e => {
                 console.error('Failed to inject life record context:', e);
                 return '';
@@ -596,7 +604,7 @@ ${groupLogStr}\n`;
             );
             if (musicBlock) {
                 volatileState += `\n${musicBlock}\n`;
-                if (userListeningContext) {
+                if (userListeningContext && !batterySlice) {
                     volatileState += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                 }
             }
@@ -674,7 +682,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         const scheduleMessageTagEnabled = !forFirePack
             && !(timelyByWorker && isAmsg2EnabledForChar(char));
 
-        if (!boxPlay) {
+        if (!boxPlay && !batterySlice) {
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
 **TOP 1｜ChatApp 格式（本节最高优先级）**：你是发消息的真实存在，以自然短句、短气泡为主；一个气泡一行，气泡间直接另起一行（实际换行，不要输出“\\n”字样）。
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
@@ -984,7 +992,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 `;
         }
 
-        if (char.chatCollaborationEnabled && !boxPlay) {
+        if (char.chatCollaborationEnabled && !boxPlay && !batterySlice) {
             baseSystemPrompt += `
 
 ### 协同功能
@@ -1001,7 +1009,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         const returningFromMode = !forFirePack
             ? (promptOptions?.returningFromMode || detectChatModeTransition(currentMsgs))
             : null;
-        if (returningFromMode && !boxPlay) {
+        if (returningFromMode && !boxPlay && !batterySlice) {
             const modeLabel: Record<ChatModeTransition, string> = {
                 call: '语音通话',
                 video: '视频通话',
@@ -1011,7 +1019,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
         }
 
-        if (!promptOptions?.miaomiaoBoxPrompt) {
+        if (!promptOptions?.miaomiaoBoxPrompt && !batterySlice) {
             baseSystemPrompt += buildChatVoiceMessagePromptBlock({
                 chatVoiceEnabled: char.chatVoiceEnabled,
                 chatVoiceLang: char.chatVoiceLang,
@@ -1021,7 +1029,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // Spark 关注（发动态）能力段 —— spark-follow 2-G（Ann 2026-09-17 拍板先用附录 A）：
         // 跟语音同一类开关——开着整段注入（逐字），关着只注入严禁句。
         // 不写进 [你现在的能力]（三种 SPARK_COMMENT 原文一个字不改、不加发帖）。
-        if (!boxPlay && loadMomentsPostOn()[char.id] === true) {
+        if (!batterySlice && !boxPlay && loadMomentsPostOn()[char.id] === true) {
             baseSystemPrompt += `\n\n### Spark 关注（发动态）
 
 用户开启了你在 Spark 关注发动态的功能。
@@ -1060,7 +1068,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 - 正文要像你会发的动态，符合你的性格和眼下的心情，不要写成公告，不要标题党空壳。
 - 标题不要复读正文。
 - 用户没点名让你发，你也可以发——这是你自己的动态，不是交作业。判断何时发，按你的人设和当下气氛决定。`;
-        } else if (!boxPlay) {
+        } else if (!batterySlice && !boxPlay) {
             baseSystemPrompt += `\n\n[系统提示: Spark 关注发动态功能当前未开启。严禁使用 [[ACTION:SPARK_POST|...]]。]`;
         }
 
@@ -1097,6 +1105,8 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
         // 这里再次校验统一边界，兼容只提供内存快照的入口。
         let effectiveHistory = selectCharacterContextMessages(messages, char, options?.contextHighWaterMark);
+        // 电量那条隐藏提示是写给模型的底稿，不是聊天。删卡片时会一起删掉；这里再挡一层，免得残留进下一轮。
+        effectiveHistory = effectiveHistory.filter(m => !m.metadata?.batteryHint);
         // 给用户看的浅灰句（求看看结果/好友申请结果/挂断提醒）不进模型，状态已经写在对应卡上。
         effectiveHistory = effectiveHistory.filter(m => m.metadata?.source !== BLOCK_NOTICE_SOURCE);
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
