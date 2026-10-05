@@ -2254,7 +2254,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           addToast(`${charName || '角色'}正在整理记忆${count ? `（${count} 条对话）` : ''}…`, 'info');
       };
 
+      const batteryLandedHandler = (e: Event) => {
+          const { charId } = ((e as CustomEvent).detail || {}) as { charId?: string };
+          if (!charId) return;
+          setLastMsgTimestamp(Date.now());
+          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          if (!isChattingWithThisChar) {
+              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+          }
+      };
+
       window.addEventListener('active-msg-received', handler);
+      window.addEventListener('battery-reminder-landed', batteryLandedHandler);
       window.addEventListener('active-msg-process-failed', inboxFailHandler);
       window.addEventListener('active-msg-backfill-stale', backfillStaleHandler);
       window.addEventListener('active-msg-progress', progressHandler);
@@ -2267,6 +2278,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       document.addEventListener('visibilitychange', onVisible);
       return () => {
           window.removeEventListener('active-msg-received', handler);
+          window.removeEventListener('battery-reminder-landed', batteryLandedHandler);
           window.removeEventListener('active-msg-process-failed', inboxFailHandler);
           window.removeEventListener('active-msg-backfill-stale', backfillStaleHandler);
           window.removeEventListener('active-msg-progress', progressHandler);

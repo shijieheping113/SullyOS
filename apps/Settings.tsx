@@ -25,6 +25,8 @@ import {
 } from '../utils/elevenLabsTts';
 import { DATE_VOICE_GUIDE } from '../utils/datePrompts';
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee, PlugsConnected } from '@phosphor-icons/react';
+import BatteryReminderSettingsCard from '../components/settings/BatteryReminderSettingsCard';
+import { readBatteryReminderEnabled, writeBatteryReminderEnabled } from '../utils/batteryReminder';
 import { loadMcpServers, saveMcpServers, createMcpServer, testMcpConnection, resetMcpSession, getMcpUseNativeTools, setMcpUseNativeTools, type McpServerConfig } from '../utils/mcpClient';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
@@ -698,6 +700,7 @@ const Settings: React.FC = () => {
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
+  const [batteryReminderOn, setBatteryReminderOn] = useState(() => readBatteryReminderEnabled());
   const [rtUserHolidays, setRtUserHolidays] = useState<UserHolidayConfig>(() => ({ ...(realtimeConfig.userHolidays || { enabled: false, countryCode: '' }), ...(holidaySettingsFocus ? { enabled: true } : {}) }));
   const [rtWeatherKey, setRtWeatherKey] = useState(realtimeConfig.weatherApiKey);
   const [rtWeatherCity, setRtWeatherCity] = useState(realtimeConfig.weatherCity);
@@ -3589,13 +3592,17 @@ const Settings: React.FC = () => {
             }
         >
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                让AI角色感知真实世界：天气、新闻热点、当前时间。角色可以根据天气关心你、聊聊最近的热点话题。
+                让AI角色感知真实世界：天气、新闻热点、当前时间。手机电量到了的时候，最近聊过的角色也会说一句。
             </p>
 
-            <div className="grid grid-cols-5 gap-2 text-center">
+            <div className="grid grid-cols-3 gap-2 text-center">
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtWeatherEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtWeatherEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2600.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f32b.png" className="w-5 h-5 inline" alt="" />}</div>
                     天气
+                </div>
+                <div className={`py-3 rounded-xl text-xs font-bold ${batteryReminderOn ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-400'}`}>
+                    <div className="text-lg mb-1"><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f50b.png" className="w-5 h-5 inline" alt="" /></div>
+                    电量
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtNewsEnabled ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtNewsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f0.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" className="w-5 h-5 inline" alt="" />}</div>
@@ -4644,6 +4651,14 @@ const Settings: React.FC = () => {
                       </div>
                   )}
               </div>
+
+              <BatteryReminderSettingsCard
+                  enabled={batteryReminderOn}
+                  onChange={(on) => {
+                      setBatteryReminderOn(on);
+                      writeBatteryReminderEnabled(on);
+                  }}
+              />
 
               {/* 新闻配置 */}
               <div className="bg-blue-50/50 p-4 rounded-2xl space-y-3">

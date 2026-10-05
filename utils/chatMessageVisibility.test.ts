@@ -30,6 +30,8 @@ describe('私聊与桌面预览的消息范围', () => {
         expect(isChatPreviewMessage(message())).toBe(true);
         expect(isChatPreviewMessage(message({ metadata: { source: 'call-end-popup' } }))).toBe(true);
         expect(isVisibleChatMessage(message({ role: 'user', metadata: { proactiveHint: true, hidden: true } }))).toBe(false);
+        expect(isVisibleChatMessage(message({ role: 'user', metadata: { batteryHint: true, hidden: true } }))).toBe(false);
+        expect(isVisibleChatMessage(message({ metadata: { batteryReminder: true, batterySource: '因手机电量低于 20% 自动触发' } }))).toBe(true);
         expect(isChatPreviewMessage(message({ groupId: 'group' }))).toBe(false);
     });
 

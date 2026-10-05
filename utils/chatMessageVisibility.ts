@@ -23,6 +23,7 @@ export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): 
     && message.metadata?.source !== 'call'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
+    && !message.metadata?.batteryHint
     && message.metadata?.source !== 'block-call-hangup'
     && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card'
         && !ALWAYS_VISIBLE_SYSTEM[String(message.metadata?.source || '')]

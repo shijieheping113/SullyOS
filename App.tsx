@@ -6,6 +6,8 @@ import { MiaomiaoBoxProvider } from './context/MiaomiaoBoxContext';
 import PhoneShell from './components/PhoneShell';
 import BuildBadge from './components/BuildBadge';
 import DevDebugPanel from './components/DevDebugPanel';
+import BatteryReminderHost from './components/BatteryReminderHost';
+import BatteryReminderDevPanel from './components/BatteryReminderDevPanel';
 import Amsg2DebugPanel from './components/Amsg2DebugPanel';
 import VRBroadcast from './components/VRBroadcast';
 import WorldBroadcast from './components/WorldBroadcast';
@@ -47,6 +49,8 @@ const App: React.FC = () => {
             {/* 挂在 Provider 里面才能直接读 characters（省掉轮询 IndexedDB），
                 面板自身用 portal 渲染到 body，绕开上面那层 transform 对 fixed 定位的影响。 */}
             <Amsg2DebugPanel />
+            <BatteryReminderHost />
+            {import.meta.env.DEV && <BatteryReminderDevPanel />}
             <WebUpdateNotice />
           </OSProvider>
         </div>

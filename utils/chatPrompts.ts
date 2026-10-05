@@ -1129,7 +1129,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             let lastRealMsg: Message | undefined;
             for (let i = historySlice.length - 2; i >= 0; i--) {
                 const m = historySlice[i];
-                if (!m.metadata?.proactiveHint && !(m.role === 'assistant' && i > 0 && historySlice[i - 1]?.metadata?.proactiveHint)) {
+                if (!m.metadata?.proactiveHint && !m.metadata?.batteryHint && !(m.role === 'assistant' && i > 0 && (historySlice[i - 1]?.metadata?.proactiveHint || historySlice[i - 1]?.metadata?.batteryHint))) {
                     lastRealMsg = m;
                     break;
                 }
@@ -1154,6 +1154,13 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     return '[聊天]';
                 })();
                 
+                if (m.metadata?.batteryReminder) {
+                    const line = String(m.content || '').trim();
+                    content = `${timeStr} [电量提醒卡片，不是你说的话] ${line}`;
+                    const body = content.indexOf(SYSTEM_LOG_LEAD) >= 0 ? content : `${SYSTEM_LOG_LEAD} ${content}`;
+                    return { role: 'system', content: body };
+                }
+
                 if (m.replyTo) {
                     // 引用回复：把"被引用的原话"做成独立的上下文框，用户的新回复另起一行突出出来。
                     // 旧格式 [回复 "引用前50字..."]: 回复 会把引用和回复挤在一行，引用往往比回复长得多，

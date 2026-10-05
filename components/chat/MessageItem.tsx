@@ -17,6 +17,7 @@ import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
+import { BatteryReminderLogCard } from '../BatteryReminderCard';
 import VideoMessageBubble from './VideoMessageBubble';
 // v8c-1（Ann 2026-09-16）：Spark 卡片头像也走共用解析器（自定义 > 主聊天头像 > 快照 > 名字 hash）
 import { resolveSparkCharAvatar } from '../../utils/sparkAvatar';
@@ -1352,6 +1353,36 @@ const MessageItem = React.memo(({
 
     // Render Avatar with potential decoration/frame
     // Removed mb-5 from here, handled via absolute positioning in parent
+    if (!isUser && m.metadata?.batteryReminder) {
+        const kind = String(m.metadata.batteryKind || 'low');
+        const level = Number(m.metadata.batteryLevel);
+        return (
+            <div
+                className="relative flex w-full justify-center px-8 my-3"
+                style={{ touchAction: 'pan-y', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
+                {...interactionProps}
+            >
+                <div className="w-full max-w-[340px]">
+                {selectionMode && (
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                            {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                        </div>
+                    </div>
+                )}
+                <BatteryReminderLogCard
+                    name={m.metadata.batterySystemFallback ? '系统提醒' : (charName || '角色')}
+                    chibi={String(m.metadata.batteryChibi || '')}
+                    text={String(m.content || '')}
+                    kind={kind}
+                    level={Number.isFinite(level) ? level : 0}
+                    source={String(m.metadata.batterySource || '')}
+                />
+                </div>
+            </div>
+        );
+    }
+
     const renderAvatar = (
         src: string,
         options?: { visible?: boolean; className?: string },
