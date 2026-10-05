@@ -1,23 +1,11 @@
 /**
- * 主代理 Worker 地址 —— 中心配置（单一可信源）
+ * 代理 Worker 地址
  *
- * SullyOS 一票联网能力都通过同一个 Cloudflare Worker 代理转发，源码全在
- * `worker/index.js`（单文件，可一键搬到自己的 Cloudflare 账号）。涉及：
- *   - 联网搜索 / 实时新闻热榜（Brave）       → /search /news
- *   - WebDAV 云备份代理                       → /webdav
- *   - GitHub 云备份代理（GFW 下走代理）       → /github
- *   - Notion 集成                             → /notion/*
- *   - 飞书多维表格集成                        → /feishu/*
- *   - 麦当劳 / 瑞幸 点单 MCP                   → /mcp/mcd /mcp/luckin
- *   - Cloudflare API 中转（一键部署后端用）    → /cf-api
+ * 设置里「自定义网络代理」只给作者小屋没有的门：豆包 / 硅基 / 音色烘焙。
+ * 读 getProxyWorkerUrl()。
  *
- * 默认指向作者部署的公共实例。如果作者哪天不再维护、或你想完全自托管，
- * 把自己部署的 worker 地址填进「设置 → 网络代理 (Worker)」即可，
- * 以上全部能力会自动切到你的实例，无需改任何代码。
- *
- * 网易云音乐（MusicContext）在播放器设置里另有一个服务地址输入框：留空 = 跟随这里，
- * 填了则只有音乐走那个地址。小红书 Lite 的 serverUrl 指向用户自己电脑上跑的服务，
- * 跟这里是两回事。
+ * 小红书 Lite、搜索、新闻、网易云、Notion、飞书、点单、网页抓取、鱼声等
+ * 走作者公共实例。读 getCoreProxyUrl()。
  */
 
 export const DEFAULT_PROXY_WORKER = 'https://sullymeow.ccwu.cc';
@@ -104,6 +92,12 @@ const notifyProxyWorkerChanged = (): void => {
 /** 当前是否在用自定义（非默认）worker。用于设置页提示文案。 */
 export const isCustomProxyWorker = (): boolean => getProxyWorkerUrl() !== DEFAULT_PROXY_WORKER;
 
+/** 作者公共小屋。小红书 Lite / 搜索 / 新闻 / 点单 / 鱼声等走这里，不跟语音门铃走。 */
+export const getCoreProxyUrl = (): string => DEFAULT_PROXY_WORKER;
+
+/** 小红书 Lite 云端桥地址（作者小屋 /api）。测试连接和保存必须用同一个。 */
+export const getXhsLiteUrl = (): string => `${DEFAULT_PROXY_WORKER}/api`;
+
 /** 从公告等入口打开设置时，请设置页自动展开并定位到网络代理。 */
 export const requestProxyWorkerSettingsFocus = (): void => {
   try {
@@ -125,13 +119,13 @@ export const consumeProxyWorkerSettingsFocus = (): boolean => {
 };
 
 /**
- * 把指向已死历史实例的 url 改写到当前生效的 worker（保留路径和 query）；
+ * 把指向已死历史实例的 url 改写到作者小屋（保留路径和 query）；
  * 其余地址原样返回。给小红书 serverUrl 这类「自己存一份地址」的模块做存量迁移用——
  * 它们存的地址不走上面的 LS_KEY，得在自己的读取层调这个。
  */
 export const rewriteStaleWorkerUrl = (url: string): string => {
   if (typeof url !== 'string' || !url || !STALE_HOSTS.some((re) => re.test(url))) return url;
-  const base = getProxyWorkerUrl();
+  const base = DEFAULT_PROXY_WORKER;
   try {
     const u = new URL(url);
     return `${base}${u.pathname === '/' ? '' : u.pathname}${u.search}`;
@@ -139,3 +133,20 @@ export const rewriteStaleWorkerUrl = (url: string): string => {
     return base;
   }
 };
+
+/**
+ * 只把「当前自建门铃 + /api」这一种小红书 Lite 地址改回作者。
+ * localhost、局域网、手填的其他地址一律原样返回。
+ */
+export const rewriteSelfHostedXhsLiteUrl = (url: string): string => {
+  if (typeof url !== 'string' || !url) return url;
+  const custom = getProxyWorkerUrl();
+  if (custom === DEFAULT_PROXY_WORKER) return url;
+  const expected = `${normalize(custom)}/api`;
+  if (normalize(url).toLowerCase() !== expected.toLowerCase()) return url;
+  return getXhsLiteUrl();
+};
+
+/** 启动时给小红书 serverUrl 用：先迁死域名，再只改自建+/api。 */
+export const migrateXhsServerUrl = (url: string): string =>
+  rewriteSelfHostedXhsLiteUrl(rewriteStaleWorkerUrl(url));

@@ -12,7 +12,7 @@
  * （worker/amsg/src/selfUpdate.ts），能保住密钥；这里是从零装，密钥是新生成的。
  */
 
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getCoreProxyUrl } from './proxyWorker';
 import { generateVapidKeyPair, generateClientToken } from './vapidGen';
 
 /** 部署出来的 Worker / D1 默认叫这个，跟 worker/amsg/wrangler.toml 对齐。 */
@@ -334,7 +334,7 @@ interface CfResponse<T = unknown> {
 }
 
 const relayUrl = (apiPath: string): string =>
-  `${getProxyWorkerUrl()}/cf-api?path=${encodeURIComponent(apiPath)}`;
+  `${getCoreProxyUrl()}/cf-api?path=${encodeURIComponent(apiPath)}`;
 
 async function cfApi<T = unknown>(
   token: string,
@@ -427,7 +427,7 @@ export async function uploadWorkerScript(
 /** 当前生效的网络代理 Worker 支不支持一键部署（老版本没有 /cf-api 这条路由）。 */
 export async function checkRelayAvailable(): Promise<boolean> {
   try {
-    const res = await fetch(`${getProxyWorkerUrl()}/cf-api`, { method: 'GET' });
+    const res = await fetch(`${getCoreProxyUrl()}/cf-api`, { method: 'GET' });
     if (!res.ok) return false;
     const body = (await res.json()) as { relay?: string };
     return body?.relay === 'cf-api';

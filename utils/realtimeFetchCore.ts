@@ -11,7 +11,7 @@
  * 构建期直接暴露。
  */
 
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getCoreProxyUrl } from './proxyWorker';
 
 export interface SearchResult {
     title: string;
@@ -53,7 +53,7 @@ export const performSearch = async (query: string, apiKey: string, signal?: Abor
 
     try {
         // 使用自建的 Cloudflare Worker 代理
-        const workerUrl = `${getProxyWorkerUrl()}/search?q=${encodeURIComponent(query)}&count=5`;
+        const workerUrl = `${getCoreProxyUrl()}/search?q=${encodeURIComponent(query)}&count=5`;
 
         const response = await fetch(workerUrl, {
             signal,
@@ -127,7 +127,7 @@ export const notionGetDiaryByDate = async (
 ): Promise<{ success: boolean; entries: DiaryPreview[]; message: string }> => {
     signal?.throwIfAborted();
     try {
-        const response = await fetch(`${getProxyWorkerUrl()}/notion/query`, {
+        const response = await fetch(`${getCoreProxyUrl()}/notion/query`, {
             signal,
             method: 'POST',
             headers: {
@@ -198,7 +198,7 @@ export const notionReadDiaryContent = async (
 ): Promise<{ success: boolean; content: string; message: string }> => {
     signal?.throwIfAborted();
     try {
-        const response = await fetch(`${getProxyWorkerUrl()}/notion/blocks/${pageId}`, {
+        const response = await fetch(`${getCoreProxyUrl()}/notion/blocks/${pageId}`, {
             signal,
             method: 'GET',
             headers: {
@@ -248,7 +248,7 @@ export const notionSearchUserNotes = async (
 ): Promise<{ success: boolean; entries: DiaryPreview[]; message: string }> => {
     signal?.throwIfAborted();
     try {
-        const response = await fetch(`${getProxyWorkerUrl()}/notion/query`, {
+        const response = await fetch(`${getCoreProxyUrl()}/notion/query`, {
             signal,
             method: 'POST',
             headers: {
@@ -379,7 +379,7 @@ export const feishuGetToken = async (appId: string, appSecret: string, signal?: 
     }
 
     try {
-        const response = await fetch(`${getProxyWorkerUrl()}/feishu/token`, {
+        const response = await fetch(`${getCoreProxyUrl()}/feishu/token`, {
             signal,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -437,7 +437,7 @@ export const feishuGetDiaryByDate = async (
         const dateTimestamp = new Date(date).getTime();
         const nextDayTimestamp = dateTimestamp + 24 * 60 * 60 * 1000;
 
-        const response = await fetch(`${getProxyWorkerUrl()}/feishu/bitable/${baseId}/${tableId}/records/search`, {
+        const response = await fetch(`${getCoreProxyUrl()}/feishu/bitable/${baseId}/${tableId}/records/search`, {
             signal,
             method: 'POST',
             headers: {

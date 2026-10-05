@@ -19,7 +19,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 import { CloudBackupConfig, CloudBackupFile } from '../types';
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getCoreProxyUrl } from './proxyWorker';
 
 const API_HOST = 'https://api.github.com';
 const UPLOAD_HOST = 'https://uploads.github.com';
@@ -113,7 +113,7 @@ export const shouldUseGithubProxy = (config: CloudBackupConfig): boolean =>
     config.githubUseProxy === true && config.githubProxyConsentVersion === 1;
 
 const proxify = (url: string): string =>
-    `${getProxyWorkerUrl()}/github?url=${encodeURIComponent(url)}`;
+    `${getCoreProxyUrl()}/github?url=${encodeURIComponent(url)}`;
 
 /**
  * A browser reports DNS failures, blocked domains, VPN split-routing misses,
@@ -127,7 +127,7 @@ export const describeGithubUploadTransportFailure = (
 ): string => {
     const prefix = kind === 'timeout' ? '上传超时' : '上传失败：网络请求未完成';
     if (shouldUseGithubProxy(config)) {
-        let workerHost = getProxyWorkerUrl();
+        let workerHost = getCoreProxyUrl();
         try { workerHost = new URL(workerHost).host; } catch { /* keep the configured URL */ }
         return `${prefix}。当前走应用内 Cloudflare 中转（${workerHost}），说明这台设备到中转、`
             + '中转到 GitHub、或大文件传输中的某一段未打通。能打开 github.com、Token 测试通过或开着梯子，'

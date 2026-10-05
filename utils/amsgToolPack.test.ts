@@ -11,6 +11,7 @@ import {
   parseToolPack,
 } from './amsgToolPack';
 import type { CharacterProfile, RealtimeConfig } from '../types';
+import { DEFAULT_PROXY_WORKER, setProxyWorkerUrl } from './proxyWorker';
 
 describe('buildToolPack / parseToolPack', () => {
   it('构建后 JSON 往返还原，memories 只留 date/summary/mood', () => {
@@ -156,5 +157,11 @@ describe('buildToolConfig / parseToolConfig', () => {
     const config = buildToolConfig(undefined);
     expect('mcpServers' in config).toBe(false);
     expect('mcpUseNativeTools' in config).toBe(false);
+  });
+
+  it('上云的代理地址走作者小屋，不跟语音门铃走', () => {
+    setProxyWorkerUrl('https://api.pigsullycat.ccwu.cc');
+    expect(buildToolConfig(undefined).proxyWorkerUrl).toBe(DEFAULT_PROXY_WORKER);
+    setProxyWorkerUrl('');
   });
 });

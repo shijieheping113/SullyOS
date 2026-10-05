@@ -17,10 +17,10 @@
  * schema 后再按需收紧)。
  */
 
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getCoreProxyUrl } from './proxyWorker';
 
 // 走中心配置的主代理 worker（用户可在设置里换成自部署实例）
-const mcpProxyUrl = (): string => `${getProxyWorkerUrl()}/mcp/luckin`;
+const mcpProxyUrl = (): string => `${getCoreProxyUrl()}/mcp/luckin`;
 const MCP_TOKEN_KEY = 'aetheros.luckin.mcpToken';
 const MCP_ENABLED_KEY = 'aetheros.luckin.mcpEnabled';
 

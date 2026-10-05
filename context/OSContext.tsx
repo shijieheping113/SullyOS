@@ -42,7 +42,7 @@ import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { captureApiRequestOnce, getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext, updateApiRequestCaptureUsage } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
-import { rewriteStaleWorkerUrl } from '../utils/proxyWorker';
+import { migrateXhsServerUrl } from '../utils/proxyWorker';
 import { buildFetchFailureDetail, classifyFetchFailure, describeReachabilityProbe, parseTargetUrl, probeOriginReachability, shouldProbeReachability, summarizeFetchRequestBody } from '../utils/networkFailureDiagnosis';
 import { INSTALLED_APPS, HIDDEN_APP_NAMES } from '../constants';
 import { isAnalyticsRequestUrl, trackEvent, shouldReportSnapshot, trackDataScaleOnce, trackCurrentAppearanceOnce, trackCurrentCharSettingsOnce, trackCurrentFeaturesOnce, trackCurrentSARFeaturesOnce } from '../utils/analytics';
@@ -1562,9 +1562,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         if (savedRealtimeConfig) {
             try {
                 const parsed = JSON.parse(savedRealtimeConfig);
-                // 小红书 serverUrl 独立持久化，存量若指向已死的历史 worker 域名则迁到当前实例
+                // 小红书 serverUrl 独立持久化：死域名迁作者；自建门铃+/api 迁回作者 Lite
                 if (parsed?.xhsMcpConfig?.serverUrl) {
-                    parsed.xhsMcpConfig.serverUrl = rewriteStaleWorkerUrl(parsed.xhsMcpConfig.serverUrl);
+                    parsed.xhsMcpConfig.serverUrl = migrateXhsServerUrl(parsed.xhsMcpConfig.serverUrl);
                 }
                 setRealtimeConfig({ ...defaultRealtimeConfig, ...parsed });
             } catch (e) {
@@ -1842,13 +1842,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         try {
           const savedRealtime = localStorage.getItem('os_realtime_config');
           const savedApiRaw = localStorage.getItem('os_api_config');
+          let resumeRealtime = defaultRealtimeConfig;
+          if (savedRealtime) {
+            const parsedRealtime = JSON.parse(savedRealtime);
+            if (parsedRealtime?.xhsMcpConfig?.serverUrl) {
+              parsedRealtime.xhsMcpConfig.serverUrl = migrateXhsServerUrl(parsedRealtime.xhsMcpConfig.serverUrl);
+            }
+            resumeRealtime = { ...defaultRealtimeConfig, ...parsedRealtime };
+          }
           resumePendingAmsgStateSync({
             characters: finalChars,
             userProfile: dbUser ?? defaultUserProfile,
             groups: dbGroups,
-            realtimeConfig: savedRealtime
-              ? { ...defaultRealtimeConfig, ...JSON.parse(savedRealtime) }
-              : defaultRealtimeConfig,
+            realtimeConfig: resumeRealtime,
             // 上次没传成功的 LLM 凭据行按这份重算补传；没有就跳过那一项。
             apiConfig: savedApiRaw ? JSON.parse(savedApiRaw) : undefined,
           });

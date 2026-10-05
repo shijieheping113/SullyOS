@@ -12,10 +12,10 @@
  *   body: 标准 JSON-RPC 2.0 报文
  */
 
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getCoreProxyUrl } from './proxyWorker';
 
 // 走中心配置的主代理 worker（用户可在设置里换成自部署实例）
-const mcpProxyUrl = (): string => `${getProxyWorkerUrl()}/mcp/mcd`;
+const mcpProxyUrl = (): string => `${getCoreProxyUrl()}/mcp/mcd`;
 const MCP_TOKEN_KEY = 'aetheros.mcd.mcpToken';
 const MCP_ENABLED_KEY = 'aetheros.mcd.mcpEnabled';
 

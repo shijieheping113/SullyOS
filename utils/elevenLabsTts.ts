@@ -11,8 +11,8 @@ import { normalizeApiKey } from './minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 import type { TtsResult } from './minimaxTts';
 import { normalizeVoiceTags } from './sanitize';
-import { getProxyWorkerUrl } from './proxyWorker';
-import { fetchViaProxy, workerProxyUrl } from './proxyFallback';
+import { getCoreProxyUrl } from './proxyWorker';
+import { fetchViaProxy } from './proxyFallback';
 import { isStaticWebDeployment } from './staticWebDeployment';
 
 export const DEFAULT_ELEVENLABS_MODEL = 'eleven_flash_v2_5';
@@ -257,10 +257,10 @@ const elevenLabsFetchAudio = async (
   // 已知没有同源代理（github.io / file:）就直接用 Worker；
   // 其余情况本地优先，同源代理不存在时自动改走自建 Worker。
   const response = useStaticWorker()
-    ? await fetch(`${getProxyWorkerUrl()}${workerPath}`, init)
+    ? await fetch(`${getCoreProxyUrl()}${workerPath}`, init)
     : await fetchViaProxy({
         local: { url: `/api/elevenlabs/tts?${query}`, init },
-        worker: { url: workerProxyUrl(workerPath), init },
+        worker: { url: `${getCoreProxyUrl()}${workerPath}`, init },
       });
   if (!response.ok) {
     let detail = '';

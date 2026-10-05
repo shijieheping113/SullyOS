@@ -18,7 +18,7 @@
 import type { CharacterProfile, RealtimeConfig } from '../types';
 import type { AgenticToolMemory, AgenticToolRealtimeConfig } from './agenticTools';
 import type { McpFireServer } from './mcpFireCore';
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getCoreProxyUrl } from './proxyWorker';
 
 export const AMSG_TOOL_PACK_KEY = 'tool_pack';
 export const AMSG_GLOBAL_NAMESPACE = 'amsg:global';
@@ -131,7 +131,7 @@ export const buildToolConfig = (
   const xhs = rc?.xhsMcpConfig;
   return {
     v: 1,
-    proxyWorkerUrl: getProxyWorkerUrl(),
+    proxyWorkerUrl: getCoreProxyUrl(),
     weatherEnabled: !!rc?.weatherEnabled,
     ...(rc?.userHolidays ? { userHolidays: { ...rc.userHolidays, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } } : {}),
     ...(rc?.weatherCity ? { weatherCity: rc.weatherCity } : {}),

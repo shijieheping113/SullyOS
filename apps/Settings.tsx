@@ -15,7 +15,7 @@ import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { resolveXhsDeploymentMode } from '../utils/xhsMcpConfig';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, setLuckinEnabled as saveLuckinEnabled, testLuckinConnection, resetLuckinSession } from '../utils/luckinMcpClient';
-import { consumeProxyWorkerSettingsFocus, getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
+import { consumeProxyWorkerSettingsFocus, getProxyWorkerUrl, getXhsLiteUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
 import {
@@ -137,7 +137,6 @@ const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ la
 // 用户版 MCP 教程（自包含，写给用户和他们的 AI 助手看的）。静态部署的站点
 // 看不到仓库内文档，所以帮助弹窗只能跳 GitHub 的 blob 页。
 const MCP_USER_GUIDE_URL = 'https://github.com/qegj567-cloud/SullyOS/blob/master/docs/mcp-user-guide.md';
-const PROXY_WORKER_SOURCE_URL = 'https://github.com/qegj567-cloud/SullyOS/blob/master/worker/index.js';
 
 const formatBackupBytes = (bytes: number): string => {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
@@ -715,9 +714,8 @@ const Settings: React.FC = () => {
   const [rtFeishuBaseId, setRtFeishuBaseId] = useState(realtimeConfig.feishuBaseId);
   const [rtFeishuTableId, setRtFeishuTableId] = useState(realtimeConfig.feishuTableId);
   const [rtXhsEnabled, setRtXhsEnabled] = useState(realtimeConfig.xhsEnabled);
-  // lite 模式走中心配置的主代理 worker（/api 是 worker/index.js 里的 XHSLite 桥）。
-  // 用户改了「自定义网络代理」，lite 模式自动跟着切到新 worker。
-  const XHS_LITE_URL = `${getProxyWorkerUrl()}/api`;
+  // lite 走作者小屋 /api。测试连接和保存用同一个地址，不跟语音门铃走。
+  const XHS_LITE_URL = getXhsLiteUrl();
   const XHS_RISK_TEXT = '使用提示：Lite 通过网页接口连接小红书，平台规则变化时可能出现登录失效或功能暂时不可用。建议先用小号体验，并在发布或互动前确认内容。';
   const XHS_COOKIE_GUIDE = [
     '【获取小红书 cookie 教程】',
@@ -1765,7 +1763,7 @@ const Settings: React.FC = () => {
       setProxyWorkerUrl(raw);                 // 传空 / 默认地址 → 自动回落默认
       const applied = getProxyWorkerUrl();
       setProxyWorkerInput(applied);
-      // 上云那份的 proxyWorkerUrl 是现算的（读 getProxyWorkerUrl），所以要在生效之后再传。
+      // 上云那份的 proxyWorkerUrl 走作者小屋（getCoreProxyUrl），语音门铃不带上云。
       syncAmsgToolConfig(realtimeConfig);
       if (applied === DEFAULT_PROXY_WORKER) trackEvent('恢复默认代理 Worker', { via: 'save-empty' });
       addToast(applied === DEFAULT_PROXY_WORKER ? '已恢复为默认 Worker' : 'Worker 地址已保存', 'success');
@@ -3929,21 +3927,6 @@ const Settings: React.FC = () => {
                     <button onClick={() => { setShowProxyConfig(false); setProxyWorkerInput(getProxyWorkerUrl()); }} className="text-[10px] text-slate-400">收起</button>
                 </div>
 
-                <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 mb-3 leading-relaxed">
-                    <b>一般无需修改这里。</b>默认地址负责静态网页环境中需要跨域转发的联网功能；
-                    GitHub 备份仍默认直连，只有你在备份设置中主动开启中转后才会使用 Worker。
-                    如果你部署了自己的 <b>worker/index.js</b>，可以在这里换成自己的实例。
-                </div>
-
-                <div className="mb-3 rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2.5 text-[10px] leading-relaxed text-sky-900">
-                    <p className="mb-1.5 font-bold">部署自己的 Worker</p>
-                    <ol className="space-y-1">
-                        <li><b>1.</b> 在 Cloudflare 控制台进入 Workers &amp; Pages，新建一个 Worker。</li>
-                        <li><b>2.</b> 打开并复制完整的 <a href={PROXY_WORKER_SOURCE_URL} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">worker/index.js 源码</a>，替换编辑器里的默认代码，然后部署。</li>
-                        <li><b>3.</b> 复制部署得到的 <b>https://xxx.workers.dev</b> 地址，粘贴到下方并保存。</li>
-                    </ol>
-                </div>
-
                 <input
                     type="text"
                     value={proxyWorkerInput}
@@ -3965,9 +3948,7 @@ const Settings: React.FC = () => {
                 </div>
 
                 <p className="text-[10px] text-slate-400 px-1 mt-2 leading-relaxed">
-                    只填到域名（如 <b>{DEFAULT_PROXY_WORKER}</b>），不要带 /search、/webdav、/api 等路径。
-                    联网搜索 / 备份代理 / Notion / 飞书 / 点单 / 网页抓取 / 出图 / 小红书 Lite / 音乐 都会切到这里填的 Worker。
-                    （音乐播放器里还留了一个独立地址框，单独填了就以那个为准。）
+                    这一格只给语音识别用。
                 </p>
             </section>
         )}

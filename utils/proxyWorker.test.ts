@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PROXY_WORKER,
   getProxyWorkerUrl,
+  getCoreProxyUrl,
+  getXhsLiteUrl,
   setProxyWorkerUrl,
   isCustomProxyWorker,
   rewriteStaleWorkerUrl,
+  rewriteSelfHostedXhsLiteUrl,
+  migrateXhsServerUrl,
   requestProxyWorkerSettingsFocus,
   consumeProxyWorkerSettingsFocus,
 } from './proxyWorker';
@@ -110,14 +114,60 @@ describe('rewriteStaleWorkerUrl', () => {
     expect(rewriteStaleWorkerUrl('https://sully-n.qegj567.workers.dev/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 
-  it('中心配了自部署 worker 时，死域名跟着迁到自部署地址', () => {
+  it('填了语音门铃时，死域名仍迁到作者小屋，不跟去自建', () => {
     setProxyWorkerUrl('https://my-own.example.com');
-    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu213.cc/api')).toBe('https://my-own.example.com/api');
+    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu213.cc/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 
   it('活地址 / 用户自部署地址 / 空值原样保留', () => {
     expect(rewriteStaleWorkerUrl(DEFAULT_PROXY_WORKER)).toBe(DEFAULT_PROXY_WORKER);
     expect(rewriteStaleWorkerUrl('https://my-own.example.com/api')).toBe('https://my-own.example.com/api');
     expect(rewriteStaleWorkerUrl('')).toBe('');
+  });
+});
+
+describe('rewriteSelfHostedXhsLiteUrl', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('没填自建门铃时原样返回', () => {
+    expect(rewriteSelfHostedXhsLiteUrl('https://api.pigsullycat.ccwu.cc/api')).toBe('https://api.pigsullycat.ccwu.cc/api');
+  });
+
+  it('只把当前自建门铃加 /api 改回作者', () => {
+    setProxyWorkerUrl('https://api.pigsullycat.ccwu.cc');
+    expect(rewriteSelfHostedXhsLiteUrl('https://api.pigsullycat.ccwu.cc/api')).toBe(getXhsLiteUrl());
+    expect(rewriteSelfHostedXhsLiteUrl('https://api.pigsullycat.ccwu.cc/api/')).toBe(getXhsLiteUrl());
+  });
+
+  it('localhost、手填的其他地址、没有 /api 的自建根地址都不动', () => {
+    setProxyWorkerUrl('https://api.pigsullycat.ccwu.cc');
+    expect(rewriteSelfHostedXhsLiteUrl('http://localhost:18060/mcp')).toBe('http://localhost:18060/mcp');
+    expect(rewriteSelfHostedXhsLiteUrl('http://localhost:18061/api')).toBe('http://localhost:18061/api');
+    expect(rewriteSelfHostedXhsLiteUrl('http://192.168.0.8:18061/api')).toBe('http://192.168.0.8:18061/api');
+    expect(rewriteSelfHostedXhsLiteUrl('https://other-lite.example.com/api')).toBe('https://other-lite.example.com/api');
+    expect(rewriteSelfHostedXhsLiteUrl('https://api.pigsullycat.ccwu.cc')).toBe('https://api.pigsullycat.ccwu.cc');
+    expect(rewriteSelfHostedXhsLiteUrl(getXhsLiteUrl())).toBe(getXhsLiteUrl());
+  });
+});
+
+describe('migrateXhsServerUrl / getCoreProxyUrl', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('作者小屋固定，不跟语音门铃走', () => {
+    setProxyWorkerUrl('https://api.pigsullycat.ccwu.cc');
+    expect(getCoreProxyUrl()).toBe(DEFAULT_PROXY_WORKER);
+    expect(getXhsLiteUrl()).toBe(`${DEFAULT_PROXY_WORKER}/api`);
+    expect(getProxyWorkerUrl()).toBe('https://api.pigsullycat.ccwu.cc');
+  });
+
+  it('死域名迁到作者后再改自建+/api', () => {
+    setProxyWorkerUrl('https://api.pigsullycat.ccwu.cc');
+    expect(migrateXhsServerUrl('https://sullymeow.ccwu213.cc/api')).toBe(getXhsLiteUrl());
+    expect(migrateXhsServerUrl('https://api.pigsullycat.ccwu.cc/api')).toBe(getXhsLiteUrl());
+    expect(migrateXhsServerUrl('http://localhost:18060/mcp')).toBe('http://localhost:18060/mcp');
   });
 });

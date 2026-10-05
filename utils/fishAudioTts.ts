@@ -15,8 +15,8 @@ import { CharacterProfile, APIConfig } from '../types';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 import { normalizeApiKey } from './minimaxApiKey';
-import { getProxyWorkerUrl } from './proxyWorker';
-import { fetchViaProxy, workerProxyUrl } from './proxyFallback';
+import { getCoreProxyUrl } from './proxyWorker';
+import { fetchViaProxy } from './proxyFallback';
 import type { TtsResult } from './minimaxTts';
 import { isStaticWebDeployment } from './staticWebDeployment';
 import { emitAppToast } from './appToast';
@@ -382,15 +382,15 @@ const fishFetchAudioOnce = async (
     try {
       if (shouldBypassWebProxy()) {
         // 已知这个部署没有同源代理（github.io / file:）：直接用 Worker，不白跑一趟。
-        res = await fetch(`${getProxyWorkerUrl()}${workerPath}`, { ...workerInit, signal: controller.signal });
+        res = await fetch(`${getCoreProxyUrl()}${workerPath}`, { ...workerInit, signal: controller.signal });
       } else {
-        // 本地开发走同源 /api 代理；自建域名部署没有那层代理，自动改走自建 Worker。
+        // 本地开发走同源 /api 代理；成品站没有那层代理，改走作者小屋。
         res = await fetchViaProxy({
           local: {
             url: FISH_PROXY_PATH,
             init: { method: 'POST', headers: jsonHeaders, body: bodyText, signal: controller.signal },
           },
-          worker: { url: workerProxyUrl(workerPath), init: { ...workerInit, signal: controller.signal } },
+          worker: { url: `${getCoreProxyUrl()}${workerPath}`, init: { ...workerInit, signal: controller.signal } },
         });
       }
     } finally {

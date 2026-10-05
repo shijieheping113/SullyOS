@@ -13,7 +13,7 @@ import React, {
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
 import { DB } from '../utils/db';
-import { getProxyWorkerUrl, DEFAULT_PROXY_WORKER, PROXY_WORKER_CHANGED_EVENT } from '../utils/proxyWorker';
+import { getProxyWorkerUrl, getCoreProxyUrl, DEFAULT_PROXY_WORKER, PROXY_WORKER_CHANGED_EVENT } from '../utils/proxyWorker';
 import type { PostProcessMusicHooks } from '../utils/applyAssistantPostProcessing';
 import { resolveRefToDataUrl } from '../utils/blobRef';
 
@@ -104,7 +104,7 @@ const normalizeHost = (u: string): string => (u || '').trim().replace(/\/+$/, ''
 export const resolveMusicWorkerUrl = (
   cfg?: Pick<MusicCfg, 'workerUrl'> | null,
   central?: string,
-): string => normalizeHost(cfg?.workerUrl || '') || normalizeHost(central || '') || getProxyWorkerUrl();
+): string => normalizeHost(cfg?.workerUrl || '') || normalizeHost(central || '') || getCoreProxyUrl();
 
 // 存量迁移：把"其实是跟着中心走"的地址收敛成空串（= 跟随）。命中三种：
 //   1. 已死的两个历史公共实例（sully-n.qegj567.workers.dev 国内超时、
@@ -396,10 +396,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // 中心地址（设置 → 网络代理）。cfg.workerUrl 留空时用的就是它，进 state 是为了让
   // 设置页显示的"当前生效地址"能跟着变——请求那边不看这份，每次现读中心配置。
-  const [centralWorkerUrl, setCentralWorkerUrl] = useState<string>(getProxyWorkerUrl);
+  const [centralWorkerUrl, setCentralWorkerUrl] = useState<string>(getCoreProxyUrl);
   useEffect(() => {
     const onProxyChanged = () => {
-      setCentralWorkerUrl(getProxyWorkerUrl());
+      setCentralWorkerUrl(getCoreProxyUrl());
       // 中心变了会带动存量迁移（存的地址正好等于新中心 → 收敛成"跟随"），重读一次。
       setCfgState(prev => {
         const next = loadCfg();

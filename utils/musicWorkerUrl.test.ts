@@ -3,8 +3,8 @@
  *
  * 音乐 App 的服务地址是独立持久化的（`sully_music_cfg_v1`），跟「设置 → 网络代理」
  * 那个中心地址不是同一份存储。这里钉住两件事，别再退化：
- *   1. 没在播放器里单独填过地址的，永远跟着中心走 —— 中心改了、改回默认了，都立刻跟上；
- *   2. 在播放器里手填过地址的，中心怎么改都不动它。
+ *   1. 没在播放器里单独填过地址的，走作者小屋，填语音门铃也不带走；
+ *   2. 在播放器里手填过地址的，门铃怎么改都不动它。
  *
  * 「跟随」现在存成空串（一个意图），不是把当时的中心地址抄一份存下来（一个快照）。
  * 快照的问题是事后分不清「用户敲的」和「当时抄的」，中心一改就留下打不通的幽灵地址。
@@ -35,11 +35,11 @@ describe('音乐服务地址：跟随中心代理', () => {
     vi.unstubAllGlobals();
   });
 
-  it('没单独设过 → 用中心地址，中心改了立刻跟上', () => {
+  it('没单独设过 → 用作者小屋，填语音门铃不带走音乐', () => {
     expect(resolveMusicWorkerUrl(loadMusicCfgStandalone())).toBe(DEFAULT_PROXY_WORKER);
 
     setProxyWorkerUrl('https://my-proxy.example.com');
-    expect(resolveMusicWorkerUrl(loadMusicCfgStandalone())).toBe('https://my-proxy.example.com');
+    expect(resolveMusicWorkerUrl(loadMusicCfgStandalone())).toBe(DEFAULT_PROXY_WORKER);
 
     setProxyWorkerUrl('');
     expect(resolveMusicWorkerUrl(loadMusicCfgStandalone())).toBe(DEFAULT_PROXY_WORKER);
@@ -87,14 +87,13 @@ describe('音乐服务地址：跟随中心代理', () => {
     expect(resolveMusicWorkerUrl(cfg)).toBe('https://my-own-music.example.com');
   });
 
-  it('发请求时才解析地址 —— 同一份 cfg，中心改了就打到新地址', async () => {
+  it('发请求时才解析地址 —— 没手填就一直打作者小屋，语音门铃改了也不带走', async () => {
     const hit: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       hit.push(url);
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
     }));
 
-    // 组件挂载时快照进 state 的那份 cfg（跟随中心），中途不会重新构造
     const cfg = loadMusicCfgStandalone();
     await musicApi._raw(cfg, '/login/qr/key');
 
@@ -103,7 +102,7 @@ describe('音乐服务地址：跟随中心代理', () => {
 
     expect(hit).toEqual([
       `${DEFAULT_PROXY_WORKER}/netease/login/qr/key`,
-      'https://my-proxy.example.com/netease/login/qr/key',
+      `${DEFAULT_PROXY_WORKER}/netease/login/qr/key`,
     ]);
   });
 });
