@@ -1,7 +1,7 @@
 /**
  * 电量提醒的说话链路：隐藏提示 → 主 API → 辅助 API → 固定文案 → 写入聊天。
  * 辅助失败就停，不再回头打主 API。
- * 这一层不读、不写「来回账本」。账本由监听电量的那边维护，测试台因此不会把真的一轮提前用掉。
+ * 这一层不读、不写「来回账本」。账本由监听电量的那边维护。
  *
  * 请求里拼主聊天的人设、世界、记忆、时间和说话原则，再附上最近聊天和电量底稿。
  * 表情包、语音条、Spark 和暗号写法不带。底稿不是要照抄的台词。
@@ -166,7 +166,6 @@ export async function runBatteryReminder(opts: {
     apiConfig: APIConfig;
     groups: GroupProfile[];
     realtimeConfig?: RealtimeConfig;
-    forceFallback?: boolean;
 }): Promise<BatterySpeech | null> {
     const char = await pickLatestChattedCharacter(opts.characters);
     if (!char) return null;
@@ -179,11 +178,7 @@ export async function runBatteryReminder(opts: {
     let text = '';
     let systemFallback = false;
 
-    if (opts.forceFallback) {
-        text = batteryFallbackText(kind, level);
-        systemFallback = true;
-    } else {
-        const historyMessages = await loadBatteryHistory(char);
+    const historyMessages = await loadBatteryHistory(char);
         await refreshBatteryMemory(char, historyMessages, userName);
         const memoryText = batteryMemoryBlock(char);
         const historyTurns = batteryHistoryTurns(historyMessages, char.name || '角色', userName);
@@ -257,7 +252,6 @@ export async function runBatteryReminder(opts: {
             text = batteryFallbackText(kind, level);
             systemFallback = true;
         }
-    }
 
     await DB.saveMessage({
         charId: char.id,

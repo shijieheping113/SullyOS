@@ -24,7 +24,7 @@ interface BatteryManager extends EventTarget {
 
 /**
  * 平时靠电量变化喊一声；页面藏到后台就卸下监听；切回前台再补看一眼。
- * 测试台自己发 battery-reminder-show，这里只负责把卡片排好。功能本体不引用测试台。
+ * 说完的那句经 battery-reminder-show 排进卡片。
  */
 const BatteryReminderHost: React.FC = () => {
     const {

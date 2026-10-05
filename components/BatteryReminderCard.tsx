@@ -214,11 +214,11 @@ export const BatteryReminderLogCard: React.FC<{
                             {batteryChipLabel(kind as BatteryKind, level)}
                         </span>
                     </div>
-                    <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, wordBreak: 'break-word' }}>{text}</p>
+                    <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, wordBreak: 'break-word' }}>{text}</p>
                 </div>
             </div>
             {source && (
-                <p style={{ margin: 0, padding: '4px 16px 16px', fontSize: 12, lineHeight: 1.45, color: '#6B5A64' }}>{source}</p>
+                <p style={{ margin: 0, padding: '2px 16px 14px', fontSize: 10, lineHeight: 1.4, color: '#6B5A64' }}>{source}</p>
             )}
         </article>
     );
