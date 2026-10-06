@@ -81,6 +81,8 @@ else if (!isReleaseBranch) forkBackupUiVisible = true;
 // 开发环境出站代理（可选）：某些网络（如公司内网）直连不了外网 TTS/语音 API，
 // 设 DEV_OUTBOUND_PROXY=http://127.0.0.1:7890 后，下面的 dev proxy 转发改走该代理。
 // 不设置时行为与原来完全一致（直连）。
+// 2026-10-07 实测：本机梯子假 IP 把 api.fish.audio 解成 198.18.x，直连在 TLS 握手前被掐断
+// （ECONNRESET），界面变成「连不上鱼声服务器」。开预览时要带上面这个变量，走 7890。
 const outboundProxyUrl = process.env.DEV_OUTBOUND_PROXY || '';
 const outboundAgent = outboundProxyUrl ? new HttpsProxyAgent(outboundProxyUrl) : undefined;
 const withOutboundProxy = <T extends object>(cfg: T): T & { agent?: HttpsProxyAgent<string> } =>

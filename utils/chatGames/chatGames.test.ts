@@ -272,6 +272,50 @@ describe('记号', () => {
         expect(findAiGameInOpenTurn([mine, theirs, said], 'dice')).toBeNull();
     });
 
+    it('骰子隔了三轮对话，旧的单人点数不再跟新的一局配', () => {
+        const solo = message({ id: 1, content: '江野掷出了 6 点', metadata: { chatGame: { game: 'dice', by: 'ai', value: 6 } } });
+        const said = [
+            message({ id: 2, role: 'user', type: 'text', content: '哈哈' }),
+            message({ id: 3, role: 'user', type: 'text', content: '再一句' }),
+            message({ id: 4, type: 'text', content: '哼' }),
+            message({ id: 5, role: 'user', type: 'text', content: '再聊' }),
+            message({ id: 6, type: 'text', content: '嗯' }),
+            message({ id: 7, role: 'user', type: 'text', content: '那我们比大小' }),
+            message({ id: 8, role: 'user', type: 'text', content: '真的比' }),
+            message({ id: 9, type: 'text', content: '来' }),
+        ];
+        const mine = message({
+            id: 10,
+            role: 'user',
+            content: '你掷出了 2 点',
+            metadata: { chatGame: { game: 'dice', by: 'user', value: 2 } },
+        });
+        const theirs = message({ id: 11, content: '江野掷出了 1 点', metadata: { chatGame: { game: 'dice', by: 'ai', value: 1 } } });
+        expect(pairedDuelCards([solo, ...said, mine, theirs])).toEqual([{
+            aiId: 11, userId: 10, hostId: 11, hiddenId: 10, userValue: 2, aiValue: 1,
+        }]);
+        expect(findAiGameInOpenTurn([solo, ...said], 'dice')).toBeNull();
+        expect(solo.content).toBe('江野掷出了 6 点');
+        const recent = message({ id: 12, content: '江野掷出了 4 点', metadata: { chatGame: { game: 'dice', by: 'ai', value: 4 } } });
+        const chatty = [
+            message({ id: 13, role: 'user', type: 'text', content: '我来' }),
+            message({ id: 14, role: 'user', type: 'text', content: '等等' }),
+            message({ id: 15, role: 'user', type: 'text', content: '好了' }),
+            message({ id: 16, type: 'text', content: '行' }),
+        ];
+        const answer = message({
+            id: 17,
+            role: 'user',
+            content: '你掷出了 3 点',
+            metadata: { chatGame: { game: 'dice', by: 'user', value: 3 } },
+        });
+        expect(pairedDuelCards([recent, ...chatty, answer])).toEqual([{
+            aiId: 12, userId: 17, hostId: 17, hiddenId: 12, userValue: 3, aiValue: 4,
+        }]);
+        const sealed = message({ id: 18, content: '猜拳 · 等你出', metadata: { chatGame: { game: 'rps', by: 'ai', value: 'rock' } } });
+        expect(findAiGameInOpenTurn([sealed, ...said], 'rps')).toBe(sealed);
+    });
+
     it('猜拳在用户出之前盖着，骰子不盖', () => {
         expect(chatGameIsSealed({ game: 'rps', by: 'ai', value: 'rock' })).toBe(true);
         expect(chatGameIsSealed({ game: 'rps', by: 'ai', value: 'rock', opened: true })).toBe(false);

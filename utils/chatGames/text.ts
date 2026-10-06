@@ -44,9 +44,44 @@ function readPlay(message: Message): ChatGameRecord | null {
 }
 
 /**
+ * 骰子可以自己玩。中间又过了这么多轮，那把旧点数就算玩完了，不再跟后面新扔的配。
+ * 一轮 = 你说完（可以连说好几句）、角色再回一次。不是按你发了几条算。
+ * 猜拳要等你出，不按这个过期。
+ */
+const ALONE_GAME_STALE_ROUNDS = 3;
+
+function dialogueRoundsBetween(messages: Message[], earlier: number, later: number): number {
+    let rounds = 0;
+    let userSpoke = false;
+    for (let index = earlier + 1; index < later; index++) {
+        const role = messages[index]?.role;
+        if (role === 'user') {
+            userSpoke = true;
+            continue;
+        }
+        if (role === 'assistant' && userSpoke) {
+            rounds += 1;
+            userSpoke = false;
+        }
+    }
+    return rounds;
+}
+
+function aloneHandWentStale(
+    messages: Message[],
+    waitingIndex: number,
+    index: number,
+    gameId: string,
+): boolean {
+    const plugin = getChatGamePlugin(gameId);
+    if (!plugin?.aiAlone) return false;
+    return dialogueRoundsBetween(messages, waitingIndex, index) >= ALONE_GAME_STALE_ROUNDS;
+}
+
+/**
  * 一轮里先出的那只手还空着，后出的对手才配成对决。
  * 两边都出过之后这一轮就关上。下一轮有人先出、对手还没出，不跟上一轮拼。
- * 合并只画在后出的那张上。正文不改。
+ * 骰子隔了三轮对话，旧的那把不再配。合并只画在后出的那张上。正文不改。
  */
 export function pairedDuelCards(messages: Message[]): DuelPair[] {
     const pairs: DuelPair[] = [];
@@ -56,6 +91,10 @@ export function pairedDuelCards(messages: Message[]): DuelPair[] {
         if (!record) return;
         const waiting = open.get(record.game);
         if (waiting && waiting.record.by !== record.by) {
+            if (aloneHandWentStale(messages, waiting.index, index, record.game)) {
+                open.set(record.game, { message, index, record });
+                return;
+            }
             const aiIsNew = record.by === 'ai';
             const ai = aiIsNew ? message : waiting.message;
             const user = aiIsNew ? waiting.message : message;
@@ -82,21 +121,28 @@ export function pairedDuelCards(messages: Message[]): DuelPair[] {
 
 /** 这一轮角色已经出了、你还没出时，返回那张角色卡。上一轮已经配过的不返回。 */
 export function findAiGameInOpenTurn(messages: Message[], gameId: string): Message | null {
-    const open = new Map<string, Message>();
-    for (const message of messages || []) {
+    const list = messages || [];
+    const open = new Map<string, { message: Message; index: number }>();
+    list.forEach((message, index) => {
         const record = readPlay(message);
-        if (!record || record.game !== gameId) continue;
+        if (!record || record.game !== gameId) return;
         const waiting = open.get(gameId);
-        const waitingRecord = waiting ? readPlay(waiting) : null;
+        const waitingRecord = waiting ? readPlay(waiting.message) : null;
         if (waiting && waitingRecord && waitingRecord.by !== record.by) {
+            if (aloneHandWentStale(list, waiting.index, index, gameId)) {
+                open.set(gameId, { message, index });
+                return;
+            }
             open.delete(gameId);
-            continue;
+            return;
         }
-        open.set(gameId, message);
-    }
+        open.set(gameId, { message, index });
+    });
     const waiting = open.get(gameId);
-    const record = waiting ? readPlay(waiting) : null;
-    return waiting && record?.by === 'ai' ? waiting : null;
+    const record = waiting ? readPlay(waiting.message) : null;
+    if (!waiting || record?.by !== 'ai') return null;
+    if (aloneHandWentStale(list, waiting.index, list.length, gameId)) return null;
+    return waiting.message;
 }
 
 export function plainChatGameClause(record: ChatGameRecord, charName: string): string | null {
