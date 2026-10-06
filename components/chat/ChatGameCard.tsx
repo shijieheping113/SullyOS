@@ -62,22 +62,38 @@ function Side({ record, value, who }: { record: ChatGameRecord; value: number | 
     );
 }
 
-export function ChatGameCard({ message, charName, revealed = false }: { message: Message; charName: string; revealed?: boolean }) {
+export function ChatGameCard({ message, charName, revealed = false, duelUser, duelAi }: {
+    message: Message;
+    charName: string;
+    revealed?: boolean;
+    duelUser?: number | string;
+    duelAi?: number | string;
+}) {
     const record = readChatGame(message.metadata);
     if (!record) return null;
     const plugin = getChatGamePlugin(record.game);
     const who = record.by === 'user' ? '你' : (charName || '对方');
-    const sealed = !revealed && chatGameIsSealed(record);
+    const duel = duelUser != null && duelAi != null;
+    const sealed = !duel && !revealed && chatGameIsSealed(record);
     const clause = plainChatGameClause(record, charName);
     const when = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     return (
-        <div className="sully-game-card" data-chat-game={record.game} data-chat-game-by={record.by}>
-            <div className="hd"><b>{who}</b><span>{plugin?.name || '小游戏'}</span><span className="time">{when}</span></div>
+        <div className="sully-game-card" data-chat-game={record.game} data-chat-game-by={record.by} data-chat-game-duel={duel ? '1' : undefined}>
+            <div className="hd">
+                <b>{duel ? (plugin?.name || '小游戏') : who}</b>
+                {duel ? null : <span>{plugin?.name || '小游戏'}</span>}
+                <span className="time">{when}</span>
+            </div>
             {sealed ? (
                 <>
                     <div className="sully-game-back" role="img" aria-label={`${plugin?.name || '小游戏'}，还盖着，等你出`} />
                     <p className="sully-game-wait">{plugin?.name || '小游戏'} · 等你出</p>
                 </>
+            ) : duel && duelUser != null && duelAi != null ? (
+                <div className="sully-game-plays">
+                    <Side record={record} value={duelUser} who="你" />
+                    <Side record={record} value={duelAi} who={charName || '对方'} />
+                </div>
             ) : (
                 <div className="sully-game-plays">
                     <Side record={record} value={record.value} who={record.by === 'user' ? '你' : (charName || '对方')} />

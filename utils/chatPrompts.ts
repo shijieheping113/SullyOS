@@ -40,7 +40,7 @@ import { formatRelativeAge } from './groupChat/relativeTime';
 import { isBlobRef } from './blobRef';
 import { loadMomentsPostOn } from './sparkCircles';
 import { BOX_MATERIAL_GUIDE } from '../apps/miaomiaoBox/miaomiaoBoxPrompt';
-import { buildChatGamesGuide, formatChatGameForModel } from './chatGames/text';
+import { buildChatGamesGuide, formatChatGameForModel, pairedDuelCards } from './chatGames/text';
 
 /**
  * 这个值是「一张图 / 一段媒体」而不是正文吗？认三种形态：内嵌 data URL、http(s) 外链、
@@ -1130,6 +1130,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             const t = (m.metadata as any)?.post?.title;
             if (m.type === 'social_card' && typeof t === 'string' && t.trim()) sparkTitles.push(t.trim());
         });
+        const revealedAiGameIds = new Set(pairedDuelCards(historySlice).map(pair => pair.aiId));
         const sparkTitleLine = [...new Set(sparkTitles)].slice(-5).reverse().join('、《');
         const sparkFootprintLine = sparkTitleLine
             ? `\n\n[你现在的能力]\n① 根据当前的聊天走向和你的想法，继续聊下去，或者在 Spark 某个你现在想聊的帖子里的评论区公开发言。写法（三种，按需选）：\n   [[ACTION:SPARK_COMMENT|你的评论内容]] —— 评论你最近互动的那条帖子（顶层评论）\n   [[ACTION:SPARK_COMMENT|帖子标题|你的评论内容]] —— 指定评论某条帖子\n   [[ACTION:SPARK_COMMENT|帖子标题|那位网友:Ta那条评论的原话片段|你的评论内容]] —— 回复某条评论（挂进 Ta 的楼中楼）\n② 不去 Spark，直接继续聊天下去。\n当下想怎么做，就怎么做。`
@@ -1258,7 +1259,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 else if (m.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE) content = `${timeStr} ${formatBlockFriendRequestRecord(m)}`;
                 else if (m.metadata?.source === BLOCK_PEEK_SOURCE) content = `${timeStr} ${formatBlockPeekRecord(m)}`;
                 else if (m.type === 'interaction') {
-                    const gameLine = formatChatGameForModel(m, char.name);
+                    const gameLine = formatChatGameForModel(m, char.name, revealedAiGameIds.has(m.id));
                     content = `${timeStr} ${gameLine || '[系统: 用户戳了你一下]'}`;
                 }
                 else if (m.type === 'collaboration_file') {

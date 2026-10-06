@@ -618,7 +618,7 @@ export const useChatAI = ({
     const triggerAI = async (
         currentMsgs: Message[],
         overrideApiConfig?: { baseUrl: string; apiKey: string; model: string },
-        opts?: { skipEmotionInjection?: boolean; frozenGameNote?: string },
+        opts?: { skipEmotionInjection?: boolean; frozenGameNote?: string; suppressGameTags?: boolean },
     ) => {
         if (isTyping || !char) return;
         const effectiveApi = overrideApiConfig || apiConfig;
@@ -631,6 +631,7 @@ export const useChatAI = ({
         // 紧接着重跑的情绪评估会基于新回复覆写出新的 buff/innerState。
         const skipEmotionInjection = !!opts?.skipEmotionInjection;
         const frozenGameNote = String(opts?.frozenGameNote || '').trim();
+        const suppressGameTags = !!opts?.suppressGameTags;
         const charForGen: CharacterProfile = skipEmotionInjection
             ? { ...char, buffInjection: '', activeBuffs: [] }
             : char;
@@ -2080,6 +2081,11 @@ export const useChatAI = ({
                 },
                 hooks: {
                     setMessages: setMessagesWithPreviewHandover,
+                releaseStreamPreview: () => {
+                    setStreamingBubbles([]);
+                    setStreamingThinking('');
+                    setStreamingHandoverIds([]);
+                },
                     addToast,
                     setRecallStatus,
                     setSearchStatus,
@@ -2094,6 +2100,7 @@ export const useChatAI = ({
                 instantRender: streamPreviewShown,
                 // Phase 0: 本地 fetch 路径保持原逻辑, 不跳 2nd-pass LLM, 也没有结构化 directives。
                 skipSecondPassLLM: false,
+                suppressGameTags,
                 directives: [],
                 sarModuleSurface: assistantSurfaceMeta,
             }));

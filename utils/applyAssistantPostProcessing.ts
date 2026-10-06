@@ -29,7 +29,8 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeC
 import { DB } from './db';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { loadRecentForGameDedupe, persistGameTagsFromText } from './chatGames/commit';
-import { gameFollowUpNote, stripGameTags } from './chatGames/text';
+import { hasRerunTags, plainGameSpeech, stripRerunTags } from './chatGames/tags';
+import { followUpRolls, gameFollowUpNote, shouldRequestGameFollowUp, stripGameTags } from './chatGames/text';
 import { SYSTEM_LOG_LEAD } from './block';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
@@ -488,6 +489,8 @@ export interface PostProcessMusicHooks {
 
 export interface PostProcessHooks {
     setMessages: (msgs: Message[]) => void;
+    /** 这一步已经落库，先把流式预览撤掉，让已经写好的气泡马上出现。 */
+    releaseStreamPreview?: () => void;
     addToast: (msg: string, type: 'info' | 'success' | 'error') => void;
     setRecallStatus?: (s: string) => void;
     setSearchStatus?: (s: string) => void;
@@ -569,6 +572,8 @@ export interface PostProcessCtx {
      * 本地 fetch 路径不传。
      */
     skipSecondPassLLM?: boolean;
+    /** 重 roll 已经重摇过这轮的牌。新回复里再写 [[GAME]] 就只删记号，不再另摇一张。 */
+    suppressGameTags?: boolean;
     /**
      * worker 端把识别到的副作用结构化传过来; 非空时只重放, 不再扫原文。
      * 本地 fetch 路径不传。
@@ -1025,12 +1030,14 @@ export async function applyAssistantPostProcessing(
 
     // ─── Step 2: 二轮 LLM 钩子 ───
 
-    // 小游戏先摇。点数和手势定下来之后，再让角色接一句。记号不能留在气泡里。
-    // 话按记号的位置落：前面的字、卡片、后面的字。卡片不挂进当轮回复的标记。
+    // 小游戏先摇。骰子点数定下来之后，再让角色接一句。猜拳不接，出完卡就等用户出手。
+    // 表情、引用留在原来的位置。回戳这类动作抽出来，交给后面照常执行。
     // 同一条里如果还夹着搜索、翻日记这类要另跑一轮的记号，就只落卡、把结果附在后头，
-    // 交给后面那一轮接着用，避免把那些记号冲掉。
+    // 交给后面那一轮接着用，避免把那些记号冲掉，也不再接一句。
     // 云端那一路也走落卡，但不接第二句。
-    if (/\[\[GAME:/i.test(aiContent)) {
+    if (ctx.suppressGameTags) {
+        aiContent = stripGameTags(aiContent);
+    } else if (/\[\[GAME:/i.test(aiContent)) {
         try {
             let gameSpeechMarked = false;
             const gameResult = await replyStep(async () => persistGameTagsFromText({
@@ -1050,15 +1057,13 @@ export async function applyAssistantPostProcessing(
                     leadInRendered = true;
                 },
             }));
-            const stripped = gameResult.content;
-            const spoken = (gameResult.spoken || '').replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/gi, '').trim();
-            const blocking = stripped.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/gi, '');
-            const hasOtherTags = /\[\[/.test(blocking);
-            if (!skipSecondPassLLM && gameResult.rolls.length && !hasOtherTags) {
-                const visible = gameResult.speechSaved ? spoken : blocking.trim();
-                if (!gameResult.speechSaved && visible) await replyStep(async () => renderLeadIn(visible));
+            const kept = [gameResult.content, gameResult.pendingDisplay].filter((part) => part && part.trim()).join('\n');
+            const diceRolls = followUpRolls(gameResult.rolls);
+            if (!skipSecondPassLLM && shouldRequestGameFollowUp(gameResult.rolls, gameResult.rerunPending)) {
+                const visible = plainGameSpeech(gameResult.spoken || '');
                 setMessages(await replyStep(async () => DB.getRecentMessagesByCharId(char.id, 200)));
-                const note = gameFollowUpNote(gameResult.rolls);
+                hooks.releaseStreamPreview?.();
+                const note = gameFollowUpNote(diceRolls);
                 if (note) {
                     try {
                         const gameMessages = [
@@ -1072,20 +1077,21 @@ export async function applyAssistantPostProcessing(
                             body: JSON.stringify({ model: effectiveApi.model, messages: gameMessages, temperature: 0.8, max_tokens: 8000, stream: false }),
                         }, 2, 0, { ...apiLogMeta, purpose: '小游戏' }));
                         updateTokenUsage(data, historyMsgCount, 'chat-game');
-                        aiContent = stripGameTags(normalizeAiContent(data.choices?.[0]?.message?.content || ''));
+                        const reply = stripRerunTags(stripGameTags(normalizeAiContent(data.choices?.[0]?.message?.content || '')));
+                        aiContent = [kept, reply].filter((part) => part && part.trim()).join('\n');
                     } catch (gameErr) {
                         ctx.replyRun?.check();
                         console.warn('[chat-game] 接话失败', gameErr);
-                        aiContent = leadInRendered ? '' : stripped;
+                        aiContent = kept;
                     }
                 } else {
-                    aiContent = gameResult.speechSaved ? '' : stripped;
+                    aiContent = kept;
                 }
-            } else if (!skipSecondPassLLM && gameResult.rolls.length && hasOtherTags) {
-                const facts = gameFollowUpNote(gameResult.rolls).replace(/不要再输出 \[\[GAME:[^\]]*\]\]。/g, '').trim();
-                aiContent = facts ? `${stripped}\n${facts}`.trim() : stripped;
+            } else if (!skipSecondPassLLM && gameResult.rerunPending && gameResult.rolls.length) {
+                const facts = gameFollowUpNote(diceRolls).replace(/不要再输出 \[\[GAME:[^\]]*\]\]。/g, '').trim();
+                aiContent = facts ? `${gameResult.content}\n${facts}`.trim() : gameResult.content;
             } else {
-                aiContent = gameResult.speechSaved ? '' : stripped;
+                aiContent = kept;
             }
         } catch (gameErr) {
             ctx.replyRun?.check();
@@ -1099,18 +1105,8 @@ export async function applyAssistantPostProcessing(
     // 纯副作用 (XHS_SHARE/COMMENT/LIKE/FAV/POST、写日记) 不重生、不需要先展示, 故不在此列。
     // 之后各分支正常跑功能 + 二轮; 末尾再展示 B。若分支因未配置等原因没真正发起二轮 (data 不变),
     // 末尾会跳过重复渲染 (见下方收尾)。
-    if (!skipSecondPassLLM) {
-        const willRegenerate =
-            /\[\[RECALL:\s*\d{4}[-/年]\d{1,2}\]\]/.test(aiContent)
-            || /\[\[SEARCH:\s*.+?\]\]/.test(aiContent)
-            || /\[\[READ_DIARY:\s*.+?\]\]/.test(aiContent)
-            || /\[\[FS_READ_DIARY:\s*.+?\]\]/.test(aiContent)
-            || /\[\[READ_NOTE:\s*.+?\]\]/.test(aiContent)
-            || /\[\[XHS_SEARCH:\s*.+?\]\]/.test(aiContent)
-            || /\[\[XHS_BROWSE(?::\s*.+?)?\]\]/.test(aiContent)
-            || /\[\[XHS_MY_PROFILE\]\]/.test(aiContent)
-            || /\[\[XHS_DETAIL:\s*.+?\]\]/.test(aiContent);
-        if (willRegenerate) await replyStep(async () => renderLeadIn(aiContent));
+    if (!skipSecondPassLLM && hasRerunTags(aiContent)) {
+        await replyStep(async () => renderLeadIn(aiContent));
     }
 
     // 5. Handle Recall (Loop if needed)

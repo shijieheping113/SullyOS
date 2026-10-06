@@ -1,7 +1,7 @@
 import { DB } from '../db';
 import { getChatGamePlugin } from './registry';
 import { isChatGameEnabled } from './settings';
-import { findAiGameInOpenTurn, plainChatGameClause, readChatGame } from './text';
+import { findAiGameInOpenTurn, readChatGame } from './text';
 import type { ChatGameRecord } from './types';
 
 export async function saveUserChatGame(args: {
@@ -38,7 +38,7 @@ export async function saveUserChatGame(args: {
         value,
         ...(pairRecord ? { withAi: pairRecord.value } : {}),
     };
-    const clause = plainChatGameClause(record, args.charName);
+    const clause = plugin.clause('你', value);
     if (!clause) return { ok: false, reason: '这一手记不下来' };
     await DB.saveMessage({
         charId: args.charId,
@@ -48,8 +48,6 @@ export async function saveUserChatGame(args: {
         metadata: { chatGame: record },
     });
     if (pair && plugin.needUser && pairRecord) {
-        const openedClause = plugin.clause(args.charName, pairRecord.value);
-        if (openedClause) await DB.updateMessage(pair.id, openedClause);
         await DB.updateMessageMetadata(pair.id, (prev: any) => ({
             ...(prev || {}),
             chatGame: { ...(prev?.chatGame || pairRecord), opened: true },

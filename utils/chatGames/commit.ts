@@ -2,6 +2,7 @@ import type { Message } from '../../types';
 import { DB } from '../db';
 import { getChatGamePlugin } from './registry';
 import { isChatGameEnabled } from './settings';
+import { hasRerunTags, partitionDisplay, splitActionTags } from './tags';
 import { normalizeGameId, plainChatGameClause, planGameTags, readChatGame } from './text';
 import type { ChatGameRecord } from './types';
 
@@ -57,18 +58,18 @@ function cleanGameText(raw: string): string {
     return raw.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function hasOtherTags(content: string): boolean {
-    const blocking = content.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/gi, '');
-    return /\[\[/.test(blocking);
-}
-
 export interface GamePersistResult {
+    /** 动作类记号，交给后面的执行。会再跑一轮时，这里是去掉游戏记号后的整段。 */
     content: string;
+    /** 还没挂上文字的引用。接话时贴到那一句上；没有接话就随这段一起交还。 */
+    pendingDisplay: string;
     rolls: GameRollResult[];
     /** 记号前后的话已经按顺序落过库。调用方不要再存一遍。 */
     speechSaved: boolean;
     /** 已经落过库的那些话，给接话模型当上文。 */
     spoken: string;
+    /** 同一条里还有搜索、翻日记这类要另跑一轮的记号。这时不接话。 */
+    rerunPending: boolean;
 }
 
 /**
@@ -92,39 +93,50 @@ export async function persistGameTagsFromText(args: {
 }): Promise<GamePersistResult> {
     const enabled = (id: string) => isChatGameEnabled(id) && !!getChatGamePlugin(id);
     const planned = planGameTags(args.content, enabled);
-    if (!/\[\[GAME:/i.test(args.content || '')) {
-        return { content: args.content, rolls: [], speechSaved: false, spoken: '' };
-    }
-    if (!planned.ids.length) {
-        return { content: planned.content, rolls: [], speechSaved: false, spoken: '' };
-    }
+    const empty = (content: string): GamePersistResult => ({
+        content, rolls: [], speechSaved: false, spoken: '', pendingDisplay: '', rerunPending: false,
+    });
+    if (!/\[\[GAME:/i.test(args.content || '')) return empty(args.content);
+    if (!planned.ids.length) return empty(planned.content);
     const turnKey = gameTurnKey(args.inheritMeta);
     const recent = turnKey && args.loadRecent ? await args.loadRecent() : [];
-    const otherTags = hasOtherTags(planned.content);
-    if (!otherTags && turnKey && planned.ids.every((id) => alreadyRolled(recent, id, turnKey))) {
-        return { content: '', rolls: [], speechSaved: false, spoken: '' };
+    const rerunPending = hasRerunTags(planned.content);
+    if (!rerunPending && turnKey && planned.ids.every((id) => alreadyRolled(recent, id, turnKey))) {
+        const actions = splitActionTags(planned.content).actions;
+        return { content: actions.join('\n'), rolls: [], speechSaved: false, spoken: '', pendingDisplay: '', rerunPending: false };
     }
     const saveCard = args.saveBare ?? ((msg) => DB.saveMessage(msg));
     const rolls: GameRollResult[] = [];
     const spokenParts: string[] = [];
+    const actions: string[] = [];
+    let carry = '';
     const parts = splitGameParts(args.content, enabled);
+    const saveSpeech = async (text: string) => {
+        spokenParts.push(text);
+        if (args.persistText) await args.persistText(text);
+        else {
+            await args.persist({
+                charId: args.charId,
+                role: 'assistant',
+                type: 'text',
+                content: text,
+                ...(args.timestamp != null ? { timestamp: args.timestamp } : {}),
+                metadata: { ...(args.inheritMeta || {}) },
+            });
+        }
+    };
     for (const part of parts) {
         if (part.kind === 'text') {
-            if (otherTags) continue;
-            const text = cleanGameText(part.text);
+            if (rerunPending) continue;
+            const split = splitActionTags(part.text);
+            actions.push(...split.actions);
+            const merged = carry ? (split.display.trim() ? `${carry}\n${split.display}` : carry) : split.display;
+            carry = '';
+            const piece = partitionDisplay(merged);
+            carry = piece.carry.trim();
+            const text = cleanGameText(piece.persist);
             if (!text) continue;
-            spokenParts.push(text);
-            if (args.persistText) await args.persistText(text);
-            else {
-                await args.persist({
-                    charId: args.charId,
-                    role: 'assistant',
-                    type: 'text',
-                    content: text,
-                    ...(args.timestamp != null ? { timestamp: args.timestamp } : {}),
-                    metadata: { ...(args.inheritMeta || {}) },
-                });
-            }
+            await saveSpeech(text);
             continue;
         }
         if (alreadyRolled(recent, part.id, turnKey)) continue;
@@ -152,10 +164,24 @@ export async function persistGameTagsFromText(args: {
         });
         rolls.push({ id: part.id, value });
     }
-    if (otherTags) {
-        return { content: planned.content, rolls, speechSaved: false, spoken: '' };
+    if (rerunPending) {
+        return {
+            content: planned.content,
+            pendingDisplay: '',
+            rolls,
+            speechSaved: false,
+            spoken: '',
+            rerunPending: true,
+        };
     }
-    return { content: '', rolls, speechSaved: spokenParts.length > 0, spoken: spokenParts.join('\n') };
+    return {
+        content: actions.join('\n'),
+        pendingDisplay: carry.trim(),
+        rolls,
+        speechSaved: spokenParts.length > 0,
+        spoken: spokenParts.join('\n'),
+        rerunPending: false,
+    };
 }
 
 export async function loadRecentForGameDedupe(charId: string): Promise<Message[]> {

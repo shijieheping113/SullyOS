@@ -10,7 +10,8 @@ import { DB } from '../utils/db';
 import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDeliveryFlags, peekNoticeKind, type BlockState } from '../utils/block';
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
 import { expandBatteryDeleteIds } from '../utils/batteryReminder';
-import { expandChatGameDeleteIds, gameFollowUpNote, readChatGame } from '../utils/chatGames/text';
+import { canRerollGameTurn, rerollTrailingAiGames } from '../utils/chatGames/reroll';
+import { expandChatGameDeleteIds, pairedDuelCards, readChatGame } from '../utils/chatGames/text';
 import { purgeOrphanBatteryHints } from '../utils/batteryReminderRun';
 import { needsVoiceBackfill, computeBackfillContent, computeBackfillTaggedContent, hasVoiceShell, voiceShellInnerText, wrapVoiceShell } from '../utils/voiceContentBackfill';
 import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
@@ -1041,7 +1042,7 @@ const Chat: React.FC = () => {
         }
     }, [isTyping, instantChatPending, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+    const canReroll = !isTyping && canRerollGameTurn(messages);
 
     // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---
     const handleTranslateToggle = useCallback((msgId: number) => {
@@ -2334,46 +2335,31 @@ const Chat: React.FC = () => {
         if (isTyping || messages.length === 0) return;
         autoReply.cancel();
 
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg.role !== 'assistant') return;
+        if (!canRerollGameTurn(messages)) return;
 
-        const toDeleteIds: number[] = [];
-        const keptRolls: Array<{ id: string; value: number | string }> = [];
-        let index = messages.length - 1;
-        while (index >= 0 && messages[index].role === 'assistant') {
-            const current = messages[index];
-            const game = readChatGame(current.metadata);
-            if (current.type === 'interaction' && game?.by === 'ai') {
-                keptRolls.push({ id: game.game, value: game.value });
-            } else {
-                toDeleteIds.push(current.id);
-            }
-            index--;
+        const outcome = await rerollTrailingAiGames(messages);
+        if (outcome.deleteIds.length) {
+            await DB.deleteMessages(outcome.deleteIds);
+            discardVoiceForMessages(outcome.deleteIds);
         }
-
-        if (toDeleteIds.length === 0) {
-            addToast('这一把的结果留着，没有要重写的话', 'info');
-            return;
-        }
-
-        await DB.deleteMessages(toDeleteIds);
-        discardVoiceForMessages(toDeleteIds);
-        // 重 roll 也删了消息：正常路径下这轮生成结束会再打脏一次，这里先打是兜住
-        // 「触发失败没走到生成收尾」的路径，云端 fire_pack 不能停在删除前。
-        // 小游戏的卡不删。点数和手势已经定死，重写的是后面那句接话，不是再摇一次。
+        // 重 roll 拿掉的是末尾这串角色消息，游戏卡也在里面。正常路径下这轮生成结束会再打脏一次，
+        // 这里先打是兜住「触发失败没走到生成收尾」的路径。用户的消息不动。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        const removed = new Set(toDeleteIds);
-        const newHistory = messages.filter(message => !removed.has(message.id));
+        const removed = new Set(outcome.deleteIds);
+        const updated = new Map(outcome.updates.map(item => [item.id, item]));
+        const newHistory = messages.filter(message => !removed.has(message.id)).map(message => {
+            const next = updated.get(message.id);
+            if (!next) return message;
+            return { ...message, content: next.content, metadata: next.metadata };
+        });
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
         trackEvent('重新生成回复');
 
         // 重 roll：不注入上一轮残留的情绪 buff 与意识流（innerState），两边独立重新生成。
-        // 留下的那张卡还在记录里。再补一句，免得这一轮只看见旧话、忘了自己出过什么，或者再写一次记号。
-        const frozenGameNote = gameFollowUpNote(keptRolls.reverse());
+        // 游戏卡和普通角色消息一样拿掉，新回复里如果再写记号，就按原来的落卡再摇一次。
         triggerAI(newHistory, undefined, {
             skipEmotionInjection: true,
-            ...(frozenGameNote ? { frozenGameNote } : {}),
         });
     };
 
@@ -4313,19 +4299,20 @@ const Chat: React.FC = () => {
         }
 
         const migMap = new Map(migrations.map(m => [m.targetId, m.chain]));
-        setAllHistoryMessages(prev => prev.filter(m => !msgIdsToDelete.has(m.id)));
+        const applyBatchDelete = (m: Message) => {
+            if (migMap.has(m.id)) {
+                return { ...m, metadata: { ...(m.metadata || {}), thinkingChain: migMap.get(m.id) } };
+            }
+            if (thinkingIdsToClear.has(m.id) && m.metadata?.thinkingChain) {
+                const { thinkingChain, ...rest } = m.metadata;
+                return { ...m, metadata: rest };
+            }
+            return m;
+        };
+        setAllHistoryMessages(prev => prev.filter(m => !msgIdsToDelete.has(m.id)).map(applyBatchDelete));
         setMessages(prev => prev
             .filter(m => !msgIdsToDelete.has(m.id))
-            .map(m => {
-                if (migMap.has(m.id)) {
-                    return { ...m, metadata: { ...(m.metadata || {}), thinkingChain: migMap.get(m.id) } };
-                }
-                if (thinkingIdsToClear.has(m.id) && m.metadata?.thinkingChain) {
-                    const { thinkingChain, ...rest } = m.metadata;
-                    return { ...m, metadata: rest };
-                }
-                return m;
-            })
+            .map(applyBatchDelete)
         );
         setTotalMsgCount(prev => Math.max(0, prev - msgIdsToDelete.size));
 
@@ -4683,9 +4670,16 @@ const Chat: React.FC = () => {
         return ids;
     }, [displayMessages]);
 
+    const duelPairs = useMemo(() => pairedDuelCards(displayMessages), [displayMessages]);
+    const duelByHostId = useMemo(
+        () => new Map(duelPairs.map(pair => [pair.hostId, pair])),
+        [duelPairs],
+    );
+    const shownMessages = renderedMessages;
+
     useLayoutEffect(() => {
-        publishReplyDisplay(activeCharacterId, renderedMessages.map(message => message.id), streamingBubbles);
-    }, [activeCharacterId, renderedMessages, streamingBubbles]);
+        publishReplyDisplay(activeCharacterId, shownMessages.map(message => message.id), streamingBubbles);
+    }, [activeCharacterId, shownMessages, streamingBubbles]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
     const hasOlderHistoryWindow = windowedFocusMsgId !== null && !!historyWindowRange && historyWindowRange.start > 0;
@@ -5501,9 +5495,9 @@ const Chat: React.FC = () => {
                     </div>
                 )}
 
-                {renderedMessages.map((m, i) => {
-                    const prevMessage = i > 0 ? renderedMessages[i - 1] : null;
-                    const nextMessage = i < renderedMessages.length - 1 ? renderedMessages[i + 1] : null;
+                {shownMessages.map((m, i) => {
+                    const prevMessage = i > 0 ? shownMessages[i - 1] : null;
+                    const nextMessage = i < shownMessages.length - 1 ? shownMessages[i + 1] : null;
                     const breaksWithPrevious = startsNewMessageGroup(prevMessage, m);
                     const breaksWithNext = !nextMessage || startsNewMessageGroup(m, nextMessage);
                     const suppressEntranceAnimation = streamPreviewHandoverIdsRef.current.has(m.id);
@@ -5543,6 +5537,7 @@ const Chat: React.FC = () => {
                             onMediaLoad={handleMessageMediaLoad}
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
                             gameRevealed={revealedGameIds.has(m.id)}
+                            gameDuel={duelByHostId.get(m.id)}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
                             selectionMode={selectionMode || sullyPickActive}

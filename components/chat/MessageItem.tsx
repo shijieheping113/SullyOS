@@ -1110,6 +1110,8 @@ interface MessageItemProps {
     onMediaLoad?: (messageId: number) => void;
     /** 用户已经出过手，角色那张猜拳卡要翻开，即使落库的标记还没跟上。 */
     gameRevealed?: boolean;
+    /** 只用于画面：后出的这张实际卡上叠出两边。不改消息正文。 */
+    gameDuel?: { userValue: number | string; aiValue: number | string };
     onLongPress: (m: Message) => void;
     onReply: (m: Message) => void;
     selectionMode: boolean;
@@ -1176,6 +1178,7 @@ const MessageItem = React.memo(({
     isLatestMessage = false,
     onMediaLoad,
     gameRevealed = false,
+    gameDuel,
     onLongPress,
     onReply,
     selectionMode,
@@ -1791,7 +1794,7 @@ const MessageItem = React.memo(({
                     </div>
                 )}
                 <div {...interactionProps}>
-                    <ChatGameCard message={m} charName={charName} revealed={gameRevealed} />
+                    <ChatGameCard message={m} charName={charName} revealed={gameRevealed} duelUser={gameDuel?.userValue} duelAi={gameDuel?.aiValue} />
                 </div>
             </div>
         );
@@ -3971,6 +3974,12 @@ const MessageItem = React.memo(({
            // 这里不深比整个 metadata（可能含大对象），只盯这几个会改变渲染的状态位——
            // 否则用户点了「确认」，DB 已更新、消息已重载，卡片却因 memo 判等而纹丝不动。
            prev.msg.metadata?.reviewStatus === next.msg.metadata?.reviewStatus &&
+           (prev.msg.metadata as any)?.chatGame?.value === (next.msg.metadata as any)?.chatGame?.value &&
+           (prev.msg.metadata as any)?.chatGame?.opened === (next.msg.metadata as any)?.chatGame?.opened &&
+           (prev.msg.metadata as any)?.chatGame?.withAi === (next.msg.metadata as any)?.chatGame?.withAi &&
+           prev.gameRevealed === next.gameRevealed &&
+           prev.gameDuel?.userValue === next.gameDuel?.userValue &&
+           prev.gameDuel?.aiValue === next.gameDuel?.aiValue &&
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
            prev.msg.metadata?.sarModuleSurface?.surface === next.msg.metadata?.sarModuleSurface?.surface &&
