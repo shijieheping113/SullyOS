@@ -9,7 +9,7 @@
  * 走作者公共实例。读 getCoreProxyUrl()。
  */
 
-export const DEFAULT_PROXY_WORKER = 'https://sullymeow.ccwu.cc';
+export const DEFAULT_PROXY_WORKER = 'https://proxy.friedsully.com';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
 const SETTINGS_FOCUS_SESSION_KEY = 'sully_settings_focus_proxy_worker_v1';
@@ -19,8 +19,8 @@ const SETTINGS_FOCUS_SESSION_KEY = 'sully_settings_focus_proxy_worker_v1';
 // MusicContext 的迁移逻辑一致：都指向同一个 worker，行为相同）。
 //   - sully-n.qegj567.workers.dev：最早的 workers.dev 默认域名（国内超时）
 //   - sullymeow.ccwu213.cc：旧公共自定义域名，注册已过期、DNS 无法解析（2026-07 起）
-// 当前作者小屋 sullymeow.ccwu.cc 是正在用的默认地址，不能算进失效名单。
-const STALE_HOSTS = new Set(['sully-n.qegj567.workers.dev', 'sullymeow.ccwu213.cc']);
+//   - sullymeow.ccwu.cc：上一档公共域名。读到就迁到当前默认 proxy.friedsully.com。
+const STALE_HOSTS = new Set(['sully-n.qegj567.workers.dev', 'sullymeow.ccwu213.cc', 'sullymeow.ccwu.cc']);
 export const isLegacyProxyWorkerUrl = (url: string): boolean => {
   try { return STALE_HOSTS.has(new URL(url).hostname.toLowerCase()); } catch { return false; }
 };
@@ -124,14 +124,14 @@ export const consumeProxyWorkerSettingsFocus = (): boolean => {
 };
 
 /**
- * 把指向已死历史实例的 url 改写到作者小屋（保留路径和 query）。
- * 按主机名精确匹配，避免子串误伤。当前默认域名不在失效名单里。
+ * 把指向已死历史实例的 url 改写到当前生效的代理（保留路径和 query）。
+ * 没另设自建时，当前生效的就是新默认。按主机名精确匹配，避免子串误伤。
  * 其余地址原样返回。给小红书 serverUrl 这类「自己存一份地址」的模块做存量迁移用——
  * 它们存的地址不走上面的 LS_KEY，得在自己的读取层调这个。
  */
 export const rewriteStaleWorkerUrl = (url: string): string => {
   if (typeof url !== 'string' || !url || !isLegacyProxyWorkerUrl(url)) return url;
-  const base = DEFAULT_PROXY_WORKER;
+  const base = getProxyWorkerUrl();
   try {
     const u = new URL(url);
     return `${base}${u.pathname === '/' ? '' : u.pathname}${u.search}`;

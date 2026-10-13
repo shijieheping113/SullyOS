@@ -129,9 +129,9 @@ describe('rewriteStaleWorkerUrl', () => {
     expect(rewriteStaleWorkerUrl('https://sully-n.qegj567.workers.dev/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 
-  it('填了语音门铃时，死域名仍迁到作者小屋，不跟去自建', () => {
+  it('中心配了自部署 worker 时，死域名跟着迁到自部署地址', () => {
     setProxyWorkerUrl('https://my-own.example.com');
-    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu213.cc/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
+    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu213.cc/api')).toBe('https://my-own.example.com/api');
   });
 
   it('活地址 / 用户自部署地址 / 空值原样保留', () => {
