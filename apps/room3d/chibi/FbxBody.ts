@@ -446,7 +446,8 @@ export function buildBody(source: T.Group, sourceParts: Parts, appearance: 'skin
             if(sitting){mesh.rotation.x=-.55;mesh.rotation.z=side*.16;mesh.position.set(side*.39,.46,.11);}
             if(motion==='water'){mesh.rotation.x=-.45;mesh.rotation.z=side*.16;mesh.position.set(side*.30,.53,.26);}
             if(activity){
-                const target=(mirror?.hands||rhythm?.hands||activity.hands)[side<0?0:1];
+                const posedHands=mirror?.hands||rhythm?.hands||activity.hands;
+                const target=posedHands?.[side<0?0:1];
                 if(target){mesh.position.fromArray(target);mesh.rotation.x=-.5;
                     if(motion==='eat'){mesh.position.fromArray(eatingHand(target,time,side));}
                     if(motion==='computer'){mesh.position.y+=Math.max(0,Math.sin(time*9+side*1.5))*.032;}
