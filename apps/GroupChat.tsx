@@ -173,16 +173,16 @@ const GroupMessageItem = React.memo(({
     avatarMode?: 'grouped' | 'every_message',
     bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios',
     messageSpacing?: 'compact' | 'default' | 'spacious',
-    showTimestamp?: 'always' | 'hover' | 'never',
+    showTimestamp?: 'always' | 'hover' | 'never' | 'every_message',
 }) => {
     const avatar = isUser ? userAvatar : char?.avatar;
     const name = isUser ? '我' : char?.name || '未知成员';
 
     const spacingClass = messageSpacing === 'compact'
-        ? (isLastInGroup ? 'mb-3' : 'mb-0.5')
+        ? (showTimestamp === 'every_message' ? 'mb-5' : (isLastInGroup ? 'mb-3' : 'mb-0.5'))
         : messageSpacing === 'spacious'
-            ? (isLastInGroup ? 'mb-8' : 'mb-2.5')
-            : (isLastInGroup ? 'mb-6' : 'mb-1.5');
+            ? (isLastInGroup ? 'mb-8' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-2.5'))
+            : (isLastInGroup ? 'mb-6' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-1.5'));
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
@@ -469,7 +469,7 @@ const GroupMessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         <ChatCardSurface message={msg}>{renderContent()}</ChatCardSurface>
                     </div>
-                    {isLastInGroup && showTimestamp !== 'never' && (
+                    {(showTimestamp === 'every_message' || (isLastInGroup && showTimestamp !== 'never')) && (
                         <span className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{timeStr}</span>
                     )}
                 </div>

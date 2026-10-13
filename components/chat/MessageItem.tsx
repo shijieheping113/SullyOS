@@ -1136,7 +1136,7 @@ interface MessageItemProps {
     avatarMode?: 'grouped' | 'every_message';
     bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
     messageSpacing?: 'compact' | 'default' | 'spacious';
-    showTimestamp?: 'always' | 'hover' | 'never';
+    showTimestamp?: 'always' | 'hover' | 'never' | 'every_message';
     /** HTML / 心象 / 音乐卡片的出现位置（聊天细节微调 chatModuleAlign 合并后的生效值）。缺省 = 居中 */
     moduleAlign?: 'anchor' | 'center';
     /** 流式预览无缝接棒时，正式消息首帧已经可见，不应再次从透明态淡入。 */
@@ -1215,7 +1215,11 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
-    const spacingClass = messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5');
+    const spacingClass = messageSpacing === 'compact'
+        ? (showTimestamp === 'every_message' ? 'mb-5' : (isLastInGroup ? 'mb-3' : 'mb-0.5'))
+        : messageSpacing === 'spacious'
+            ? (isLastInGroup ? 'mb-8' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-2.5'))
+            : (isLastInGroup ? 'mb-6' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-1.5'));
     const marginBottom = spacingClass;
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
@@ -1225,6 +1229,7 @@ const MessageItem = React.memo(({
     // 时间戳改用绝对定位浮层（见下方渲染处），不再占据行内高度，
     // 于是气泡列底恒等于气泡尖角——头像贴 bottom-0 就始终对齐：
     // 组末/组中、时间戳开或关都一样，发新消息也不会因参考高度变化而位移。
+    // 「每条都显示」时组中也要留出浮层高度，避免压到下一条；其余档位间距不变。
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 });
     const activePointerId = useRef<number | null>(null);
@@ -1940,7 +1945,7 @@ const MessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {<ChatCardSurface message={m}>{content}</ChatCardSurface>}
                     </div>
-                    {isLastInGroup && showTimestamp !== 'never' && (
+                    {(showTimestamp === 'every_message' || (isLastInGroup && showTimestamp !== 'never')) && (
                         <div className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
                     )}
                     </div>

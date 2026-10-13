@@ -280,7 +280,8 @@ const choices = {
         { value: 'spacious', label: '宽松' },
     ],
     timestamp: [
-        { value: 'always', label: '始终显示' },
+        { value: 'always', label: '始终显示', desc: '组末显示' },
+        { value: 'every_message', label: '每条都显示' },
         { value: 'hover', label: '悬停（电脑）' },
         { value: 'never', label: '不显示' },
     ],

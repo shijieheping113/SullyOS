@@ -187,7 +187,7 @@ export interface OSTheme {
   chatModuleAlign?: 'anchor' | 'center';
   chatBubbleStyle?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
   chatMessageSpacing?: 'compact' | 'default' | 'spacious';
-  chatShowTimestamp?: 'always' | 'hover' | 'never';
+  chatShowTimestamp?: 'always' | 'hover' | 'never' | 'every_message';
   chatHeaderStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
   chatInputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
   chatChromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
@@ -243,7 +243,7 @@ export interface ChatLayoutPreset {
   avatarShape?: 'circle' | 'rounded' | 'square';
   avatarSize?: 'small' | 'medium' | 'large';
   messageLayout?: 'default' | 'compact' | 'spacious';
-  showTimestamp?: 'always' | 'hover' | 'never';
+  showTimestamp?: 'always' | 'hover' | 'never' | 'every_message';
   bubbleThemeId?: string;
 }
 
