@@ -1,5 +1,5 @@
-import type { CharacterProfile, Message, SocialAppProfile, SocialPost, SubAccount, UserProfile } from '../types';
 import { ContextBuilder } from './context';
+import type { CharacterProfile, Message, SocialAppProfile, SocialPost, SubAccount, UserProfile } from '../types';
 import { formatMessageForPrompt } from './messageFormat';
 
 type Handles = Record<string, SubAccount[]>;
@@ -17,17 +17,14 @@ export interface SparkCircleWorld {
 }
 
 /** All three generation paths share the same identity and persona contract. */
-export function buildSparkGenerationContext(
-    participants: CharacterProfile[], user: UserProfile, social: SocialAppProfile, handles: Handles,
+export async function buildSparkGenerationContext(participants: CharacterProfile[], user: UserProfile, social: SocialAppProfile, handles: Handles,
     recentMessages: Record<string, Message[]> = {},
     circle?: SparkCircleWorld,
-): string {
-    const profiles = participants.map(char => {
-        // 与主聊天完全对齐：调用方（SocialApp buildGenerationContext）已按角色上下文范围
-        // 加载好消息（自适应/手动范围 + 隐藏旧消息边界），这里不再截断——
-        // 记录带够，帖子与评论自然会贴着最近聊过的事长出来（Ann 定稿：不做条数上限）。
+): Promise<string> {
+    const profiles = (await Promise.all(participants.map(async char => {
+        // 与主聊天完全对齐：调用方已按角色上下文范围加载好消息，这里不再截断。
         const recent = recentMessages[char.id] || [];
-        const core = ContextBuilder.buildCoreContext(char, user, true, undefined, {
+        const core = await ContextBuilder.buildCoreContext(char, user, true, undefined, {
             skipUserProfile: true,
             headerOverride: `[角色资料，仅属于 charId=${JSON.stringify(char.id)}]`,
         }, { worldbookMessages: recent }, { skipEmotionBuff: true });
@@ -39,7 +36,7 @@ ${core}
 近期私聊片段（【角色私人记忆】——只用于该角色理解关系；生成路人（charId 为 null）的评论时视同不存在，禁止输出其中任何细节）:
 ${recent.map(m => formatMessageForPrompt(m, char.name, user.name).slice(0, 800)).join('\n') || '(无近期片段，不编造共同经历)'}
 <<< 角色档案结束 charId=${JSON.stringify(char.id)} >>>`;
-    }).join('\n\n');
+    }))).join('\n\n');
     const worldSection = circle ? `
 【本 Spark 社区所属世界】${circle.name}
 ${circle.worldPrompt?.trim() || '(未填写世界观)'}

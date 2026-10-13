@@ -65,6 +65,17 @@ export interface AmsgSyncSnapshot {
 
 // charId → 最新快照。同角色多轮聊天只留最后一份，flush 永远用最新状态拼模板。
 const dirty = new Map<string, AmsgSyncSnapshot>();
+const stateEpochs = new Map<string, number>();
+const snapshotEpochs = new WeakMap<AmsgSyncSnapshot, number>();
+const isCurrentSnapshot = (snapshot: AmsgSyncSnapshot) =>
+  snapshotEpochs.get(snapshot) === (stateEpochs.get(snapshot.char.id) ?? 0);
+
+/** 停用/恢复使旧队列失效，旧请求的失败回调也不能重新塞回去。 */
+export const discardAmsgPendingState = (charId: string): void => {
+  stateEpochs.set(charId, (stateEpochs.get(charId) ?? 0) + 1);
+  dirty.delete(charId);
+  writePendingCharIds(readPendingCharIds().filter(id => id !== charId));
+};
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
 let lifecycleBound = false;
@@ -170,7 +181,9 @@ export const markAmsgStateDirty = (
     return;
   }
 
-  dirty.set(snapshot.char.id, snapshot);
+  const queuedSnapshot = { ...snapshot };
+  snapshotEpochs.set(queuedSnapshot, stateEpochs.get(snapshot.char.id) ?? 0);
+  dirty.set(snapshot.char.id, queuedSnapshot);
   persistDirtyMark(snapshot.char.id);
   bindLifecycleListener();
   queueFlush();
@@ -226,7 +239,7 @@ export const markAmsgStateDirtyForAll = (scope: {
  */
 const requeue = (batch: AmsgSyncSnapshot[]) => {
   for (const snapshot of batch) {
-    if (!dirty.has(snapshot.char.id)) dirty.set(snapshot.char.id, snapshot);
+    if (isCurrentSnapshot(snapshot) && !dirty.has(snapshot.char.id)) dirty.set(snapshot.char.id, snapshot);
   }
 };
 
@@ -273,9 +286,12 @@ export const flushAmsgState = async (reason: string): Promise<void> => {
       return;
     }
 
-    for (const snapshot of batch) dirty.delete(snapshot.char.id);
-    await ActiveMsgClient.syncCharFirePacks(batch.map((snapshot) => ({
+    const currentBatch = batch.filter(isCurrentSnapshot);
+    if (!currentBatch.length) return;
+    for (const snapshot of currentBatch) dirty.delete(snapshot.char.id);
+    await ActiveMsgClient.syncCharFirePacks(currentBatch.map((snapshot) => ({
       char: snapshot.char,
+      isCurrent: () => isCurrentSnapshot(snapshot),
       config: snapshot.char.activeMsg2Config!,
       userProfile: snapshot.userProfile,
       groups: snapshot.groups,
@@ -344,8 +360,8 @@ export const resumePendingAmsgStateSync = (scope: {
   // （那等于把 token 又抄一份到别的地方），补传用启动时这份最新配置——它本来就是
   // 云端此刻该有的那一份。
   if (hasPersistedToolConfigMark()) syncAmsgToolConfig(scope.realtimeConfig);
-  // LLM 凭据行同理（同样只记欠账、不落凭据本体）。
-  if (scope.apiConfig && hasPersistedCredSyncMark()) syncAmsgLlmCredentials(scope.apiConfig);
+  // 每次启动按当前规则对齐云端凭据。开了单独 API 就写单独那份，否则用角色默认对话 API，再没有才用全局。
+  if (scope.apiConfig) syncAmsgLlmCredentials(scope.apiConfig);
 
   const pending = readPendingCharIds();
   if (pending.length === 0) return;
@@ -515,10 +531,6 @@ const writeCredSyncMark = (pending: boolean) => {
   } catch { /* 见上 */ }
 };
 
-const hasPersistedCredSyncMark = (): boolean => {
-  try { return localStorage.getItem(AMSG2_PENDING_CRED_SYNC_LS_KEY) === '1'; } catch { return false; }
-};
-
 /**
  * 按底账里记着的 credId，用当前配置重算出这几行现在该是什么值。
  * 角色已删 / 凭据配不齐的那些直接跳过——没得算，也不该拿一份残缺的去覆盖云端。
@@ -531,9 +543,14 @@ export const buildCredentialRowsToResync = async (
     .map(parseCharCredId)
     .filter((parsed): parsed is { charId: string; purpose: 'chat' | 'emotion' } =>
       !!parsed && (parsed.purpose === 'chat' || parsed.purpose === 'emotion'));
-  if (wanted.length === 0) return [];
 
   const all = characters ?? await DB.getAllCharacters();
+  // 备份恢复或换设备时，本地可能没有凭据底账。开了主动消息 2.0 的角色仍要按当前规则补一行。
+  for (const char of all) {
+    if (char.activeMsg2Config?.enabled && !wanted.some((item) => item.charId === char.id && item.purpose === 'chat')) {
+      wanted.push({ charId: char.id, purpose: 'chat' });
+    }
+  }
   const byId = new Map(all.map((char) => [char.id, char]));
   const rows: LlmCredentialRow[] = [];
   for (const { charId, purpose } of wanted) {
@@ -555,15 +572,18 @@ const runLlmCredentialSync = async (reason: string): Promise<void> => {
   try {
     const globalConfig = await ActiveMsgStore.getGlobalConfig();
     // 没配 worker、或这台 worker 还不认凭据表 = 这几行没有去处，不是「传失败」，连底账一起清掉。
-    if (!globalConfig.workerUrl?.trim() || !snapshot || !(await isLlmCredentialsReady())) {
+    if (!globalConfig.workerUrl?.trim() || !snapshot) {
       hasPendingCredSync = false;
       pendingCredApiConfig = undefined;
       writeCredSyncMark(false);
       return;
     }
-    const rows = await buildCredentialRowsToResync(snapshot);
-    // 值一个都没变（多半是这次保存改的不是 API 那几项）：不发请求，直接销账。
-    if (pickChangedCredRows(rows).length > 0) await ActiveMsgClient.putLlmCredentials(rows);
+    if (await isLlmCredentialsReady()) {
+      const rows = await buildCredentialRowsToResync(snapshot);
+      if (pickChangedCredRows(rows).length > 0) await ActiveMsgClient.putLlmCredentials(rows);
+    }
+    const refresh = await ActiveMsgClient.refreshApiCredentialsForPendingTasks(snapshot);
+    if (refresh.failed > 0) throw new Error(`${refresh.failed} 个任务的 API 凭据尚未同步`);
     if (pendingCredApiConfig === snapshot) {
       hasPendingCredSync = false;
       pendingCredApiConfig = undefined;
@@ -584,6 +604,12 @@ const runLlmCredentialSync = async (reason: string): Promise<void> => {
     }
   } finally {
     credSyncing = false;
+    // 上传途中又换了 API：旧请求结束后立刻传最新一份。写进云端的仍是每个角色自己的单独 API 或回退值。
+    if (hasPendingCredSync && pendingCredApiConfig !== snapshot) {
+      if (credRetryTimer != null) { clearTimeout(credRetryTimer); credRetryTimer = null; }
+      credRetryCount = 0;
+      void runLlmCredentialSync('newer-config');
+    }
   }
 };
 

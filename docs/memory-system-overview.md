@@ -2,6 +2,10 @@
 
 本项目包含两套并行运行的记忆系统：传统日度/月度总结（Legacy）和向量化记忆宫殿（主系统）。
 
+## 角色页与像素家园入口
+
+角色宫殿概览现在有「记忆房间 / 像素家园」两页，第二页沿用原像素家园的地图、装修、潜行、人物及导入导出。退出返回同一角色的概览。未启用记忆宫殿的角色也可进入像素家园，不因打开家园而开启记忆提取。原像素存档仍保存在 pixel_home_layouts / pixel_home_assets 和原有角色键中；只移动入口，不重建布局或迁移数据。RoomApp 原位置改为「拜访（测试版）3D」，使用独立的 CharacterProfile.home3D。
+
 聊天加号面板的「记忆归档」按当前角色的 `memoryPalaceEnabled` 判断：启用时先提示该入口属于旧版记忆系统，「确定」返回，「我有必须使用的原因」才进入原归档设置；未启用时直接进入。提示不改变任何记忆配置或数据，不拦截其他归档内部流程。
 
 聊天进入时的 v1「请自查」提示：当前角色开启宫殿且 `activeMemoryMonths` 非空才展示，列出具体年月。按角色在 localStorage `memory-context-self-check:v1:<id>` 记录已答复；「否」和关闭不改记忆，「我看不懂」只显示 DC 反馈指引。「是」通过函数式角色更新移除当前展示的月份，保留并发新增的其他月份，不删记忆或月度精炼。确认后不重复打扰；存储不可用时至少在当前组件会话内不重复。说明明确提醒启用前的历史不保证已进入宫殿，月度精炼不受小眼睛控制。
@@ -55,7 +59,9 @@
 - `buildCoreContext(char, user, true)`（用于聊天）：
   - 月度总结 → "长期核心记忆"
   - `activeMemoryMonths` 对应的详细日志 → "激活的详细回忆"
+- `buildCoreContext(..., false)` 仅省略神经链接激活月份的详细日志，月度总结保持原行为。向量召回独立：上游已提供的结果不受 true/false 限制，核心块或实时状态块统一注入；组装器不会因此新增召回调用。记忆宫殿关闭时仍不注入旧缓存。
 - AI 可以用 `[[RECALL: YYYY-MM]]` 语法主动拉取某个月的详细日志
+- 神经链接 → 角色 → 记忆页的默认折叠「记忆设置」中提供「隐藏 RECALL 指令提示」，按角色保存，默认开启（旧角色未设置字段也按开启处理）。开启仅省略 ChatApp 行为规范中的「调取记忆」一行；关闭恢复该行。本地和云端即时聊天共用此设置，后台主动消息模板保持原行为。指令解析、月份小眼睛、旧版记忆数据与记忆宫殿均不受影响；日记等功能自身的提示也保持原样。此本地偏好随完整备份保存，不随分享角色卡导入/导出。
 
 ### 管理
 
@@ -65,6 +71,8 @@
 ---
 
 ## 系统二：向量化记忆宫殿（主系统，仿大脑结构）
+
+检索评分对旧档或远程候选中的缺失／非法 `room` 使用客厅评分参数兜底，与提取入口一致；衰减和房间权重共用 `resolveMemoryScoringRoom`。仅在评分时兜底，不改写记忆正文、向量或原房间，不因一条异常记录中断整轮召回。合法七房间的评分保持原样。回归测试见 `utils/memoryPalace/roomScoring.test.ts`。
 
 ### AI 原文范围（各入口共用）
 
@@ -194,6 +202,22 @@
 一次，仍失败则整次不入库并保留输入，避免出现“前几批成功、后几批丢失”
 的半份搬家。
 
+### 剧情事件盒手动转为角色记忆
+
+事件盒列表中，每个盒子的「重新总结」使用主 API 重新读取该盒起止消息 ID 范围内的完整原文，不使用旧摘要。自动归档与手动重做共用正文检查：不回退读取 reasoning_content，剥除显式思考标签，拒绝空正文、输出截断、上游过滤及典型字数推理泄漏。总结请求为思考模型预留最多 4096 输出 token，摘要提示仍限制在 800 字内；每次点击只发起一次请求，失败后可手动重试。
+
+重做成功后只原位替换该盒摘要，保留盒 ID、创建时间、原文归档标记、转化回执和其他盒子。提交时重新校验摘要来源与原文；原文缺失、被修改或剧情被删除时拒绝保存，保留现有数据。已转为角色记忆的内容不会被重做同步覆盖，需在神经链接／记忆宫殿单独修改；空摘要盒也能进入列表重做。回归见 `storyTheaterArchive.test.ts` 和 `storyTheaterArchivePanel.test.ts`。
+
+剧情会话右上角「查看事件盒与转化记忆」及剧情列表的事件盒按钮进入独立页面。只展示 summary 策略产生的事件盒，支持展开摘要、勾选导出 TXT、选择参与角色，并为每个选中的盒子填写记忆日期。没有事件盒时说明生成条件，向量策略仍走原独立向量入口。故事无需结束，也不切换真实/虚构模式。
+
+`storyTheaterMemoryConversion.ts` 复用正常水位线的 `extractMemoriesFromBuffer`、`vectorizeAndStore`、`buildAutoArchiveFragments` 和神经链接合并规则。完整事件盒摘要拆成小段再提取，避免抽取器单条 600 字截断。LLM 按目标角色视角二次整理，明确区分用户、扮演身份与其他人物；正文保留剧情来源，日期由用户指定，不把剧情时间写回聊天时间。
+
+开启宫殿时写入带向量的节点，并以 `palaceMemoryId` 关联神经链接；关闭宫殿时只写 `mood='story'` 的传统记忆，不调用 Embedding。手动操作不要求自动归档开关打开。不会推进 `mp_lastMsgId_*` 或 `hideBeforeMessageId`，也不隐藏、删除原文。
+
+以「剧情 ID + 事件盒 ID + 接收角色 ID」防重：同页执行锁 + 事务内回执检查。宫殿正文、向量、神经链接及 `archives[].memoryConversions` 回执同事务保存，只有成功后才更新界面与发布远端向量；空提取、向量失败、源摘要变更或角色配置变更均不留下半份记录。同一次多盒转化逐盒提交，失败时保留已完成盒，重试只处理未完成项。语义去重跳过的节点不生成悬空神经链接关联，回执展示跳过数量。
+
+回执随完整剧情备份保留；删除剧情不反向删除手动转入角色的记忆，删除页会提示。回归：`storyTheaterMemoryConversion.test.ts`、`storyTheaterArchivePanel.test.ts`、`db.storyTheater.test.ts`；实际界面 + IndexedDB、模拟 API 验收页 `test/fixtures/story-archive.html`（独立端口 5191）。
+
 ### 三、检索逻辑（Retrieval Pipeline）
 
 **查询源清洗（querySanitizer.ts）**：query 构建前先过 `sanitizeQuerySourceMessages`——图片/表情包/语音消息整条剔除（图片 content 是几万字符的 base64 data URI，进 embedding 批量请求会把 token 总量顶爆，硅基流动直接 400 code 20015），卡片类消息经 `normalizeMessageContent` 翻成可读文本，文本里的 data URI 也一律剥离。入库管线的 `isMessageSemanticallyRelevant` 是同一口径。
@@ -320,6 +344,8 @@ active(新建) → anchor(7天+，心理锚点) → fulfilled / disappointed
 
 **注入**：`injectMemoryPalace` 每轮纯 IDB 读出 → `char.roomPlatesInjection` → `buildCoreContext` 在印象档案之后注入（受 `memoryPalaceEnabled` 把关防残留）。注入框架把门牌定位为 **constraint 而非 topic**："你早已知道的背景，不要主动提起，只在相关时自然影响反应"——对应人脑背景知识"常在但低激活"的状态。
 
+**家园聊天入口**：`homeConversation.ts` 直接调用 ChatApp 的 `buildChatRequestPayload`。`home_3d` 与 `chat_app` 共用交互召回策略、完整可见消息范围及注入位置；每次使用请求内角色副本清空旧召回和门牌。共用 `injectMemoryPalace` 在检查 embedding 配置前读取门牌，因此开启宫殿但未配置向量时，私聊和家园都能读到门牌。家园只替换现场/动作及输出协议提示词。
+
 **审计**：神经链接 app「门牌」标签页（`RoomPlatePanel`）可查看/改写/删除——蒸错的事实一旦常驻会被自信地重复很久，必须有人工纠错口。一键清空（wipe）会连门牌一起清。
 
 **备份**：门牌与消化日志都随「设置-导出」全量备份走（v2 分片，导出装配在 OSContext、还原在 `importFullData`，clear-and-add 语义）；门牌另随记忆宫殿导出/导入迁移（`export.ts`，合并语义：同文本去重、尊重容量上限、条目重生成 ID）。
@@ -375,6 +401,28 @@ active(新建) → anchor(7天+，心理锚点) → fulfilled / disappointed
 - 打开入口时先关闭聊天加号面板；退出整个记忆链接时再次清空面板状态，保证落回聊天正文。线索编辑抽屉的关闭只返回本次修补现场，不会丢失诊断结果。
 
 关键实现：`components/chat/MemoryRepairPortal.tsx`、`utils/memoryPalace/memoryRepair.ts`。
+
+### 3D 家园上下文与后处理（2026-10-04）
+
+- `homeConversation.ts` 与 ChatApp / DateApp 共用 `loadCharacterContextRange` 和历史格式化；自适应遵守水位快照，忽略旧手动条数，用户断点继续收窄。开启宫殿本身不强制覆盖用户的手动模式；模式沿用统一设置。`contextEntryParity.test.ts` 对照三个入口的最终原文及召回材料，覆盖超过 200 条、手动区间、断点和一键入宫。
+- 家园用户发言、角色回复与主动开口各自保存为独立的 user / assistant 消息；相邻短动作保留原文、合为一段场景记录，发言、其他 App 私有消息、主动开口触发及归档边界都会切段。动作段不算角色发言，不调用 LLM 压缩。新回复不再追加到旧问题的消息 ID。
+- v3 同步保持角色日志与共享消息库同事务提交。旧 v1 / v2 消息保留 ID、归档水位和用户断点，附加原始事件；共享历史格式化先筛选范围，再按事件时间展开旧记录、恢复双方角色，之后插入世界书深度。无法从日志还原的旧消息保留原文，不猜测拆分或删除。
+- 家园生成前复用 ChatApp 的本机收件准备；补回/重生成不能用临时新 ID 将范围外的旧记录带回。只有尚未落库的新输入可作本次请求的临时输入。重生成及旧输入补回按目标输入时间截断后续原文。
+- 已归档动作段不再追加；一键存入记忆在读取历史快照的同一事务中封住动作段，避免归档进行中追加的内容被旧水位吞掉。后来的动作另起新消息，不改动归档提取算法或档位阈值。
+- 3D 家园此前只落库、未挂接整理（旧文中的世界家园 engine 是另一入口）。现在 OSContext 的角色保存成功后调用 `homeMemoryPostHook.ts`：新消息段或新角色回复检查共用整理阈值，读取最新宫殿开关，复用 `processNewMessagesWithAutoArchive`；新回复累计共用认知消化轮次。重存、编辑、动作不重复计对话轮次，连续动作段也不会按每个动作增加消息条数。按角色排队，保存失败不会触发，未到阈值不调用整理 LLM。
+- 2026-10-05：3D 家园使用独立 Trace 标识 `home_3d`，与 `chat_app` 共用完整载荷、交互召回增强和实时数据注入。旧 `world_home` 仍指另一套世界家园，不扩大其策略范围；DateApp 也保持原策略。范围先按 ID 水位/断点筛选，之后按 timestamp（同时间以 ID 打破平局）排序；两边的召回、世界书扫描和历史格式化均消费此顺序，不使用 UI 近窗替代。
+
+
+### 情绪上下文的入口边界
+
+ContextBuilder.buildEmotionContext 统一组装 buffInjection 和共享缓存 innerState。仅 chat/home 入口且角色日程功能、情绪开关开启时注入；未声明入口默认不注入。私聊与家园的实时块复用此函数，不清空其他入口的角色状态。innerState 使用同一情绪评估落库函数写入的角色缓存，下一轮实时读取，不依赖当天日程是否存在。私聊和家园重生成显式省略旧情绪输入，并重新评估。家园评估与主回复并行，评估看到本轮实际发送的 system 和历史。
+
+
+### 全入口日程上下文
+
+ContextBuilder 的 buildCoreContext、buildVolatileCoreState、buildRoleSettingsContext 为异步入口，调用方必须 await 后再拼接或发送。角色日程功能开启后统一按角色时区从 IndexedDB 读取当前日程，注入全天安排、当前时段和日程旁白；false/skipMemories 不控制日程。没有日程只返回空日程段，不调用 LLM 生成。关闭角色日程总开关才停止读取与注入。
+
+私聊的日程放在 ContextBuilder 实时状态块中，不再在 ChatPrompts 额外拼接；后者在每轮建立一次日程读取 Promise，交给 ContextBuilder 和音乐氛围共用；null 也复用，不跨轮缓存。日程修改指令仅提供给有对应解析器的私聊，其他入口照样得到日程内容。时间感知关闭只隐藏钟点，不隐藏安排。后台 fire-pack 将日程读取延后到 worker 真正执行时，避免把打包时的旧状态冻结在提示词中。
 
 ## 低频维护（可选）
 

@@ -38,7 +38,7 @@ export const isLocalProxyMissing = (): boolean => localProxyMissing;
 export async function fetchViaProxy(route: ProxyRoute): Promise<Response> {
   const attempts: ProxyAttempt[] = [];
   // 成品网站没有 vite 那层同源转发。先打自己会得到 405，日志里就像识别接口坏了。
-  const publicSite = typeof window !== 'undefined' && !isDevVoiceHost(window.location.host);
+  const publicSite = typeof window !== 'undefined' && !isDevVoiceHost(window.location.host || window.location.hostname || '');
   if (!localProxyMissing && !publicSite) attempts.push(route.local);
   attempts.push(route.worker);
 
@@ -70,7 +70,7 @@ export const proxyWorkerWsBase = (): string => {
 
 /** 本机开发（localhost / 局域网预览）才有 vite 的同源转发。成品域名上先敲自己会白等。 */
 const isDevVoiceHost = (host: string): boolean => {
-  let name = host.trim().toLowerCase();
+  let name = String(host || '').trim().toLowerCase();
   if (name.startsWith('[')) {
     const end = name.indexOf(']');
     name = end >= 0 ? name.slice(1, end) : name;
@@ -97,7 +97,7 @@ const isDevVoiceHost = (host: string): boolean => {
 export const voiceSocketUrls = (localPath: string, workerPath: string): string[] => {
   const urls: string[] = [];
   const wsBase = proxyWorkerWsBase();
-  const devHost = typeof window !== 'undefined' && isDevVoiceHost(window.location.host);
+  const devHost = typeof window !== 'undefined' && isDevVoiceHost(window.location.host || window.location.hostname || '');
   if (!localProxyMissing && devHost) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     urls.push(`${proto}//${window.location.host}${localPath}`);

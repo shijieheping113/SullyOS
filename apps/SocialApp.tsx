@@ -3,6 +3,7 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
+import { useAppShortcut } from '../utils/appShortcutLaunch';
 import { DB } from '../utils/db';
 // 六改-3：codepointToEmoji / SparkPostImage 抽到 ./social/SparkPostImage.tsx，
 // 与聊天侧 social_card 卡片共用（原来聊天侧把 sparkimg: 引用当文本铺出来的 bug 就在这修）。
@@ -159,6 +160,7 @@ const SocialApp: React.FC = () => {
     // Modes: 'home' (Feed) | 'me' (Profile) | 'create' (Modal Overlay)
     // spark-follow 2-C：三页 —— home=发现 | follow=关注（朋友圈） | me=用户主页（原「我的」整页迁到右下角人形）
     const [activeTab, setActiveTab] = useState<'home' | 'follow' | 'me'>('home');
+    useAppShortcut(AppID.Social, intent => { setSelectedPost(null); setIsCreateOpen(false); setShowSettings(false); setActiveTab(intent.entryId === 'me' ? 'me' : 'home'); });
     const [isCreateOpen, setIsCreateOpen] = useState(false); 
     
     const [selectedPost, setSelectedPost] = useState<SocialPost | null>(null);
@@ -676,7 +678,7 @@ const SocialApp: React.FC = () => {
             }
             return [char.id, msgs] as const;
         }));
-        return buildSparkGenerationContext(participants, userProfile, socialProfile, characterHandles, Object.fromEntries(recent), circle);
+        return await buildSparkGenerationContext(participants, userProfile, socialProfile, characterHandles, Object.fromEntries(recent), circle);
     };
 
     const handleRefresh = async () => {

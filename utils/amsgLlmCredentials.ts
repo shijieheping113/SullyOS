@@ -1,3 +1,4 @@
+import { resolveDialogueApi } from './characterApi';
 /**
  * 主动消息 2.0 的「LLM 凭据引用」（credRefs）：本地这一侧的命名、取值与变更侦测。
  *
@@ -58,7 +59,7 @@ export const normalizeChatApiUrl = (baseUrl: string): string =>
 /**
  * 一个角色名下的三种凭据。**引用一经写进任务就不再改**，配置变了只覆盖行的值。
  *
- *   chat     定时主动消息用的那份（角色开了「单独 API」就是单独那份，否则是全局聊天 API）
+ *   chat     定时主动消息。开了单独 API 就用单独那份，否则用角色默认对话 API，再没有才用全局。
  *   instant  即时对话用的那份（= 本地生成那一轮真正会用的凭据，含 -thinking 后缀之类的
  *            当轮终值）。和 chat 分开是因为两者本来就可能不是同一个模型：开了单独 API
  *            的角色，主动消息走单独 API，而用户按下发送的这一句必须还由聊天那个模型来答。
@@ -107,17 +108,17 @@ export const toCredentialValue = (
 };
 
 /**
- * 定时主动消息那一行的值：角色开了「单独 API」就用单独那份，否则用全局聊天 API。
- * 算法与排程时的 resolveApiConfig 同一份口径——凭据行绝不能把单独 API 的角色写成全局凭据。
+ * 定时主动消息那一行的值：开了单独 API 就用单独那份，否则用角色默认对话 API，再没有才用全局。
+ * 算法与排程时的 resolveApiConfig 同一份口径。
  * 配不齐（多半是单独 API 缺字段）返回 null。
  */
 export const buildCharChatCredRow = (
-  char: Pick<CharacterProfile, 'id'>,
+  char: Pick<CharacterProfile, 'id' | 'dialogueApi'>,
   config: ActiveMsg2CharacterConfig | undefined,
   apiConfig: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>,
 ): LlmCredentialRow | null => {
   const useSecondary = !!(config?.useSecondaryApi && config.secondaryApi?.baseUrl);
-  const source = useSecondary ? config!.secondaryApi! : apiConfig;
+  const source = useSecondary ? config!.secondaryApi! : resolveDialogueApi(apiConfig, char);
   const value = toCredentialValue(source);
   return value ? { credId: charCredId(char.id, 'chat'), value } : null;
 };

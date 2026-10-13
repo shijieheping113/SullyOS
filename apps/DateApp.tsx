@@ -1,3 +1,4 @@
+import { resolveDialogueApi } from '../utils/characterApi';
 import { useDateMessageHistory } from '../utils/useDateMessageHistory';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
@@ -185,19 +186,20 @@ const DateApp: React.FC = () => {
     const formatTime = () => `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
     // peek / send / reroll 共用的 LLM 调用（提示词构建统一在 utils/datePrompts.ts）
-    const callLLM = async (messages: ApiMessage[], temperature: number): Promise<string> => {
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const callLLM = async (messages: ApiMessage[], temperature: number, speaker = char): Promise<string> => {
+        const dialogueApi = resolveDialogueApi(apiConfig, speaker);
+        const response = await fetch(`${dialogueApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dialogueApi.apiKey}` },
             body: JSON.stringify({
-                model: apiConfig.model,
+                model: dialogueApi.model,
                 messages,
                 temperature,
                 // max_tokens 是 Claude 原生 API 的必填字段；缺了它，糯米机/Csy 等
                 // OpenAI→Claude 中转会被上游打回，再包成 502 / bad_response_status_code。
                 // 与私聊 (useChatAI.ts) 对齐，统一带 8000。
                 max_tokens: 8000,
-                stream: apiConfig.stream ?? false,
+                stream: dialogueApi.stream ?? false,
             })
         });
         if (!response.ok) throw new Error(`API Error ${response.status}`);
@@ -294,15 +296,15 @@ const DateApp: React.FC = () => {
             const msgs = await loadCharacterContextMessages(c);
             const preparedMsgs = await materializeVisionDescriptions(msgs, apiConfig.visionApi);
             const emojis = await DB.getEmojis();
-            const { messages } = DatePrompts.buildPeekPayload({
+            const { messages } = (await DatePrompts.buildPeekPayload({
                 char: c,
                 userProfile,
                 allMsgs: preparedMsgs,
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 openingMode: selectedOpening,
-            });
-            const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
+            }));
+            const content = await callLLM(messages, resolveDialogueApi(apiConfig, c).temperature ?? 0.85, c);
             if (requestId === peekRequestRef.current) setPeekStatus(content);
 
         } catch (e: any) {
@@ -419,7 +421,7 @@ const DateApp: React.FC = () => {
             variant: 'send',
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
-        const rawContent = await callLLM(messages, apiConfig.temperature ?? 0.85);
+        const rawContent = await callLLM(messages, resolveDialogueApi(apiConfig, char).temperature ?? 0.85);
         const parsed = parseSARModuleReply(rawContent, sarModulePlan);
         const sarModuleEvents = createSARModuleEventMeta(sarModulePlan);
         const userSurface = sarModulePlan.user?.phase === 'active' && parsed.userSurface
@@ -478,15 +480,15 @@ const DateApp: React.FC = () => {
         // 新消息也不带 isOpening，阅读模式会从上一次见面的开场开始切片，表现为
         // 「新见面只有立绘模式是新剧情，阅读模式全是旧剧情」。
         if (lastMsg.metadata?.isOpening === true) {
-            const { messages } = DatePrompts.buildPeekPayload({
+            const { messages } = (await DatePrompts.buildPeekPayload({
                 char,
                 userProfile,
                 allMsgs: preparedValidMsgs,
                 openingMode: lastMsg.metadata?.dateOpeningMode === 'invite' ? 'invite' : 'approach',
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
-            });
-            const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+            }));
+            const content = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
             // 生成成功后才动库：先删旧开场、再带 isOpening 落新开场，请求失败时原剧情不丢
             await DB.deleteMessage(lastMsg.id);
             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata: { ...lastMsg.metadata, source: 'date', isOpening: true } });
@@ -519,7 +521,7 @@ const DateApp: React.FC = () => {
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
         // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
-        const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+        const rawContent = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
         const sarPlan = getSARModuleRuntimePlan(char, userProfile);
         const parsed = parseSARModuleReply(rawContent, sarPlan);
         const sarModuleEvents = createSARModuleEventMeta(sarPlan);
@@ -656,6 +658,27 @@ const DateApp: React.FC = () => {
         setMode('history');
         trackEvent('打开见面记录');
     };
+
+    useAppShortcut(ShortcutAppID.Date, (intent, isCurrent) => {
+        setCameFromChat(false);
+        setMeetSurface(intent.entryId === 'story' ? 'story' : 'companion');
+        const target = characters.find(c => c.id === intent.characterId);
+        if (!target) { setMode('select'); return; }
+        setActiveCharacterId(target.id);
+        setPreviousMode('select');
+        if (intent.entryId === 'history') {
+            setHistoryMessages([]); setMode('history');
+            setHistoryView('encounter'); setHistorySortOrder('newest'); setHistoryLoadLimit(DATE_HISTORY_MESSAGE_LIMIT);
+            void DB.getRecentMessagesByCharIdAndSource(target.id, 'date', DATE_HISTORY_MESSAGE_LIMIT).then(msgs => {
+                if (isCurrent()) { setHistoryMessages(msgs); setHistoryReachedEnd(msgs.length < DATE_HISTORY_MESSAGE_LIMIT); }
+            }).catch(() => { if (isCurrent()) addToast('见面记录读取失败，请重试', 'error'); });
+        } else if (intent.entryId === 'settings') setMode('settings');
+        else {
+            // Opening a shortcut must not discard savedDateState or generate an opening.
+            clearDateResumeAttempt(); encounterIdRef.current = crypto.randomUUID();
+            setDateMessages([]); setPeekStatus(''); setHasSavedOpening(false); setMode('entry');
+        }
+    });
 
     const handleLoadMoreHistory = async () => {
         if (!char || historyBusy || historyReachedEnd) return;
@@ -1249,3 +1272,5 @@ const DateApp: React.FC = () => {
 };
 
 export default DateApp;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

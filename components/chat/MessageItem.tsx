@@ -508,7 +508,7 @@ const ForwardCard: React.FC<{
                                 <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                                     <div className={`max-w-[80%] ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
                                         <div className="text-[10px] text-slate-400 mb-1 px-1">{senderName} {msg.timestamp ? formatTime(msg.timestamp) : ''}</div>
-                                        <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-all ${isUser ? 'bg-primary text-white rounded-br-sm' : 'bg-white text-slate-700 rounded-bl-sm shadow-sm border border-slate-100'}`}>
+                                        <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-normal [overflow-wrap:anywhere] ${isUser ? 'bg-primary text-white rounded-br-sm' : 'bg-white text-slate-700 rounded-bl-sm shadow-sm border border-slate-100'}`}>
                                             {msg.type === 'image' ? (msg.content ? <TokenImg value={msg.content} className="max-w-[200px] rounded-xl" /> : <span className="italic opacity-60">[图片已丢失]</span>) :
                                              msg.type === 'emoji' ? (msg.content ? <TokenImg value={msg.content} className="max-w-[100px]" /> : <span className="italic opacity-60">[表情已丢失]</span>) :
                                              msg.content}
@@ -1420,6 +1420,9 @@ const MessageItem = React.memo(({
             </div>
         );
     };
+
+    // Secrets are revealed on entering the home, or inspected in history management.
+    if (m.type === 'secret_note') return null;
 
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
@@ -2745,8 +2748,7 @@ const MessageItem = React.memo(({
     }
 
     if (m.type === 'room_card') {
-        // 小屋「生活动态」轻量卡片：情绪评估顺风车偶尔捎带的一句小变化（utils/roomAmbient.ts）。
-        // content 进上下文，角色自然记得自己干过啥——不额外建 feed，卡片即记录。
+        // 兼容已保存的小屋生活动态卡片；情绪评估已不再生成新动态。
         const md: any = m.metadata || {};
         const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
         const card = (
@@ -3605,7 +3607,9 @@ const MessageItem = React.memo(({
     // 历史快照里还可能原样躺着图片令牌 / data: / 图床 URL（用户侧引用图片消息时曾直接落库），
     // 那种值洗不出正文、截 10 个字就是一串 `blobref:b_`，交给写入端同一个快照函数换成占位符。
     const replyPreview = m.replyTo
-        ? stripJunk(m.replyTo.content)
+        ? (isImageValue(m.replyTo.content)
+            ? buildReplySnapshotContent({ content: m.replyTo.content })
+            : stripJunk(m.replyTo.content))
         : '';
 
     // Parse %%BILINGUAL%% for bilingual display (langA = "选" language, langB = "译" language)
@@ -3718,10 +3722,9 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
-            {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文；
-                用户语音消息同样把文字收进语音条「转文字」，顶部不重复 */}
+            {/* 外语语音和用户语音都把文字交给下方语音条，顶部不再重复。长英文整词换行。 */}
             {displayContent && !isUserVoiceMsg && !suppressVoiceDupTextBubble && (
-            <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
+            <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-normal [overflow-wrap:anywhere] select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(hasVoiceTag ? dedupeRepeatedLines(displayContent) : displayContent)}
                 {showExpandedTranslation && (
                     <div className="mt-2.5 pt-2 border-t border-current/15">

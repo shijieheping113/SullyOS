@@ -6,12 +6,12 @@
  *
  * 与聊天侧注入面的差异（刻意为之，不是漏配）：
  *   - 注入：ContextBuilder.buildCoreContext 全量（人设 / 世界书 / 印象 / 记忆 /
- *     记忆宫殿召回 / 情绪 buff）+ 当前虚拟时间。
+ *     记忆宫殿召回 / 已开启的日程）+ 当前虚拟时间；情绪上下文不在此入口启用。
  *   - 不注入：聊天 App 行为规范（IM 气泡 / 表情包 / 语音 / 引用 / 转账 / 小红书 /
  *     日记等工具块）——这些是线上聊天专属指令，面对面场景里输出会破坏 VN 格式。
  *   - 不注入：实时天气 / 新闻、群聊背景、Notion / 飞书日记标题——见面是高沉浸短会话，
  *     这些背景块收益低，还会稀释 VN 格式指令的权重。
- *   - 日程 / 音乐氛围目前也不进见面场景；以后要加请在这里统一加，别在组件里散拼。
+ *   - 日程由 ContextBuilder 统一读取，所有入口遵守角色总开关；音乐氛围仍为私聊额外内容。
  *   - 角色表达原则与 ChatApp 共用；三条路径均在世界书和模式指令之后追加 system 收尾。
  *     收尾不参与世界书关键词扫描或对话深度计数，也不按模型供应商分流。
  *
@@ -25,7 +25,9 @@ import { ContextBuilder } from './context';
 import { ChatPrompts } from './chatPrompts';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
-import { getVoicePromptOverride } from './ttsProvider';
+import { getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from './ttsProvider';
+import { getElevenLabsVoiceActingGuide } from './elevenLabsTts';
+import { isElevenLabsV4Model } from './elevenLabsModels';
 import { selectCharacterContextMessages } from './chatContextRange';
 import { buildCharacterResponsePrinciples } from './characterResponsePrinciples';
 
@@ -56,6 +58,13 @@ export const DATE_VOICE_GUIDE = `4. **语音情绪（跟立绘分开）**: \`[em
    - 不是每句都要标——情绪平淡、自然说话时**不标**（默认更真实），只在台词确实有明显情绪、且和立绘强度不一致时才标。
    - 立绘可以夸张、语音要克制。例：\`[happy] "……真的吗？我等这句话好久了。" [v:calm]\`（脸上是惊喜，声音是压着的温柔）。
    - \`[v:xxx]\` 只写在带引号的台词行，动作/叙述行不用标。`;
+
+export const getDateVoiceGuide = (provider = getTtsProvider(), model = getElevenLabsModel()): string => {
+    const custom = getVoicePromptOverride('dateVoice');
+    if (custom) return custom;
+    if (provider !== 'elevenlabs' || !isElevenLabsV4Model(model)) return DATE_VOICE_GUIDE;
+    return `${DATE_VOICE_GUIDE}\n\n${getElevenLabsVoiceActingGuide(model)}\n\n见面格式约定：Audio Tags 放在台词引号内部，行首仍只写立绘表情，行尾仍可写独立的 [v:xxx]。上面的情绪标签枚举限制只针对行首立绘标签，不限制引号内部的声音指令。例如：[shy] "[whispers] 你终于来了。[soft chuckle]" [v:calm]。动作与叙述行保持原格式，不加语音标签。`;
+};
 
 /**
  * 注入 prompt 的当前时间，直接取真实系统时间（完整日期 + 星期 + 时分）。
@@ -597,7 +606,7 @@ const buildVNModeBlock = (char: CharacterProfile, userName: string): string => {
 1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
 2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。逐行结合台词、动作和上下文选择最贴切的表情，细微情绪也要体现；[normal] 用于确实平静或中性的状态，不是默认占位符。已有笑意、低落、恼意或羞赧时，应从可用标签中选对应表情，不要把明确情绪全标成 [normal]。同一情绪延续时，相邻行可以重复标签；情绪发生变化时及时切换，不为了凑标签种类制造情绪。仅限使用以下情绪: ${dateEmotions.join(', ')}。不要使用任何不在此列表中的标签。
 3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写（不加引号）。
-${char.dateVoiceEnabled ? (getVoicePromptOverride('dateVoice') ?? DATE_VOICE_GUIDE) : ''}
+${char.dateVoiceEnabled ? getDateVoiceGuide() : ''}
 
 ${preset.block}
 
@@ -643,14 +652,15 @@ export const DatePrompts = {
      * 历史以纯文本块塞进 user 消息（保持"你不在和用户对话"的框定），
      * 但文本本身来自 buildMessageHistory，卡片/媒体已压成短摘要。
      */
-    buildPeekPayload: (input: {
+    buildPeekPayload: async (input: {
         char: CharacterProfile;
         userProfile: UserProfile;
         allMsgs: Message[];
         emojis: Emoji[];
         useVisionDescriptions?: boolean;
         openingMode?: 'approach' | 'invite';
-    }): { messages: ApiMessage[] } => {
+    }): Promise<{ messages: ApiMessage[] }> => {
+
         const { char, userProfile, allMsgs, emojis } = input;
         const charTz = resolveCharTimeZone(char);
         const dateTimeOn = isDateTimeAwarenessOn(char);
@@ -675,13 +685,13 @@ export const DatePrompts = {
         // 线下时间感知关掉 → 抑制 buildCoreContext 的时间注入，让见面真正脱离现实时间线（纯架空）
         // conversational 不给：peek 是「用户还没走过去」的第三人称镜头，时间块末尾那句
         // 语境框定说的是「对方还在跟你说话」，跟这里的框定正好相反（见下面的 peekInstructions）。
-        const context = ContextBuilder.buildCharacterContext({
+        const context = (await ContextBuilder.buildCharacterContext({
             char, user: userProfile,
             history: apiMessages.map(message => ({ ...message, content: typeof message.content === 'string'
                 ? message.content : message.content.filter((part: any) => part?.type === 'text').map((part: any) => part.text).join(' ') })),
             includeDetailedMemories: false,
-            timeOptions: { skipTimeAwareness: !isDateTimeAwarenessOn(char) },
-        });
+            timeOptions: { skipTimeAwareness: !isDateTimeAwarenessOn(char), includeUserLocation: true },
+        }));
 
         // 文风预设也作用于开场感知；人称（pov）刻意不作用——peek 的设计就是
         // 第三人称旁观镜头（用户还没"走过去"），人称指令只影响 session 内叙述
@@ -737,6 +747,7 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         variant: 'send' | 'reroll';
         useVisionDescriptions?: boolean;
     }): Promise<{ messages: ApiMessage[] }> => {
+
         const { char, userProfile, allMsgs, emojis, userText, variant } = input;
 
         const historyMsgs = buildDateHistory(
@@ -751,10 +762,10 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
 
         // 向量召回挂到 char.memoryPalaceInjection，buildCoreContext 会读取
         await injectMemoryPalace(char, allMsgs, undefined, userProfile?.name);
-        const context = ContextBuilder.buildCharacterContext({
+        const context = (await ContextBuilder.buildCharacterContext({
             char, user: userProfile, history: conversation,
-            timeOptions: { skipTimeAwareness: !isDateTimeAwarenessOn(char), conversational: true },
-        });
+            timeOptions: { skipTimeAwareness: !isDateTimeAwarenessOn(char), conversational: true, includeUserLocation: true },
+        }));
         const systemPrompt = context.coreContext
             + buildVNModeBlock(char, userProfile?.name || '')
             + ContextBuilder.buildSARModuleContext(char, userProfile, 'date');

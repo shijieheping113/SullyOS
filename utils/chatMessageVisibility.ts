@@ -19,8 +19,10 @@ const ALWAYS_VISIBLE_SYSTEM = {
 
 export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): boolean => (
     !message.groupId
+    && message.type !== 'secret_note'
     && message.metadata?.source !== 'date'
     && message.metadata?.source !== 'call'
+    && message.metadata?.source !== 'home'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
     && !message.metadata?.batteryHint
