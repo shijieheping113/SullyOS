@@ -28,10 +28,9 @@ describe('心里话里的情绪清单', () => {
         expect(html).not.toContain('data-emotion-notes');
         expect(html).not.toContain('收起');
         expect(html).toContain('transition-opacity');
-        expect(html).toContain('perspective:720px');
-        expect(html).toContain('rotateY(0deg)');
-        expect(html).not.toContain('rotateY(90deg)');
-        expect(html).not.toContain('rotateY(-90deg)');
+        expect(html).not.toContain('rotateY');
+        expect(html).not.toContain('position:absolute');
+        expect(html).not.toContain('#e5e5ea');
     });
 
     it('情绪清单用小字，长说明可以换行', () => {
@@ -45,6 +44,8 @@ describe('心里话里的情绪清单', () => {
         expect(html).toContain('break-words');
         expect(html).not.toContain('text-[17px]');
         expect(html).not.toContain('#ffcc00');
+        expect(html).not.toContain('#e5e5ea');
+        expect(html).not.toContain('#ececef');
     });
 
     it('点一下翻面，滑动和紧接着的第二下都不翻', () => {
