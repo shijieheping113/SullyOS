@@ -487,6 +487,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         [char, innerStateTick],
     );
     const canPeekInnerState = innerStateText.length > 0;
+    const emotionInPeek = osTheme.chatEmotionView === 'peek';
+    const canOpenInnerPeek = canPeekInnerState || (emotionInPeek && (char?.activeBuffs?.length || 0) > 0);
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -530,15 +532,15 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     }, [activeCharacterId]);
 
     useEffect(() => {
-        if (innerStateOpen && !canPeekInnerState) setInnerStateOpen(false);
-    }, [innerStateOpen, canPeekInnerState]);
+        if (innerStateOpen && !canOpenInnerPeek) setInnerStateOpen(false);
+    }, [innerStateOpen, canOpenInnerPeek]);
 
     useEffect(() => {
         setInnerStateOpen(false);
     }, [activeCharacterId]);
 
     const openInnerStatePeek = useCallback(() => {
-        if (!canPeekInnerState) return;
+        if (!canOpenInnerPeek) return;
         setInnerStateOpen(true);
         try {
             if (!localStorage.getItem(CHAT_INNERSTATE_HINT_SEEN_KEY)) {
@@ -546,7 +548,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 addToast('滑到消息列表底部，点「心里话」可查看', 'info');
             }
         } catch { /* storage unavailable */ }
-    }, [canPeekInnerState, addToast]);
+    }, [canOpenInnerPeek, addToast]);
+    const closeInnerStatePeek = useCallback(() => setInnerStateOpen(false), []);
 
     const historyContextRange = useMemo(() => {
         if (!char) return undefined;
@@ -1816,7 +1819,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         const peekHeight = wrap.offsetHeight;
         const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
         if (distance >= peekHeight - 1) tuckChatInnerPeek(scroller, wrap);
-    }, [messages, canPeekInnerState, activeCharacterId]);
+    }, [messages, canOpenInnerPeek, activeCharacterId]);
 
     const handleChatScroll = useCallback(() => {
         const scroller = scrollRef.current;
@@ -5469,7 +5472,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 headerDensity={osTheme.chatHeaderDensity}
                 statusStyle={osTheme.chatStatusStyle}
                 chromeStyle={osTheme.chatChromeStyle}
-                hideBuffs={osTheme.chatHideHeaderBuffs}
+                hideBuffs={!!osTheme.chatHideHeaderBuffs || emotionInPeek}
                 acnh={acnh}
              />}
 
@@ -5837,7 +5840,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 )}
                 {/* 正常底边空白。心里话先不占滚动，贴住底边再滑一下，才跟着这条列表出来。 */}
                 <div aria-hidden="true" className="h-6 shrink-0" />
-                {canPeekInnerState && (
+                {canOpenInnerPeek && (
                     <div ref={bindInnerPeekWrap} data-chat-inner-peek-wrap="" style={{ overflowAnchor: 'none' }}>
                         <ChatInnerStatePeekEntry onOpen={openInnerStatePeek} />
                     </div>
@@ -6326,10 +6329,11 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
 
             <ChatInnerStatePeek
-                open={innerStateOpen && canPeekInnerState}
-                onClose={() => setInnerStateOpen(false)}
+                open={innerStateOpen && canOpenInnerPeek}
+                onClose={closeInnerStatePeek}
                 text={innerStateText}
                 charName={char?.name}
+                emotions={emotionInPeek ? (char?.activeBuffs || []) : undefined}
             />
 
             {/* Forward Modal */}

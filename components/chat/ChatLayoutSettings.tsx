@@ -339,6 +339,7 @@ export default function ChatLayoutSettings({theme,updateTheme}:{theme:OSTheme;up
     const statusStyle = theme.chatStatusStyle || defaults.chatStatusStyle;
     const sendButtonStyle = theme.chatSendButtonStyle || defaults.chatSendButtonStyle;
     const showHeaderBuffs = theme.chatHideHeaderBuffs !== true;
+    const emotionView = theme.chatEmotionView === 'peek' ? 'peek' : (showHeaderBuffs ? 'header' : 'hidden');
 
 return <div><details className="chat-decoration-layout-group"><summary>内置布局</summary><div>
                     <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
@@ -372,18 +373,21 @@ return <div><details className="chat-decoration-layout-group"><summary>内置布
                 <div className="mt-4">
                     <ChoiceGroup title="在线状态样式" items={choices.status} value={statusStyle} onPick={(value) => updateTheme({ chatStatusStyle: value as OSTheme['chatStatusStyle'] })} />
                 </div>
-                <div className="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2.5">
-                    <div className="min-w-0 pr-3">
-                        <div className="text-[11px] font-bold text-slate-700">显示情绪栏</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">角色名下方的情绪 buff 胶囊；关掉后顶栏更干净（位置/样式也可在「进阶」里用 .sully-chat-buffs 调）。</div>
-                    </div>
-                    <button
-                        onClick={() => updateTheme({ chatHideHeaderBuffs: showHeaderBuffs })}
-                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${showHeaderBuffs ? 'bg-primary' : 'bg-slate-300'}`}
-                        aria-pressed={showHeaderBuffs}
-                    >
-                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${showHeaderBuffs ? 'left-[22px]' : 'left-0.5'}`} />
-                    </button>
+                <div className="mt-4">
+                    <ChoiceGroup
+                        title="显示情绪栏"
+                        items={[
+                            { value: 'header', label: '显示' },
+                            { value: 'hidden', label: '不显示' },
+                            { value: 'peek', label: '心里话' },
+                        ]}
+                        value={emotionView}
+                        onPick={(value) => {
+                            if (value === 'peek') updateTheme({ chatEmotionView: 'peek' });
+                            else updateTheme({ chatEmotionView: 'header', chatHideHeaderBuffs: value === 'hidden' });
+                        }}
+                    />
+                    <div className="mt-2 text-[10px] text-slate-400">显示仍是顶栏胶囊。不显示则收起。心里话不放顶栏，从聊天底部心里话进去，点卡片翻成备忘录清单。顶栏那一档仍可用「进阶」里的 .sully-chat-buffs 调。</div>
                 </div>
                 </div></details>
 <details className="chat-decoration-layout-group"><summary>气泡与头像</summary><div>

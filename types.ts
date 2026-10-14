@@ -209,6 +209,8 @@ export interface OSTheme {
   chatSound?: { src: string; volume?: number };
   /** 隐藏顶栏的情绪 buff 栏。 */
   chatHideHeaderBuffs?: boolean;
+  /** 情绪的第三种位置。未设置或 header 时仍看 chatHideHeaderBuffs。peek 时不放顶栏胶囊，改到心里话翻面。 */
+  chatEmotionView?: 'header' | 'peek';
 }
 
 /** 聊天细节微调字段（外观 App「聊天细节微调」区块），可整组按角色覆盖。
