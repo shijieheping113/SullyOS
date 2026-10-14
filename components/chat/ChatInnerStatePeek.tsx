@@ -21,20 +21,23 @@ export function EmotionNoteList({ emotions }: { emotions: CharacterBuff[] }) {
         return <p className="px-1 py-4 text-center text-[12px] text-[#8e8e93]">还没有情绪</p>;
     }
     return (
-        <ul data-emotion-notes="" className="overflow-hidden rounded-[10px] bg-white shadow-[0_0_0_0.5px_rgba(60,60,67,0.18)]">
-            {emotions.map((buff, index) => (
-                <li key={buff.id} className="flex items-start gap-2 pl-2.5">
-                    <span className="mt-[9px] h-[14px] w-[14px] shrink-0 rounded-full border-[1.5px] border-[#ffcc00] bg-white" aria-hidden />
-                    <div className={`min-w-0 flex-1 py-1.5 pr-2.5 ${index === emotions.length - 1 ? '' : 'border-b border-[#c6c6c8]'}`}>
-                        <p className="text-[12px] leading-snug text-[#1c1c1e] break-words" style={{ fontFamily: noteFont }}>
-                            {buff.emoji ? `${buff.emoji} ` : ''}{buff.label}
-                        </p>
-                        <p className="mt-0.5 text-[11px] leading-snug text-[#8e8e93] break-words">
-                            {intensityLabel(buff.intensity)}{buff.description ? ` · ${buff.description}` : ''}
-                        </p>
-                    </div>
-                </li>
-            ))}
+        <ul data-emotion-notes="" className="overflow-hidden rounded-[10px] bg-white shadow-[0_0_0_0.5px_rgba(60,60,67,0.16)]">
+            {emotions.map((buff, index) => {
+                const color = buff.color || '#1c1c1e';
+                return (
+                    <li key={buff.id} className="flex items-start gap-2.5 pl-3">
+                        <span className="mt-[11px] h-[15px] w-[15px] shrink-0 rounded-full" style={{ background: color }} aria-hidden />
+                        <div className={`min-w-0 flex-1 py-2 pr-3 ${index === emotions.length - 1 ? '' : 'border-b'}`} style={index === emotions.length - 1 ? undefined : { borderColor: 'rgba(60,60,67,0.29)' }}>
+                            <p className="text-[13px] font-bold leading-snug break-words" style={{ color, fontFamily: noteFont }}>
+                                {buff.emoji ? `${buff.emoji} ` : ''}{buff.label}
+                            </p>
+                            <p className="mt-0.5 text-[11px] leading-[1.35] text-[#8e8e93] break-words">
+                                {intensityLabel(buff.intensity)}{buff.description ? ` · ${buff.description}` : ''}
+                            </p>
+                        </div>
+                    </li>
+                );
+            })}
         </ul>
     );
 }
@@ -48,31 +51,76 @@ export function shouldPeekFlip(moved: boolean, now: number, lockUntil: number, t
 
 const ChatInnerStatePeek: React.FC<Props> = ({ open, onClose, text, charName, emotions }) => {
     const [showList, setShowList] = useState(false);
+    const [turn, setTurn] = useState<'idle' | 'out' | 'edge' | 'in'>('idle');
+    const [present, setPresent] = useState(open);
+    const [shown, setShown] = useState(false);
     const onCloseRef = useRef(onClose);
     const gestureRef = useRef({ x: 0, y: 0, moved: false });
     const lockUntilRef = useRef(0);
     onCloseRef.current = onClose;
     useEffect(() => {
-        if (!open) return;
-        setShowList(false);
-        lockUntilRef.current = 0;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onCloseRef.current();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        if (open) {
+            setPresent(true);
+            setShowList(false);
+            setTurn('idle');
+            lockUntilRef.current = 0;
+            let second = 0;
+            const first = requestAnimationFrame(() => {
+                second = requestAnimationFrame(() => setShown(true));
+            });
+            const onKey = (e: KeyboardEvent) => {
+                if (e.key === 'Escape') onCloseRef.current();
+            };
+            window.addEventListener('keydown', onKey);
+            return () => {
+                cancelAnimationFrame(first);
+                cancelAnimationFrame(second);
+                window.removeEventListener('keydown', onKey);
+            };
+        }
+        setShown(false);
+        setTurn('idle');
+        const timer = window.setTimeout(() => setPresent(false), 200);
+        return () => window.clearTimeout(timer);
     }, [open]);
+    useEffect(() => {
+        if (turn !== 'edge') return;
+        let second = 0;
+        const first = requestAnimationFrame(() => {
+            second = requestAnimationFrame(() => setTurn('in'));
+        });
+        return () => {
+            cancelAnimationFrame(first);
+            cancelAnimationFrame(second);
+        };
+    }, [turn]);
+    useEffect(() => {
+        if (turn !== 'out' && turn !== 'in') return;
+        const ms = turn === 'out' ? 240 : 260;
+        const id = window.setTimeout(() => {
+            if (turn === 'out') {
+                setShowList(value => !value);
+                setTurn('edge');
+            } else {
+                setTurn('idle');
+            }
+        }, ms);
+        return () => window.clearTimeout(id);
+    }, [turn]);
 
-    if (!open) return null;
+    if (!present) return null;
 
-    const shell = 'relative mx-3 mb-[max(5.5rem,env(safe-area-inset-bottom))] pointer-events-auto';
+    const lit = shown && open;
+    const layer = `fixed inset-0 z-[130] flex flex-col justify-end pointer-events-none transition-opacity duration-200 ease-out ${lit ? 'opacity-100' : 'opacity-0'}`;
+    const shell = `relative z-10 mx-3 mb-[max(5.5rem,env(safe-area-inset-bottom))] ${lit ? 'pointer-events-auto' : 'pointer-events-none'}`;
+    const veil = `absolute inset-0 bg-slate-900/15 transition-opacity duration-200 ${lit ? 'pointer-events-auto' : 'pointer-events-none'}`;
 
     if (!emotions) {
         return (
-            <div className="fixed inset-0 z-[130] flex flex-col justify-end pointer-events-none">
+            <div className={layer}>
                 <button
                     type="button"
-                    className="absolute inset-0 bg-slate-900/15 pointer-events-auto transition-opacity duration-200"
+                    className={veil}
                     aria-label="关闭"
                     onClick={onClose}
                 />
@@ -118,23 +166,28 @@ const ChatInnerStatePeek: React.FC<Props> = ({ open, onClose, text, charName, em
             gestureRef.current.moved = false;
             return;
         }
-        lockUntilRef.current = Date.now() + 500;
-        setShowList(value => !value);
+        lockUntilRef.current = Date.now() + 560;
+        setTurn('out');
     };
+    const cardTurn: React.CSSProperties = turn === 'out'
+        ? { transform: 'rotateY(90deg)', transition: 'transform 240ms ease-in' }
+        : turn === 'edge'
+            ? { transform: 'rotateY(-90deg)', transition: 'none' }
+            : turn === 'in'
+                ? { transform: 'rotateY(0deg)', transition: 'transform 260ms ease-out' }
+                : { transform: 'rotateY(0deg)', transition: 'none' };
 
     return (
-        <div className="fixed inset-0 z-[130] flex flex-col justify-end pointer-events-none">
-            <style>{'@keyframes sullyPeekIn{from{transform:rotateY(78deg);opacity:.45}to{transform:none;opacity:1}}'}</style>
+        <div className={layer}>
             <button
                 type="button"
-                className="absolute inset-0 bg-slate-900/15 pointer-events-auto transition-opacity duration-200"
+                className={veil}
                 aria-label="关闭"
                 onClick={() => onCloseRef.current()}
             />
-            <div className={`${shell} z-10`} role="dialog" aria-modal="true" aria-labelledby="chat-inner-peek-title">
-                <div className="[perspective:1100px]">
+            <div className={shell} role="dialog" aria-modal="true" aria-labelledby="chat-inner-peek-title">
+                <div style={{ perspective: '720px', perspectiveOrigin: 'center center' }}>
                     <div
-                        className="rounded-[1.35rem]"
                         onPointerDown={(event) => {
                             gestureRef.current = { x: event.clientX, y: event.clientY, moved: false };
                         }}
@@ -143,12 +196,19 @@ const ChatInnerStatePeek: React.FC<Props> = ({ open, onClose, text, charName, em
                             if (Math.abs(event.clientX - gesture.x) > 8 || Math.abs(event.clientY - gesture.y) > 8) gesture.moved = true;
                         }}
                         onClick={flip}
+                        style={{
+                            transformStyle: 'preserve-3d',
+                            backfaceVisibility: 'hidden',
+                            WebkitBackfaceVisibility: 'hidden',
+                            transformOrigin: 'center center',
+                            ...cardTurn,
+                        }}
                     >
                         {showList ? (
-                            <div key="list" className="flex flex-col overflow-hidden rounded-[1.35rem] bg-[#fffdf8] shadow-[0_12px_40px_rgba(60,40,20,0.16)] [animation:sullyPeekIn_240ms_ease]">
+                            <div key="list" className="flex flex-col overflow-hidden rounded-[1.35rem] bg-[#fffdf8] shadow-[0_12px_40px_rgba(60,40,20,0.16)]">
                                 <div className="h-[3px] bg-[#ffcc00]" />
                                 <div className="px-3.5 pt-2.5 pb-1 flex items-center justify-between gap-2">
-                                    <p className="text-[13px] font-semibold text-[#1c1c1e]" style={{ fontFamily: noteFont }}>情绪</p>
+                                    <p className="text-[13px] font-bold text-[#1c1c1e]" style={{ fontFamily: noteFont }}>情绪</p>
                                     <button type="button" data-peek-exit="" onClick={leave} className={exitButtonClass}>退出</button>
                                 </div>
                                 <div
@@ -163,7 +223,7 @@ const ChatInnerStatePeek: React.FC<Props> = ({ open, onClose, text, charName, em
                         ) : (
                             <div
                                 key="thought"
-                                className="overflow-hidden rounded-[1.35rem] border border-white/70 shadow-[0_12px_40px_rgba(167,139,250,0.22)] [animation:sullyPeekIn_240ms_ease]"
+                                className="overflow-hidden rounded-[1.35rem] border border-white/70 shadow-[0_12px_40px_rgba(167,139,250,0.22)]"
                                 style={{
                                     background: 'linear-gradient(145deg, rgba(255,255,255,0.94) 0%, rgba(255,247,252,0.92) 55%, rgba(245,240,255,0.94) 100%)',
                                     backdropFilter: 'blur(14px)',

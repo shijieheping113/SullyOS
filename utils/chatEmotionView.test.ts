@@ -5,7 +5,7 @@ import ChatInnerStatePeek, { EmotionNoteList, shouldPeekFlip } from '../componen
 import { pickDecorationLayout } from './chatDecoration';
 import type { CharacterBuff } from '../types';
 
-const shy: CharacterBuff = { id: 'shy', name: 'shy', label: '害羞', intensity: 2, emoji: '😳', description: '耳朵热' };
+const shy: CharacterBuff = { id: 'shy', name: 'shy', label: '害羞', intensity: 2, emoji: '😳', color: '#db2777', description: '耳朵热' };
 
 describe('心里话里的情绪清单', () => {
     it('不传情绪时仍是原来的心里话，没有清单', () => {
@@ -27,6 +27,11 @@ describe('心里话里的情绪清单', () => {
         expect(html).toContain('退出');
         expect(html).not.toContain('data-emotion-notes');
         expect(html).not.toContain('收起');
+        expect(html).toContain('transition-opacity');
+        expect(html).toContain('perspective:720px');
+        expect(html).toContain('rotateY(0deg)');
+        expect(html).not.toContain('rotateY(90deg)');
+        expect(html).not.toContain('rotateY(-90deg)');
     });
 
     it('情绪清单用小字，长说明可以换行', () => {
@@ -35,10 +40,11 @@ describe('心里话里的情绪清单', () => {
         expect(html).toContain('害羞');
         expect(html).toContain('耳朵热');
         expect(html).toContain('中等');
-        expect(html).toContain('text-[12px]');
+        expect(html).toContain('font-bold');
+        expect(html).toContain('#db2777');
         expect(html).toContain('break-words');
         expect(html).not.toContain('text-[17px]');
-        expect(html).not.toContain('text-[20px]');
+        expect(html).not.toContain('#ffcc00');
     });
 
     it('点一下翻面，滑动和紧接着的第二下都不翻', () => {
