@@ -39,7 +39,7 @@ describe('心里话里的情绪清单', () => {
         expect(html).toContain('害羞');
         expect(html).toContain('耳朵热');
         expect(html).toContain('中等');
-        expect(html).toContain('font-bold');
+        expect(html).toContain('font-semibold');
         expect(html).toContain('#db2777');
         expect(html).toContain('break-words');
         expect(html).not.toContain('text-[17px]');
