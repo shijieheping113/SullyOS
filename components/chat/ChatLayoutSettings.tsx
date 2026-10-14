@@ -285,6 +285,10 @@ const choices = {
         { value: 'hover', label: '悬停（电脑）' },
         { value: 'never', label: '不显示' },
     ],
+    timestampPlacement: [
+        { value: 'outside', label: '气泡外' },
+        { value: 'inside', label: '气泡内' },
+    ],
     emojiSize: [
         { value: 'small', label: '小', desc: '96px' },
         { value: 'medium', label: '中', desc: '128px' },
@@ -325,6 +329,7 @@ export default function ChatLayoutSettings({theme,updateTheme}:{theme:OSTheme;up
     const bubbleStyle = theme.chatBubbleStyle || defaults.chatBubbleStyle;
     const messageSpacing = theme.chatMessageSpacing || defaults.chatMessageSpacing;
     const showTimestamp = theme.chatShowTimestamp || defaults.chatShowTimestamp;
+    const timestampPlacement = theme.chatTimestampPlacement || 'outside';
     const headerStyle = theme.chatHeaderStyle || defaults.chatHeaderStyle;
     const inputStyle = theme.chatInputStyle || defaults.chatInputStyle;
     const chromeStyle = theme.chatChromeStyle || defaults.chatChromeStyle;
@@ -397,6 +402,11 @@ return <div><details className="chat-decoration-layout-group"><summary>内置布
                 </div>
                 <div className="mt-4">
                     <ChoiceGroup title="时间戳" items={choices.timestamp} value={showTimestamp} onPick={(value) => updateTheme({ chatShowTimestamp: value as OSTheme['chatShowTimestamp'] })} />
+                    {showTimestamp !== 'never' && (
+                        <div className="mt-4">
+                            <ChoiceGroup title="位置" items={choices.timestampPlacement} value={timestampPlacement} onPick={(value) => updateTheme({ chatTimestampPlacement: value as OSTheme['chatTimestampPlacement'] })} />
+                        </div>
+                    )}
                 </div>
                 </div></details>
 <details className="chat-decoration-layout-group" open><summary>细节微调</summary><div><ChatFineTunePanel value={theme} onChange={updateTheme}/><button className="chat-decoration-link" onClick={()=>updateTheme({...FINE_TUNE_DEFAULTS})}>微调恢复默认</button></div></details>

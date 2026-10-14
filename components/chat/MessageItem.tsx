@@ -13,6 +13,7 @@ import { stripFishCuesForDisplay } from '../../utils/fishAudioTts';
 import { formatStatCount } from '../../utils/videoParser';
 import { trackEvent } from '../../utils/analytics';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../../utils/bubbleAppearance';
+import { BubbleCornerTime, BubbleInlineTime, lastBlockIsCodeFence, pinInlineTime } from './BubbleInlineTime';
 import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
@@ -1137,6 +1138,7 @@ interface MessageItemProps {
     bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
     messageSpacing?: 'compact' | 'default' | 'spacious';
     showTimestamp?: 'always' | 'hover' | 'never' | 'every_message';
+    timestampPlacement?: 'outside' | 'inside';
     /** HTML / 心象 / 音乐卡片的出现位置（聊天细节微调 chatModuleAlign 合并后的生效值）。缺省 = 居中 */
     moduleAlign?: 'anchor' | 'center';
     /** 流式预览无缝接棒时，正式消息首帧已经可见，不应再次从透明态淡入。 */
@@ -1200,6 +1202,7 @@ const MessageItem = React.memo(({
     bubbleVariant = 'modern',
     messageSpacing = 'default',
     showTimestamp = 'always',
+    timestampPlacement = 'outside',
     moduleAlign = 'center',
     suppressEntranceAnimation = false,
     onMcdSendCart,
@@ -1215,11 +1218,15 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
-    const spacingClass = messageSpacing === 'compact'
-        ? (showTimestamp === 'every_message' ? 'mb-5' : (isLastInGroup ? 'mb-3' : 'mb-0.5'))
-        : messageSpacing === 'spacious'
-            ? (isLastInGroup ? 'mb-8' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-2.5'))
-            : (isLastInGroup ? 'mb-6' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-1.5'));
+    const showTimeOnMessage = showTimestamp === 'every_message' || (isLastInGroup && showTimestamp !== 'never');
+    const wantInsideTime = timestampPlacement === 'inside' && showTimeOnMessage;
+    const spacingClass = (wantInsideTime && (m.type === 'text' || !m.type))
+        ? (messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5'))
+        : (messageSpacing === 'compact'
+            ? (showTimestamp === 'every_message' ? 'mb-5' : (isLastInGroup ? 'mb-3' : 'mb-0.5'))
+            : messageSpacing === 'spacious'
+                ? (isLastInGroup ? 'mb-8' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-2.5'))
+                : (isLastInGroup ? 'mb-6' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-1.5')));
     const marginBottom = spacingClass;
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
@@ -1865,6 +1872,8 @@ const MessageItem = React.memo(({
             </div>
         </div>
     ) : null;
+    let suppressOutsideTime = false;
+    let inlineTimeAttached = false;
     const commonLayout = (content: React.ReactNode) => (
         <>
             {centerModules && thinkingChainNode && (
@@ -1945,7 +1954,7 @@ const MessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {<ChatCardSurface message={m}>{content}</ChatCardSurface>}
                     </div>
-                    {(showTimestamp === 'every_message' || (isLastInGroup && showTimestamp !== 'never')) && (
+                    {!suppressOutsideTime && showTimeOnMessage && (
                         <div className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
                     )}
                     </div>
@@ -3521,12 +3530,41 @@ const MessageItem = React.memo(({
     };
 
     // --- Enhanced Text Rendering (Markdown Lite) ---
-    const renderContent = (text: string) => {
-        // 1. Split by Code Blocks (triple backtick)
+    const renderContent = (text: string, trailing?: React.ReactNode) => {
         const parts = text.split(/(```[\s\S]*?```)/g);
+        const isCode = (part: string) => part.startsWith('```') && part.endsWith('```');
+        let lastKind: 'none' | 'code' | 'text' = 'none';
+        let lastPart = -1;
+        let lastLine = -1;
+        for (let index = 0; index < parts.length; index++) {
+            const part = parts[index];
+            if (isCode(part)) {
+                lastKind = 'code';
+                continue;
+            }
+            const cleaned = part.replace(/``+/g, '').replace(/(^|\s)`(\s|$)/gm, '$1$2');
+            const lines = cleaned.split('\n');
+            for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+                const line = lines[lineIdx];
+                if (line.trim().startsWith('>')) {
+                    if (!line.trim().substring(1).trim()) continue;
+                } else if (!line.trim()) continue;
+                lastKind = 'text';
+                lastPart = index;
+                lastLine = lineIdx;
+            }
+        }
+        const canAttach = Boolean(trailing) && lastKind === 'text';
+        const lineBody = (source: string, target: boolean) => {
+            const inline = renderInline(source);
+            if (!target || !trailing) return inline;
+            const pinned = pinInlineTime(inline, trailing);
+            if (!pinned.pinned) return inline;
+            inlineTimeAttached = true;
+            return pinned.nodes;
+        };
         return parts.map((part, index) => {
-            // Render Code Block
-            if (part.startsWith('```') && part.endsWith('```')) {
+            if (isCode(part)) {
                 const codeContent = part.replace(/^```\w*\n?/, '').replace(/```$/, '');
                 return (
                     <pre key={index} className="bg-black/80 text-gray-100 p-3 rounded-lg text-xs font-mono overflow-x-auto my-2 whitespace-pre shadow-inner border border-white/10">
@@ -3535,33 +3573,30 @@ const MessageItem = React.memo(({
                 );
             }
 
-            // Clean stray backtick artifacts from non-code text
-            let cleanedPart = part
+            const cleanedPart = part
                 .replace(/``+/g, '')
                 .replace(/(^|\s)`(\s|$)/gm, '$1$2');
 
-            // Render Regular Text (split by newlines for paragraph spacing)
             return cleanedPart.split('\n').map((line, lineIdx) => {
                 const key = `${index}-${lineIdx}`;
+                const target = canAttach && index === lastPart && lineIdx === lastLine;
 
-                // Quote Format "> text"
                 if (line.trim().startsWith('>')) {
                     const quoteText = line.trim().substring(1).trim();
                     if (!quoteText) return null;
                     return (
-                        <div key={key} className="my-1 pl-2.5 border-l-[3px] border-current opacity-70 italic text-[13px]">
-                            {renderInline(quoteText)}
+                        <div key={key} className={`my-1 pl-2.5 border-l-[3px] border-current opacity-70 italic text-[13px]${target ? ' relative' : ''}`} data-inline-time={target ? '' : undefined}>
+                            {lineBody(quoteText, target)}
                         </div>
                     );
                 }
 
-                // Markdown Header "# text" → render as bold text (strip the #)
                 const headerMatch = line.match(/^#{1,6}\s+(.+)$/);
                 if (headerMatch) {
-                    return <div key={key} className="min-h-[1.2em] font-bold">{renderInline(headerMatch[1])}</div>;
+                    return <div key={key} className={`min-h-[1.2em] font-bold${target ? ' relative' : ''}`} data-inline-time={target ? '' : undefined}>{lineBody(headerMatch[1], target)}</div>;
                 }
 
-                return <div key={key} className="min-h-[1.2em]">{renderInline(line)}</div>;
+                return <div key={key} className={`min-h-[1.2em]${target ? ' relative' : ''}`} data-inline-time={target ? '' : undefined}>{lineBody(line, target)}</div>;
             });
         });
     };
@@ -3686,6 +3721,15 @@ const MessageItem = React.memo(({
     const isVoiceOnlyMsg = isUserVoiceMsg || isPairedVoiceSubtitleMsg
         || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
 
+    suppressOutsideTime = wantInsideTime;
+    const fenceSource = !hasBilingual
+        ? rawContent
+        : (isShowingTarget && !showExpandedTranslation)
+            ? rawContent.substring(bilingualIdx + '%%BILINGUAL%%'.length)
+            : rawContent.substring(0, bilingualIdx);
+    const inlineTimeNode = wantInsideTime && !lastBlockIsCodeFence(fenceSource)
+        ? <BubbleInlineTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
+        : undefined;
     return commonLayout(
         <div className={isVoiceOnlyMsg
             ? `relative ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`
@@ -3730,7 +3774,10 @@ const MessageItem = React.memo(({
             {/* 外语语音和用户语音都把文字交给下方语音条，顶部不再重复。长英文整词换行。 */}
             {displayContent && !isUserVoiceMsg && !suppressVoiceDupTextBubble && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-normal [overflow-wrap:anywhere] select-text" style={{ color: styleConfig.textColor }}>
-                {renderContent(hasVoiceTag ? dedupeRepeatedLines(displayContent) : displayContent)}
+                {renderContent(hasVoiceTag ? dedupeRepeatedLines(displayContent) : displayContent, inlineTimeNode)}
+                {wantInsideTime && !inlineTimeAttached && (
+                    <BubbleCornerTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
+                )}
                 {showExpandedTranslation && (
                     <div className="mt-2.5 pt-2 border-t border-current/15">
                         <div className="mb-1 text-[9px] font-bold tracking-[0.16em] opacity-40 select-none">翻译</div>
@@ -3738,6 +3785,10 @@ const MessageItem = React.memo(({
                     </div>
                 )}
             </div>
+            )}
+
+            {wantInsideTime && !inlineTimeAttached && !(displayContent && !isUserVoiceMsg && !suppressVoiceDupTextBubble) && (
+                <BubbleCornerTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
             )}
 
             {hasSarSurface && (displayContent || hasVoiceContent) && (
@@ -4016,6 +4067,7 @@ const MessageItem = React.memo(({
            prev.bubbleVariant === next.bubbleVariant &&
            prev.messageSpacing === next.messageSpacing &&
            prev.showTimestamp === next.showTimestamp &&
+           prev.timestampPlacement === next.timestampPlacement &&
            prev.moduleAlign === next.moduleAlign &&
            prev.previewExpanded === next.previewExpanded &&
            prev.previewTransferOpen === next.previewTransferOpen &&

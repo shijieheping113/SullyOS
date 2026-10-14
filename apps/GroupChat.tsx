@@ -1,6 +1,7 @@
 import ChatRuntimeStyle from '../components/chat/ChatRuntimeStyle';
 import { resolveDialogueApi } from '../utils/characterApi';
 import {ChatCardSurface} from '../components/chat/ChatCardSurface';
+import { BubbleInlineTime, plainLinesWithInlineTime } from '../components/chat/BubbleInlineTime';
 import { avatarDecorationImageStyle, isAnniversaryFrame } from '../utils/anniversaryGifts';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
@@ -149,6 +150,7 @@ const GroupMessageItem = React.memo(({
     bubbleVariant = 'modern',
     messageSpacing = 'default',
     showTimestamp = 'always',
+    timestampPlacement = 'outside',
 }: {
     msg: Message,
     isUser: boolean,
@@ -174,15 +176,21 @@ const GroupMessageItem = React.memo(({
     bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios',
     messageSpacing?: 'compact' | 'default' | 'spacious',
     showTimestamp?: 'always' | 'hover' | 'never' | 'every_message',
+    timestampPlacement?: 'outside' | 'inside',
 }) => {
     const avatar = isUser ? userAvatar : char?.avatar;
     const name = isUser ? '我' : char?.name || '未知成员';
 
-    const spacingClass = messageSpacing === 'compact'
-        ? (showTimestamp === 'every_message' ? 'mb-5' : (isLastInGroup ? 'mb-3' : 'mb-0.5'))
-        : messageSpacing === 'spacious'
-            ? (isLastInGroup ? 'mb-8' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-2.5'))
-            : (isLastInGroup ? 'mb-6' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-1.5'));
+    const showTimeOnMessage = showTimestamp === 'every_message' || (isLastInGroup && showTimestamp !== 'never');
+    const wantInsideTime = timestampPlacement === 'inside' && showTimeOnMessage;
+    const textLike = !msg.type || msg.type === 'text';
+    const spacingClass = (wantInsideTime && textLike)
+        ? (messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5'))
+        : (messageSpacing === 'compact'
+            ? (showTimestamp === 'every_message' ? 'mb-5' : (isLastInGroup ? 'mb-3' : 'mb-0.5'))
+            : messageSpacing === 'spacious'
+                ? (isLastInGroup ? 'mb-8' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-2.5'))
+                : (isLastInGroup ? 'mb-6' : (showTimestamp === 'every_message' ? 'mb-5' : 'mb-1.5')));
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
@@ -337,6 +345,7 @@ const GroupMessageItem = React.memo(({
         </div>
     );
 
+    let inlineTimeAttached = false;
     // Special Content Renderers
     const renderContent = () => {
         switch (msg.type) {
@@ -405,7 +414,12 @@ const GroupMessageItem = React.memo(({
                                 <span className="truncate italic">"{buildReplySnapshotContent({ content: msg.replyTo.content })}"</span>
                             </div>
                         )}
-                        <div className="relative z-10 select-text" style={{ color: styleConfig.textColor }}>{msg.content}</div>
+                        <div className="relative z-10 select-text" style={{ color: styleConfig.textColor }}>{(() => {
+                            if (!wantInsideTime) return msg.content;
+                            const lined = plainLinesWithInlineTime(msg.content, <BubbleInlineTime time={timeStr} hover={showTimestamp === 'hover'} />);
+                            inlineTimeAttached = lined.attached;
+                            return lined.attached ? lined.nodes : msg.content;
+                        })()}</div>
                     </div>
                 );
         }
@@ -469,7 +483,7 @@ const GroupMessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         <ChatCardSurface message={msg}>{renderContent()}</ChatCardSurface>
                     </div>
-                    {(showTimestamp === 'every_message' || (isLastInGroup && showTimestamp !== 'never')) && (
+                    {showTimeOnMessage && !inlineTimeAttached && (
                         <span className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{timeStr}</span>
                     )}
                 </div>
@@ -1929,6 +1943,7 @@ ${memberTimeline || '(暂无互动记录)'}
                             bubbleVariant={osTheme.chatBubbleStyle}
                             messageSpacing={osTheme.chatMessageSpacing}
                             showTimestamp={osTheme.chatShowTimestamp}
+                            timestampPlacement={osTheme.chatTimestampPlacement}
                         />
                     );
                 })}
