@@ -2276,15 +2276,15 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             if (xSocialUrl && !isXhsUrl(xSocialUrl) && xLinkCardsOn(realtimeConfig, char) && await decideLinkCard('xCards')) {
                 try {
                     addToast(xSocialUrl.includes('threads.') ? '正在读取 Threads…' : '正在读取 X…', 'info');
-                    const got = await fetchLinkSocialCard(xSocialUrl);
+                    const got = await fetchLinkSocialCard(xSocialUrl, realtimeConfig);
                     if (got) {
-                        const sharedFeed = buildSocialModelFeed(got.kind, got.card, userProfile.name || '用户');
+                        const shortPreview = (got.card.text || '').trim().split('\n')[0]?.slice(0, 60) || (got.kind === 'threads' ? 'Threads 帖子' : 'X 帖子');
                         await DB.saveMessage({
                             charId: char.id,
                             role: 'user',
                             type: got.kind === 'threads' ? 'threads_card' : 'x_card',
-                            content: sharedFeed,
-                            metadata: { ...metadata, xSocial: got.card, modelFeed: sharedFeed, originalShareText: text, originalShareUrl: xSocialUrl, provider: got.card.provider },
+                            content: shortPreview,
+                            metadata: { ...metadata, xSocial: got.card, originalShareText: text, originalShareUrl: xSocialUrl, provider: got.card.provider },
                         });
                         xSocialCardCreated = true;
                     }

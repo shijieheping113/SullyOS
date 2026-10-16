@@ -290,16 +290,17 @@ export function normalizeMessageContent(
         const meta: any = msg.metadata || {};
         const kind = type === 'threads_card' ? 'threads' : 'x';
         const sharer = msg.role === 'assistant' ? charName : userName;
+        const shareNote = typeof meta.originalShareText === 'string' ? meta.originalShareText : '';
         const card = meta.xSocial;
         if (card && (card.text || card.authorName || card.authorHandle)) {
-            return buildSocialModelFeed(kind, card, sharer);
+            return buildSocialModelFeed(kind, card, sharer, shareNote);
         }
         const feed = typeof meta.modelFeed === 'string' ? meta.modelFeed.trim() : '';
         if (feed) return buildSocialModelFeed(kind, {
             provider: kind === 'threads' ? 'threads-ssr' : 'fxtwitter',
             text: feed.replace(/^\[(?:X|Threads)帖子\][^\n]*\n?/, ''),
             replies: [],
-        }, sharer);
+        }, sharer, shareNote);
         return kind === 'threads' ? `[Threads帖子] ${sharer}分享了一条 Threads 帖` : `[X帖子] ${sharer}分享了一条 X 帖`;
     }
 

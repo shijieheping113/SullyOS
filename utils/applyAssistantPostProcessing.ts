@@ -2386,8 +2386,8 @@ export async function applyAssistantPostProcessing(
                     includeReplies: !!realtimeConfig?.xSearchIncludeReplies,
                 });
                 if (xPackHit.name === 'X_PROFILE') return runXProfile(xPackHit.arg);
-                if (xPackHit.name === 'X_READ') return runXRead(xPackHit.arg);
-                if (xPackHit.name === 'THREADS_READ') return runThreadsRead(xPackHit.arg);
+                if (xPackHit.name === 'X_READ') return runXRead(xPackHit.arg, realtimeConfig);
+                if (xPackHit.name === 'THREADS_READ') return runThreadsRead(xPackHit.arg, realtimeConfig);
                 return runYahooDiscuss(xPackHit.arg);
             });
             toolText = ran.summary;

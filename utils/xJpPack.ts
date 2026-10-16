@@ -37,6 +37,8 @@ export interface XJpRealtimeFlags {
     xFeatYahooDiscuss?: boolean;
     xSearchFeed?: 'top' | 'latest';
     xSearchIncludeReplies?: boolean;
+    xReplyLimitMode?: 'all' | 'custom';
+    xReplyMaxCount?: number;
 }
 
 export interface XJpCharFlags {
@@ -48,6 +50,33 @@ export const clampJpHotCount = (n: unknown): number => {
     const v = typeof n === 'number' ? n : Number(n);
     if (!Number.isFinite(v)) return JP_HOT_DEFAULT_N;
     return Math.max(1, Math.min(JP_HOT_HARD_CAP, Math.floor(v)));
+};
+
+export const X_REPLY_DEFAULT_MAX = 15;
+export const X_REPLY_HARD_CAP = 200;
+
+export const clampXReplyCount = (n: unknown): number => {
+    const v = typeof n === 'number' ? n : Number(n);
+    if (!Number.isFinite(v)) return X_REPLY_DEFAULT_MAX;
+    return Math.max(1, Math.min(X_REPLY_HARD_CAP, Math.floor(v)));
+};
+
+export const resolveXReplyLimit = (rc?: Pick<XJpRealtimeFlags, 'xReplyLimitMode' | 'xReplyMaxCount'> | null): number | null => {
+    if (rc?.xReplyLimitMode !== 'custom') return null;
+    return clampXReplyCount(rc?.xReplyMaxCount);
+};
+
+export const sliceSocialCardReplies = (card: XSocialCardData, maxReplies?: number | null): XSocialCardData => {
+    if (maxReplies == null || !Number.isFinite(maxReplies)) return card;
+    const cap = Math.max(0, Math.floor(maxReplies));
+    const replies = card.replies || [];
+    if (replies.length <= cap) return card;
+    const totalReplies = Math.max(card.totalReplies || 0, replies.length);
+    return {
+        ...card,
+        replies: replies.slice(0, cap),
+        totalReplies,
+    };
 };
 
 export const jpHotHoursOf = (hours: unknown): 4 | 24 => (hours === 24 ? 24 : 4);
@@ -147,33 +176,55 @@ export const formatReplyLine = (reply: XSocialReply, opHandle: string, opName?: 
 
 export const socialShareHead = (kind: 'x' | 'threads', sharer: string, card: Pick<XSocialCardData, 'authorName' | 'authorHandle'>): string => {
     const brand = kind === 'x' ? 'X' : 'Threads';
-    return `[${brand}帖子] ${sharer}分享了一条 ${brand} 帖。这是别人发在 ${brand} 上的帖子，不是${sharer}自己说的话。作者：${personLabel(card.authorName, card.authorHandle)}`;
+    return `[${brand}帖子] ${sharer}分享了一条 ${brand} 帖（发帖作者：${personLabel(card.authorName, card.authorHandle)}；这是${sharer}在 ${brand} 上刷到后转给你一起看、找你聊的帖子卡片，不是${sharer}本人说的话）`;
 };
 
-export const buildSocialModelFeed = (kind: 'x' | 'threads', card: XSocialCardData, sharer?: string): string => {
+export const extractSocialShareNote = (raw?: string | null): string => {
+    if (!raw) return '';
+    return cleanFeedText(raw);
+};
+
+export const buildSocialModelFeed = (
+    kind: 'x' | 'threads',
+    card: XSocialCardData,
+    sharer?: string,
+    shareNote?: string | null,
+): string => {
     const handle = card.authorHandle || '?';
     const head = sharer
         ? socialShareHead(kind, sharer, card)
         : `${kind === 'x' ? '[X帖子]' : '[Threads帖子]'} ${personLabel(card.authorName, card.authorHandle)}`;
-    const lines = [
-        head,
-        card.text || '',
-    ];
+    const lines = [head];
+    const note = extractSocialShareNote(shareNote);
+    if (sharer && note) {
+        lines.push(`${sharer}分享时附言：${note}`);
+    }
+    const body = (card.text || '').trim();
+    if (body) {
+        lines.push(sharer ? `帖子正文：\n${body}` : body);
+    }
     if (card.statsLine) lines.push(card.statsLine);
-    const extras = card.threadTexts || [];
+    const extras = (card.threadTexts || []).filter(Boolean);
     if (extras.length) {
-        lines.push('—— 楼主连发 ——');
+        lines.push(sharer ? '楼主连发补充：' : '—— 楼主连发 ——');
         extras.forEach(t => lines.push(t || ''));
     }
     const replies = card.replies || [];
     if (replies.length) {
         const total = card.totalReplies || 0;
         const more = total > replies.length;
-        const head = kind === 'x' ? '—— 回复' : '—— 可见回复';
-        lines.push(more
-            ? `${head}—— 共 ${total} 条，这里只看到最新的 ${replies.length} 条（接口一页就回这么多，不是帖子只有这么点）`
-            : `${head}（${replies.length}）——`);
-        replies.forEach(r => lines.push(formatReplyLine(r, handle, card.authorName)));
+        if (sharer) {
+            lines.push(more
+                ? `评论区（共 ${total} 条，当前展示前 ${replies.length} 条）：`
+                : `评论区（${replies.length} 条）：`);
+            replies.forEach(r => lines.push(`· ${formatReplyLine(r, handle, card.authorName)}`));
+        } else {
+            const rHead = kind === 'x' ? '—— 回复' : '—— 可见回复';
+            lines.push(more
+                ? `${rHead}—— 共 ${total} 条，这里只看到最新的 ${replies.length} 条（接口一页就回这么多，不是帖子只有这么点）`
+                : `${rHead}（${replies.length}）——`);
+            replies.forEach(r => lines.push(formatReplyLine(r, handle, card.authorName)));
+        }
     }
     return cleanFeedText(lines.join('\n'));
 };

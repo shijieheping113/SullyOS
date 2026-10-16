@@ -661,6 +661,8 @@ export interface RealtimeConfig {
   xFeatYahooDiscuss?: boolean;
   xSearchFeed?: 'top' | 'latest';
   xSearchIncludeReplies?: boolean;
+  xReplyLimitMode?: 'all' | 'custom';
+  xReplyMaxCount?: number;
 
   // 缓存配置
   cacheMinutes: number;

@@ -295,6 +295,8 @@ const defaultRealtimeConfig: RealtimeConfig = {
   xFeatYahooDiscuss: false,
   xSearchFeed: 'top',
   xSearchIncludeReplies: false,
+  xReplyLimitMode: 'all',
+  xReplyMaxCount: 15,
   cacheMinutes: 30
 };
 

@@ -95,6 +95,8 @@ export interface RealtimeConfig {
     xFeatYahooDiscuss?: boolean;
     xSearchFeed?: 'top' | 'latest';
     xSearchIncludeReplies?: boolean;
+    xReplyLimitMode?: 'all' | 'custom';
+    xReplyMaxCount?: number;
 
     // 小红书配置 (xiaohongshu-skills)
     xhsEnabled?: boolean;
@@ -140,6 +142,8 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     xFeatYahooDiscuss: false,
     xSearchFeed: 'top',
     xSearchIncludeReplies: false,
+    xReplyLimitMode: 'all',
+    xReplyMaxCount: 15,
     xhsMcpConfig: {
         enabled: false,
         mode: 'lite',

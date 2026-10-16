@@ -744,6 +744,8 @@ const Settings: React.FC = () => {
   const [rtXFeatYahooDiscuss, setRtXFeatYahooDiscuss] = useState(!!realtimeConfig.xFeatYahooDiscuss);
   const [rtXSearchFeed, setRtXSearchFeed] = useState<'top' | 'latest'>(realtimeConfig.xSearchFeed === 'latest' ? 'latest' : 'top');
   const [rtXSearchReplies, setRtXSearchReplies] = useState(!!realtimeConfig.xSearchIncludeReplies);
+  const [rtXReplyLimitMode, setRtXReplyLimitMode] = useState<'all' | 'custom'>(realtimeConfig.xReplyLimitMode === 'custom' ? 'custom' : 'all');
+  const [rtXReplyMaxCount, setRtXReplyMaxCount] = useState<string>(String(realtimeConfig.xReplyMaxCount || 15));
   const [jpHotPreview, setJpHotPreview] = useState('');
   const [jpHotRefreshLabel, setJpHotRefreshLabel] = useState('尚未刷新');
   const [jpHotRefreshing, setJpHotRefreshing] = useState(false);
@@ -2043,6 +2045,8 @@ const Settings: React.FC = () => {
           xFeatYahooDiscuss: rtXFeatYahooDiscuss,
           xSearchFeed: rtXSearchFeed,
           xSearchIncludeReplies: rtXSearchReplies,
+          xReplyLimitMode: rtXReplyLimitMode,
+          xReplyMaxCount: Math.max(1, Math.min(200, Math.floor(Number(rtXReplyMaxCount) || 15))),
           xhsMcpConfig: {
               enabled: rtXhsMcpEnabled,
               mode: rtXhsMode,
@@ -4748,6 +4752,40 @@ const Settings: React.FC = () => {
                           搜索连回复一起看
                           <input type="checkbox" checked={rtXSearchReplies} onChange={e => setRtXSearchReplies(e.target.checked)} />
                       </label>
+                      <div className="pt-2 border-t border-slate-200/70 space-y-2">
+                          <div className="flex items-center justify-between">
+                              <span className="text-[12px] font-bold text-slate-600">帖子回复收录数量</span>
+                              <div className="flex gap-1.5">
+                                  <button
+                                      type="button"
+                                      onClick={() => setRtXReplyLimitMode('all')}
+                                      className={`text-[11px] px-2.5 py-1 rounded-full font-bold ${rtXReplyLimitMode === 'all' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500'}`}
+                                  >全量回复</button>
+                                  <button
+                                      type="button"
+                                      onClick={() => setRtXReplyLimitMode('custom')}
+                                      className={`text-[11px] px-2.5 py-1 rounded-full font-bold ${rtXReplyLimitMode === 'custom' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500'}`}
+                                  >限制条数</button>
+                              </div>
+                          </div>
+                          {rtXReplyLimitMode === 'custom' && (
+                              <div className="flex items-center justify-between gap-2 bg-white rounded-xl px-3 py-2">
+                                  <span className="text-[11px] font-bold text-slate-600">最多收录与展示前</span>
+                                  <div className="flex items-center gap-1.5">
+                                      <input
+                                          type="number"
+                                          min={1}
+                                          max={200}
+                                          value={rtXReplyMaxCount}
+                                          onChange={e => setRtXReplyMaxCount(e.target.value)}
+                                          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-center text-xs font-bold text-slate-800"
+                                      />
+                                      <span className="text-[11px] font-bold text-slate-500">条回复</span>
+                                  </div>
+                              </div>
+                          )}
+                          <p className="text-[10px] text-slate-400 leading-relaxed">控制分享 X / Threads 帖子或翻楼时，卡片展示与写进聊天记录的回复条数上限，避免热帖一次收进过多回复。</p>
+                      </div>
                   </div>
               </div>
 

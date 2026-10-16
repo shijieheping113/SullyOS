@@ -12,7 +12,10 @@ import {
     isXUrl,
     personLabelShort,
     parseXSearchArg,
+    resolveXReplyLimit,
+    sliceSocialCardReplies,
     trimFeedFromEnd,
+    type XJpRealtimeFlags,
     type XSocialCardData,
     type XSocialReply,
 } from './xJpPack';
@@ -171,13 +174,17 @@ export const fetchThreadsCard = async (raw: string): Promise<XSocialCardData> =>
     return card;
 };
 
-export const fetchLinkSocialCard = async (url: string): Promise<{ kind: 'x' | 'threads'; card: XSocialCardData; feed: string } | null> => {
+export const fetchLinkSocialCard = async (
+    url: string,
+    rc?: Pick<XJpRealtimeFlags, 'xReplyLimitMode' | 'xReplyMaxCount'> | null,
+): Promise<{ kind: 'x' | 'threads'; card: XSocialCardData; feed: string } | null> => {
+    const maxReplies = resolveXReplyLimit(rc);
     if (isThreadsUrl(url)) {
-        const card = await fetchThreadsCard(url);
+        const card = sliceSocialCardReplies(await fetchThreadsCard(url), maxReplies);
         return { kind: 'threads', card, feed: buildSocialModelFeed('threads', card) };
     }
     if (isXUrl(url)) {
-        const card = await fetchXConversationCard(url);
+        const card = sliceSocialCardReplies(await fetchXConversationCard(url), maxReplies);
         return { kind: 'x', card, feed: buildSocialModelFeed('x', card) };
     }
     return null;
@@ -289,9 +296,12 @@ export const runYahooDiscuss = async (q: string): Promise<XPackToolResult> => {
     }
 };
 
-export const runXRead = async (raw: string): Promise<XPackToolResult> => {
+export const runXRead = async (
+    raw: string,
+    rc?: Pick<XJpRealtimeFlags, 'xReplyLimitMode' | 'xReplyMaxCount'> | null,
+): Promise<XPackToolResult> => {
     try {
-        const card = await fetchXConversationCard(raw);
+        const card = sliceSocialCardReplies(await fetchXConversationCard(raw), resolveXReplyLimit(rc));
         return okSummary(buildSocialModelFeed('x', card));
     } catch (e) {
         const reason = (e as any)?.reason;
@@ -299,9 +309,12 @@ export const runXRead = async (raw: string): Promise<XPackToolResult> => {
     }
 };
 
-export const runThreadsRead = async (raw: string): Promise<XPackToolResult> => {
+export const runThreadsRead = async (
+    raw: string,
+    rc?: Pick<XJpRealtimeFlags, 'xReplyLimitMode' | 'xReplyMaxCount'> | null,
+): Promise<XPackToolResult> => {
     try {
-        const card = await fetchThreadsCard(raw);
+        const card = sliceSocialCardReplies(await fetchThreadsCard(raw), resolveXReplyLimit(rc));
         return okSummary(buildSocialModelFeed('threads', card));
     } catch (e) {
         const reason = (e as any)?.reason;

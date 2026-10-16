@@ -75,6 +75,8 @@ export interface AmsgToolConfig extends AgenticToolRealtimeConfig {
   xFeatSearch?: boolean;
   xFeatProfile?: boolean;
   xFeatYahooDiscuss?: boolean;
+  xReplyLimitMode?: 'all' | 'custom';
+  xReplyMaxCount?: number;
   /** 上云这份比工具侧多一个 cookie（lite 模式的登录态），并且两个开关字段是必填。 */
   xhsMcpConfig?: {
     enabled: boolean;
@@ -167,6 +169,8 @@ export const buildToolConfig = (
     xFeatSearch: rc?.xFeatSearch !== false,
     xFeatProfile: rc?.xFeatProfile !== false,
     xFeatYahooDiscuss: !!rc?.xFeatYahooDiscuss,
+    xReplyLimitMode: rc?.xReplyLimitMode === 'custom' ? 'custom' : 'all',
+    xReplyMaxCount: rc?.xReplyMaxCount,
     ...(rc?.newsApiKey ? { newsApiKey: rc.newsApiKey } : {}),
     ...(rc?.newsPlatforms?.length ? { newsPlatforms: rc.newsPlatforms } : {}),
     notionEnabled: !!rc?.notionEnabled,

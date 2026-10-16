@@ -12,6 +12,8 @@ import {
     parseXSearchArg,
     personLabel,
     personLabelShort,
+    resolveXReplyLimit,
+    sliceSocialCardReplies,
     stripXPackTags,
     xLinkCardsOn,
     xPackOn,
@@ -96,7 +98,7 @@ describe('贴链域名与热词缓存', () => {
 });
 
 describe('来源标记、教学和热词句末', () => {
-    it('分享进历史时带来源头，不把楼主原文当成用户自己说的', () => {
+    it('分享进历史时带来源头与用户附言，不把楼主原文当成用户自己说的', () => {
         const card: XSocialCardData = {
             provider: 'fxtwitter',
             authorName: '小灯',
@@ -104,10 +106,12 @@ describe('来源标记、教学和热词句末', () => {
             text: '正文',
             replies: [],
         };
-        const x = buildSocialModelFeed('x', card, 'Ann');
+        const x = buildSocialModelFeed('x', card, 'Ann', '你看这个太好笑了 https://x.com/akari/status/1');
         const threads = buildSocialModelFeed('threads', { ...card, provider: 'threads-ssr' }, 'Ann');
-        expect(x.startsWith('[X帖子] Ann分享了一条 X 帖。这是别人发在 X 上的帖子，不是Ann自己说的话。作者：小灯（@akari）')).toBe(true);
-        expect(threads.startsWith('[Threads帖子] Ann分享了一条 Threads 帖。这是别人发在 Threads 上的帖子，不是Ann自己说的话。作者：小灯（@akari）')).toBe(true);
+        expect(x.startsWith('[X帖子] Ann分享了一条 X 帖（发帖作者：小灯（@akari）；这是Ann在 X 上刷到后转给你一起看、找你聊的帖子卡片，不是Ann本人说的话）')).toBe(true);
+        expect(x).toContain('Ann分享时附言：你看这个太好笑了');
+        expect(x).toContain('帖子正文：\n正文');
+        expect(threads.startsWith('[Threads帖子] Ann分享了一条 Threads 帖（发帖作者：小灯（@akari）；这是Ann在 Threads 上刷到后转给你一起看、找你聊的帖子卡片，不是Ann本人说的话）')).toBe(true);
         const withLink = buildSocialModelFeed('x', { ...card, text: '正文\nhttps://example.com/extra' }, 'Ann');
         expect(withLink).not.toContain('example.com');
         expect(withLink).not.toContain('http');
@@ -148,5 +152,26 @@ describe('来源标记、教学和热词句末', () => {
         expect(findFirstXPackTag(text)?.arg).toBe('犬');
         expect(findFirstXPackTag('[[XHS_SEARCH: 猫]]')).toBeNull();
         expect(stripXPackTags(text)).toBe('看看 [[XHS_SEARCH: 猫]] 然后');
+    });
+
+    it('回复条数可按设置选全量或自定义上限', () => {
+        const card: XSocialCardData = {
+            provider: 'fxtwitter',
+            authorName: '小灯',
+            authorHandle: 'akari',
+            text: '正文',
+            replies: [
+                { name: 'A', handle: 'a', text: '1' },
+                { name: 'B', handle: 'b', text: '2' },
+                { name: 'C', handle: 'c', text: '3' },
+            ],
+        };
+        expect(resolveXReplyLimit({ xReplyLimitMode: 'all', xReplyMaxCount: 2 })).toBeNull();
+        expect(resolveXReplyLimit({ xReplyLimitMode: 'custom', xReplyMaxCount: 2 })).toBe(2);
+        const all = sliceSocialCardReplies(card, resolveXReplyLimit({ xReplyLimitMode: 'all', xReplyMaxCount: 2 }));
+        expect(all.replies).toHaveLength(3);
+        const capped = sliceSocialCardReplies(card, resolveXReplyLimit({ xReplyLimitMode: 'custom', xReplyMaxCount: 2 }));
+        expect(capped.replies).toHaveLength(2);
+        expect(capped.totalReplies).toBe(3);
     });
 });
