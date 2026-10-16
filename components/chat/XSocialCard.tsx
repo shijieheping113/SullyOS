@@ -260,11 +260,11 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                     <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 leading-tight">
                             <div className="flex items-baseline gap-1.5 truncate">
-                                <span className="truncate text-[13px] font-semibold tracking-[-0.01em]" style={{ color: ink }}>
+                                <span className="truncate text-[14px] font-semibold tracking-[-0.01em]" style={{ color: ink }}>
                                     {primaryLabel}
                                 </span>
                                 {subLabel ? (
-                                    <span className="truncate text-[11px] font-normal" style={{ color: muted }}>
+                                    <span className="truncate text-[12px] font-normal" style={{ color: muted }}>
                                         {subLabel}
                                     </span>
                                 ) : null}
@@ -274,13 +274,13 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                             className="flex shrink-0 items-center justify-center rounded-full p-0.5 transition-colors hover:bg-neutral-100"
                             title={card.url ? '在 Threads 上查看原帖' : undefined}
                         >
-                            <ThreadsLogo size={15} color="#000000" />
+                            <ThreadsLogo size={16} color="#000000" />
                         </div>
                     </div>
 
                     {/* 主帖正文 */}
                     {body ? (
-                        <div className="mt-1 whitespace-pre-wrap break-words text-[13px] font-normal leading-[1.42]" style={{ color: ink }}>
+                        <div className="mt-1 whitespace-pre-wrap break-words text-[14px] font-normal leading-[1.43]" style={{ color: ink }}>
                             <BodyText text={body} accent="#0095f6" underlineTag />
                         </div>
                     ) : null}
@@ -289,7 +289,7 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                     {extras.length > 0 && (
                         <div className="mt-2 space-y-1.5">
                             {extras.map((text, i) => (
-                                <div key={i} className="whitespace-pre-wrap break-words text-[12.5px] leading-[1.4]" style={{ color: ink }}>
+                                <div key={i} className="whitespace-pre-wrap break-words text-[13px] leading-[1.4]" style={{ color: ink }}>
                                     <BodyText text={text} accent="#0095f6" underlineTag />
                                 </div>
                             ))}
@@ -299,7 +299,7 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                     {/* Threads 紧贴正文底部的四枚圆润图标栏 */}
                     <div className="mt-2.5 flex items-center gap-4">
                         <ActionBtn
-                            icon={<ThreadsHeartSvg size={15} />}
+                            icon={<ThreadsHeartSvg size={16} />}
                             count={likes}
                             baseColor={ink}
                             activeColor="#ff3040"
@@ -307,7 +307,7 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                             title="赞"
                         />
                         <ActionBtn
-                            icon={<ThreadsCommentSvg size={15} />}
+                            icon={<ThreadsCommentSvg size={16} />}
                             count={comments}
                             baseColor={ink}
                             activeColor={ink}
@@ -315,7 +315,7 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                             title="回复"
                         />
                         <ActionBtn
-                            icon={<ThreadsRepostSvg size={15} />}
+                            icon={<ThreadsRepostSvg size={16} />}
                             count={reposts}
                             baseColor={ink}
                             activeColor="#00ba7c"
@@ -323,7 +323,7 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                             title="转发"
                         />
                         <ActionBtn
-                            icon={<ThreadsSendSvg size={14} />}
+                            icon={<ThreadsSendSvg size={15} />}
                             count=""
                             baseColor={ink}
                             activeColor={ink}
@@ -345,7 +345,7 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                     </div>
                     <div
                         onClick={e => e.stopPropagation()}
-                        className="max-h-[175px] overflow-y-auto pr-1 cursor-default"
+                        className="max-h-[195px] overflow-y-auto pr-1 cursor-default"
                     >
                         <div className="relative space-y-2.5">
                             {replies.map((reply, i) => {
@@ -360,13 +360,13 @@ const ThreadsCardView: React.FC<{ card: XSocialCardData }> = ({ card }) => {
                                         {!last && (
                                             <div
                                                 className="pointer-events-none absolute w-[1.6px] rounded-full"
-                                                style={{ left: 11.5, top: 26, bottom: -8, background: rail }}
+                                                style={{ left: 13, top: 28, bottom: -8, background: rail }}
                                             />
                                         )}
-                                        <div className="flex w-6 shrink-0 justify-center">
-                                            <Face url={reply.avatar} label={replyName || who} size={24} wash={wash} ink={ink} />
+                                        <div className="flex w-7 shrink-0 justify-center">
+                                            <Face url={reply.avatar} label={replyName || who} size={26} wash={wash} ink={ink} />
                                         </div>
-                                        <div className="min-w-0 flex-1 text-[12px] leading-[1.35]">
+                                        <div className="min-w-0 flex-1 text-[12.5px] leading-[1.36]">
                                             <div className="flex items-baseline gap-1 truncate">
                                                 <span className="truncate font-semibold" style={{ color: ink }}>{who}</span>
                                                 {whoSub ? (
@@ -436,7 +436,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
     return (
         <div
             onClick={card.url ? openOriginal : undefined}
-            className={`w-[258px] max-w-full rounded-2xl border bg-white px-3.5 py-2.5 text-left shadow-[0_2px_10px_rgba(15,20,25,0.05)] transition-shadow hover:shadow-[0_4px_14px_rgba(15,20,25,0.09)] ${card.url ? 'cursor-pointer' : ''}`}
+            className={`w-[286px] max-w-full rounded-2xl border bg-white px-4 py-3 text-left shadow-[0_2px_10px_rgba(15,20,25,0.05)] transition-shadow hover:shadow-[0_4px_14px_rgba(15,20,25,0.09)] ${card.url ? 'cursor-pointer' : ''}`}
             style={{
                 borderColor: border,
                 color: ink,
@@ -446,15 +446,15 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
             {/* 顶部作者栏 + 品牌标识 */}
             <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                    <Face url={card.avatar} label={label} size={34} wash={wash} ink={ink} />
+                    <Face url={card.avatar} label={label} size={38} wash={wash} ink={ink} />
                     <div className="min-w-0 leading-tight">
                         <div className="flex items-center gap-1">
-                            <span className="truncate text-[13.5px] font-bold tracking-[-0.01em]" style={{ color: ink }}>
+                            <span className="truncate text-[14.5px] font-bold tracking-[-0.01em]" style={{ color: ink }}>
                                 {name || label}
                             </span>
                         </div>
                         {handle ? (
-                            <div className="truncate text-[11.5px] font-normal" style={{ color: muted }}>
+                            <div className="truncate text-[12px] font-normal" style={{ color: muted }}>
                                 @{handle}
                             </div>
                         ) : null}
@@ -464,14 +464,14 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     className="flex shrink-0 items-center justify-center rounded-full p-1 transition-colors hover:bg-slate-100"
                     title={card.url ? '在 X 上查看原帖' : undefined}
                 >
-                    <XLogo size={14} color="#0f1419" />
+                    <XLogo size={15} color="#0f1419" />
                 </div>
             </div>
 
             {/* 主帖正文：通栏展示，紧凑利落 */}
             {body ? (
                 <div
-                    className="mt-2 whitespace-pre-wrap break-words text-[13px] font-normal leading-[1.42]"
+                    className="mt-2 whitespace-pre-wrap break-words text-[14px] font-normal leading-[1.43]"
                     style={{ color: ink }}
                 >
                     <BodyText text={body} accent={accent} />
@@ -482,7 +482,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
             {extras.length > 0 && (
                 <div className="mt-2 space-y-1.5 border-l-2 pl-2.5" style={{ borderColor: '#cfd9de' }}>
                     {extras.map((text, i) => (
-                        <div key={i} className="whitespace-pre-wrap break-words text-[12.5px] leading-[1.38]" style={{ color: ink }}>
+                        <div key={i} className="whitespace-pre-wrap break-words text-[13px] leading-[1.38]" style={{ color: ink }}>
                             <BodyText text={text} accent={accent} />
                         </div>
                     ))}
@@ -492,7 +492,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
             {/* 互动数字摘要条 */}
             {(repostsNum > 0 || quotesNum > 0 || likesNum > 0) && (
                 <div
-                    className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t pt-2 text-[11px]"
+                    className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t pt-2 text-[12px]"
                     style={{ borderColor: subtleLine, color: muted }}
                 >
                     {repostsNum > 0 && (
@@ -519,7 +519,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                 style={{ borderColor: subtleLine }}
             >
                 <ActionBtn
-                    icon={<ReplySvg size={14} />}
+                    icon={<ReplySvg size={15} />}
                     count={comments}
                     baseColor={muted}
                     activeColor="#1d9bf0"
@@ -527,7 +527,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     title="回复"
                 />
                 <ActionBtn
-                    icon={<RepostSvg size={14} />}
+                    icon={<RepostSvg size={15} />}
                     count={reposts}
                     baseColor={muted}
                     activeColor="#00ba7c"
@@ -535,7 +535,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     title="转帖"
                 />
                 <ActionBtn
-                    icon={<HeartSvg size={14} />}
+                    icon={<HeartSvg size={15} />}
                     count={likes}
                     baseColor={muted}
                     activeColor="#f91880"
@@ -544,7 +544,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                 />
                 {quotes ? (
                     <ActionBtn
-                        icon={<QuoteSvg size={14} />}
+                        icon={<QuoteSvg size={15} />}
                         count={quotes}
                         baseColor={muted}
                         activeColor="#1d9bf0"
@@ -553,7 +553,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     />
                 ) : null}
                 <ActionBtn
-                    icon={<ShareSvg size={14} />}
+                    icon={<ShareSvg size={15} />}
                     count=""
                     baseColor={muted}
                     activeColor="#1d9bf0"
@@ -573,7 +573,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     </div>
                     <div
                         onClick={e => e.stopPropagation()}
-                        className="max-h-[175px] overflow-y-auto pr-1 cursor-default"
+                        className="max-h-[195px] overflow-y-auto pr-1 cursor-default"
                     >
                         <div className="relative space-y-2.5">
                             {replies.map((reply, i) => {
@@ -586,17 +586,17 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                                         {!last && (
                                             <div
                                                 className="pointer-events-none absolute w-[1.5px] rounded-full"
-                                                style={{ left: 11.5, top: 26, bottom: -8, background: '#cfd9de' }}
+                                                style={{ left: 13, top: 28, bottom: -8, background: '#cfd9de' }}
                                             />
                                         )}
-                                        <div className="flex w-6 shrink-0 justify-center">
-                                            <Face url={reply.avatar} label={who} size={24} wash={wash} ink={ink} />
+                                        <div className="flex w-7 shrink-0 justify-center">
+                                            <Face url={reply.avatar} label={who} size={26} wash={wash} ink={ink} />
                                         </div>
-                                        <div className="min-w-0 flex-1 text-[12px] leading-[1.35]">
+                                        <div className="min-w-0 flex-1 text-[12.5px] leading-[1.36]">
                                             <div className="flex items-baseline gap-1 truncate">
                                                 <span className="truncate font-bold" style={{ color: ink }}>{who}</span>
                                                 {replyHandle ? (
-                                                    <span className="truncate text-[11px]" style={{ color: muted }}>@{replyHandle}</span>
+                                                    <span className="truncate text-[11.5px]" style={{ color: muted }}>@{replyHandle}</span>
                                                 ) : null}
                                             </div>
                                             {target && target !== '?' && (
