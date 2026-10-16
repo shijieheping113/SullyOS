@@ -39,6 +39,8 @@ describe('buildToolPack / parseToolPack', () => {
         { date: '2026-05-01', summary: '吵了一小架' },
       ],
       timeAwarenessEnabled: true,
+      jpHotEnabled: false,
+      xToolsEnabled: false,
     });
     expect(JSON.stringify(pack)).not.toContain('"id"');
   });
@@ -52,6 +54,8 @@ describe('buildToolPack / parseToolPack', () => {
       activeMemoryMonths: [],
       memories: [],
       timeAwarenessEnabled: true,
+      jpHotEnabled: false,
+      xToolsEnabled: false,
     });
   });
 

@@ -30,6 +30,19 @@ import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
+import { buildXPackTeaching, jpHotInjectOn, xYahooDiscussOn } from './xJpPack';
+
+/** 天气或国内热点关掉时，位置会补在实时段外面。日本热词段里已经写过位置，就不要再补一次。 */
+export const shouldAppendUserLocationBesideRealtime = (
+    timelyByWorker: boolean,
+    weatherEnabled: boolean,
+    newsEnabled: boolean,
+    realtimeText: string,
+    jpHotInRealtime: boolean,
+): boolean => {
+    if (jpHotInRealtime && realtimeText.trim()) return false;
+    return timelyByWorker || (!weatherEnabled && !newsEnabled) || !realtimeText.trim();
+};
 import { getBackgroundUserLocationContext, getUserLocationContext } from './userLocation';
 import { isScheduleFeatureOn } from './scheduleFeature';
 import { buildChatVoiceMessagePromptBlock } from './voiceMessagePrompt';
@@ -414,11 +427,14 @@ export const ChatPrompts = {
         const realtimePromise: Promise<string> = (async () => {
             if (forFirePack || timelyByWorker || boxPlay) return '';
             try {
-                if (config.weatherEnabled || config.newsEnabled) {
+                const includeJp = jpHotInjectOn(config, char);
+                if (config.weatherEnabled || config.newsEnabled || includeJp) {
                     // 时间行跟着角色的「时间感知」开关走：关掉的角色不该从天气块里读到
                     // 「当前真实时间」，那是这个开关本来要挡住的东西。
                     const realtimeContext = await RealtimeContextManager.buildFullContext(config, charTz, {
                         includeTime: char.timeAwarenessEnabled !== false,
+                        includeJp,
+                        jpDiscuss: xYahooDiscussOn(config, char),
                         userLocation: userLocationPromise,
                     });
                     return `\n${realtimeContext}\n`;
@@ -563,7 +579,13 @@ ${groupLogStr}\n`;
         volatileState += realtimeText;
         // Local weather rendering already embeds it beside weather. Instant chat's
         // weather arrives from the worker, so keep this per-turn text in Live Context.
-        if (timelyByWorker || (!config.weatherEnabled && !config.newsEnabled) || !realtimeText) volatileState += userLocationText;
+        if (shouldAppendUserLocationBesideRealtime(
+            !!timelyByWorker,
+            !!config.weatherEnabled,
+            !!config.newsEnabled,
+            realtimeText,
+            jpHotInjectOn(config, char),
+        )) volatileState += userLocationText;
 
         // 日程已由 ContextBuilder 实时块统一注入；这里的 schedule 仅供音乐氛围使用。
 
@@ -672,6 +694,11 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
             && (!forFirePack || isWorkerReachableUrl(xhsServerUrl))
         );
         const xhsEnabled = !!(char.xhsEnabled && mcpXhsAvailable);
+        // 这些标记只在手机这一轮的二轮里执行。主动消息和即时对话在 Worker 上生成，
+        // 那边不会去跑，教了只会剩下一行没人接的标记。
+        const xPackTeaching = (forFirePack || timelyByWorker)
+            ? ''
+            : buildXPackTeaching(realtimeConfig, char);
         // `[schedule_message]` 排的是本地定时消息：存在浏览器里，靠 OSContext 那个 5 秒
         // 轮询的 React 定时器派发，App 关着就不存在。主动消息 2.0 到点生成走的是另一条路
         // （worker 到点跑，不需要 App 开着），它有自己的排程工具，worker 会把说明追加在
@@ -992,7 +1019,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    - 聊到旅行/穿搭/好物 → 主动说可以搜一下
    - 不要生硬地介绍功能，而是在对话自然流动中提起
    - 第一次提到小红书时可以稍微解释一下："我有小红书号的哦，可以帮你搜东西、看看大家怎么说"
-` : ''}
+` : ''}${xPackTeaching}
 
 `;
         }
@@ -1357,7 +1384,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         content += sparkFootprintLine;
                     }
                 }
-                else if ((m.type as string) === 'xhs_card' || (m.type as string) === 'webpage_card') {
+                else if ((m.type as string) === 'xhs_card' || (m.type as string) === 'webpage_card' || (m.type as string) === 'x_card' || (m.type as string) === 'threads_card') {
                     content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
                 }
                 else if ((m.type as string) === 'vr_card') {

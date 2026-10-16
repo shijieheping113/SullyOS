@@ -26,6 +26,7 @@ import {
 } from '../../../utils/realtimeWorldCore';
 import type { AmsgToolConfig } from '../../../utils/amsgToolPack';
 import { getUserHolidayReminder } from '../../../utils/userHolidays';
+import { fetchJpHotFeed } from '../../../utils/jpHotClient';
 
 /** 两份快照都放全局命名空间：天气按城市、热榜按时段，本来就是所有角色共用一份。 */
 export const AMSG_WEATHER_SNAPSHOT_KEY = 'world_weather';
@@ -197,6 +198,8 @@ type RealtimeWorldArgs = {
   toolConfig: AmsgToolConfig;
   /** 角色的时间感知开关（tool_pack 带上来的）：关掉就连今日节日一起不给。 */
   timeAwarenessEnabled: boolean;
+  /** 角色是否吃日本热词。缺省＝不吃。国内热点仍只看全局 newsEnabled。 */
+  charJpHotEnabled?: boolean;
   /** 角色的时区，判「今天几号」用。 */
   tzId: string;
   nowMs: number;
@@ -221,7 +224,8 @@ export const buildRealtimeWorldBlock = async (args: RealtimeWorldArgs): Promise<
   const { toolConfig: cfg, nowMs, globalRows } = args;
 
   const specialDates = args.timeAwarenessEnabled ? checkSpecialDates(args.tzId, nowMs) : [];
-  if (!cfg.weatherEnabled && !cfg.newsEnabled) {
+  const includeJp = !!cfg.jpHotEnabled && !!args.charJpHotEnabled;
+  if (!cfg.weatherEnabled && !cfg.newsEnabled && !includeJp) {
     // 天气热搜都没开，只剩节日：有就单说一句，没有就整段不要。
     return renderRealtimeWorldBlock({ specialDates });
   }
@@ -246,10 +250,14 @@ export const buildRealtimeWorldBlock = async (args: RealtimeWorldArgs): Promise<
     }
   }
 
+  const jpHotFeed = includeJp
+    ? await withBudget(fetchJpHotFeed(cfg, new Date(nowMs)).catch(() => ''), 8000, '', '日本热词')
+    : '';
   const block = renderRealtimeWorldBlock({
     specialDates,
     weather,
     news: pickRandomNews(news, REALTIME_NEWS_PICK_COUNT),
+    jpHotFeed,
   });
   console.log('[amsg:world] 本次注入', {
     节日: specialDates.length,

@@ -12,6 +12,7 @@
  */
 
 import type { Message, Emoji } from '../types';
+import { buildSocialModelFeed } from './xJpPack';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
 import { formatTransferRecord } from './transferFormat';
@@ -285,6 +286,23 @@ export function normalizeMessageContent(
     // 小红书卡片：把笔记标题 + 正文 desc + 作者翻成可读文本喂给角色。标题来自分享文案
     // （无需后端），desc/作者来自 MCP 抓取（可能没有）。没专门分支时会走默认只给 content(=标题)，
     // 抓空时甚至空字符串，角色读不到任何东西。
+    if (type === 'x_card' || type === 'threads_card') {
+        const meta: any = msg.metadata || {};
+        const kind = type === 'threads_card' ? 'threads' : 'x';
+        const sharer = msg.role === 'assistant' ? charName : userName;
+        const card = meta.xSocial;
+        if (card && (card.text || card.authorName || card.authorHandle)) {
+            return buildSocialModelFeed(kind, card, sharer);
+        }
+        const feed = typeof meta.modelFeed === 'string' ? meta.modelFeed.trim() : '';
+        if (feed) return buildSocialModelFeed(kind, {
+            provider: kind === 'threads' ? 'threads-ssr' : 'fxtwitter',
+            text: feed.replace(/^\[(?:X|Threads)帖子\][^\n]*\n?/, ''),
+            replies: [],
+        }, sharer);
+        return kind === 'threads' ? `[Threads帖子] ${sharer}分享了一条 Threads 帖` : `[X帖子] ${sharer}分享了一条 X 帖`;
+    }
+
     if (type === 'xhs_card') {
         const note: any = msg.metadata?.xhsNote || {};
         const share = shareLinkContext(msg);

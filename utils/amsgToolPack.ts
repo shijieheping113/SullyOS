@@ -36,6 +36,10 @@ export interface AmsgToolPack {
    * 也不给今日节日——这个字段不上云的话，前台守着的开关一到主动消息就失效。
    */
   timeAwarenessEnabled: boolean;
+  /** 角色吃不吃日本热词。缺省不吃。国内热点不进这份角色包。 */
+  jpHotEnabled?: boolean;
+  /** 角色开不开 X / Threads。缺省不开。 */
+  xToolsEnabled?: boolean;
 }
 
 /**
@@ -59,6 +63,18 @@ export interface AmsgToolConfig extends AgenticToolRealtimeConfig {
   weatherApiKey?: string;
   /** 热榜要拉哪几个平台（继承来的 newsEnabled 管开关）。留空 worker 用内置默认。 */
   newsPlatforms?: string[];
+  jpHotEnabled?: boolean;
+  jpHotPickCount?: number;
+  jpHotHours?: 4 | 24;
+  jpHotInterestEnabled?: boolean;
+  jpHotDomains?: string[];
+  jpHotSource?: 'trends' | 'yahoo';
+  xToolsEnabled?: boolean;
+  xFeatLinkCards?: boolean;
+  xFeatReadDeep?: boolean;
+  xFeatSearch?: boolean;
+  xFeatProfile?: boolean;
+  xFeatYahooDiscuss?: boolean;
   /** 上云这份比工具侧多一个 cookie（lite 模式的登录态），并且两个开关字段是必填。 */
   xhsMcpConfig?: {
     enabled: boolean;
@@ -117,6 +133,8 @@ export const buildToolPack = (char: CharacterProfile): AmsgToolPack => ({
   })),
   // 前台的判定是「没显式关就算开」，这边照抄同一句，别让同一个开关两处读出不同结果。
   timeAwarenessEnabled: char.timeAwarenessEnabled !== false,
+  jpHotEnabled: char.jpHotEnabled === true,
+  xToolsEnabled: char.xToolsEnabled === true,
 });
 
 /**
@@ -137,6 +155,18 @@ export const buildToolConfig = (
     ...(rc?.weatherCity ? { weatherCity: rc.weatherCity } : {}),
     ...(rc?.weatherApiKey ? { weatherApiKey: rc.weatherApiKey } : {}),
     newsEnabled: !!rc?.newsEnabled,
+    jpHotEnabled: !!rc?.jpHotEnabled,
+    jpHotPickCount: rc?.jpHotPickCount,
+    jpHotHours: rc?.jpHotHours === 24 ? 24 : 4,
+    jpHotInterestEnabled: !!rc?.jpHotInterestEnabled,
+    jpHotDomains: rc?.jpHotDomains,
+    jpHotSource: rc?.jpHotSource === 'yahoo' ? 'yahoo' : 'trends',
+    xToolsEnabled: !!rc?.xToolsEnabled,
+    xFeatLinkCards: rc?.xFeatLinkCards !== false,
+    xFeatReadDeep: !!rc?.xFeatReadDeep,
+    xFeatSearch: rc?.xFeatSearch !== false,
+    xFeatProfile: rc?.xFeatProfile !== false,
+    xFeatYahooDiscuss: !!rc?.xFeatYahooDiscuss,
     ...(rc?.newsApiKey ? { newsApiKey: rc.newsApiKey } : {}),
     ...(rc?.newsPlatforms?.length ? { newsPlatforms: rc.newsPlatforms } : {}),
     notionEnabled: !!rc?.notionEnabled,

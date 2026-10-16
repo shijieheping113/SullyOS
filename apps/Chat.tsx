@@ -35,6 +35,8 @@ import { buildSARMemoryBoundaryInstruction, formatMessageWithTime, normalizeMess
 import { getRoomLabel } from '../utils/memoryPalace/types';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
 import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteLink, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
+import { buildSocialModelFeed, findXOrThreadsUrl, isXOrThreadsUrl, xLinkCardsOn } from '../utils/xJpPack';
+import { fetchLinkSocialCard } from '../utils/xSocialFetch';
 import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
 import { isDevDebugAvailable } from '../utils/devDebug';
 import { isImageValue, migrateDataUrlToRef, putImageBlob, putImageBlobDeduped, useBlobRefUrl } from '../utils/blobRef';
@@ -367,13 +369,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
     const [inputPreferences, setInputPreferences] = useState(loadChatInputPreferences);
     const [settingsInputPreferences, setSettingsInputPreferences] = useState(loadChatInputPreferences);
-    const [linkCardQuestion, setLinkCardQuestion] = useState<'linkCards' | 'xhsCards' | null>(null);
+    const [linkCardQuestion, setLinkCardQuestion] = useState<'linkCards' | 'xhsCards' | 'xCards' | null>(null);
     const linkCardAnswer = useRef<((convert: boolean) => void) | null>(null);
     useEffect(() => () => { linkCardAnswer.current?.(false); linkCardAnswer.current = null; }, []);
-    const decideLinkCard = async (kind: 'linkCards' | 'xhsCards'): Promise<boolean> => {
+    const decideLinkCard = async (kind: 'linkCards' | 'xhsCards' | 'xCards'): Promise<boolean> => {
         const prefs = loadChatInputPreferences();
         if (prefs[kind] === false) return false;
-        const notice = kind === 'xhsCards' ? 'xhsCardNoticeSeen' : 'linkCardNoticeSeen';
+        const notice = kind === 'xhsCards' ? 'xhsCardNoticeSeen' : kind === 'xCards' ? 'xCardNoticeSeen' : 'linkCardNoticeSeen';
         if (prefs[notice]) return true;
         // A second simultaneous send keeps its text instead of replacing a pending question.
         if (linkCardAnswer.current) return false;
@@ -381,7 +383,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     };
     const answerLinkCard = (convert: boolean) => {
         if (!linkCardQuestion) return;
-        const notice = linkCardQuestion === 'xhsCards' ? 'xhsCardNoticeSeen' : 'linkCardNoticeSeen';
+        const notice = linkCardQuestion === 'xhsCards' ? 'xhsCardNoticeSeen' : linkCardQuestion === 'xCards' ? 'xCardNoticeSeen' : 'linkCardNoticeSeen';
         const prefs = { ...loadChatInputPreferences(), [linkCardQuestion]: convert, [notice]: true };
         saveChatInputPreferences(prefs);
         setInputPreferences(prefs);
@@ -2184,6 +2186,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         if (type === 'text') {
             let xhsCardCreated = false;
             let webpageCardCreated = false;
+            let xSocialCardCreated = false;
             const xhsFullNote = extractXhsNoteLink(text);
             const xhsFullNoteId = xhsFullNote?.noteId;
             // 同时识别桌面/旧版 xhslink.com 与手机版新版 xhslink.cn。
@@ -2269,7 +2272,29 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             // 视频平台链接（抖音/B站/快手…）Jina 基本抓不到东西（SPA+登录墙），
             // 优先走 apizero 视频解析拿标题/作者/封面/热度；失败降级回通用网页抓取。
             const sharedUrl = detectFirstUrl(text);
-            if (sharedUrl && !isXhsUrl(sharedUrl) && !(xhsFullNoteId || xhsShortUrl) && await decideLinkCard('linkCards')) {
+            const xSocialUrl = findXOrThreadsUrl(text);
+            if (xSocialUrl && !isXhsUrl(xSocialUrl) && xLinkCardsOn(realtimeConfig, char) && await decideLinkCard('xCards')) {
+                try {
+                    addToast(xSocialUrl.includes('threads.') ? '正在读取 Threads…' : '正在读取 X…', 'info');
+                    const got = await fetchLinkSocialCard(xSocialUrl);
+                    if (got) {
+                        const sharedFeed = buildSocialModelFeed(got.kind, got.card, userProfile.name || '用户');
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'user',
+                            type: got.kind === 'threads' ? 'threads_card' : 'x_card',
+                            content: sharedFeed,
+                            metadata: { ...metadata, xSocial: got.card, modelFeed: sharedFeed, originalShareText: text, originalShareUrl: xSocialUrl, provider: got.card.provider },
+                        });
+                        xSocialCardCreated = true;
+                    }
+                } catch (e) {
+                    console.warn('X/Threads 贴链失败', e);
+                    addToast('这条链接没读出来，原文留着。', 'error');
+                }
+            }
+            const preferSocialCard = !!xSocialUrl && xLinkCardsOn(realtimeConfig, char);
+            if (!preferSocialCard && sharedUrl && !isXhsUrl(sharedUrl) && !isXOrThreadsUrl(sharedUrl) && !(xhsFullNoteId || xhsShortUrl) && await decideLinkCard('linkCards')) {
                 let webpage: ExtractedWebpage | null = null;
                 if (isVideoShareUrl(sharedUrl)) {
                     try {
@@ -2309,7 +2334,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             }
 
             // 原文和链接已完整保存在卡片 metadata；仅建卡成功后移除重复的文字消息。
-            if ((xhsCardCreated || webpageCardCreated) && savedUserMsgId) {
+            if ((xhsCardCreated || webpageCardCreated || xSocialCardCreated) && savedUserMsgId) {
                 await DB.deleteMessage(savedUserMsgId);
             }
         }
@@ -5207,7 +5232,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 }}
             />
             <ConfirmDialog isOpen={linkCardQuestion !== null}
-                title={linkCardQuestion === 'xhsCards' ? '小红书链接解析' : '分享链接解析'}
+                title={linkCardQuestion === 'xhsCards' ? '小红书链接解析' : linkCardQuestion === 'xCards' ? 'X / Threads 链接解析' : '分享链接解析'}
                 message="检测到分享链接，要关闭自动转卡片吗？关闭后，本条及之后的链接会按原文发送，方便角色用你配置的 MCP 读取。保留卡片也会带上原链接。两类解析可在加号 → 设置中分别调整。"
                 confirmText="关闭，发送原文" cancelText="保留卡片"
                 onConfirm={() => answerLinkCard(false)} onCancel={() => answerLinkCard(true)} />
@@ -5280,6 +5305,10 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 onSetTranslateLang={(lang: string) => { const next = normalizeTranslationLangLabel(lang); if (!next) return; setTranslateTargetLang(next); localStorage.setItem(`chat_translate_lang_${activeCharacterId}`, next); setShowingTargetIds(new Set()); }}
                 xhsEnabled={!!char.xhsEnabled}
                 onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
+                jpHotEnabled={!!realtimeConfig?.jpHotEnabled && !!char.jpHotEnabled}
+                onToggleJpHot={realtimeConfig?.jpHotEnabled ? () => updateCharacter(char.id, { jpHotEnabled: !char.jpHotEnabled }) : undefined}
+                xToolsEnabled={!!realtimeConfig?.xToolsEnabled && !!char.xToolsEnabled}
+                onToggleXTools={realtimeConfig?.xToolsEnabled ? () => updateCharacter(char.id, { xToolsEnabled: !char.xToolsEnabled }) : undefined}
                 htmlModeEnabled={!!(char as any).htmlModeEnabled}
                 onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
                 htmlModeCustomPrompt={settingsHtmlModeCustomPrompt}

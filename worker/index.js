@@ -1,3 +1,5 @@
+import { handleXJpRequest } from "./xJpRealtime.js";
+
 const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1";
 const FEISHU_BASE = "https://open.feishu.cn/open-apis";
 const XHS_BASE = "https://edith.xiaohongshu.com";
@@ -2444,6 +2446,16 @@ export default {
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+
+    // 日本热词 / 雅虎讨论 / Threads 读帖。X 的 Fx 与搜索不走这里。
+    if (request.method === "GET" && /^\/(?:gtrends\/jp|yahoo-realtime\/(?:hot|discuss)|threads\/post)$/.test(url.pathname.replace(/\/+$/, ""))) {
+      try {
+        const xjp = await handleXJpRequest(url);
+        if (xjp) return jsonResponse(xjp, { origin });
+      } catch (e) {
+        return jsonResponse({ ok: false, reason: "unreachable", detail: String((e && e.message) || e) }, { origin });
+      }
     }
 
     // ========== 小红书 Lite 桥接 (/api/<command>) ==========

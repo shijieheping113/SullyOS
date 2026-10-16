@@ -21,6 +21,8 @@ export const CHAT_TYPE_SAMPLES = {
  social_card:msg(9,'social_card','今天的小确幸',{post:{title:'今天的小确幸',content:'在转角遇见了一家花店。',images:['🌼'],authorName:'示例作者'}}),
  chat_forward:msg(10,'chat_forward',JSON.stringify({fromUserName:'我',fromCharName:'示例角色',count:2,preview:['我：周末去看海吧。','示例角色：好，一起。'],messages:[]})),
  xhs_card:msg(11,'xhs_card','周末散步路线',{xhsNote:{title:'周末散步路线',desc:'沿着河边慢慢走。',authorName:'示例作者',likes:128}}),
+ x_card:msg(29,'x_card','主帖正文',{xSocial:{provider:'fxtwitter',authorName:'示例',authorHandle:'demo',text:'主帖正文',replies:[{name:'路人',handle:'guest',text:'回复一句',replyToName:'示例',replyToHandle:'demo'}]},modelFeed:'[X帖子] 示例（@demo）\n主帖正文'}),
+ threads_card:msg(30,'threads_card','Threads 正文',{xSocial:{provider:'threads-ssr',authorName:'示例',authorHandle:'demo',text:'Threads 正文',replies:[]},modelFeed:'[Threads帖子] 示例（@demo）\nThreads 正文'}),
  score_card:msg(12,'score_card','写给晚风的歌',{scoreCard:{title:'写给晚风的歌',genre:'民谣',lyrics:'晚风替我捎去一句晚安。',author:'示例角色'}}),
  music_card:msg(13,'music_card','一起听歌',{song:{songId:0,name:'晚风来信',artists:'示例歌手',albumPic:''},intent:'join'}),
  mcd_card:msg(14,'mcd_card','推荐菜单',{mcdCardKind:'proposal',mcdProposal:{items:[{name:'薯条'},{name:'汉堡'}]}}),

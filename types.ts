@@ -644,6 +644,24 @@ export interface RealtimeConfig {
   xhsEnabled: boolean;
   xhsMcpConfig?: XhsMcpConfig;
 
+  // 日本热词。和国内热点分开，角色只有开/关。
+  jpHotEnabled?: boolean;
+  jpHotPickCount?: number;
+  jpHotHours?: 4 | 24;
+  jpHotInterestEnabled?: boolean;
+  jpHotDomains?: string[];
+  jpHotSource?: 'trends' | 'yahoo';
+
+  // X / Threads。总开关关掉时，分能力一律不生效。
+  xToolsEnabled?: boolean;
+  xFeatLinkCards?: boolean;
+  xFeatReadDeep?: boolean;
+  xFeatSearch?: boolean;
+  xFeatProfile?: boolean;
+  xFeatYahooDiscuss?: boolean;
+  xSearchFeed?: 'top' | 'latest';
+  xSearchIncludeReplies?: boolean;
+
   // 缓存配置
   cacheMinutes: number;
 }
@@ -3029,6 +3047,10 @@ export interface CharacterProfile {
 
   // 小红书 per-character toggle
   xhsEnabled?: boolean;
+  /** 是否吃日本热词。缺省关。国内热点仍只看全局开关。 */
+  jpHotEnabled?: boolean;
+  /** 是否启用 X / Threads。和 xhsEnabled 无关。缺省关。 */
+  xToolsEnabled?: boolean;
 
   socialProfile?: {
       handle: string;
@@ -4006,7 +4028,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'secret_note' | 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'box_record';
+export type MessageType = 'secret_note' | 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'x_card' | 'threads_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'box_record';
 
 export interface Message {
     id: number;

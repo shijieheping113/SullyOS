@@ -30,6 +30,8 @@ import { DB } from './db';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { loadRecentForGameDedupe, persistGameTagsFromText } from './chatGames/commit';
 import { hasRerunTags, plainGameSpeech, stripRerunTags } from './chatGames/tags';
+import { findFirstXPackTag, stripXPackTags, xPackShortRecord, xPackTagEnabled } from './xJpPack';
+import { runThreadsRead, runXProfile, runXRead, runXSearch, runYahooDiscuss } from './xSocialFetch';
 import { followUpRolls, gameFollowUpNote, shouldRequestGameFollowUp, stripGameTags } from './chatGames/text';
 import { SYSTEM_LOG_LEAD } from './block';
 import { resolveCharTimeZone } from './timezone';
@@ -2370,6 +2372,60 @@ export async function applyAssistantPostProcessing(
         setXhsStatus('');
     }
     aiContent = aiContent.replace(/\[\[XHS_POST:.*?\]\]/gs, '').trim();
+
+    // X / Threads 标记写在 XHS_* 后面，精确全名，不会吃掉 XHS_。
+    const xPackHit = findFirstXPackTag(aiContent);
+    if (xPackHit && !skipSecondPassLLM) {
+        const allowed = xPackTagEnabled(xPackHit.name, realtimeConfig, char);
+        let toolText = 'ok: false\nreason: not_enabled';
+        let toolOk = false;
+        if (allowed) {
+            const ran = await replyStep(async () => {
+                if (xPackHit.name === 'X_SEARCH') return runXSearch(xPackHit.arg, {
+                    sort: realtimeConfig?.xSearchFeed === 'latest' ? 'latest' : 'top',
+                    includeReplies: !!realtimeConfig?.xSearchIncludeReplies,
+                });
+                if (xPackHit.name === 'X_PROFILE') return runXProfile(xPackHit.arg);
+                if (xPackHit.name === 'X_READ') return runXRead(xPackHit.arg);
+                if (xPackHit.name === 'THREADS_READ') return runThreadsRead(xPackHit.arg);
+                return runYahooDiscuss(xPackHit.arg);
+            });
+            toolText = ran.summary;
+            toolOk = ran.ok;
+            if (ran.ok) {
+                const note = xPackShortRecord(xPackHit.name, xPackHit.arg, true, char.name, ran.count);
+                if (note) {
+                    await replyStep(async () => persistMessage({
+                        charId: char.id,
+                        role: 'system',
+                        type: 'text',
+                        content: note,
+                    }));
+                }
+            }
+        }
+        const lead = stripXPackTags(aiContent);
+        const looked = toolOk ? '你已经看完了上面的结果' : '这次没有查到可用结果';
+        const xMessages = [
+            ...fullMessages,
+            ...(lead ? [{ role: 'assistant', content: lead }] : []),
+            { role: 'user', content: `[系统: 你刚刚用了 X / Threads 的工具。以下是结果]\n\n${toolText}\n\n[系统: ${looked}。现在请你：\n1. 用自己的话接着说，比如「我刚搜了一下」「我看了 ta 的主页」\n2. 可以评价、吐槽、挑你在意的那几句\n3. 不要再输出 [[${xPackHit.name}:]]\n4. 不要把原链接写出来\n5. 如果没查到，就说这次没看到，不要编]` },
+        ];
+        try {
+            data = await replyStep(async () => safeFetchJson(`${baseUrl}/chat/completions`, {
+                signal: ctx.replyRun?.signal,
+                method: 'POST', headers,
+                body: JSON.stringify({ model: effectiveApi.model, messages: xMessages, temperature: 0.8, max_tokens: 8000, stream: false }),
+            }, 2, 0, { ...apiLogMeta, purpose: 'X工具' }));
+            updateTokenUsage(data, historyMsgCount, 'x-pack');
+            aiContent = normalizeAiContent(data.choices?.[0]?.message?.content || lead);
+        } catch (e) {
+            ctx.replyRun?.check();
+            console.warn('[x-pack] 二轮失败', e);
+            aiContent = lead;
+        }
+    }
+    aiContent = stripXPackTags(aiContent);
 
     // 二轮 LLM 可能新产生日程标签；在统一动作解析前再消费一次。首次那条已经从 aiContent
     // 剥掉且写入幂等（同活动不重复），因此普通单轮回复不会重放副作用。

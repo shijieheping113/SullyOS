@@ -21,6 +21,8 @@ import { loadUserLocationConfig, type UserLocationConfig } from '../utils/userLo
 import { saveUserLocationConfig } from '../utils/userLocation';
 import { consumeHolidaySettings, hasHolidaySettingsRequest, type UserHolidayConfig } from '../utils/userHolidays';
 import { NotionManager, FeishuManager, RealtimeContextManager, fetchOwmWeather, fetchOpenMeteoWeather } from '../utils/realtimeContext';
+import { JP_DOMAIN_DEFAULT_KEYS, JP_DOMAIN_OPTIONS } from '../utils/xJpPack';
+import { fetchJpHotFeed, formatJpHotRefreshLabel, peekJpHotRefreshedAt } from '../utils/jpHotClient';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { resolveXhsDeploymentMode } from '../utils/xhsMcpConfig';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
@@ -728,6 +730,26 @@ const Settings: React.FC = () => {
   const [rtFeishuBaseId, setRtFeishuBaseId] = useState(realtimeConfig.feishuBaseId);
   const [rtFeishuTableId, setRtFeishuTableId] = useState(realtimeConfig.feishuTableId);
   const [rtXhsEnabled, setRtXhsEnabled] = useState(realtimeConfig.xhsEnabled);
+  const [rtJpHotEnabled, setRtJpHotEnabled] = useState(!!realtimeConfig.jpHotEnabled);
+  const [rtJpHotCount, setRtJpHotCount] = useState(realtimeConfig.jpHotPickCount || 6);
+  const [rtJpHotHours, setRtJpHotHours] = useState<4 | 24>(realtimeConfig.jpHotHours === 24 ? 24 : 4);
+  const [rtJpHotInterest, setRtJpHotInterest] = useState(!!realtimeConfig.jpHotInterestEnabled);
+  const [rtJpHotDomains, setRtJpHotDomains] = useState<string[]>(realtimeConfig.jpHotDomains || JP_DOMAIN_DEFAULT_KEYS);
+  const [rtJpHotSource, setRtJpHotSource] = useState<'trends' | 'yahoo'>(realtimeConfig.jpHotSource === 'yahoo' ? 'yahoo' : 'trends');
+  const [rtXToolsEnabled, setRtXToolsEnabled] = useState(!!realtimeConfig.xToolsEnabled);
+  const [rtXFeatLinkCards, setRtXFeatLinkCards] = useState(realtimeConfig.xFeatLinkCards !== false);
+  const [rtXFeatReadDeep, setRtXFeatReadDeep] = useState(!!realtimeConfig.xFeatReadDeep);
+  const [rtXFeatSearch, setRtXFeatSearch] = useState(realtimeConfig.xFeatSearch !== false);
+  const [rtXFeatProfile, setRtXFeatProfile] = useState(realtimeConfig.xFeatProfile !== false);
+  const [rtXFeatYahooDiscuss, setRtXFeatYahooDiscuss] = useState(!!realtimeConfig.xFeatYahooDiscuss);
+  const [rtXSearchFeed, setRtXSearchFeed] = useState<'top' | 'latest'>(realtimeConfig.xSearchFeed === 'latest' ? 'latest' : 'top');
+  const [rtXSearchReplies, setRtXSearchReplies] = useState(!!realtimeConfig.xSearchIncludeReplies);
+  const [jpHotPreview, setJpHotPreview] = useState('');
+  const [jpHotRefreshLabel, setJpHotRefreshLabel] = useState('尚未刷新');
+  const [jpHotRefreshing, setJpHotRefreshing] = useState(false);
+  useEffect(() => {
+      setJpHotRefreshLabel(formatJpHotRefreshLabel(peekJpHotRefreshedAt()));
+  }, []);
   // lite 走作者小屋 /api。测试连接和保存用同一个地址，不跟语音门铃走。
   const XHS_LITE_URL = getXhsLiteUrl();
   const XHS_RISK_TEXT = '使用提示：Lite 通过网页接口连接小红书，平台规则变化时可能出现登录失效或功能暂时不可用。建议先用小号体验，并在发布或互动前确认内容。';
@@ -2007,6 +2029,20 @@ const Settings: React.FC = () => {
           feishuBaseId: rtFeishuBaseId,
           feishuTableId: rtFeishuTableId,
           xhsEnabled: rtXhsEnabled,
+          jpHotEnabled: rtJpHotEnabled,
+          jpHotPickCount: Math.max(1, Math.min(12, Math.floor(Number(rtJpHotCount) || 6))),
+          jpHotHours: rtJpHotHours,
+          jpHotInterestEnabled: rtJpHotInterest,
+          jpHotDomains: rtJpHotDomains,
+          jpHotSource: rtJpHotSource,
+          xToolsEnabled: rtXToolsEnabled,
+          xFeatLinkCards: rtXFeatLinkCards,
+          xFeatReadDeep: rtXFeatReadDeep,
+          xFeatSearch: rtXFeatSearch,
+          xFeatProfile: rtXFeatProfile,
+          xFeatYahooDiscuss: rtXFeatYahooDiscuss,
+          xSearchFeed: rtXSearchFeed,
+          xSearchIncludeReplies: rtXSearchReplies,
           xhsMcpConfig: {
               enabled: rtXhsMcpEnabled,
               mode: rtXhsMode,
@@ -4599,6 +4635,103 @@ const Settings: React.FC = () => {
                           </details>
                       </div>
                   )}
+              </div>
+
+              <div className={`p-4 rounded-2xl space-y-3 ${rtJpHotEnabled ? 'bg-emerald-50/70' : 'bg-slate-50'}`}>
+                  <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-emerald-800">日本热议</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={rtJpHotEnabled} onChange={e => setRtJpHotEnabled(e.target.checked)} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">和上面的国内热点分开。角色还要在聊天设置里单独打开，才会看到这一段。</p>
+                  <div className={rtJpHotEnabled ? 'space-y-2' : 'space-y-2 opacity-40 pointer-events-none'}>
+                      <label className="text-[10px] font-bold text-slate-400 block">条数（1–12，默认 6）</label>
+                      <input type="number" min={1} max={12} value={rtJpHotCount} onChange={e => setRtJpHotCount(Number(e.target.value))} className="w-full bg-white rounded-xl px-3 py-2 text-sm" />
+                      <div className="flex gap-2">
+                          <button type="button" onClick={() => setRtJpHotHours(4)} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotHours === 4 ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>近 4 小时</button>
+                          <button type="button" onClick={() => setRtJpHotHours(24)} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotHours === 24 ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>近 24 小时</button>
+                      </div>
+                      <div className="flex gap-2">
+                          <button type="button" onClick={() => setRtJpHotSource('trends')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotSource === 'trends' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>Google Trends</button>
+                          <button type="button" onClick={() => setRtJpHotSource('yahoo')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotSource === 'yahoo' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>雅虎急上昇</button>
+                      </div>
+                      <label className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+                          按兴趣筛选
+                          <input type="checkbox" checked={rtJpHotInterest} onChange={e => setRtJpHotInterest(e.target.checked)} />
+                      </label>
+                      <div className={`flex flex-wrap gap-1.5 ${rtJpHotInterest ? '' : 'opacity-40 pointer-events-none'}`}>
+                          {JP_DOMAIN_OPTIONS.map(({ key, label }) => {
+                              const active = rtJpHotDomains.includes(key);
+                              return (
+                                  <button key={key} type="button" onClick={() => setRtJpHotDomains(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])} className={`text-[11px] px-2.5 py-1 rounded-full font-bold ${active ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500 border border-emerald-200'}`}>{label}</button>
+                              );
+                          })}
+                      </div>
+                      {rtJpHotInterest && rtJpHotDomains.length === 0 && <p className="text-[10px] text-slate-400">一个都没勾，就等于不筛选。</p>}
+                      <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-slate-500">{jpHotRefreshLabel}</span>
+                          <button
+                              type="button"
+                              disabled={jpHotRefreshing}
+                              onClick={async () => {
+                                  setJpHotRefreshing(true);
+                                  try {
+                                      const feed = await fetchJpHotFeed({
+                                          jpHotEnabled: true,
+                                          jpHotPickCount: rtJpHotCount,
+                                          jpHotHours: rtJpHotHours,
+                                          jpHotInterestEnabled: rtJpHotInterest,
+                                          jpHotDomains: rtJpHotDomains,
+                                          jpHotSource: rtJpHotSource,
+                                      }, new Date(), { force: true });
+                                      setJpHotPreview(feed || '这次没有拉到词。');
+                                      setJpHotRefreshLabel(formatJpHotRefreshLabel(peekJpHotRefreshedAt()));
+                                  } catch {
+                                      setJpHotPreview('这次没有拉到词。');
+                                  } finally {
+                                      setJpHotRefreshing(false);
+                                  }
+                              }}
+                              className="text-[11px] px-3 py-1 rounded-full font-bold bg-emerald-500 text-white disabled:opacity-40"
+                          >{jpHotRefreshing ? '正在刷新…' : '刷新热词'}</button>
+                      </div>
+                      {jpHotPreview ? <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-[11px] leading-relaxed text-slate-600">{jpHotPreview}</pre> : null}
+                  </div>
+              </div>
+
+              <div className={`p-4 rounded-2xl space-y-3 ${rtXToolsEnabled ? 'bg-slate-100' : 'bg-slate-50'}`}>
+                  <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-800">X 与 Threads</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={rtXToolsEnabled} onChange={e => setRtXToolsEnabled(e.target.checked)} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-800"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">不带动新闻热点，也不带动小红书。总开关关着时，下面这些都不会跑。</p>
+                  <div className={rtXToolsEnabled ? 'space-y-2' : 'space-y-2 opacity-40 pointer-events-none'}>
+                      {([
+                          ['贴上 X / Threads 链接就出卡片', rtXFeatLinkCards, setRtXFeatLinkCards],
+                          ['搜索', rtXFeatSearch, setRtXFeatSearch],
+                          ['看公开主页', rtXFeatProfile, setRtXFeatProfile],
+                          ['再翻一页楼', rtXFeatReadDeep, setRtXFeatReadDeep],
+                          ['雅虎讨论', rtXFeatYahooDiscuss, setRtXFeatYahooDiscuss],
+                      ] as const).map(([label, on, setOn]) => (
+                          <label key={label} className="flex items-center justify-between text-[12px] font-bold text-slate-600">
+                              {label}
+                              <input type="checkbox" checked={on} onChange={e => setOn(e.target.checked)} />
+                          </label>
+                      ))}
+                      <div className="flex gap-2 pt-1">
+                          <button type="button" onClick={() => setRtXSearchFeed('top')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtXSearchFeed === 'top' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500'}`}>搜索默认热门</button>
+                          <button type="button" onClick={() => setRtXSearchFeed('latest')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtXSearchFeed === 'latest' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500'}`}>搜索默认最新</button>
+                      </div>
+                      <label className="flex items-center justify-between text-[12px] font-bold text-slate-600">
+                          搜索连回复一起看
+                          <input type="checkbox" checked={rtXSearchReplies} onChange={e => setRtXSearchReplies(e.target.checked)} />
+                      </label>
+                  </div>
               </div>
 
               {/* Firecrawl 网页读取：方舟计划默认隐藏，代码与降级能力保留。 */}

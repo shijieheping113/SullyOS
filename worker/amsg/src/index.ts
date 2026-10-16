@@ -2215,6 +2215,7 @@ export const amsgHooks = {
       toolConfig,
       userName: pack.targetName,
       timeAwarenessEnabled: toolPack.timeAwarenessEnabled,
+      charJpHotEnabled: toolPack.jpHotEnabled === true,
       tzId: pack.tzId,
       nowMs: ctx.now.getTime(),
       globalRows,

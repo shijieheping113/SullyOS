@@ -117,6 +117,10 @@ interface ChatModalsProps {
     // XHS toggle
     xhsEnabled?: boolean;
     onToggleXhs?: () => void;
+    jpHotEnabled?: boolean;
+    onToggleJpHot?: () => void;
+    xToolsEnabled?: boolean;
+    onToggleXTools?: () => void;
     // HTML mode
     htmlModeEnabled?: boolean;
     onToggleHtmlMode?: () => void;
@@ -284,6 +288,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
+    jpHotEnabled, onToggleJpHot, xToolsEnabled, onToggleXTools,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceAutoPlay, onToggleChatVoiceAutoPlay, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable, voiceCollectable, onToggleVoiceFavorite, voiceFavorited,
@@ -748,6 +753,24 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         )}
                     </ChatSettingsSection>
                     <ChatSettingsSection title="扩展功能" summary="小红书与 HTML 卡片">
+                        <div className="pt-2 border-t border-slate-100">
+                            <div className={`flex justify-between items-center ${onToggleJpHot ? 'cursor-pointer' : 'opacity-40'}`} onClick={onToggleJpHot}>
+                                <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">日本热议</label>
+                                <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${jpHotEnabled ? 'bg-emerald-400' : 'bg-slate-200'}`}>
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${jpHotEnabled ? 'translate-x-4' : ''}`}></div>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">{onToggleJpHot ? '只决定这个角色吃不吃日本热词。条数和兴趣在全局设置里。' : '全局关着，这里显示为关，也不生效。'}</p>
+                        </div>
+                        <div className="pt-2 border-t border-slate-100">
+                            <div className={`flex justify-between items-center ${onToggleXTools ? 'cursor-pointer' : 'opacity-40'}`} onClick={onToggleXTools}>
+                                <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">X 与 Threads</label>
+                                <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${xToolsEnabled ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${xToolsEnabled ? 'translate-x-4' : ''}`}></div>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">{onToggleXTools ? '和小红书分开。总开关开着时，这个角色才会读帖、搜索或刷主页。' : '全局关着，这里显示为关，也不生效。'}</p>
+                        </div>
                         {/* XHS Toggle */}
                         <div className="pt-2 border-t border-slate-100">
                             <div className="flex justify-between items-center cursor-pointer" onClick={onToggleXhs}>

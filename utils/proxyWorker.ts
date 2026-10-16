@@ -100,6 +100,10 @@ export const isCustomProxyWorker = (): boolean => getProxyWorkerUrl() !== DEFAUL
 /** 作者公共小屋。小红书 Lite / 搜索 / 新闻 / 点单 / 鱼声等走这里，不跟语音门铃走。 */
 export const getCoreProxyUrl = (): string => DEFAULT_PROXY_WORKER;
 
+/** 日本热词、雅虎讨论、Threads。作者小屋没有这四条，走已经部署好的二改代理。 */
+export const XJP_PROXY_WORKER = 'https://api.pigsullycat.ccwu.cc';
+export const getXJpProxyBase = (): string => XJP_PROXY_WORKER;
+
 /** 小红书 Lite 云端桥地址（作者小屋 /api）。测试连接和保存必须用同一个。 */
 export const getXhsLiteUrl = (): string => `${DEFAULT_PROXY_WORKER}/api`;
 

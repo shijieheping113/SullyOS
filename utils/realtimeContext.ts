@@ -7,6 +7,8 @@ import { safeResponseJson } from './safeApi';
 import { DB } from './db';
 import { getCoreProxyUrl, getXhsLiteUrl } from './proxyWorker';
 import { nowInTimeZone } from './timezone';
+import { fetchJpHotFeed } from './jpHotClient';
+import { jpDiscussTeachingLine, JP_DOMAIN_DEFAULT_KEYS } from './xJpPack';
 import {
     performSearch as performSearchCore,
     notionGetDiaryByDate,
@@ -76,6 +78,24 @@ export interface RealtimeConfig {
     feishuBaseId?: string;
     feishuTableId?: string;
 
+    // 日本热词。和国内热点分开。角色只有开/关，参数只在这里。
+    jpHotEnabled?: boolean;
+    jpHotPickCount?: number;
+    jpHotHours?: 4 | 24;
+    jpHotInterestEnabled?: boolean;
+    jpHotDomains?: string[];
+    jpHotSource?: 'trends' | 'yahoo';
+
+    // X / Threads。总开关关掉时，分能力一律不生效。
+    xToolsEnabled?: boolean;
+    xFeatLinkCards?: boolean;
+    xFeatReadDeep?: boolean;
+    xFeatSearch?: boolean;
+    xFeatProfile?: boolean;
+    xFeatYahooDiscuss?: boolean;
+    xSearchFeed?: 'top' | 'latest';
+    xSearchIncludeReplies?: boolean;
+
     // 小红书配置 (xiaohongshu-skills)
     xhsEnabled?: boolean;
     xhsMcpConfig?: {
@@ -106,6 +126,20 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     notionApiKey: '',
     notionDatabaseId: '',
     xhsEnabled: false,
+    jpHotEnabled: false,
+    jpHotPickCount: 6,
+    jpHotHours: 4,
+    jpHotInterestEnabled: false,
+    jpHotDomains: JP_DOMAIN_DEFAULT_KEYS,
+    jpHotSource: 'trends',
+    xToolsEnabled: false,
+    xFeatLinkCards: true,
+    xFeatReadDeep: false,
+    xFeatSearch: true,
+    xFeatProfile: true,
+    xFeatYahooDiscuss: false,
+    xSearchFeed: 'top',
+    xSearchIncludeReplies: false,
     xhsMcpConfig: {
         enabled: false,
         mode: 'lite',
@@ -420,9 +454,10 @@ export const RealtimeContextManager = {
         tz: string | undefined,
         // includeTime=false：角色关掉了「时间感知」。天气/新闻还要，但当前时间和今日节日
         // 属于时间感知的范畴，这个开关关着就不该从这一段里漏出去。
-        opts: { includeTime: boolean; userLocation?: Promise<string> },
+        opts: { includeTime: boolean; userLocation?: Promise<string>; includeJp?: boolean; jpDiscuss?: boolean },
     ): Promise<string> => {
         const includeTime = opts.includeTime;
+        const includeJp = !!opts.includeJp;
 
         // 1. 时间与节日。tz 非空时按角色所在时区折算，两者同一个时区，否则同一段里
         //    日期和节日会打架。时差提示（tzAwarenessNote）统一由 ContextBuilder.buildCoreContext
@@ -432,14 +467,28 @@ export const RealtimeContextManager = {
         const specialDates = includeTime ? RealtimeContextManager.checkSpecialDates(tz) : [];
 
         // 2. 天气（有没有 OWM key 都能取：无 key 走 Open-Meteo）
-        const weather = config.weatherEnabled ? await RealtimeContextManager.fetchWeather(config) : null;
-
-        // 3. 新闻热点（背景认知）
+        const weatherPromise = config.weatherEnabled ? RealtimeContextManager.fetchWeather(config) : Promise.resolve(null);
+        // 3. 新闻热点（背景认知）。仍只看全局 newsEnabled，不另做角色开关。
         //    完整快照存 IndexedDB 给「热点」App；这里每轮随机抽几条打散注入，控 token + 保持新鲜感。
-        const newsPool = config.newsEnabled ? await RealtimeContextManager.fetchNews(config) : [];
+        const newsPromise = config.newsEnabled ? RealtimeContextManager.fetchNews(config) : Promise.resolve([] as NewsItem[]);
+        const jpPromise = includeJp ? fetchJpHotFeed(config).catch(() => '') : Promise.resolve('');
+        const [weather, newsPool, jpHotFeed, userLocationText] = await Promise.all([
+            weatherPromise,
+            newsPromise,
+            jpPromise,
+            opts.userLocation ?? Promise.resolve(''),
+        ]);
         const picks = pickRandomNews(newsPool, REALTIME_NEWS_PICK_COUNT);
 
-        const fullContext = renderRealtimeWorldBlock({ timeLine, specialDates, weather, news: picks, userLocationText: await opts.userLocation });
+        const fullContext = renderRealtimeWorldBlock({
+            timeLine,
+            specialDates,
+            weather,
+            news: picks,
+            userLocationText,
+            jpHotFeed,
+            jpDiscussLine: includeJp && opts.jpDiscuss && jpHotFeed ? jpDiscussTeachingLine() : undefined,
+        });
 
         // ── F12 探针：本轮真正注入 prompt 的热点 + 文本量（评估 token 用）──
         try {

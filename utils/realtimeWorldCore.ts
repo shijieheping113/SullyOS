@@ -433,6 +433,10 @@ export interface RealtimeWorldRenderInput {
     userLocationText?: string;
     /** 本轮要注入的热点（抽样交给调用方，渲染保持纯净好测）。 */
     news?: NewsItem[];
+    /** 日本热词整段。空则不出现，也不改国内热点那段。 */
+    jpHotFeed?: string;
+    /** 日本段末尾是否教雅虎讨论标记。 */
+    jpDiscussLine?: string;
 }
 
 /**
@@ -446,8 +450,10 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
     const weather = input.weather ?? null;
     const news = input.news ?? [];
     const userLocationText = input.userLocationText?.trim();
+    const jpHotFeed = input.jpHotFeed?.trim();
+    const jpDiscussLine = input.jpDiscussLine?.trim();
 
-    if (!timeLine && specialDates.length === 0 && !weather && news.length === 0 && !userLocationText) {
+    if (!timeLine && specialDates.length === 0 && !weather && news.length === 0 && !userLocationText && !jpHotFeed) {
         return '';
     }
 
@@ -497,6 +503,14 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
         });
         parts.push('');
         parts.push(`若你想主动把其中某条当作"新闻卡片"分享给对方，可单独输出一行：[[NEWS_CARD: 来源|标题]]（标题照抄上面的）。它会以卡片形式呈现，然后你再就此展开聊。别滥用，自然就好。`);
+    }
+
+    if (jpHotFeed) {
+        parts.push('');
+        parts.push(`🇯🇵 【日本热议 · 背景知识】`);
+        parts.push(`（这是日本这边正在被讨论的事，和上面的国内热点不是同一份。不要复读同一段话，也不要硬播报；对方正在说别的事，就安静当背景。）`);
+        parts.push(jpHotFeed);
+        if (jpDiscussLine) parts.push(jpDiscussLine);
     }
 
     // 5. 行为指令（按真拿到的数据裁剪：没天气就别教它关心天气，否则等于教它现编一个）

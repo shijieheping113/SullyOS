@@ -81,7 +81,8 @@ const stripBusinessTagsForBubble = (t: string): string =>
 const stripBusinessTagsForNotification = (t: string): string =>
   stripBusinessTagsForBubble(t)
     .replace(/\[\[(?:READ_NOTE|XHS_[A-Z_]+|LIFE|NEWS_CARD)[:\s][\s\S]*?\]\]/g, '')
-    .replace(/\[\[XHS_[A-Z_]+\]\]/g, '');
+    .replace(/\[\[XHS_[A-Z_]+\]\]/g, '')
+    .replace(/\[\[(?:X_SEARCH|X_PROFILE|X_READ|YAHOO_DISCUSS|THREADS_READ)[:\s][\s\S]*?\]\]/g, '');
 
 /**
  * 剥掉**所有** `[[...]]`, 不看标签名 —— 客户端 `chatParser.hasDisplayContent` 的口径.

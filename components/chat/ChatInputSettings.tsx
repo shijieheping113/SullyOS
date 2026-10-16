@@ -42,14 +42,18 @@ const ChatInputSettings: React.FC<ChatInputSettingsProps> = ({ value, onChange, 
                     key: 'xhsCards', label: '小红书链接自动转卡片（私聊）',
                     help: '独立识别小红书官网和 xhslink.com / xhslink.cn 分享链接。关闭后直接发送原文；不影响角色主动浏览小红书的配置。',
                 },
-            ] as const).filter(item => scope === 'private' || !['linkCards', 'xhsCards'].includes(item.key)).map(({ key, label, help }) => (
+                {
+                    key: 'xCards', label: 'X / Threads 链接自动转卡片（私聊）',
+                    help: '识别 x.com、twitter.com 和 threads.com。还要全局和这个角色都打开 X，才会真正出卡。关闭后原文留下，也不会再当成普通网页抓一次。',
+                },
+            ] as const).filter(item => scope === 'private' || !['linkCards', 'xhsCards', 'xCards'].includes(item.key)).map(({ key, label, help }) => (
                 <div key={key}>
                     <div className="flex items-center gap-1">
                         <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 text-xs font-bold text-slate-600">
                             <span>{label}</span>
                             <input
                                 type="checkbox"
-                                checked={key === 'linkCards' || key === 'xhsCards' ? value[key] !== false : value[key] === true}
+                                checked={key === 'linkCards' || key === 'xhsCards' || key === 'xCards' ? value[key] !== false : value[key] === true}
                                 onChange={event => onChange({ ...value, [key]: event.target.checked })}
                                 className="h-5 w-5 shrink-0 cursor-pointer accent-primary"
                             />

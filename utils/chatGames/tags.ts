@@ -14,6 +14,11 @@ const RERUN_SOURCES = [
     String.raw`\[\[XHS_BROWSE(?::\s*.+?)?\]\]`,
     String.raw`\[\[XHS_MY_PROFILE\]\]`,
     String.raw`\[\[XHS_DETAIL:\s*.+?\]\]`,
+    String.raw`\[\[X_SEARCH:\s*.+?\]\]`,
+    String.raw`\[\[X_PROFILE:\s*.+?\]\]`,
+    String.raw`\[\[X_READ:\s*.+?\]\]`,
+    String.raw`\[\[YAHOO_DISCUSS:\s*.+?\]\]`,
+    String.raw`\[\[THREADS_READ:\s*.+?\]\]`,
 ];
 
 const ACTION_SOURCE = [

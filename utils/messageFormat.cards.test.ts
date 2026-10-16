@@ -53,6 +53,24 @@ describe('normalizeMessageContent · xhs_card', () => {
   });
 });
 
+describe('normalizeMessageContent · x_card / threads_card', () => {
+  it('用户贴的 X / Threads 卡带分享头，不当成用户本人说的话', () => {
+    const card = {
+      provider: 'fxtwitter',
+      authorName: '小灯',
+      authorHandle: 'akari',
+      text: '今晚的月色很好',
+      replies: [],
+    };
+    const x = normalizeMessageContent(mk('x_card', 'https://x.com/akari/status/1', { xSocial: card }), 'Char', 'Ann');
+    const threads = normalizeMessageContent(mk('threads_card', 'https://www.threads.com/@akari/post/1', { xSocial: { ...card, provider: 'threads-ssr' } }), 'Char', 'Ann');
+    expect(x.startsWith('[X帖子] Ann分享了一条 X 帖。这是别人发在 X 上的帖子，不是Ann自己说的话。作者：小灯（@akari）')).toBe(true);
+    expect(x).toContain('今晚的月色很好');
+    expect(x).not.toContain('http');
+    expect(threads.startsWith('[Threads帖子] Ann分享了一条 Threads 帖。这是别人发在 Threads 上的帖子，不是Ann自己说的话。作者：小灯（@akari）')).toBe(true);
+  });
+});
+
 describe('normalizeMessageContent · webpage_card', () => {
   it('有正文时注入网页正文', () => {
     const out = normalizeMessageContent(

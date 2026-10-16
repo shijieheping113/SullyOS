@@ -17,6 +17,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import type { VRSARActivity } from '../types';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, MemoryPalaceFeatureFlags } from '../types';
 import { DB } from '../utils/db';
+import { JP_DOMAIN_DEFAULT_KEYS } from '../utils/xJpPack';
 import { reportDatabaseFailure } from '../utils/databaseHealth';
 import type { AvatarTouchRecord } from '../utils/avatarTouch';
 import { clampClaudeTemperature, modelRejectsSamplingParams, stripSamplingParams } from '../utils/samplingParamCompat';
@@ -280,6 +281,20 @@ const defaultRealtimeConfig: RealtimeConfig = {
   feishuBaseId: '',
   feishuTableId: '',
   xhsEnabled: false,
+  jpHotEnabled: false,
+  jpHotPickCount: 6,
+  jpHotHours: 4,
+  jpHotInterestEnabled: false,
+  jpHotDomains: JP_DOMAIN_DEFAULT_KEYS,
+  jpHotSource: 'trends',
+  xToolsEnabled: false,
+  xFeatLinkCards: true,
+  xFeatReadDeep: false,
+  xFeatSearch: true,
+  xFeatProfile: true,
+  xFeatYahooDiscuss: false,
+  xSearchFeed: 'top',
+  xSearchIncludeReplies: false,
   cacheMinutes: 30
 };
 

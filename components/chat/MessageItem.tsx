@@ -20,6 +20,7 @@ import { stripLeakedSourceTags } from '../../utils/sanitize';
 import TokenImg from '../os/TokenImg';
 import { BatteryReminderLogCard } from '../BatteryReminderCard';
 import { ChatGameCard } from './ChatGameCard';
+import { XSocialCard } from './XSocialCard';
 import { readChatGame } from '../../utils/chatGames/text';
 import VideoMessageBubble from './VideoMessageBubble';
 // v8c-1（Ann 2026-09-16）：Spark 卡片头像也走共用解析器（自定义 > 主聊天头像 > 快照 > 名字 hash）
@@ -2122,6 +2123,12 @@ const MessageItem = React.memo(({
                     </div>
                 </div>
             </div>
+        );
+    }
+
+    if ((m.type === 'x_card' || m.type === 'threads_card') && m.metadata?.xSocial) {
+        return commonLayout(
+            <XSocialCard card={m.metadata.xSocial} kind={m.type === 'threads_card' ? 'threads' : 'x'} />
         );
     }
 
