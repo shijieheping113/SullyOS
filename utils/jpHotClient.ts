@@ -1,5 +1,6 @@
 /**
- * 日本热词：先 Trends，失败再雅虎。同一时段用同一份，失败就用上一槽。
+ * 日本热词：三条平行路（Google Trends／雅虎急上昇／Bing 新闻），选哪条就只走哪条。
+ * 同一时段用同一份，拉不到就用上一槽。
  */
 
 import { getXJpProxyBase } from './proxyWorker';
@@ -14,8 +15,8 @@ import {
     type XJpRealtimeFlags,
 } from './xJpPack';
 
-const CACHE_ID = 'sully_jp_hot_cache_v1';
-const LAST_ID = 'sully_jp_hot_last_v1';
+const CACHE_ID = 'sully_jp_hot_cache_v2';
+const LAST_ID = 'sully_jp_hot_last_v2';
 
 interface CacheRow { key: string; feed: string; at: number }
 
@@ -48,14 +49,14 @@ const readRow = (id: string): CacheRow | null => {
     return null;
 };
 
-const pull = async (path: string): Promise<{ source: 'trends' | 'yahoo'; items: JpHotItem[]; feed: string; sourceMode: string } | null> => {
+const pull = async (path: string): Promise<{ source: 'trends' | 'yahoo' | 'bing'; items: JpHotItem[]; feed: string; sourceMode: string } | null> => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 26000);
     try {
         const res = await fetch(`${getXJpProxyBase()}${path}`, { signal: ctrl.signal });
         const data = await res.json().catch(() => null);
         if (!data || data.ok !== true) return null;
-        const source = data.source === 'yahoo' ? 'yahoo' : 'trends';
+        const source = data.source === 'yahoo' ? 'yahoo' : data.source === 'bing' ? 'bing' : 'trends';
         const items = Array.isArray(data.items) ? data.items as JpHotItem[] : [];
         const feed = typeof data.model_feed === 'string' ? data.model_feed.trim() : '';
         if (!feed && !items.length) return null;
@@ -68,7 +69,7 @@ const pull = async (path: string): Promise<{ source: 'trends' | 'yahoo'; items: 
 };
 
 const feedFromGot = (
-    got: { source: 'trends' | 'yahoo'; items: JpHotItem[]; feed: string },
+    got: { source: 'trends' | 'yahoo' | 'bing'; items: JpHotItem[]; feed: string },
     n: number,
 ): string => {
     if (got.feed) return got.feed.replace(/&nbsp;|&#160;|&#x0*a0;/gi, ' ').replace(/[ \t]{2,}/g, ' ');
@@ -101,7 +102,7 @@ export const fetchJpHotFeed = async (
     now: Date = new Date(),
     options?: { force?: boolean },
 ): Promise<string> => {
-    const sourcePref = config.jpHotSource === 'yahoo' ? 'yahoo' : 'trends';
+    const sourcePref = config.jpHotSource === 'yahoo' ? 'yahoo' : config.jpHotSource === 'bing' ? 'bing' : 'trends';
     const hours = jpHotHoursOf(config.jpHotHours);
     const n = clampJpHotCount(config.jpHotPickCount);
     const slot = getHotNewsSlot({ tz: 'Asia/Tokyo', now });
@@ -115,8 +116,10 @@ export const fetchJpHotFeed = async (
     }
 
     const q = `n=${n}&hours=${hours}&interest=${interest}&domains=${encodeURIComponent(domains)}`;
-    let got = sourcePref === 'trends' ? await pull(`/gtrends/jp?${q}`) : null;
-    if (!got) got = await pull(`/yahoo-realtime/hot?${q}`);
+    const pathOf = (source: string) => source === 'trends' ? `/gtrends/jp?${q}`
+        : source === 'yahoo' ? `/yahoo-realtime/hot?${q}`
+            : `/bing/jp?${q}`;
+    let got = await pull(pathOf(sourcePref));
     const feed = got ? feedFromGot(got, n) : '';
     if (!got || !feed) {
         const last = readRow(LAST_ID);

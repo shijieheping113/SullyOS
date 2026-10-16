@@ -28,7 +28,7 @@ export interface XJpRealtimeFlags {
     jpHotHours?: 4 | 24;
     jpHotInterestEnabled?: boolean;
     jpHotDomains?: string[];
-    jpHotSource?: 'trends' | 'yahoo';
+    jpHotSource?: 'trends' | 'yahoo' | 'bing';
     xToolsEnabled?: boolean;
     xFeatLinkCards?: boolean;
     xFeatReadDeep?: boolean;
@@ -356,11 +356,13 @@ export const buildJpHotLines = (items: JpHotItem[]): string[] => items.map(item 
     return `${item.query}｜${dom}｜${summ}`;
 });
 
-export const buildJpHotModelFeed = (lines: string[], source: 'trends' | 'yahoo'): string => {
+export const buildJpHotModelFeed = (lines: string[], source: 'trends' | 'yahoo' | 'bing'): string => {
     if (!lines.length) return '';
     const header = source === 'yahoo'
-        ? '【日本热词｜雅虎｜背景知识，别硬播报】'
-        : '【日本热词｜Google Trends｜背景知识，别硬播报】';
+        ? '【日本热词｜雅虎】'
+        : source === 'bing'
+            ? '【日本热词｜Bing】'
+            : '【日本热词｜Google Trends】';
     return `${header}\n${lines.map(w => `- ${w}`).join('\n')}`;
 };
 

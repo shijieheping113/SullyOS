@@ -650,7 +650,7 @@ export interface RealtimeConfig {
   jpHotHours?: 4 | 24;
   jpHotInterestEnabled?: boolean;
   jpHotDomains?: string[];
-  jpHotSource?: 'trends' | 'yahoo';
+  jpHotSource?: 'trends' | 'yahoo' | 'bing';
 
   // X / Threads。总开关关掉时，分能力一律不生效。
   xToolsEnabled?: boolean;

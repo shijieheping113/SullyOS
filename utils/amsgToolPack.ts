@@ -68,7 +68,7 @@ export interface AmsgToolConfig extends AgenticToolRealtimeConfig {
   jpHotHours?: 4 | 24;
   jpHotInterestEnabled?: boolean;
   jpHotDomains?: string[];
-  jpHotSource?: 'trends' | 'yahoo';
+  jpHotSource?: 'trends' | 'yahoo' | 'bing';
   xToolsEnabled?: boolean;
   xFeatLinkCards?: boolean;
   xFeatReadDeep?: boolean;
@@ -160,7 +160,7 @@ export const buildToolConfig = (
     jpHotHours: rc?.jpHotHours === 24 ? 24 : 4,
     jpHotInterestEnabled: !!rc?.jpHotInterestEnabled,
     jpHotDomains: rc?.jpHotDomains,
-    jpHotSource: rc?.jpHotSource === 'yahoo' ? 'yahoo' : 'trends',
+    jpHotSource: rc?.jpHotSource === 'yahoo' ? 'yahoo' : rc?.jpHotSource === 'bing' ? 'bing' : 'trends',
     xToolsEnabled: !!rc?.xToolsEnabled,
     xFeatLinkCards: rc?.xFeatLinkCards !== false,
     xFeatReadDeep: !!rc?.xFeatReadDeep,

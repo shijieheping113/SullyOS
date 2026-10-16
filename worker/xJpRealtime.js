@@ -171,6 +171,24 @@ export const parseGoogleNewsRss = (xml, q) => {
   return items;
 };
 
+/** Bing 新闻 RSS（CF 出口稳定可达）：标题在 title，媒体名在 News:Source。 */
+export const parseBingNewsRss = (xml, q) => {
+  const items = [];
+  const blocks = String(xml || '').split(/<item\b/i).slice(1, 11);
+  for (const block of blocks) {
+    const title = stripTags((block.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+    if (!title) continue;
+    const source = stripTags((block.match(/<(?:News:|news:)?Source[^>]*>([\s\S]*?)<\/(?:News:|news:)?Source>/i) || [])[1] || '');
+    let desc = stripTags((block.match(/<description[^>]*>([\s\S]*?)<\/description>/i) || [])[1] || '');
+    desc = desc.replace(/(?:\s|\.|…)+$/, '').trim();
+    if (desc.startsWith(title)) desc = desc.slice(title.length).replace(/^[\s\-|｜]+/, '');
+    if (source && desc.startsWith(source)) desc = desc.slice(source.length).replace(/^[\s\-|｜]+/, '');
+    if (!newsSourceOk(source)) continue;
+    items.push({ title, source, desc, q });
+  }
+  return items;
+};
+
 const SNS_FLUFF_HINTS = [
   'ホロライブ', 'おやつはホテル', '切り抜き', 'キリヌキ', 'スパチャ', '配信枠',
   'youtube.com', 'youtu.be', '@youtube', 'チャンネル登録', '高評価', '草草草',
@@ -311,7 +329,7 @@ const RSS_HEADERS = {
   'Accept-Language': 'ja,en;q=0.8',
 };
 
-const googleNewsBlurb = async (q, deadline) => {
+const googleNewsBlurb = async (q, deadline, trace) => {
   if (Date.now() > deadline) return null;
   const pull = async (query) => {
     if (Date.now() > deadline) return [];
@@ -319,8 +337,51 @@ const googleNewsBlurb = async (q, deadline) => {
     const got = await fetchText(url, Math.min(4500, Math.max(1500, deadline - Date.now())), 800000, RSS_HEADERS);
     return parseGoogleNewsRss(got.text, q).filter(it => !looksLikeSnsFluff(it.title) && !looksLikeSnsFluff(`${it.title}（${it.source || ''}）`) && newsSourceOk(it.source));
   };
-  let news = await pull(`${q} when:1d`);
-  if (!news.length) news = await pull(q);
+  // Google 对 CF 出口间歇 503：原地重试两次（第一次隔 1.5s，第二次隔 2s），全空才认输。
+  const RETRY_WAITS = [1500, 2000];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, RETRY_WAITS[attempt - 1]));
+    if (trace) trace.attempts++;
+    let news = await pull(`${q} when:1d`);
+    if (!news.length) news = await pull(q);
+    if (news.length) {
+      if (trace && attempt > 0) { trace.retried++; trace.lastRetryWaitMs = RETRY_WAITS[attempt - 1]; }
+      return pickGoogleNewsBlurb(news, q, 280);
+    }
+    if (Date.now() > deadline) break;
+  }
+  if (trace) trace.exhausted++;
+  return null;
+};
+
+/**
+ * Bing 新闻首页的「Bing のトレンド」轮播：一页就是当日日本趋势，标题即热点本身。
+ * 只认这一段之后的卡片，前面「トップ記事」不算，免得把头条混进来。
+ */
+export const parseBingTrendTitles = (html) => {
+  const text = String(html || '');
+  const mark = text.indexOf('Bing のトレンド');
+  const seg = mark >= 0 ? text.slice(mark) : text;
+  const titles = [];
+  const seen = new Set();
+  const re = /class="tobitem_title">([^<]{4,200})</g;
+  let m;
+  while ((m = re.exec(seg))) {
+    const title = stripTags(m[1]);
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    titles.push(title);
+  }
+  return titles;
+};
+
+/** 第三条路：Bing 新闻 RSS。CF 出口稳过，格式和工作台一样是「标题（媒体名）」。 */
+export const bingNewsBlurb = async (q, deadline) => {
+  if (Date.now() > deadline) return null;
+  const url = `https://www.bing.com/news/search?${new URLSearchParams({ q, format: 'RSS', setlang: 'ja', cc: 'JP' })}`;
+  const got = await fetchText(url, Math.min(4500, Math.max(1500, deadline - Date.now())), 800000, RSS_HEADERS);
+  const news = parseBingNewsRss(got.text, q)
+    .filter(it => !looksLikeSnsFluff(it.title) && !looksLikeSnsFluff(`${it.title}（${it.source || ''}）`));
   return pickGoogleNewsBlurb(news, q, 280);
 };
 
@@ -403,7 +464,7 @@ const yahooNewsBlurb = async (q, deadline) => {
 /** 和工作台 _blurb_ok 同一套：真文本、不是社媒碎嘴、够长。 */
 const blurbOk = (blurb, minLen = 36) => !!blurb && !looksLikeSnsFluff(blurb) && !String(blurb).includes('热议关键词') && String(blurb).trim().length >= minLen;
 
-const enrichOne = async (item, deadline, preferYahoo) => {
+const enrichOne = async (item, deadline, preferYahoo, source, trace) => {
   if (item.summary && (looksLikeSnsFluff(item.summary) || String(item.summary).startsWith('関連：'))) item.summary = null;
   // 种子：Trends RSS 自带的新闻标题，先垫一条，后面真新闻再覆盖。
   if (!item.summary && Array.isArray(item.news_titles) && item.news_titles.length) {
@@ -423,7 +484,7 @@ const enrichOne = async (item, deadline, preferYahoo) => {
   if (preferYahoo && deadline - Date.now() >= 2500) {
     const pair = await Promise.all([
       yahooNewsBlurb(item.query, deadline).catch(() => null),
-      googleNewsBlurb(item.query, deadline).catch(() => null),
+      googleNewsBlurb(item.query, deadline, trace).catch(() => null),
     ]);
     const yb = pair[0];
     const gb = pair[1];
@@ -436,9 +497,16 @@ const enrichOne = async (item, deadline, preferYahoo) => {
     }
   } else if (preferYahoo) {
     if (!good()) accept(await yahooNewsBlurb(item.query, deadline).catch(() => null), 40);
-    if (!good()) accept(await googleNewsBlurb(item.query, deadline).catch(() => null), 36);
+    if (!good()) accept(await googleNewsBlurb(item.query, deadline, trace).catch(() => null), 36);
+    if (!good()) accept(await bingNewsBlurb(item.query, deadline).catch(() => null), 36);
+  } else if (source === 'bing') {
+    // Bing 源：摘要也先走 Bing（词是从 Bing 首页热榜来的，两边同一家更对得上），
+    // 拿不到再退回 Google 新闻。
+    if (!good()) accept(await bingNewsBlurb(item.query, deadline).catch(() => null), 36);
+    if (!good()) accept(await googleNewsBlurb(item.query, deadline, trace).catch(() => null), 36);
   } else {
-    if (!good()) accept(await googleNewsBlurb(item.query, deadline).catch(() => null), 36);
+    if (!good()) accept(await googleNewsBlurb(item.query, deadline, trace).catch(() => null), 36);
+    if (!good()) accept(await bingNewsBlurb(item.query, deadline).catch(() => null), 36);
     if (!good()) accept(await yahooNewsBlurb(item.query, deadline).catch(() => null), 40);
   }
   const related = (Array.isArray(item.related) ? item.related : []).filter(x => typeof x === 'string' && x && x !== item.query).slice(0, 2);
@@ -455,15 +523,18 @@ const finishHot = async (source, items, n, interestOn, domains, extra) => {
   const filtered = filterHotPool(items, interestOn, domains);
   const shown = filtered.pool.slice(0, n);
   const deadline = Date.now() + 14000;
-  if (shown.length) await mapLimit(shown, 5, it => enrichOne(it, deadline, source === 'yahoo'));
+  const trace = { attempts: 0, retried: 0, exhausted: 0, lastRetryWaitMs: 0 };
+  if (shown.length) await mapLimit(shown, 5, it => enrichOne(it, deadline, source === 'yahoo', source, trace));
   const lines = shown.map(it => {
     let summary = it.summary;
     if (!summary || looksLikeSnsFluff(summary) || String(summary).startsWith('関連：')) summary = NO_NEWS;
     return `${it.query}｜${it.domain_label || '其它'}｜${summary}`;
   });
   const header = source === 'yahoo'
-    ? '【日本热词｜雅虎｜背景知识，别硬播报】'
-    : '【日本热词｜Google Trends｜背景知识，别硬播报】';
+    ? '【日本热词｜雅虎】'
+    : source === 'bing'
+      ? '【日本热词｜Bing】'
+      : '【日本热词｜Google Trends】';
   let modelFeed = lines.length ? `${header}\n${lines.map(line => `- ${line}`).join('\n')}` : header;
   if (filtered.mode === 'relaxed' || filtered.mode === 'empty') modelFeed += `\n（说明：${filtered.note}）`;
   if (extra && extra.honest) modelFeed += `\n（说明：${extra.honest}）`;
@@ -485,6 +556,18 @@ const finishHot = async (source, items, n, interestOn, domains, extra) => {
     })),
     lines,
     model_feed: modelFeed,
+    google_news: {
+      attempts: trace.attempts,
+      retried: trace.retried,
+      exhausted: trace.exhausted,
+      retry_waits_ms: [1500, 2000],
+      last_retry_wait_ms: trace.lastRetryWaitMs,
+      note: trace.retried
+        ? `Google 新闻第一次没通，重试后拿到（间隔 ${trace.lastRetryWaitMs}ms）`
+        : trace.exhausted
+          ? 'Google 新闻重试两次仍没通，已交给别的源'
+          : 'Google 新闻一次就通',
+    },
   };
 };
 
@@ -615,6 +698,32 @@ const apiYahooHot = async (url) => {
 };
 
 const cleanYahoo = (s) => String(s || '').replace(/\tSTART\t/g, '').replace(/\tEND\t/g, '').replace(/\s+/g, ' ').trim();
+
+/** Bing 源：词来自 Bing 新闻首页「Bing のトレンド」，和 Trends／雅虎并列，不是谁的兜底。 */
+const apiBingHot = async (url) => {
+  const qs = parseQs(url);
+  try {
+    const got = await fetchText('https://www.bing.com/news?cc=JP&setlang=ja', 12000, 1500000, {
+      ...BROWSER_HTML_HEADERS,
+      'Accept-Language': 'ja,JP;q=0.9,ja;q=0.8,en;q=0.7',
+    });
+    const titles = parseBingTrendTitles(got.text);
+    if (!titles.length) return softFail('no_results', 'Bing 首页没有趋势卡片');
+    const items = titles.map(title => {
+      const dom = classifyDomain(title, '', '');
+      return {
+        query: title,
+        domain: dom.domain,
+        domain_label: dom.domain_label,
+        summary: null,
+        news_titles: [],
+      };
+    });
+    return finishHot('bing', items, qs.n, qs.interestOn, qs.domains, { sourceMode: 'bing_news_home', hours: qs.hours });
+  } catch (e) {
+    return softFail('unreachable', String((e && e.message) || e));
+  }
+};
 
 export const parseYahooDiscuss = (html, q, limit) => {
   const data = parseYahooNextData(html);
@@ -778,6 +887,7 @@ export const handleXJpRequest = async (url) => {
   const path = url.pathname.replace(/\/+$/, '');
   if (path === '/gtrends/jp') return apiGtrends(url);
   if (path === '/yahoo-realtime/hot') return apiYahooHot(url);
+  if (path === '/bing/jp') return apiBingHot(url);
   if (path === '/yahoo-realtime/discuss') return apiYahooDiscuss(url);
   if (path === '/threads/post') return apiThreads(url);
   return null;

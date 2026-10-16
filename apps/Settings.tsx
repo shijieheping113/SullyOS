@@ -735,7 +735,7 @@ const Settings: React.FC = () => {
   const [rtJpHotHours, setRtJpHotHours] = useState<4 | 24>(realtimeConfig.jpHotHours === 24 ? 24 : 4);
   const [rtJpHotInterest, setRtJpHotInterest] = useState(!!realtimeConfig.jpHotInterestEnabled);
   const [rtJpHotDomains, setRtJpHotDomains] = useState<string[]>(realtimeConfig.jpHotDomains || JP_DOMAIN_DEFAULT_KEYS);
-  const [rtJpHotSource, setRtJpHotSource] = useState<'trends' | 'yahoo'>(realtimeConfig.jpHotSource === 'yahoo' ? 'yahoo' : 'trends');
+  const [rtJpHotSource, setRtJpHotSource] = useState<'trends' | 'yahoo' | 'bing'>(realtimeConfig.jpHotSource === 'yahoo' ? 'yahoo' : realtimeConfig.jpHotSource === 'bing' ? 'bing' : 'trends');
   const [rtXToolsEnabled, setRtXToolsEnabled] = useState(!!realtimeConfig.xToolsEnabled);
   const [rtXFeatLinkCards, setRtXFeatLinkCards] = useState(realtimeConfig.xFeatLinkCards !== false);
   const [rtXFeatReadDeep, setRtXFeatReadDeep] = useState(!!realtimeConfig.xFeatReadDeep);
@@ -4656,6 +4656,7 @@ const Settings: React.FC = () => {
                       <div className="flex gap-2">
                           <button type="button" onClick={() => setRtJpHotSource('trends')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotSource === 'trends' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>Google Trends</button>
                           <button type="button" onClick={() => setRtJpHotSource('yahoo')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotSource === 'yahoo' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>雅虎急上昇</button>
+                          <button type="button" onClick={() => setRtJpHotSource('bing')} className={`text-[11px] px-3 py-1 rounded-full font-bold ${rtJpHotSource === 'bing' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500'}`}>Bing 新闻</button>
                       </div>
                       <label className="flex items-center justify-between text-[11px] font-bold text-slate-500">
                           按兴趣筛选

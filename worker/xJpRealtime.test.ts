@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error 中心代理这段是纯 JS
-import { parseGtrendsPage, parseThreadsHtml, parseYahooDiscuss, parseYahooNextData, filterHotPool, yahooSearchTitles, pickGoogleNewsBlurb } from './xJpRealtime.js';
+import { parseGtrendsPage, parseThreadsHtml, parseYahooDiscuss, parseYahooNextData, filterHotPool, yahooSearchTitles, pickGoogleNewsBlurb, parseBingNewsRss } from './xJpRealtime.js';
 
 describe('worker 解析对齐工作台', () => {
     it('雅虎急上昇从 __NEXT_DATA__ 取出词', () => {
@@ -71,5 +71,15 @@ describe('worker 解析对齐工作台', () => {
     it('标题里夹命中词高亮时，取完整标题而不是半句', () => {
         const html = '<a href="https://news.yahoo.co.jp/articles/662599e46461c571bfd6ddd0fc7b387526c72fb9" class="x"><div class="t">石川県に<em class="hit">緊急地震速報</em>、取り消し</div><div class="d">　16日午後0時38分ごろ、石川県を含む広い地域に<em class="hit">緊急地震速報</em>が発表され、その後、取り消された。 　…</div></a>';
         expect(yahooSearchTitles(html)[0]).toBe('石川県に緊急地震速報、取り消し');
+    });
+
+    it('Bing 新闻 RSS 取标题 + News:Source，desc 当导语用', () => {
+        const xml = '<rss><channel><item><title>ソースネクストで最大2252万件流出</title>'
+            + '<description>ソースネクストは15日、会員情報への不正アクセスを発表した。</description>'
+            + '<News:Source>ITmedia</News:Source></item></channel></rss>';
+        const items = parseBingNewsRss(xml, 'ソースネクスト');
+        expect(items[0].title).toBe('ソースネクストで最大2252万件流出');
+        expect(items[0].source).toBe('ITmedia');
+        expect(items[0].desc).toContain('不正アクセス');
     });
 });

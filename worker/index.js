@@ -2449,7 +2449,7 @@ export default {
     }
 
     // 日本热词 / 雅虎讨论 / Threads 读帖。X 的 Fx 与搜索不走这里。
-    if (request.method === "GET" && /^\/(?:gtrends\/jp|yahoo-realtime\/(?:hot|discuss)|threads\/post)$/.test(url.pathname.replace(/\/+$/, ""))) {
+    if (request.method === "GET" && /^\/(?:gtrends\/jp|yahoo-realtime\/(?:hot|discuss)|threads\/post|bing\/jp)$/.test(url.pathname.replace(/\/+$/, ""))) {
       try {
         const xjp = await handleXJpRequest(url);
         if (xjp) return jsonResponse(xjp, { origin });

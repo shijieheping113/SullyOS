@@ -507,11 +507,10 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
 
     if (jpHotFeed) {
         parts.push('');
-        parts.push(`🇯🇵 【日本热议 · 可以聊的当下话题】`);
-        parts.push(`（这些是日本此刻正在被热议的事，是你真实看到的，不是虚构的。可以当成跟对方闲聊的谈资：`);
-        parts.push(`对方提起日本、或者聊到相关的人／作品／事件时，就顺着这个话题自然接下去；`);
-        parts.push(`想找个话头、气氛正好、又刚好对得上时，也可以主动挑一条提起，展开聊两句。`);
-        parts.push(`但要挑时机、挑契合的那条，别一条条播报，别生硬地"报新闻"，也别把整段复读出来。对方正在认真说别的事，就先放着。）`);
+        parts.push(`🇯🇵 【日本热词 · 刷手机看到的】`);
+        parts.push(`（下面这些是日本那边此刻正在被热议的事，是你刷手机刷到的新闻，不是你已经掌握的知识。`);
+        parts.push(`想找话头、气氛正好、或者对方聊到相关的人／作品／事件时，都可以拿它当谈资自然地聊起来。`);
+        parts.push(`别一条条播报，别硬邦邦地"报新闻"，也别把整段复读出来；对方正在认真说别的事，就先放着。）`);
         parts.push(jpHotFeed);
         if (jpDiscussLine) parts.push(jpDiscussLine);
     }
