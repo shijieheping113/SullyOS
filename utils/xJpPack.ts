@@ -133,6 +133,8 @@ export interface XSocialCardData {
     statsLine?: string;
     threadTexts?: string[];
     replies: XSocialReply[];
+    /** 帖子上挂着的回复总数（接口给的统计）。可能大于 replies.length：接口一页只回一部分。 */
+    totalReplies?: number;
 }
 
 export const formatReplyLine = (reply: XSocialReply, opHandle: string, opName?: string | null): string => {
@@ -165,7 +167,12 @@ export const buildSocialModelFeed = (kind: 'x' | 'threads', card: XSocialCardDat
     }
     const replies = card.replies || [];
     if (replies.length) {
-        lines.push(kind === 'x' ? `—— 回复（${replies.length}）——` : `—— 可见回复（${replies.length}）——`);
+        const total = card.totalReplies || 0;
+        const more = total > replies.length;
+        const head = kind === 'x' ? '—— 回复' : '—— 可见回复';
+        lines.push(more
+            ? `${head}—— 共 ${total} 条，这里只看到最新的 ${replies.length} 条（接口一页就回这么多，不是帖子只有这么点）`
+            : `${head}（${replies.length}）——`);
         replies.forEach(r => lines.push(formatReplyLine(r, handle, card.authorName)));
     }
     return cleanFeedText(lines.join('\n'));

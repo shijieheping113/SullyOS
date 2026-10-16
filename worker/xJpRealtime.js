@@ -316,7 +316,7 @@ const googleNewsBlurb = async (q, deadline) => {
   const pull = async (query) => {
     if (Date.now() > deadline) return [];
     const url = `https://news.google.com/rss/search?${new URLSearchParams({ q: query, hl: 'ja', gl: 'JP', ceid: 'JP:ja' })}`;
-    const got = await fetchText(url, Math.min(6000, Math.max(1500, deadline - Date.now())), 800000, RSS_HEADERS);
+    const got = await fetchText(url, Math.min(4500, Math.max(1500, deadline - Date.now())), 800000, RSS_HEADERS);
     return parseGoogleNewsRss(got.text, q).filter(it => !looksLikeSnsFluff(it.title) && !looksLikeSnsFluff(`${it.title}（${it.source || ''}）`) && newsSourceOk(it.source));
   };
   let news = await pull(`${q} when:1d`);
@@ -330,10 +330,15 @@ export const yahooSearchTitles = (html) => {
   let m;
   while ((m = re.exec(html)) && titles.length < 3) {
     const window = html.slice(m.index, m.index + 1800);
-    const bits = window.match(/>([^<]{12,160})</g) || [];
+    // 标题里常插 <em> 命中词高亮，先摘掉再取文本节点，否则被切成半句。
+    const flat = window.replace(/<\/?em[^>]*>/gi, '');
+    const bits = flat.match(/>([^<]{6,160})</g) || [];
     for (const bit of bits) {
       const title = stripTags(bit.slice(1, -1));
       if (!title || /yahoo/i.test(title) || /^\d{1,2}\/\d{1,2}/.test(title)) continue;
+      // 搜索页里链接后面第一段常是摘要残句（以「ごろ」「…」结尾、带省略号），不是标题；跳过它。
+      if (/…$/.test(title) || /(ごろ|によると|ということです)$/.test(title)) continue;
+      if (title.length < 8) continue;
       if (!titles.includes(title)) titles.push(title);
       break;
     }
@@ -341,14 +346,43 @@ export const yahooSearchTitles = (html) => {
   return titles;
 };
 
+/** 和工作台 _yahoo_blurb_from_parts 同一套：标题 + 导语，短的不要。 */
+const yahooBlurbFromParts = (title, lead) => {
+  const parts = [];
+  const t = stripTags(title || '');
+  const l = stripTags(lead || '');
+  if (t) parts.push(t);
+  if (l) parts.push(l);
+  if (!parts.length) return null;
+  if (parts.length === 2) {
+    const joined = parts[0].includes(parts[1]) || parts[1].startsWith(parts[0].slice(0, 10))
+      ? parts[1]
+      : `${parts[0]}。${parts[1]}`;
+    const clipped = clipSummary(joined, 280);
+    return clipped.length >= 40 ? clipped : null;
+  }
+  const clipped = clipSummary(parts[0], 280);
+  return clipped.length >= 40 ? clipped : null;
+};
+
+/** 和工作台 _blurb_relevant 同一套：整词在，或每个分词都在。 */
+const blurbRelevant = (q, blurb) => {
+  const b = String(blurb || '');
+  const query = String(q || '').trim();
+  if (!b || !query) return false;
+  if (b.includes(query)) return true;
+  const toks = query.split(/[^\w\u3040-\u30ff\u4e00-\u9fff]+/).filter(t => t.length >= 2);
+  return toks.length > 0 && toks.every(tok => b.includes(tok));
+};
+
 const yahooNewsBlurb = async (q, deadline) => {
   if (Date.now() > deadline) return null;
   const url = `https://news.yahoo.co.jp/search?${new URLSearchParams({ p: q })}`;
-  const got = await fetchText(url, Math.min(6000, Math.max(1500, deadline - Date.now())));
+  const got = await fetchText(url, Math.min(4500, Math.max(1500, deadline - Date.now())));
   const html = got.text || '';
   const titles = yahooSearchTitles(html);
-  if (!titles.length) return null;
-  let blurb = titles[0];
+  const fast = titles.length ? yahooBlurbFromParts(titles[0], '') : null;
+  let blurb = fast;
   const article = html.match(/href="(https:\/\/news\.yahoo\.co\.jp\/articles\/[a-f0-9]+)"/i);
   if (article && deadline - Date.now() > 1200) {
     try {
@@ -356,47 +390,63 @@ const yahooNewsBlurb = async (q, deadline) => {
       const tm = String(art.text || '').match(/<title>([^<]+)<\/title>/i);
       const desc = String(art.text || '').match(/property=["']og:description["'][^>]*content=["']([^"']+)["']/i)
         || String(art.text || '').match(/content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
-      const title = tm ? stripTags(tm[1]).replace(/\s*[-|｜].*$/, '').trim() : titles[0];
+      const title = tm ? stripTags(tm[1]).replace(/\s*[-|｜].*$/, '').replace(/（[^）]*）\s*$/, '').trim() : (titles[0] || '');
       const lead = desc ? stripTags(desc[1]) : '';
-      blurb = lead && lead.slice(0, 12) !== title.slice(0, 12) ? `${title}。${lead}` : (lead || title);
+      const fromArticle = yahooBlurbFromParts(title, lead);
+      if (fromArticle) blurb = fromArticle;
     } catch { /* 搜索页标题也行 */ }
   }
-  blurb = clipSummary(blurb, 280);
   if (!blurb || looksLikeSnsFluff(blurb)) return null;
-  return blurb;
+  return clipSummary(blurb, 280);
 };
+
+/** 和工作台 _blurb_ok 同一套：真文本、不是社媒碎嘴、够长。 */
+const blurbOk = (blurb, minLen = 36) => !!blurb && !looksLikeSnsFluff(blurb) && !String(blurb).includes('热议关键词') && String(blurb).trim().length >= minLen;
 
 const enrichOne = async (item, deadline, preferYahoo) => {
   if (item.summary && (looksLikeSnsFluff(item.summary) || String(item.summary).startsWith('関連：'))) item.summary = null;
+  // 种子：Trends RSS 自带的新闻标题，先垫一条，后面真新闻再覆盖。
   if (!item.summary && Array.isArray(item.news_titles) && item.news_titles.length) {
     const seeded = clipSummary(item.news_titles.slice(0, 2).join('。'), 280);
-    if (seeded && seeded.length >= 36 && !looksLikeSnsFluff(seeded)) item.summary = seeded;
+    if (blurbOk(seeded)) item.summary = seeded;
   }
-  const good = () => item.summary && String(item.summary).length >= 50 && !looksLikeSnsFluff(item.summary);
-  const take = (blurb) => {
-    if (!blurb) return;
-    if (!item.summary || blurb.length > String(item.summary).length) item.summary = blurb;
+  const good = () => blurbOk(item.summary, 50);
+  /** 和工作台 _accept 一样：够长就收，更长才换掉旧的。 */
+  const accept = (blurb, minLen = 36) => {
+    if (!blurbOk(blurb, minLen)) return false;
+    if (!item.summary || blurb.length > String(item.summary).length) {
+      item.summary = blurb;
+      return true;
+    }
+    return false;
   };
   if (preferYahoo && deadline - Date.now() >= 2500) {
     const pair = await Promise.all([
       yahooNewsBlurb(item.query, deadline).catch(() => null),
       googleNewsBlurb(item.query, deadline).catch(() => null),
     ]);
-    if (pair[0] && pair[0].length >= 40) item.summary = pair[0];
-    else if (pair[1]) item.summary = pair[1];
+    const yb = pair[0];
+    const gb = pair[1];
+    // 雅虎先：命中热词、或者本身就够长，才算数；否则退回 Google 新闻。
+    if (blurbOk(yb, 40) && (blurbRelevant(item.query, yb) || String(yb).length >= 60)) item.summary = yb;
+    else if (blurbOk(gb, 36)) item.summary = gb;
+    else {
+      accept(yb, 40);
+      if (!good()) accept(gb, 36);
+    }
   } else if (preferYahoo) {
-    if (!good()) take(await yahooNewsBlurb(item.query, deadline).catch(() => null));
-    if (!good()) take(await googleNewsBlurb(item.query, deadline).catch(() => null));
+    if (!good()) accept(await yahooNewsBlurb(item.query, deadline).catch(() => null), 40);
+    if (!good()) accept(await googleNewsBlurb(item.query, deadline).catch(() => null), 36);
   } else {
-    if (!good()) take(await googleNewsBlurb(item.query, deadline).catch(() => null));
-    if (!good()) take(await yahooNewsBlurb(item.query, deadline).catch(() => null));
+    if (!good()) accept(await googleNewsBlurb(item.query, deadline).catch(() => null), 36);
+    if (!good()) accept(await yahooNewsBlurb(item.query, deadline).catch(() => null), 40);
   }
   const related = (Array.isArray(item.related) ? item.related : []).filter(x => typeof x === 'string' && x && x !== item.query).slice(0, 2);
   if (item.summary && related.length && String(item.summary).length < 100 && !looksLikeSnsFluff(item.summary)) {
     const extra = related.join('／');
     if (extra && !String(item.summary).includes(extra)) item.summary = clipSummary(`${item.summary}（関連：${extra}）`, 280);
   }
-  if (!item.summary || looksLikeSnsFluff(item.summary)) item.summary = null;
+  if (!blurbOk(item.summary)) item.summary = null;
   else item.summary = clipSummary(item.summary, 280);
   return item;
 };
@@ -404,8 +454,8 @@ const enrichOne = async (item, deadline, preferYahoo) => {
 const finishHot = async (source, items, n, interestOn, domains, extra) => {
   const filtered = filterHotPool(items, interestOn, domains);
   const shown = filtered.pool.slice(0, n);
-  const deadline = Date.now() + 12000;
-  if (shown.length) await Promise.all(shown.map(it => enrichOne(it, deadline, source === 'yahoo')));
+  const deadline = Date.now() + 14000;
+  if (shown.length) await mapLimit(shown, 5, it => enrichOne(it, deadline, source === 'yahoo'));
   const lines = shown.map(it => {
     let summary = it.summary;
     if (!summary || looksLikeSnsFluff(summary) || String(summary).startsWith('関連：')) summary = NO_NEWS;
@@ -502,6 +552,12 @@ export const parseGtrendsRss = (xml) => {
   return items;
 };
 
+const TRENDS_HEADERS = {
+  ...BROWSER_HTML_HEADERS,
+  'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+  Referer: 'https://trends.google.com/trending?geo=JP',
+};
+
 const apiGtrends = async (url) => {
   const qs = parseQs(url);
   const pageUrl = `https://trends.google.com/trending?geo=JP&hours=${qs.hours}&hl=ja`;
@@ -509,7 +565,8 @@ const apiGtrends = async (url) => {
   let sourceMode = 'page';
   let honest = '';
   try {
-    const got = await fetchText(pageUrl, 14000, 3500000);
+    // 和工作台 _fetch_gtrends_page 同参数：同样的 Referer、同样的 18 秒。
+    const got = await fetchText(pageUrl, 18000, 3500000, TRENDS_HEADERS);
     items = parseGtrendsPage(got.text, qs.hours);
   } catch {
     items = [];
@@ -526,6 +583,21 @@ const apiGtrends = async (url) => {
     if (!items.length) return softFail('no_results', 'Trends 网页无列表，RSS 也是空的');
   }
   return finishHot('trends', items, qs.n, qs.interestOn, qs.domains, { sourceMode, honest, hours: qs.hours });
+};
+
+/** Workers 一次能同时开着的出站连接有限，多出来的会排队；排队时超时计时已经在跑，
+ *  排在后面的就会白白超时。雅虎这条路一条要打两次请求，所以一次最多放 5 条。 */
+const mapLimit = async (items, limit, fn) => {
+  const list = Array.from(items);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (cursor < list.length) {
+      const index = cursor++;
+      await fn(list[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return list;
 };
 
 const apiYahooHot = async (url) => {

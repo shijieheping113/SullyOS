@@ -67,4 +67,9 @@ describe('worker 解析对齐工作台', () => {
         const html = '<a href="https://news.yahoo.co.jp/articles/1c78206cde783ebfd92b8382e61467542d8cae46" class="x"><div><span>まさか4点リードがひっくり返された</span></div></a>';
         expect(yahooSearchTitles(html)).toEqual(['まさか4点リードがひっくり返された']);
     });
+
+    it('标题里夹命中词高亮时，取完整标题而不是半句', () => {
+        const html = '<a href="https://news.yahoo.co.jp/articles/662599e46461c571bfd6ddd0fc7b387526c72fb9" class="x"><div class="t">石川県に<em class="hit">緊急地震速報</em>、取り消し</div><div class="d">　16日午後0時38分ごろ、石川県を含む広い地域に<em class="hit">緊急地震速報</em>が発表され、その後、取り消された。 　…</div></a>';
+        expect(yahooSearchTitles(html)[0]).toBe('石川県に緊急地震速報、取り消し');
+    });
 });

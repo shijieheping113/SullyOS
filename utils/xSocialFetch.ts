@@ -102,6 +102,7 @@ export const cardFromFxConversation = (conv: any): XSocialCardData | null => {
         statsLine: `互动：赞 ${status.likes ?? 0}｜转 ${status.reposts ?? status.retweets ?? 0}｜评 ${status.replies ?? 0}｜引用 ${status.quotes ?? 0}`,
         threadTexts: thread.filter(t => String(t.id) !== mainId).map(t => t.text),
         replies,
+        totalReplies: Number(status.replies) || undefined,
     };
 };
 
@@ -188,10 +189,12 @@ const fail = (reason: XPackToolResult['reason'], detail = ''): XPackToolResult =
     summary: `ok: false\nreason: ${reason}${detail ? `\n${detail}` : ''}`,
 });
 
-const okSummary = (summary: string): XPackToolResult => ({
-    ok: true,
-    summary: `ok: true\n${trimFeedFromEnd(summary)}`,
-});
+/** 超长会从末尾收掉。收过就明说，免得模型以为自己看到了全部。 */
+const okSummary = (summary: string): XPackToolResult => {
+    const trimmed = trimFeedFromEnd(summary);
+    const note = trimmed === summary ? '' : '\n（这条太长，末尾有一截没收进来，别当成全部。）';
+    return { ok: true, summary: `ok: true\n${trimmed}${note}` };
+};
 
 export const runXSearch = async (
     q: string,

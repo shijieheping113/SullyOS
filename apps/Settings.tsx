@@ -4697,7 +4697,23 @@ const Settings: React.FC = () => {
                               className="text-[11px] px-3 py-1 rounded-full font-bold bg-emerald-500 text-white disabled:opacity-40"
                           >{jpHotRefreshing ? '正在刷新…' : '刷新热词'}</button>
                       </div>
-                      {jpHotPreview ? <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-[11px] leading-relaxed text-slate-600">{jpHotPreview}</pre> : null}
+                      {jpHotPreview ? (
+                          <div className="space-y-1.5">
+                              <button
+                                  type="button"
+                                  onClick={async () => {
+                                      try {
+                                          await navigator.clipboard.writeText(jpHotPreview);
+                                          addToast('热词已复制', 'success');
+                                      } catch {
+                                          addToast('复制失败，请长按手动选择', 'error');
+                                      }
+                                  }}
+                                  className="w-full py-1.5 rounded-lg bg-emerald-100 text-emerald-700 text-[11px] font-bold active:scale-95 transition-transform"
+                              >一键复制</button>
+                              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-[11px] leading-relaxed text-slate-600">{jpHotPreview}</pre>
+                          </div>
+                      ) : null}
                   </div>
               </div>
 
