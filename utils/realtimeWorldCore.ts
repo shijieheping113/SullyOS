@@ -507,12 +507,14 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
 
     if (jpHotFeed) {
         parts.push('');
-        parts.push(`🇯🇵 【日本热词 · 刷手机看到的】`);
-        parts.push(`（下面这些是日本那边此刻正在被热议的事，是你刷手机刷到的新闻，不是你已经掌握的知识。`);
-        parts.push(`想找话头、气氛正好、或者对方聊到相关的人／作品／事件时，都可以拿它当谈资自然地聊起来。`);
-        parts.push(`别一条条播报，别硬邦邦地"报新闻"，也别把整段复读出来；对方正在认真说别的事，就先放着。）`);
+        parts.push(`🇯🇵 【日本热词】`);
         parts.push(jpHotFeed);
-        if (jpDiscussLine) parts.push(jpDiscussLine);
+        parts.push('');
+        parts.push(`### 【日本热词使用指导】`);
+        parts.push(`1. 以上是你刚刷手机看到的日本当下的热点新闻，属于你可以拿来闲聊的真实话题。`);
+        parts.push(`2. 何时使用：当你想找话头、聊天氛围放松、或者对方聊到相关的人物／作品／事件时，可以挑一条你感兴趣的自然地聊起来、分享你的看法。`);
+        parts.push(`3. 怎么聊：像平时跟朋友随口提起"诶我刚刷到……"一样自然带出，不要像新闻播音员那样一条条硬播报，也不要把列表原文整段复读；如果对方正在认真聊别的事或带着情绪，就先别插无关热词。`);
+        if (jpDiscussLine) parts.push(`4. ${jpDiscussLine}`);
     }
 
     // 5. 行为指令（按真拿到的数据裁剪：没天气就别教它关心天气，否则等于教它现编一个）
@@ -522,6 +524,9 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
     tips.push(`这些信息都是真实的，可以直接引用；如果对方问"你怎么知道的"，就说你刚刷到 / 刚看到的。`);
     if (weather) {
         tips.push(`天气是真实的，可以自然地关心对方（"外面在下雨，带伞了吗？"）。`);
+    }
+    if (jpHotFeed) {
+        tips.push(`日本热词是你刷手机看到的新鲜事，找话头或聊到相关话题时可以自然提起，但别当成任务逐条播报。`);
     }
     tips.push(`别假装不知道这些，这是你真能感知到的外部世界。`);
     tips.forEach((t, i) => parts.push(`${i + 1}. ${t}`));

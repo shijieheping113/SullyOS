@@ -51,7 +51,7 @@ const readRow = (id: string): CacheRow | null => {
 
 const pull = async (path: string): Promise<{ source: 'trends' | 'yahoo' | 'bing'; items: JpHotItem[]; feed: string; sourceMode: string } | null> => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 26000);
+    const timer = setTimeout(() => ctrl.abort(), 45000);
     try {
         const res = await fetch(`${getXJpProxyBase()}${path}`, { signal: ctrl.signal });
         const data = await res.json().catch(() => null);

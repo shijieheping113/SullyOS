@@ -65,6 +65,19 @@ describe('renderRealtimeWorldBlock', () => {
         expect(out).toContain('- 某某官宣（微博）：一句简介');
         expect(out).toContain('[[NEWS_CARD: 来源|标题]]');
     });
+
+    it('日本热词带独立的【日本热词使用指导】标题与分条说明', () => {
+        const out = renderRealtimeWorldBlock({
+            jpHotFeed: '【日本热词｜Google Trends】\n- 千島列島｜地方社会｜気象庁が緊急地震速報を取り消し（時事通信）',
+            jpDiscussLine: '若想看某条底下人们怎么聊（不是新闻），可以单独一行：[[YAHOO_DISCUSS: 日语关键词]]。别把讨论碎嘴当成新闻摘要。',
+        });
+        expect(out).toContain('### 【日本热词使用指导】');
+        expect(out).toContain('1. 以上是你刚刷手机看到的日本当下的热点新闻');
+        expect(out).toContain('2. 何时使用：');
+        expect(out).toContain('3. 怎么聊：');
+        expect(out).toContain('4. 若想看某条底下人们怎么聊');
+        expect(out).toContain('日本热词是你刷手机看到的新鲜事');
+    });
 });
 
 describe('getHotNewsSlot', () => {

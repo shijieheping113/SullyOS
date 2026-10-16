@@ -330,25 +330,36 @@ const RSS_HEADERS = {
 };
 
 const googleNewsBlurb = async (q, deadline, trace) => {
-  if (Date.now() > deadline) return null;
+  const gDeadline = Math.min(deadline, Date.now() + 5000);
+  if (Date.now() > gDeadline) return null;
   const pull = async (query) => {
-    if (Date.now() > deadline) return [];
+    if (Date.now() > gDeadline) return [];
     const url = `https://news.google.com/rss/search?${new URLSearchParams({ q: query, hl: 'ja', gl: 'JP', ceid: 'JP:ja' })}`;
-    const got = await fetchText(url, Math.min(4500, Math.max(1500, deadline - Date.now())), 800000, RSS_HEADERS);
-    return parseGoogleNewsRss(got.text, q).filter(it => !looksLikeSnsFluff(it.title) && !looksLikeSnsFluff(`${it.title}（${it.source || ''}）`) && newsSourceOk(it.source));
+    try {
+      const got = await fetchText(url, Math.min(2500, Math.max(1000, gDeadline - Date.now())), 800000, BROWSER_HTML_HEADERS);
+      if (!got.ok) return [];
+      return parseGoogleNewsRss(got.text, q).filter(it => !looksLikeSnsFluff(it.title) && !looksLikeSnsFluff(`${it.title}（${it.source || ''}）`) && newsSourceOk(it.source));
+    } catch {
+      return [];
+    }
   };
-  // Google 对 CF 出口间歇 503：原地重试两次（第一次隔 1.5s，第二次隔 2s），全空才认输。
-  const RETRY_WAITS = [1500, 2000];
+  const RETRY_WAITS = [600, 900];
+  let hadRetry = false;
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, RETRY_WAITS[attempt - 1]));
+    if (Date.now() > gDeadline) break;
+    if (attempt > 0) {
+      hadRetry = true;
+      const waitMs = RETRY_WAITS[attempt - 1];
+      if (trace) { trace.retried++; trace.lastRetryWaitMs = waitMs; }
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
     if (trace) trace.attempts++;
     let news = await pull(`${q} when:1d`);
-    if (!news.length) news = await pull(q);
+    if (!news.length && Date.now() + 800 < gDeadline) news = await pull(q);
     if (news.length) {
-      if (trace && attempt > 0) { trace.retried++; trace.lastRetryWaitMs = RETRY_WAITS[attempt - 1]; }
+      if (trace && hadRetry) trace.recovered = (trace.recovered || 0) + 1;
       return pickGoogleNewsBlurb(news, q, 280);
     }
-    if (Date.now() > deadline) break;
   }
   if (trace) trace.exhausted++;
   return null;
@@ -498,16 +509,20 @@ const enrichOne = async (item, deadline, preferYahoo, source, trace) => {
   } else if (preferYahoo) {
     if (!good()) accept(await yahooNewsBlurb(item.query, deadline).catch(() => null), 40);
     if (!good()) accept(await googleNewsBlurb(item.query, deadline, trace).catch(() => null), 36);
-    if (!good()) accept(await bingNewsBlurb(item.query, deadline).catch(() => null), 36);
   } else if (source === 'bing') {
     // Bing 源：摘要也先走 Bing（词是从 Bing 首页热榜来的，两边同一家更对得上），
     // 拿不到再退回 Google 新闻。
     if (!good()) accept(await bingNewsBlurb(item.query, deadline).catch(() => null), 36);
     if (!good()) accept(await googleNewsBlurb(item.query, deadline, trace).catch(() => null), 36);
   } else {
+    // Google Trends 源：和本地工作台 gtrends_enrich_summary 完全一致，走 Google 新闻 → 雅虎新闻。
     if (!good()) accept(await googleNewsBlurb(item.query, deadline, trace).catch(() => null), 36);
-    if (!good()) accept(await bingNewsBlurb(item.query, deadline).catch(() => null), 36);
-    if (!good()) accept(await yahooNewsBlurb(item.query, deadline).catch(() => null), 40);
+    if (!good()) {
+      const yb = await yahooNewsBlurb(item.query, deadline).catch(() => null);
+      if (blurbOk(yb, 36) && (blurbRelevant(item.query, yb) || String(yb).length >= 60)) {
+        accept(yb, 36);
+      }
+    }
   }
   const related = (Array.isArray(item.related) ? item.related : []).filter(x => typeof x === 'string' && x && x !== item.query).slice(0, 2);
   if (item.summary && related.length && String(item.summary).length < 100 && !looksLikeSnsFluff(item.summary)) {
@@ -522,8 +537,8 @@ const enrichOne = async (item, deadline, preferYahoo, source, trace) => {
 const finishHot = async (source, items, n, interestOn, domains, extra) => {
   const filtered = filterHotPool(items, interestOn, domains);
   const shown = filtered.pool.slice(0, n);
-  const deadline = Date.now() + 14000;
-  const trace = { attempts: 0, retried: 0, exhausted: 0, lastRetryWaitMs: 0 };
+  const deadline = Date.now() + 18000;
+  const trace = { attempts: 0, retried: 0, recovered: 0, exhausted: 0, lastRetryWaitMs: 0 };
   if (shown.length) await mapLimit(shown, 5, it => enrichOne(it, deadline, source === 'yahoo', source, trace));
   const lines = shown.map(it => {
     let summary = it.summary;
@@ -559,13 +574,14 @@ const finishHot = async (source, items, n, interestOn, domains, extra) => {
     google_news: {
       attempts: trace.attempts,
       retried: trace.retried,
+      recovered: trace.recovered,
       exhausted: trace.exhausted,
-      retry_waits_ms: [1500, 2000],
+      retry_waits_ms: [600, 900],
       last_retry_wait_ms: trace.lastRetryWaitMs,
-      note: trace.retried
-        ? `Google 新闻第一次没通，重试后拿到（间隔 ${trace.lastRetryWaitMs}ms）`
-        : trace.exhausted
-          ? 'Google 新闻重试两次仍没通，已交给别的源'
+      note: trace.recovered
+        ? `Google 新闻重试 ${trace.retried} 次，其中 ${trace.recovered} 条重试后拿到（间隔 ${trace.lastRetryWaitMs}ms）`
+        : (trace.retried || trace.exhausted)
+          ? `Google 新闻重试 ${trace.retried} 次仍未拿到（${trace.exhausted} 条在 CF 出口被拒，已转走雅虎新闻）`
           : 'Google 新闻一次就通',
     },
   };
