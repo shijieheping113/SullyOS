@@ -1658,6 +1658,8 @@ const MessageItem = React.memo(({
 
         if (m.metadata?.source === 'peek-request') {
             const line = String(m.metadata?.peekText || '').trim();
+            const headline = String(m.metadata?.peekHeadline || '').trim();
+            const title = headline || '求你看看';
             const outcome = String(m.metadata?.peekOutcome || (m.metadata?.peekViewed ? 'reveal' : ''));
             const discarded = outcome === 'discard';
             const secret = outcome === 'secret';
@@ -1679,10 +1681,8 @@ const MessageItem = React.memo(({
                         <article className={`block-card peek ${cardState}`}>
                             <div className="card-head">
                                 <div className="avatar"><TokenImg value={charAvatar} alt={charName} className="w-full h-full object-cover" loading="lazy" decoding="async" /></div>
-                                <div>
-                                    <div className="eyebrow">A LITTLE LOOK</div>
-                                    <div className="title">求你看看</div>
-                                    <div className="subtitle">只想确认你还在不在</div>
+                                <div className="card-title">
+                                    <div className="title">{title}</div>
                                 </div>
                             </div>
                             {line ? (
@@ -1707,7 +1707,7 @@ const MessageItem = React.memo(({
             const status = String(m.metadata?.requestStatus || 'pending');
             const done = status === 'accepted' || status === 'ignored';
             const title = status === 'accepted' ? '已重新加好友' : status === 'ignored' ? '已忽略' : '重新加好友';
-            const statusText = status === 'accepted' ? '门已经打开一条缝。' : status === 'ignored' ? '猫儿会先安静一会儿。' : '通过后，聊天会慢慢恢复';
+            const statusText = status === 'accepted' ? '聊天可以恢复了' : status === 'ignored' ? '猫儿会先安静一会儿。' : '通过后，聊天会慢慢恢复';
             return (
                 <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} relative`}>
                     {selectionMode && (
@@ -1721,10 +1721,9 @@ const MessageItem = React.memo(({
                         <article className={`block-card request${done ? ' done' : ''}`}>
                             <div className="card-head">
                                 <div className="avatar"><TokenImg value={charAvatar} alt={charName} className="w-full h-full object-cover" loading="lazy" decoding="async" /></div>
-                                <div>
-                                    <div className="eyebrow">ONE MORE CHANCE</div>
+                                <div className="card-title">
                                     <div className="title">{title}</div>
-                                    <div className="subtitle">把门留一条缝，好吗</div>
+                                    <div className="subtitle">想恢复正常聊天</div>
                                 </div>
                             </div>
                             {line ? <p className="copy">{line}</p> : null}

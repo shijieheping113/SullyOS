@@ -1288,7 +1288,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 else if (m.metadata?.source === BLOCK_SOURCE) {
                     const bMeta = m.metadata || {};
                     const bStatus = bMeta.blockStatus === '已解除' ? '已解除' : '已拉黑';
-                    content = `${timeStr} ${formatBlockRecord({ at: Number(m.timestamp || 0), status: bStatus, blockCallsToo: !!bMeta.blockCallsToo })}`;
+                    content = `${timeStr} ${formatBlockRecord({
+                        at: Number(m.timestamp || 0),
+                        status: bStatus,
+                        blockCallsToo: !!bMeta.blockCallsToo,
+                        allowProactiveCall: !!char.allowProactiveCall,
+                    })}`;
                 }
                 else if (m.metadata?.source === BLOCK_FRIEND_REQUEST_SOURCE) content = `${timeStr} ${formatBlockFriendRequestRecord(m)}`;
                 else if (m.metadata?.source === BLOCK_PEEK_SOURCE) content = `${timeStr} ${formatBlockPeekRecord(m)}`;

@@ -2396,7 +2396,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
 
     // 拉黑（冷战玩法）两张卡：
-    //  求看看卡「看看」→ 标记已看（角色知道自己被看到了，但拉黑没解除）；
+    //  求看看「看看」记成看过；「扔掉」记成扔掉；「偷偷看」察觉了记成看过，没察觉记成没看。原文都留着。
     //  好友申请卡「通过」→ 落一条「已解除」记录（聊天电话一起恢复）+ 卡标记已通过；
     //  好友申请卡「忽略」→ 只标记已忽略，拉黑继续。
     const patchMessageMeta = useCallback((id: number, patch: Record<string, unknown>) => {
@@ -6007,7 +6007,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                         await saveBlockRecord(char.id, '已解除');
                                         setBlockState(prev => ({ ...prev, blocked: false, blockCallsToo: false, since: 0 }));
                                     } else {
-                                        await saveBlockRecord(char.id, '已拉黑', blockCallsTooChecked);
+                                        await saveBlockRecord(char.id, '已拉黑', blockCallsTooChecked, { allowProactiveCall: !!char.allowProactiveCall });
                                         setBlockState(prev => ({ ...prev, blocked: true, blockCallsToo: blockCallsTooChecked, since: Date.now() }));
                                     }
                                     setModalType('none');
@@ -6028,7 +6028,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                     type="button"
                                     onClick={async () => {
                                         if (!char) return;
-                                        await saveBlockRecord(char.id, '已拉黑', false, { relaxedCalls: true });
+                                        await saveBlockRecord(char.id, '已拉黑', false, { relaxedCalls: true, allowProactiveCall: !!char.allowProactiveCall });
                                         setBlockState(prev => ({ ...prev, blockCallsToo: false }));
                                         setModalType('none');
                                         await reloadMessages(visibleCountRef.current);
@@ -6040,7 +6040,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                     type="button"
                                     onClick={async () => {
                                         if (!char) return;
-                                        await saveBlockRecord(char.id, '已拉黑', true, { patchedCalls: true });
+                                        await saveBlockRecord(char.id, '已拉黑', true, { patchedCalls: true, allowProactiveCall: !!char.allowProactiveCall });
                                         setBlockState(prev => ({ ...prev, blockCallsToo: true }));
                                         setModalType('none');
                                         await reloadMessages(visibleCountRef.current);

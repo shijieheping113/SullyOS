@@ -106,7 +106,8 @@ export const lastRejectedIncomingAt = (messages: Array<{ timestamp?: number; met
 
 /**
  * 拉黑拦来电（纯函数，零额外 IO）。
- * 聊天记录里的 [[记录:BLOCK|...]] 系统消息是事实源：最后一条「已拉黑」且电话=是 → 拦。
+ * 聊天记录里的 BLOCK 系统消息是事实源：最后一条「已拉黑」且 metadata.blockCallsToo → 拦。
+ * 模型看到的「电话=可以打 / 打不通」只是结论，闸门不解析那几个字。
  * 用户去电永不拦截，这里只决定「要不要弹角色来电」。
  * 和 utils/block.ts 的 getBlockStateFromMessages 判定一致，但这里只读 metadata，
  * 不依赖 role（该 helper 需要 role 字段做「最后一条带拒收标记」兜底，来电场景不需要——

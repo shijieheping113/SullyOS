@@ -8,11 +8,13 @@
 
 ## 这是什么
 
-用户拒收这个角色的**普通消息**（可选连电话一起拒）。角色照常生成、用户照常看见，气泡挂「未送达」。角色以为自己没送到。想被看见，只能走：
+用户拒收这个角色的**普通消息**（可选连电话一起拒）。角色照常生成、用户照常看见，气泡挂「未送达」。角色知道普通文字没送到，也仍然可以写。想让对方看见，可以走：
 
-- 求看看卡 `[[ACTION:PEEK|短句]]`
+- 求看看：一封信。正例是 `[[ACTION:PEEK|起头]]`，换行后写信，最后一行 `[[/PEEK]]`。起头在标签里，跟好友申请一样。空的 `[[ACTION:PEEK]]` 只剥掉，不落卡。旧的「第一行当起头」和「标签里只有一句」仍能收成信。没有起头时卡片标题仍是「求你看看」。
 - 好友申请 `[[ACTION:FRIEND_REQUEST|附言]]`
 - 电话（没勾「连电话」时）`[[ACTION:CALL]]`
+
+发不发看空气，提示词里的情形是例子，不是清单。不设代码闸。施工留档在仓库外 `D:\SullyOS\拉黑施工单-20261018.md`。
 
 **不是**主动消息 1.0 / 2.0。**不是**用户去电。**不写** `CharacterProfile`。
 
@@ -58,7 +60,7 @@
 
 ```
 role: system, type: system
-content: [[记录:BLOCK|at=...|status=已拉黑|电话=是]]
+content: [[记录:BLOCK|at=...|status=已拉黑|电话=打不通]]
 metadata.source = 'block-status'
 metadata.blockStatus = '已拉黑' | '已解除'
 metadata.blockCallsToo
@@ -68,19 +70,22 @@ metadata.blockCallsRelaxed   // 事后放开电话
 
 界面用 `blockRecordDisplayText`，不展示方括号。
 
+电话这一格只写给模型看的结论：`可以打` 或 `打不通`。没开主动来电，或勾了连电话一起拒，都是 `打不通`。不要写回 `电话=是` / `电话=否`（「是」会被读成电话能打）。来电闸门只看 `metadata.blockCallsToo`，不解析这几个字。拼历史时要带上角色的 `allowProactiveCall`。
+
 ### 求看看卡
 
-解析：`utils/chatParser.ts` 吃 `[[ACTION:PEEK|短句]]`，落 `source=peek-request`。
+解析：`utils/chatParser.ts`。正例的竖线后是 `metadata.peekHeadline`（卡片标题），`[[/PEEK]]` 前的信是 `metadata.peekText`，换行保留。`[[/ACTION:PEEK]]` 也算结束。没写结束标签时，标签后的文字收到下一张 `[[` 之前，算这封信。空标签不落卡。没有起头的旧卡，标题仍显示「求你看看」。
 
 用户三键（`apps/Chat.tsx` `handleResolveBlockAction`）：
 
 | 键 | `peekOutcome` | 角色在上下文里看到 | 用户浅灰句 |
 |---|---|---|---|
-| 不看，扔掉 | `discard` | 扔掉 | 你扔掉了这条求看看 |
-| 看看 | `reveal` | 已看 | 你看了这条求看看 |
-| 偷偷看一下 | `secret` | 50% 已看 / 50% 扔掉（`peekCharacterKnows`，刷新不重掷） | 你偷偷看了一下，对方没察觉 / 对方察觉了 |
+| 还没点 | 无 | 没看，原文在 | 无 |
+| 不看，扔掉 | `discard` | 扔掉，原文在 | 你扔掉了这条求看看 |
+| 看看 | `reveal` | 看过，原文在 | 你看了这条求看看 |
+| 偷偷看一下 | `secret` | 察觉了是看过，没察觉是没看。原文都在。五成，`peekCharacterKnows`，刷新不重掷。记录里不写「偷偷」 | 你偷偷看了一下，对方没察觉 / 对方察觉了 |
 
-浅灰句：`saveBlockNotice` → `source=block-notice`。只给人看，`chatPrompts.buildMessageHistory` 会丢掉，不进模型。角色侧仍读卡上的 live `formatBlockPeekRecord`。
+浅灰句：`saveBlockNotice` → `source=block-notice`。只给人看，`chatPrompts.buildMessageHistory` 会丢掉，不进模型。角色侧仍读卡上的 live `formatBlockPeekRecord`，形如「【求看看记录】时间 / 对方：没看 / 起头：短句 / 你写下的：全文」。没有起头的旧卡不写起头那一行。
 
 ### 好友申请卡
 
@@ -116,9 +121,9 @@ metadata.blockCallsRelaxed   // 事后放开电话
 
 `utils/chatRequestPayload.ts`：
 
-1. `buildBlockStatusBlock` 拼进易变尾段（求看看 / 好友申请 / 电话能不能打，都写在「对方能看见的只有这些」）
+1. `buildBlockStatusBlock` 拼进易变尾段（对方看不见、三项能力、记住要自己想）
 2. 然后才是「回到你自己」钢印
-3. **仍在拉黑时**，再在钢印**后面**钉 `buildBlockRecencyStamp`（「此刻仍被拒收…只能发求看看卡、好友申请或打电话」）
+3. **仍在拉黑时**，再在钢印**后面**钉 `buildBlockRecencyStamp`（「此刻仍被拒收…读空气」）。这句盖住的是上面的拉黑说明，不是人设。不要写成动作菜单，也不要写回「只能发」。
 
 不要把这段挪回钢印前面——模型开口前最后一眼会被人设挤掉，会忘了自己被拒收。
 
@@ -156,7 +161,7 @@ metadata.blockCallsRelaxed   // 事后放开电话
 - 加号第一页仍是 8 格。拉黑在第三页「更多」。
 - 已拉黑且没勾电话：弹窗可「把电话也拒了」；也可再放开电话（仍拉黑消息）。
 - 求看看三键 class：`peek-discard` / `peek-secret` / `peek-reveal`。不要用光秃的 `.reveal`（会被主题 CSS 挤成一条 i）。`.actions.peek-actions` 必须是等宽 grid，且写在 `.actions { display:flex }` **后面**。
-- 卡片配色跟 `public/block-cards-preview.html`，头像用角色真头像。不要简化成纯色方块。
+- 卡片配色仍跟原来的淡紫卡片，头像用角色真头像。不要简化成纯色方块。外框已缩小：无英文小字、无大引号。求看看正文可滑动，点开前仍然模糊。`public/block-cards-preview.html` 是旧海报稿，聊天里以 `blockCards.css` 为准。
 
 `source` 对 UI / 模型：
 

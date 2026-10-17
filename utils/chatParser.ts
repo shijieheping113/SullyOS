@@ -530,19 +530,24 @@ export const ChatParser = {
             }
         }
 
-        // PEEK — 拉黑期间角色求用户看一眼。短句直接显示在卡上（代码不截字数，只剥符号；
-        // 15 字是提示词里的玩法约束）。落一张系统卡，用户点「看看」即标记已看。
+        // PEEK — 拉黑期间角色交给对方的一封信。起头在标签里，信在 [[/PEEK]] 前。
+        // 空标签只剥掉，不落卡。不截字数。
         const peekExtract = extractBlockPeekAction(content);
-        if (peekExtract.consumed) {
+        if (peekExtract.found) {
             content = peekExtract.text;
+        }
+        if (peekExtract.consumed) {
             try {
                 await persist({
                     charId,
                     role: 'system',
                     type: 'system',
-                    content: peekExtract.line ? `[求看看] ${peekExtract.line}` : '[求看看]',
+                    content: peekExtract.line
+                        ? (peekExtract.headline ? `[求看看] ${peekExtract.headline}\n${peekExtract.line}` : `[求看看] ${peekExtract.line}`)
+                        : '[求看看]',
                     metadata: {
                         source: BLOCK_PEEK_SOURCE,
+                        peekHeadline: peekExtract.headline,
                         peekText: peekExtract.line,
                         peekViewed: false,
                         askedAt: Date.now(),
