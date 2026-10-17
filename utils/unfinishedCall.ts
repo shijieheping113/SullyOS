@@ -126,6 +126,11 @@ export const findLatestUnfinishedCall = (
   return latest;
 };
 
+/** 补记的挂断卡片排在最后一句后面 1 毫秒，不排到按下「新开」的现在。 */
+export const unfinishedHangupTimestamp = (
+  session: Pick<UnfinishedCallSession, 'lastTimestamp'>,
+): number => session.lastTimestamp + 1;
+
 export const formatCallClock = (seconds: number): string => {
   const safe = Math.max(0, Math.floor(seconds));
   return `${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;

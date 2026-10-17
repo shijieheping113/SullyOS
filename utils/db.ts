@@ -48,7 +48,8 @@ const DB_NAME = 'AetherOS_Data';
 // v73: direct home-turn lookups for incremental journal writes.
 // v74: merge master delivery lookup with both home indexes, including existing v73 databases.
 // v75：喵喵盒表和家园索引一起补齐。旧库无论停在哪一版，缺的表和索引都会在升级时建上。
-const DB_VERSION = 75;
+// v76：私聊最近一页按 [charId, timestamp] 取。补记的挂断卡片编号最新、时间却在最后一句后面，按编号取页会被切掉。
+const DB_VERSION = 76;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -316,6 +317,25 @@ export const openDB = (): Promise<IDBDatabase> => {
       const messageStore = (event.target as IDBOpenDBRequest).transaction!.objectStore(STORE_MESSAGES);
       if (!messageStore.indexNames.contains('charId_source')) {
           messageStore.createIndex('charId_source', ['charId', 'metadata.source'], { unique: false });
+      }
+
+      // 时间不是合法数字的旧消息不能进这个索引，否则整次升级会失败、库打不开。
+      // 先扫一遍，有坏数据就跳过索引，最近一页退回按编号取。
+      if (!messageStore.indexNames.contains('charId_timestamp')) {
+          const scan = messageStore.openCursor();
+          let unsafe = false;
+          scan.onsuccess = () => {
+              const cursor = scan.result;
+              if (cursor) {
+                  const stamp = (cursor.value as { timestamp?: unknown }).timestamp;
+                  if (!(stamp == null || (typeof stamp === 'number' && Number.isFinite(stamp)))) unsafe = true;
+                  if (!unsafe) cursor.continue();
+                  return;
+              }
+              if (!unsafe && !messageStore.indexNames.contains('charId_timestamp')) {
+                  messageStore.createIndex('charId_timestamp', ['charId', 'timestamp'], { unique: false });
+              }
+          };
       }
 
       if (!messageStore.indexNames.contains('charId_homeTurn')) {
@@ -747,6 +767,41 @@ export const DB = {
     });
   },
 
+  /** 只取这几个来源，给通话记录用。不把整本聊天（含图片）读进内存。 */
+  getMessagesByCharIdAndSources: async (charId: string, sources: string[]): Promise<Message[]> => {
+    const uniqueSources = [...new Set(sources.filter(Boolean))];
+    if (!charId || uniqueSources.length === 0) return [];
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const store = transaction.objectStore(STORE_MESSAGES);
+      const fail = (error: DOMException | null) => reject(error || new Error('按来源读取聊天记录失败'));
+      if (!store.indexNames.contains('charId_source')) {
+        const request = store.index('charId').getAll(IDBKeyRange.only(charId));
+        request.onsuccess = () => {
+          const wanted = new Set(uniqueSources);
+          resolve((request.result || []).filter((message: Message) => !message.groupId && wanted.has(String(message.metadata?.source || ''))));
+        };
+        request.onerror = () => fail(request.error);
+        return;
+      }
+      const index = store.index('charId_source');
+      const collected: Message[] = [];
+      let remaining = uniqueSources.length;
+      for (const source of uniqueSources) {
+        const request = index.getAll(IDBKeyRange.only([charId, source]));
+        request.onsuccess = () => {
+          for (const message of (request.result || []) as Message[]) {
+            if (!message.groupId) collected.push(message);
+          }
+          remaining -= 1;
+          if (remaining === 0) resolve(collected);
+        };
+        request.onerror = () => fail(request.error);
+      }
+    });
+  },
+
   /**
    * 某个角色的聊天条数。走 charId 索引的 count()，**一条消息都不会被读出来**，
    * IndexedDB 只回一个数字。使用统计的规模档位用它，别拿 getMessagesByCharId
@@ -875,19 +930,23 @@ export const DB = {
   },
 
   // UI 读取不受记忆水位影响。先按展示范围筛选，再凑满 N 条，避免见面/通话占满窗口。
+  // 有 charId_timestamp 时按时间从新到旧取。补记挂断的编号比后来的聊天还大，按编号取会把它留在最新一页，排序后又被切掉。
   // totalCount 仍是廉价的索引计数上限；游标已取尽时，调用方用实际展示条数替代它。
   getRecentMessagesWithCount: async (charId: string, limit: number, accept?: (message: Message) => boolean): Promise<{ messages: Message[], totalCount: number }> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
-      const index = store.index('charId');
-      const countReq = index.count(IDBKeyRange.only(charId));
+      const countReq = store.index('charId').count(IDBKeyRange.only(charId));
       countReq.onsuccess = () => {
           const totalCount = countReq.result;
-          // Use reverse cursor to only collect the last N messages
           const collected: Message[] = [];
-          const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
+          const byTime = store.indexNames.contains('charId_timestamp');
+          const index = byTime ? store.index('charId_timestamp') : store.index('charId');
+          const range = byTime
+              ? IDBKeyRange.bound([charId, -Number.MAX_SAFE_INTEGER], [charId, Number.MAX_SAFE_INTEGER])
+              : IDBKeyRange.only(charId);
+          const cursorReq = index.openCursor(range, 'prev');
           cursorReq.onsuccess = () => {
               const cursor = cursorReq.result;
               if (cursor && collected.length < limit) {

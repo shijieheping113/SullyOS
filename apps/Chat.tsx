@@ -3581,7 +3581,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         setVisibleCount(LARGE);
         const allMsgs = await DB.getMessagesByCharId(requestCharId, true);
         if (activeCharIdRef.current !== requestCharId) return;
-        const browseableMessages = allMsgs.filter(message => isVisibleChatMessage(message, !!char?.hideSystemLogs));
+        // 按说话时间排，不按保存编号。补记的挂断编号最大，不排序就会停在最新一条旁边。
+        const ordered = sortChatMessages(allMsgs);
+        const browseableMessages = ordered.filter(message => isVisibleChatMessage(message, !!char?.hideSystemLogs));
         const targetIndex = browseableMessages.findIndex(message => message.id === messageId);
         if (targetIndex < 0) {
             visibleCountRef.current = LOAD_BATCH_SIZE;
@@ -3596,7 +3598,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             targetIndex,
             HISTORY_WINDOW_RADIUS,
         );
-        setMessages(allMsgs);
+        setMessages(ordered);
         setTotalMsgCount(browseableMessages.length);
         historyWindowTotalRef.current = browseableMessages.length;
         historyWindowRangeRef.current = nextRange;

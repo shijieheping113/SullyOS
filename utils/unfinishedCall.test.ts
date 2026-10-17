@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findLatestUnfinishedCall,
   unfinishedCallEndCard,
+  unfinishedHangupTimestamp,
   unfinishedKeepsakeLine,
   type UnfinishedCallInput,
 } from './unfinishedCall';
@@ -94,5 +95,24 @@ describe('没挂完的电话', () => {
       endedAt: 90_000,
       keepsakeLine: '“今天也想见你。” —— 苏利',
     });
+  });
+
+  it('补记挂断排在最后一句后面 1 毫秒', () => {
+    const session = findLatestUnfinishedCall([
+      call(1, 'call-9', 'assistant', '在。', 1_000),
+      call(2, 'call-9', 'user', '好', 61_000),
+    ], 'sully');
+    expect(session).not.toBeNull();
+    const endedAt = unfinishedHangupTimestamp(session!);
+    expect(endedAt).toBe(61_001);
+    const card = unfinishedCallEndCard({
+      charId: 'sully',
+      charName: '苏利',
+      session: session!,
+      keepsakeLine: '记着',
+      callMode: 'voice',
+      endedAt,
+    });
+    expect(card.metadata.endedAt).toBe(61_001);
   });
 });

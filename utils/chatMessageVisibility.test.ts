@@ -99,6 +99,32 @@ describe('先按显示范围过滤，再计算最近 N 条', () => {
         expect(recent.messages.map(m => m.id)).toEqual(ids.slice(-30));
     });
 
+    it('补记的挂断编号最新、时间却在最后一句后面，不占最新一页，扩大后排在当时那句后面', async () => {
+        const charId = nextCharId();
+        const before = await DB.saveMessage({ charId, role: 'user', type: 'text', content: '通话前', timestamp: 1_000 });
+        const later: number[] = [];
+        for (let i = 0; i < 40; i++) {
+            later.push(await DB.saveMessage({ charId, role: 'assistant', type: 'text', content: `之后 ${i}`, timestamp: 10_000 + i }));
+        }
+        const callLine = await DB.saveMessage({
+            charId, role: 'assistant', type: 'text', content: '在听', timestamp: 2_000,
+            metadata: { source: 'call', callSessionId: 'call-old' },
+        });
+        const card = await DB.saveMessage({
+            charId, role: 'system', type: 'system', content: '通话结束 · 苏利', timestamp: 2_001,
+            metadata: { source: 'call-end-popup', callSessionId: 'call-old' },
+        });
+        const latest = await DB.getRecentMessagesWithCount(charId, 30, isVisibleChatMessage);
+        expect(latest.messages.map(message => message.id)).toEqual(later.slice(-30));
+        expect(latest.messages.some(message => message.id === card)).toBe(false);
+        const wider = await DB.getRecentMessagesWithCount(charId, 80, isVisibleChatMessage);
+        const ids = wider.messages.map(message => message.id);
+        expect(ids.indexOf(card)).toBe(ids.indexOf(before) + 1);
+        expect(ids[ids.indexOf(card) + 1]).toBe(later[0]);
+        const callRows = await DB.getMessagesByCharIdAndSources(charId, ['call', 'call-end-popup']);
+        expect(callRows.map(message => message.id).sort((a, b) => a - b)).toEqual([callLine, card]);
+    });
+
     it('记忆处理水位不影响桌面预览和可回看的聊天', async () => {
         const charId = nextCharId();
         const id = await DB.saveMessage({ charId, role: 'assistant', type: 'text', content: '旧聊天仍能回看' });

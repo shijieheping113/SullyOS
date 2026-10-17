@@ -15,6 +15,7 @@ import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatCon
 import { trackEvent } from '../../utils/analytics';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
 import { chatMessageFuzzyMatchesKeyword } from '../../utils/chatMessageSearch';
+import { sortChatMessages } from '../../utils/chatMessageOrder';
 import { normalizeMessageContent } from '../../utils/messageFormat';
 import { SULLY_ASSISTANT_MENU_SUBTITLE } from '../../utils/sullyAssistantCopy';
 
@@ -1010,7 +1011,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </div>
                     </div>
                     {(() => {
-                        const reversed = allHistoryMessages.slice().reverse();
+                        const reversed = sortChatMessages(allHistoryMessages).reverse();
                         const query = historySearch.trim();
                         const filtered = query ? reversed.filter(message => chatMessageFuzzyMatchesKeyword(message, query)) : reversed;
                         const limited = query ? filtered.slice(0, HISTORY_SEARCH_MAX) : filtered;

@@ -127,6 +127,7 @@ import { findExpiredCallSnapshots } from '../utils/callSnapshotRetention';
 import {
   findLatestUnfinishedCall,
   unfinishedCallEndCard,
+  unfinishedHangupTimestamp,
   unfinishedKeepsakeLine,
   type UnfinishedCallSession,
 } from '../utils/unfinishedCall';
@@ -1851,61 +1852,69 @@ const CallApp: React.FC = () => {
   };
   const loadCallRecords = async (charId?: string) => {
     if (!charId) return setCallRecords([]);
-    // includeProcessed=true：通话消息与聊天消息同存一个 store，记忆宫殿处理后会推进
-    // 高水位标记 mp_lastMsgId_<charId>，默认的 getMessagesByCharId 会过滤掉水位线之前的
-    // 消息——这会导致继续聊天后通话记录被"清空"。这里必须读取全部消息。
-    const all = await DB.getMessagesByCharId(charId, true);
-    const callMsgs = all
-      .filter(m => m.metadata?.source === 'call' && m.metadata?.callSessionId)
-      .sort((a, b) => a.timestamp - b.timestamp);
-    const callEnds = new Map<string, Message>();
-    all.forEach(message => {
-      if (message.metadata?.source !== 'call-end-popup' || !message.metadata?.callSessionId) return;
-      callEnds.set(String(message.metadata.callSessionId), message);
-    });
-    const grouped = new Map<string, Message[]>();
-    callMsgs.forEach(m => {
-      const sid = String(m.metadata?.callSessionId);
-      const arr = grouped.get(sid) || [];
-      arr.push(m);
-      grouped.set(sid, arr);
-    });
-    const records: CallRecord[] = Array.from(grouped.entries()).map(([sessionId, msgs]) => {
-      const start = msgs[0]?.timestamp || Date.now();
-      const end = msgs[msgs.length - 1]?.timestamp || start;
-      const endMarker = callEnds.get(sessionId);
-      const savedDuration = Number(endMarker?.metadata?.durationSec);
-      const savedMode = endMarker?.metadata?.callMode
-        || msgs.find(message => message.metadata?.callMode)?.metadata?.callMode;
-      return {
-        id: sessionId,
-        sessionId,
-        characterId: charId,
-        characterName: selectedChar?.name || '未选择角色',
-        createdAt: new Date(start).toLocaleString('zh-CN'),
-        durationSec: Number.isFinite(savedDuration)
-          ? Math.max(1, Math.floor(savedDuration))
-          : Math.max(1, Math.floor((end - start) / 1000)),
-        mode: savedMode === 'voice' || savedMode === 'video' ? savedMode : undefined,
-        transcript: msgs.map(m => ({
-          id: `db-${m.id}`,
-          dbId: m.id,
-          role: m.role as 'user' | 'assistant',
-          text: m.content,
-          audioUrl: m.metadata?.audioUrl,
-          thinkingChain: typeof m.metadata?.thinkingChain === 'string' ? m.metadata.thinkingChain : undefined,
-          performance: m.metadata?.avatarPerformance as AvatarPerformanceDirection | undefined,
-          performanceTimeline: m.metadata?.avatarPerformanceCues as AvatarPerformanceCue[] | undefined,
-          cameraSnapshotRef: typeof m.metadata?.cameraSnapshotRef === 'string' && m.metadata.cameraSnapshotRef
-            ? m.metadata.cameraSnapshotRef
-            : undefined,
-          cameraSnapshotExpired: m.metadata?.cameraSnapshotExpired === true,
-          time: formatTimeByTs(m.timestamp),
-          timestamp: m.timestamp,
-        })),
-      };
-    }).sort((a, b) => (b.transcript[b.transcript.length - 1]?.timestamp || 0) - (a.transcript[a.transcript.length - 1]?.timestamp || 0));
-    setCallRecords(records);
+    // 只读通话正文和挂断卡片。整本聊天一起读时，手机上容易读不动，列表就停在空白。
+    try {
+      const rows = await DB.getMessagesByCharIdAndSources(charId, ['call', 'call-end-popup']);
+      const callMsgs = rows
+        .filter(m => m.metadata?.source === 'call' && m.metadata?.callSessionId)
+        .sort((a, b) => a.timestamp - b.timestamp);
+      const callEnds = new Map<string, Message>();
+      rows.forEach(message => {
+        if (message.metadata?.source !== 'call-end-popup' || !message.metadata?.callSessionId) return;
+        callEnds.set(String(message.metadata.callSessionId), message);
+      });
+      const grouped = new Map<string, Message[]>();
+      callMsgs.forEach(m => {
+        const sid = String(m.metadata?.callSessionId);
+        const arr = grouped.get(sid) || [];
+        arr.push(m);
+        grouped.set(sid, arr);
+      });
+      // 只有挂断卡片、正文还没读到时也要留一条，避免这通从列表里消失。
+      callEnds.forEach((_marker, sessionId) => {
+        if (!grouped.has(sessionId)) grouped.set(sessionId, []);
+      });
+      const records: CallRecord[] = Array.from(grouped.entries()).map(([sessionId, msgs]) => {
+        const endMarker = callEnds.get(sessionId);
+        const start = msgs[0]?.timestamp || endMarker?.timestamp || Date.now();
+        const end = msgs[msgs.length - 1]?.timestamp || endMarker?.timestamp || start;
+        const savedDuration = Number(endMarker?.metadata?.durationSec);
+        const savedMode = endMarker?.metadata?.callMode
+          || msgs.find(message => message.metadata?.callMode)?.metadata?.callMode;
+        return {
+          id: sessionId,
+          sessionId,
+          characterId: charId,
+          characterName: selectedChar?.name || (typeof endMarker?.metadata?.characterName === 'string' ? endMarker.metadata.characterName : '未选择角色'),
+          createdAt: new Date(start).toLocaleString('zh-CN'),
+          durationSec: Number.isFinite(savedDuration)
+            ? Math.max(1, Math.floor(savedDuration))
+            : Math.max(1, Math.floor((end - start) / 1000)),
+          mode: savedMode === 'voice' || savedMode === 'video' ? savedMode : undefined,
+          transcript: msgs.map(m => ({
+            id: `db-${m.id}`,
+            dbId: m.id,
+            role: m.role as 'user' | 'assistant',
+            text: m.content,
+            audioUrl: m.metadata?.audioUrl,
+            thinkingChain: typeof m.metadata?.thinkingChain === 'string' ? m.metadata.thinkingChain : undefined,
+            performance: m.metadata?.avatarPerformance as AvatarPerformanceDirection | undefined,
+            performanceTimeline: m.metadata?.avatarPerformanceCues as AvatarPerformanceCue[] | undefined,
+            cameraSnapshotRef: typeof m.metadata?.cameraSnapshotRef === 'string' && m.metadata.cameraSnapshotRef
+              ? m.metadata.cameraSnapshotRef
+              : undefined,
+            cameraSnapshotExpired: m.metadata?.cameraSnapshotExpired === true,
+            time: formatTimeByTs(m.timestamp),
+            timestamp: m.timestamp,
+          })),
+          sortAt: end,
+        };
+      }).sort((a, b) => b.sortAt - a.sortAt).map(({ sortAt: _sortAt, ...record }) => record);
+      setCallRecords(records);
+    } catch (error) {
+      console.error('[call] load records failed', error);
+      addToast('通话记录这次没读出来', 'error');
+    }
   };
   const pruneCallSnapshots = async (charId: string, sessionId: string) => {
     const all = await DB.getMessagesByCharId(charId, true);
@@ -2110,6 +2119,7 @@ const CallApp: React.FC = () => {
   const settleUnfinishedCall = async (session: UnfinishedCallSession, charId: string, charName: string) => {
     const char = characters.find(item => item.id === charId);
     const name = char?.name || charName || '对方';
+    const endedAt = unfinishedHangupTimestamp(session);
     const card = unfinishedCallEndCard({
       charId,
       charName: name,
@@ -2117,12 +2127,14 @@ const CallApp: React.FC = () => {
       session,
       keepsakeLine: unfinishedKeepsakeLine(session.lines, name),
       callMode: session.callMode || callMode,
+      endedAt,
     });
     await DB.saveMessage({
       charId,
       role: 'system',
       type: 'system',
       content: card.content,
+      timestamp: endedAt,
       metadata: card.metadata,
     });
     markCallTurnDirty();
@@ -3548,8 +3560,7 @@ ${sentencePlan}`;
     const record = deleteConfirmRecord;
     if (!record) return;
     setDeleteConfirmRecord(null);
-    // includeProcessed=true：同 loadCallRecords，否则水位线之前的通话消息删不掉
-    const all = await DB.getMessagesByCharId(record.characterId, true);
+    const all = await DB.getMessagesByCharIdAndSources(record.characterId, ['call', 'call-end-popup']);
     // 删除通话消息 + 聊天页的通话总结卡片
     const sessionMessages = all.filter(m => {
       if (m.metadata?.source === 'call' && m.metadata?.callSessionId === record.sessionId) return true;
