@@ -1245,7 +1245,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     const desc = typeof m.metadata?.videoDescription === 'string'
                         ? m.metadata.videoDescription.trim()
                         : '';
-                    let textPart = `${timeStr} [用户分享了一段短视频《${title}》]\n这是用户转发的外部短视频，不是你在现场拍的，也不一定是你本人出现在画面里；请把它当「用户发来给你看的分享」来回应。按照实际的视频内容来理解。\n用角色口吻自然衔接当前对话，融入视频的讨论，不要朗读或复述下面的画面说明，不要突兀换话题，而是交流讨论内容。`;
+                    let textPart = `${timeStr} [用户分享了一段短视频《${title}》]\n这段视频是用户发来给你看的：可能是用户自己刚拍的，也可能是用户从别处转来的，按画面本身判断，不要默认是谁拍的，也不要假设画面里出现的人就是用户或你。请把它当「用户特意分享给你的内容」来回应。按照实际的视频内容来理解。\n用角色口吻自然衔接当前对话，融入视频的讨论，不要朗读或复述下面的画面说明，不要突兀换话题，而是交流讨论内容。`;
                     if (desc) textPart += `\n（供你理解视频画面内容，勿照读）${desc}`;
                     if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
                     return { role: m.role, content: textPart };

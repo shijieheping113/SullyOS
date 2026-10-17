@@ -612,6 +612,17 @@ const MiaomiaoBoxHost: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lpId]);
 
+  // 系统返回（手机返回键 / 导航球返回）：不出小窗，只做单纯返回。
+  // 盒子上层时先按盒内「返回」的逻辑走——不在盒主页就先回盒主页，在盒主页就退出盒子回聊天；
+  // 返回 true = 这次返回被盒子接住了，不再往下传成「退出聊天 App」。
+  // 注意：必须挂在下面 `if (!showFloat && !showWidget) return null` 之前，
+  // 否则盒子收起的那次渲染会少跑一个 hook，React 直接崩（Rendered more hooks…）。
+  useEffect(() => {
+    if (!showFloat) return;
+    return os.registerBackHandler(() => { onHomeLeft(); return true; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFloat, box.page, readId, os.registerBackHandler]);
+
   if (!showFloat && !showWidget) return null;
 
   const sub = box.pendingStarter

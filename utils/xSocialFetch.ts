@@ -102,7 +102,7 @@ export const cardFromFxConversation = (conv: any): XSocialCardData | null => {
         authorHandle: author.handle,
         avatar: author.avatar,
         text: status.text || '',
-        statsLine: `互动：赞 ${status.likes ?? 0}｜转 ${status.reposts ?? status.retweets ?? 0}｜评 ${status.replies ?? 0}｜引用 ${status.quotes ?? 0}`,
+        statsLine: `互动：赞 ${status.likes ?? 0}｜转 ${status.reposts ?? status.retweets ?? 0}｜评 ${status.replies ?? 0}｜引用 ${status.quotes ?? 0}｜浏览 ${status.views ?? status.view_count ?? 0}`,
         threadTexts: thread.filter(t => String(t.id) !== mainId).map(t => t.text),
         replies,
         totalReplies: Number(status.replies) || undefined,

@@ -302,14 +302,16 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, []);
 
   useEffect(() => {
-    if (shell === 'float' && os.activeApp !== AppID.Chat) setShell('widget');
+    // 离开聊天（Home 键 / 切 App）时盒子整个收起，不留小窗——小窗只由「－」号出。
+    if (shell === 'float' && os.activeApp !== AppID.Chat) setShell('hidden');
   }, [os.activeApp, shell]);
 
   useEffect(() => {
     const s = sessionRef.current;
+    // 同样不出小窗：切角色时盒子直接收起，会话还在，随时能从聊天里重新打开。
     if (shell === 'float' && s && os.activeCharacterId && s.charId !== os.activeCharacterId) {
       setPending(null);
-      setShell('widget');
+      setShell('hidden');
     }
   }, [os.activeCharacterId, shell, session?.charId]);
 
@@ -849,10 +851,8 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const leaveToChat = () => {
-    const s = sessionRef.current;
-    const inPlay = !!(s && s.status === 'playing' && messages.length > 0);
-    if (inPlay) setShell('widget');
-    else setShell('hidden');
+    // 纯返回：只退出盒子回聊天，不出小窗。小窗只由右上角「－」号出（collapseToWidget）。
+    setShell('hidden');
   };
 
   const sendPlay = async (text: string) => {

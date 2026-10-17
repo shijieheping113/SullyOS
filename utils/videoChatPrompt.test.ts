@@ -30,7 +30,7 @@ describe('video message prompt', () => {
     );
     const text = JSON.stringify(apiMessages);
     expect(text).toContain('用户分享了一段短视频');
-    expect(text).toContain('也不一定是你本人出现在画面里');
+    expect(text).toContain('不要默认是谁拍的');
     expect(text).toContain('融入视频的讨论');
     expect(text).toContain('（供你理解视频画面内容，勿照读）一只猫在跑');
     expect(text).not.toContain('video_url');
