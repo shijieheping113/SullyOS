@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
 import { cleanFeedText, personLabelShort, type XSocialCardData } from '../../utils/xJpPack';
 
+/** 转帖、引用、喜欢、回复、浏览量同一套：满一千就写成 K，不再换别的单位。 */
 const compactCount = (raw: string): string => {
     const n = Number(String(raw).replace(/,/g, ''));
-    if (!Number.isFinite(n)) return raw;
-    if (n === 0) return '';
-    if (n < 10000) return n.toLocaleString('en-US');
-    if (n < 1_000_000) {
-        const v = n / 1000;
-        return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, '')}K`;
-    }
-    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    if (!Number.isFinite(n) || n <= 0) return Number.isFinite(n) ? '' : raw;
+    if (n < 1000) return String(Math.round(n));
+    const value = n / 1000;
+    const text = value >= 100 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '');
+    return `${text}K`;
 };
 
 const rawStatNumber = (line: string, labels: string[]): number => {
@@ -93,9 +91,9 @@ const HeartSvg: React.FC<{ size?: number }> = ({ size = 14 }) => (
     </svg>
 );
 
-const QuoteSvg: React.FC<{ size?: number }> = ({ size = 14 }) => (
+const BookmarkSvg: React.FC<{ size?: number }> = ({ size = 14 }) => (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true">
-        <path d="M8.75 21V3h2v18h-2zM18 21V8.5h2V21h-2zM4 21l.004-10h2L6 21H4zm9.248 0v-7h2v7h-2z" />
+        <path d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z" />
     </svg>
 );
 
@@ -105,10 +103,10 @@ const ShareSvg: React.FC<{ size?: number }> = ({ size = 14 }) => (
     </svg>
 );
 
-/** X 官方浏览量图标（柱状图） */
+/** X 官方浏览量图标（四柱 analytics 图标） */
 const ViewsSvg: React.FC<{ size?: number }> = ({ size = 14 }) => (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true">
-        <path d="M4 21V10h3v11H4zM10.5 21V3h3v18h-3zM17 21v-7h3v7h-3z" />
+        <path d="M8.75 21V3h2v18h-2zM18 21V8.5h2V21h-2zM4 21l.004-10h2L6 21H4zm9.248 0v-7h2v7h-2z" />
     </svg>
 );
 
@@ -434,6 +432,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
     const likesNum = rawStatNumber(statsLine, ['赞']);
     const repostsNum = rawStatNumber(statsLine, ['转发', '转']);
     const quotesNum = rawStatNumber(statsLine, ['引用']);
+    const viewsNum = rawStatNumber(statsLine, ['浏览', '阅', '查看']);
 
     const openOriginal = (e: React.MouseEvent) => {
         if (!card.url) return;
@@ -498,36 +497,41 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
             )}
 
             {/* 互动数字摘要条 */}
-            {(repostsNum > 0 || quotesNum > 0 || likesNum > 0) && (
+            {(repostsNum > 0 || quotesNum > 0 || likesNum > 0 || viewsNum > 0) && (
                 <div
-                    className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t pt-2 text-[11.5px]"
+                    className="mt-2 flex flex-nowrap items-center gap-x-1.5 border-t pt-2 text-[10px] leading-none"
                     style={{ borderColor: subtleLine, color: muted }}
                 >
                     {repostsNum > 0 && (
-                        <span>
+                        <span className="whitespace-nowrap">
                             <strong className="font-bold tabular-nums" style={{ color: ink }}>{reposts}</strong> 转帖
                         </span>
                     )}
                     {quotesNum > 0 && (
-                        <span>
+                        <span className="whitespace-nowrap">
                             <strong className="font-bold tabular-nums" style={{ color: ink }}>{quotes}</strong> 引用
                         </span>
                     )}
                     {likesNum > 0 && (
-                        <span>
+                        <span className="whitespace-nowrap">
                             <strong className="font-bold tabular-nums" style={{ color: ink }}>{likes}</strong> 喜欢
+                        </span>
+                    )}
+                    {viewsNum > 0 && (
+                        <span className="whitespace-nowrap">
+                            <strong className="font-bold tabular-nums" style={{ color: ink }}>{views}</strong> 查看
                         </span>
                     )}
                 </div>
             )}
 
-            {/* 底部动作图标栏 */}
+            {/* 底部动作图标栏（还原真实 X：回复、转帖、喜欢、浏览量四组主数据 + 右侧书签/分享） */}
             <div
-                className="mt-2 flex items-center justify-between border-t pt-2 pr-1"
+                className="mt-2 flex items-center justify-between border-t pt-2"
                 style={{ borderColor: subtleLine }}
             >
                 <ActionBtn
-                    icon={<ReplySvg size={14} />}
+                    icon={<ReplySvg size={13.5} />}
                     count={comments}
                     baseColor={muted}
                     activeColor="#1d9bf0"
@@ -535,7 +539,7 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     title="回复"
                 />
                 <ActionBtn
-                    icon={<RepostSvg size={14} />}
+                    icon={<RepostSvg size={13.5} />}
                     count={reposts}
                     baseColor={muted}
                     activeColor="#00ba7c"
@@ -543,40 +547,40 @@ export const XSocialCard: React.FC<{ card: XSocialCardData; kind: 'x' | 'threads
                     title="转帖"
                 />
                 <ActionBtn
-                    icon={<HeartSvg size={14} />}
+                    icon={<HeartSvg size={13.5} />}
                     count={likes}
                     baseColor={muted}
                     activeColor="#f91880"
                     activeBg="rgba(249,24,128,0.1)"
                     title="喜欢"
                 />
-                {quotes ? (
-                    <ActionBtn
-                        icon={<QuoteSvg size={14} />}
-                        count={quotes}
-                        baseColor={muted}
-                        activeColor="#1d9bf0"
-                        activeBg="rgba(29,155,240,0.1)"
-                        title="引用"
-                    />
-                ) : null}
                 <ActionBtn
-                    icon={<ViewsSvg size={14} />}
+                    icon={<ViewsSvg size={13.5} />}
                     count={views}
                     baseColor={muted}
                     activeColor="#1d9bf0"
                     activeBg="rgba(29,155,240,0.1)"
-                    title="浏览量"
+                    title="查看"
                 />
-                <ActionBtn
-                    icon={<ShareSvg size={14} />}
-                    count=""
-                    baseColor={muted}
-                    activeColor="#1d9bf0"
-                    activeBg="rgba(29,155,240,0.1)"
-                    onClick={card.url ? openOriginal : undefined}
-                    title={card.url ? '打开原帖' : '分享'}
-                />
+                <div className="flex items-center gap-2">
+                    <ActionBtn
+                        icon={<BookmarkSvg size={13.5} />}
+                        count=""
+                        baseColor={muted}
+                        activeColor="#1d9bf0"
+                        activeBg="rgba(29,155,240,0.1)"
+                        title="书签"
+                    />
+                    <ActionBtn
+                        icon={<ShareSvg size={13.5} />}
+                        count=""
+                        baseColor={muted}
+                        activeColor="#1d9bf0"
+                        activeBg="rgba(29,155,240,0.1)"
+                        onClick={card.url ? openOriginal : undefined}
+                        title={card.url ? '打开原帖' : '分享'}
+                    />
+                </div>
             </div>
 
             {/* 回复区：带左侧时间线连接轨 */}
