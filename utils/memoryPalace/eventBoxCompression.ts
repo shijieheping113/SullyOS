@@ -213,11 +213,11 @@ ${sarMemoryBoundary ? `\n${sarMemoryBoundary}` : ''}
                         { role: 'user', content: userMsg },
                     ],
                     temperature: 0.5,
-                    max_tokens: 8000,
+                    max_tokens: 11000,
                     stream: false,
                 }),
             },
-            2, 120_000, { appName: '记忆宫殿', purpose: '事件压缩' }
+            2, 180_000, { appName: '记忆宫殿', purpose: '事件压缩' }
         );
 
         // 统一剥除 <think> 块并兼容分段 content / reasoning-only 中转。
