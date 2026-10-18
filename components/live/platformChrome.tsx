@@ -328,8 +328,11 @@ export function Seek({
   variant: 'yt' | 'nico' | 'ytLight';
   label: string;
 }) {
-  const thumb = variant === 'nico' ? '#ffffff' : '#ff0000';
-  const track = variant === 'ytLight' ? '#d8d8d8' : 'rgba(255,255,255,0.45)';
+  const thumb = variant === 'nico' ? '#0080ff' : '#FF0033';
+  const baseTrack = variant === 'ytLight' ? '#e2e8f0' : 'rgba(255,255,255,0.28)';
+  const span = Math.max(1, max - min);
+  const pct = Math.max(0, Math.min(100, ((value - min) / span) * 100));
+  const trackBg = `linear-gradient(to right, ${thumb} 0%, ${thumb} ${pct}%, ${baseTrack} ${pct}%, ${baseTrack} 100%)`;
   return (
     <input
       aria-label={label}
@@ -339,7 +342,7 @@ export function Seek({
       value={value}
       onChange={e => onChange(Number(e.target.value))}
       className="live-seek"
-      style={{ ['--seek-thumb' as string]: thumb, ['--seek-track' as string]: track }}
+      style={{ ['--seek-thumb' as string]: thumb, ['--seek-track' as string]: trackBg }}
     />
   );
 }
@@ -351,24 +354,25 @@ export function LiveUiStyle() {
         -webkit-appearance: none;
         appearance: none;
         width: 100%;
-        height: 44px;
+        height: 18px;
         background: transparent;
         margin: 0;
         cursor: pointer;
       }
       .live-seek:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
       .live-seek::-webkit-slider-runnable-track {
-        height: 3px;
+        height: 4px;
         background: var(--seek-track);
         border-radius: 99px;
       }
       .live-seek::-webkit-slider-thumb {
         -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
+        width: 12px;
+        height: 12px;
         border-radius: 99px;
         background: var(--seek-thumb);
-        margin-top: -5.5px;
+        margin-top: -4px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.25);
       }
       @media (prefers-reduced-motion: reduce) {
         .live-ui *:not(.danmaku-fly) { animation: none !important; transition: none !important; }

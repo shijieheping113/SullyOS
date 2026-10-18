@@ -485,6 +485,8 @@ interface FloatingDanmakuOverlayProps {
   showTranslation?: boolean;
   visible?: boolean;
   platformTheme?: LivePlatformTheme;
+  /** 轨道数：小窗 2 条，全屏 3 条 */
+  tracks?: number;
 }
 
 export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
@@ -492,30 +494,32 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   showTranslation = true,
   visible = true,
   platformTheme = 'youtube',
+  tracks = 3,
 }) => {
   if (!visible || !danmakuList || danmakuList.length === 0) return null;
 
   const isNico = platformTheme === 'niconico';
-  // 一轨只放一条：同轨永远不会有第二条追上来，彻底消灭"叠成一坨"。
-  // 速度按字符估算，保证长短句看起来一样快；不截断，长句就慢慢走完全程。
-  const items = danmakuList.slice(-2);
-  const trackTops = ['0px', '21px'];
+  // 多轨防追尾飘屏弹幕：同轨只跑一条，错峰出发，自适应字长速度，绝不重叠、绝不压底。
+  const trackCount = Math.max(1, Math.min(3, tracks));
+  const items = danmakuList.slice(-trackCount);
+  const trackTops = Array.from({ length: trackCount }, (_, i) => `${i * 21}px`);
+
 
   const estimateWidth = (text: string) => {
     let w = 0;
-    for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 12.5 : 7;
+    for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 13 : 7.5;
     return w;
   };
 
   return (
     <div
       className="pointer-events-none absolute inset-x-0 select-none overflow-hidden"
-      style={{ zIndex: 15, height: 42, containerType: 'inline-size' }}
+      style={{ zIndex: 15, height: trackCount * 21, containerType: 'inline-size' }}
     >
       <style>{`
         @keyframes onAirDanmakuFlow {
           0% { transform: translate3d(100cqw, 0, 0); }
-          100% { transform: translate3d(-100%, 0, 0); }
+          100% { transform: translate3d(-105%, 0, 0); }
         }
       `}</style>
       {items.map((dm, idx) => {
@@ -525,7 +529,7 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
         const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
         const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
         const full = `${dm.text}${showTranslation && cleanTrans && cleanTrans !== dm.text ? `（${cleanTrans}）` : ''}`;
-        const duration = Math.max(7, (384 + estimateWidth(full)) / 52);
+        const duration = Math.max(7.5, (390 + estimateWidth(full)) / 50);
 
         return (
           <div
@@ -537,32 +541,50 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
               left: 0,
               width: 'max-content',
               whiteSpace: 'nowrap',
-              lineHeight: '21px',
+              lineHeight: '20px',
               animation: `onAirDanmakuFlow ${duration}s linear infinite`,
-              animationDelay: `${idx * 0.35}s`,
+              animationDelay: `${idx * 0.6}s`,
               willChange: 'transform',
             }}
           >
             <span
               className={`inline-flex items-center gap-1 ${
-                isNico ? 'text-[12.5px] font-bold tracking-tight' : 'text-[12px] font-semibold'
+                isNico ? 'text-[12.5px] font-extrabold tracking-tight' : 'text-[12px] font-bold'
               } ${
-                isSc ? 'text-amber-700' : isGift ? 'text-pink-600' : isMine ? 'text-emerald-700' : 'text-slate-700'
+                isSc
+                  ? 'text-[#b45309]'
+                  : isGift
+                  ? 'text-[#be185d]'
+                  : isMine
+                  ? isNico
+                    ? 'text-[#0066cc] underline decoration-[#0080ff] underline-offset-2'
+                    : 'text-[#047857]'
+                  : 'text-[#1e293b]'
               }`}
+              style={{
+                WebkitTextStroke: '2px rgba(255, 255, 255, 0.72)',
+                paintOrder: 'stroke fill',
+              }}
             >
               {isSc && (
-                <span className="px-1 rounded bg-[#ffb300] text-black text-[10px] font-extrabold">
+                <span
+                  className="px-1.5 py-[1px] rounded bg-[#f59e0b] text-white text-[10px] font-extrabold"
+                  style={{ WebkitTextStroke: '0px' }}
+                >
                   ¥{dm.scAmount}
                 </span>
               )}
               {isGift && (
-                <span className="px-1 rounded bg-pink-500/90 text-white text-[10px] font-bold">
-                  {dm.giftEmoji || '🎁'}{dm.giftName}
+                <span
+                  className="px-1.5 py-[1px] rounded bg-[#ec4899] text-white text-[10px] font-bold"
+                  style={{ WebkitTextStroke: '0px' }}
+                >
+                  {dm.giftEmoji || '🎁'} {dm.giftName}
                 </span>
               )}
               <span>{dm.text}</span>
               {showTranslation && cleanTrans && cleanTrans !== dm.text && (
-                <span className="text-[11px] font-medium text-slate-500">（{cleanTrans}）</span>
+                <span className="text-[11px] font-semibold text-[#475569]">（{cleanTrans}）</span>
               )}
             </span>
           </div>

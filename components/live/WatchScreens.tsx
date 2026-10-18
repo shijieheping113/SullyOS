@@ -83,9 +83,12 @@ export function VodDetailView(props: {
     if (next) props.onSelectPersona(next.id);
   };
 
+  const { bindLongPress, wasLongPressTriggered } = useLongPressMenu();
   const avatar = props.channel.avatar || props.charAvatar;
   const trans = chapter?.speechTranslated?.replace(/^译[：:]\s*/, '').trim() || '';
   const voiceOn = Boolean(chapter && props.ttsPlayingId === chapter.id);
+  const screenText = chapter?.screen || '暂无画面描写';
+  const speechText = chapter?.speechOriginal || '';
 
   const popInner = () => {
     if (sheet) {
@@ -142,142 +145,224 @@ export function VodDetailView(props: {
 
   const renderPicture = (fill: boolean) => (
     <div
-      className={`relative overflow-hidden select-none ${
-        fill ? 'flex-1 min-h-0' : 'h-[204px] shrink-0'
-      }`}
+      className={`relative w-full overflow-hidden select-none flex flex-col border-b ${
+        isNico ? 'border-[#d8dce3]' : 'border-[#eceef2]'
+      } ${fill ? 'flex-1 min-h-0' : 'h-[296px] shrink-0'}`}
     >
-      {/* 氛围背景 */}
+      {/* 零黑罩通透背景 */}
       {props.vod.coverImageUrl ? (
-        <>
-          <TokenImg
-            value={props.vod.coverImageUrl}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/15 to-black/65" />
-        </>
+        <TokenImg
+          value={props.vod.coverImageUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+        />
       ) : (
         <>
           <div
             className="absolute inset-0"
             style={{
-              background:
-                props.vod.coverGradient ||
-                'linear-gradient(135deg, #1e293b 0%, #334155 55%, #0f172a 100%)',
+              background: isNico
+                ? 'linear-gradient(135deg, #f4f9ff 0%, #eaf2fc 48%, #f2f4f9 100%)'
+                : 'linear-gradient(135deg, #fffaf8 0%, #f8f2f6 50%, #f0f4fb 100%)',
             }}
           />
           {avatar && (
             <TokenImg
               value={avatar}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-55"
+              className="absolute inset-0 w-full h-full object-cover scale-125 blur-3xl opacity-25"
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-b from-slate-950/60 via-slate-900/40 to-slate-950/80" />
         </>
       )}
 
-      {/* 顶部角标与操作 */}
-      <div className="absolute inset-x-0 top-0 z-20 px-3 pt-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          {fill && (
+      {/* ① 顶部控制栏 + 三轨飘屏弹幕 */}
+      <div className="relative z-10 h-[82px] shrink-0 overflow-hidden">
+        <div className="relative z-30 h-8 px-2.5 flex items-center justify-between gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {fill && (
+              <button
+                type="button"
+                onClick={() => setFullscreen(false)}
+                className="h-6 px-2 rounded-full text-[#0f172a] text-[11px] font-bold inline-flex items-center gap-0.5"
+              >
+                <Icon name="back" size={14} />
+                <span>收起</span>
+              </button>
+            )}
+            <span
+              className={`h-5 px-2 shrink-0 text-white text-[10.5px] font-extrabold inline-flex items-center gap-1 ${
+                isNico ? 'rounded-[3px] bg-[#0080ff]' : 'rounded-full bg-[#FF0033]'
+              }`}
+            >
+              🎬 {chapter?.timestampLabel || '00:00'} · {chapter?.chapterTitle || '正片'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
-              onClick={() => setFullscreen(false)}
-              className="h-7 px-2.5 rounded-full bg-black/60 text-white text-xs font-bold inline-flex items-center gap-1"
+              onClick={() =>
+                props.onChangePlatformTheme(isNico ? 'youtube' : 'niconico')
+              }
+              className={`h-6 px-2 text-[10.5px] font-extrabold ${
+                isNico
+                  ? 'rounded-[3px] bg-[#252525] text-white'
+                  : 'rounded-full bg-[#FF0033] text-white'
+              }`}
             >
-              <Icon name="back" size={14} />
-              退出全屏
+              {isNico ? 'ニコ動 ⇄' : 'YouTube ⇄'}
             </button>
-          )}
-          <span className="h-6 px-2 rounded bg-black/60 backdrop-blur-sm text-white text-[11px] font-bold inline-flex items-center">
-            🎬 {chapter?.timestampLabel || '00:00'} · {chapter?.chapterTitle || '正片'}
-          </span>
+            <button
+              type="button"
+              onClick={() => setShowTranslation(v => !v)}
+              className={`h-6 px-1.5 rounded text-[10.5px] font-extrabold ${
+                showTranslation
+                  ? isNico
+                    ? 'bg-[#0080ff] text-white'
+                    : 'bg-[#0f0f0f] text-white'
+                  : 'text-[#64748b] line-through'
+              }`}
+            >
+              译
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDanmaku(v => !v)}
+              className={`h-6 px-1.5 rounded text-[10.5px] font-extrabold ${
+                showDanmaku
+                  ? isNico
+                    ? 'bg-[#0080ff] text-white'
+                    : 'bg-[#0f0f0f] text-white'
+                  : 'text-[#64748b] line-through'
+              }`}
+            >
+              {isNico ? 'コメ' : '弹'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setFullscreen(v => !v)}
+              className="w-6 h-6 rounded text-[#1e293b] inline-flex items-center justify-center"
+            >
+              <Icon name={fill ? 'collapse' : 'expand'} size={14} />
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setShowDanmaku(v => !v)}
-            className={`h-7 px-2 rounded text-[11px] font-bold border ${
-              showDanmaku
-                ? 'bg-white/20 text-white border-white/30'
-                : 'bg-black/45 text-white/50 border-white/10 line-through'
-            }`}
-          >
-            {isNico ? 'コメ' : '弹幕'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setFullscreen(v => !v)}
-            className="w-7 h-7 rounded bg-black/45 text-white flex items-center justify-center border border-white/15"
-          >
-            <Icon name={fill ? 'collapse' : 'expand'} size={15} />
-          </button>
-        </div>
-      </div>
-
-      {/* 多轨防截断飘屏弹幕 */}
-      {showDanmaku && chapter && (
-        <FloatingDanmakuOverlay
-          danmakuList={chapter.danmaku || []}
-          showTranslation={showTranslation}
-          visible
-          platformTheme={props.platformTheme}
-        />
-      )}
-
-      {/* 中央头像与发声状态 */}
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pt-3">
-        <div className="rounded-full p-1 bg-white/20 backdrop-blur-md shadow-xl border border-white/30">
-          <Face src={avatar} name={props.channel.channelName} size={fill ? 96 : 68} />
-        </div>
-        {voiceOn && (
-          <span className="mt-1.5 px-2.5 py-0.5 rounded-full bg-[#ff0000] text-white text-[10px] font-bold">
-            🔊 正在朗读本节
-          </span>
+        {showDanmaku && chapter && (
+          <div className="relative w-full h-[50px]">
+            <FloatingDanmakuOverlay
+              danmakuList={chapter.danmaku || []}
+              showTranslation={showTranslation}
+              visible
+              platformTheme={props.platformTheme}
+            />
+          </div>
         )}
       </div>
 
-      {fill && chapter && (
-        <div className="absolute inset-x-3 bottom-3 z-20 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15 p-4 text-white max-h-[46%] overflow-y-auto">
-          <p className="text-xs text-amber-300 font-bold mb-1">
-            {chapter.timestampLabel} · {chapter.chapterTitle}
-          </p>
-          <p className="text-xs text-slate-200 mb-2">🎥 {chapter.screen}</p>
-          <p className="text-base font-bold text-white">「{chapter.speechOriginal}」</p>
-          {showTranslation && trans && trans !== chapter.speechOriginal && (
-            <p className="mt-1 text-xs text-sky-300">🌐 {trans}</p>
+      {/* ② 章节画面层 */}
+      <div
+        className="relative z-10 flex-[2] min-h-0 px-3 pt-0.5 pb-1 overflow-hidden flex flex-col justify-center cursor-pointer"
+        {...bindLongPress(() => chapter && openMenu(chapter, idx))}
+        onClick={() => {
+          if (wasLongPressTriggered()) return;
+          if (chapter) openMenu(chapter, idx);
+        }}
+      >
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span
+            className={`text-[10px] font-extrabold tracking-wider ${
+              isNico ? 'text-[#0066cc]' : 'text-[#475569]'
+            }`}
+          >
+            🎥 分镜画面 ({idx + 1}/{chapters.length})
+          </span>
+          <span className="text-[10px] text-[#94a3b8] ml-auto">点此或长按编辑本章</span>
+        </div>
+        <p className="text-[11.5px] leading-[1.45] font-medium text-[#1e293b] break-words">
+          {screenText}
+        </p>
+      </div>
+
+      {/* ③ 章节语音与台词层 */}
+      <div
+        className="relative z-10 flex-[2] min-h-0 px-3 pt-0.5 pb-1.5 overflow-hidden flex flex-col justify-center cursor-pointer"
+        {...bindLongPress(() => chapter && openMenu(chapter, idx))}
+        onClick={() => {
+          if (wasLongPressTriggered()) return;
+          if (chapter?.speechOriginal) props.onPlayChapterVoice(chapter);
+        }}
+      >
+        <div className="flex items-center justify-between gap-2 mb-0.5">
+          <span
+            className={`text-[10px] font-extrabold ${
+              isNico ? 'text-[#0080ff]' : 'text-[#FF0033]'
+            }`}
+          >
+            🎙️ {props.channel.channelName} · {voiceOn ? '正在播音（点击停止）' : '点台词听原声'}
+          </span>
+          {chapter && (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                openMenu(chapter, idx);
+              }}
+              className="w-6 h-6 rounded-full text-[#475569] inline-flex items-center justify-center text-xs font-extrabold"
+            >
+              ⋯
+            </button>
           )}
         </div>
-      )}
+        <p className="text-[12.5px] leading-[1.48] font-bold text-[#0f172a] break-words">
+          「{speechText || '（无台词）'}」
+        </p>
+        {showTranslation && trans && trans !== speechText && (
+          <p className="mt-0.5 text-[10.5px] leading-[1.38] font-semibold text-[#0369a1] break-words">
+            🌐 {trans}
+          </p>
+        )}
+      </div>
     </div>
   );
 
   const renderChapterBar = () => (
-    <div className="shrink-0 bg-[#0f0f0f] text-white px-3 py-2 flex items-center gap-2 border-b border-[#222]">
+    <div
+      className={`shrink-0 px-2.5 py-1.5 flex items-center gap-1.5 border-b ${
+        isNico
+          ? 'bg-[#252525] text-white border-[#1a1a1a]'
+          : 'bg-white text-[#0f0f0f] border-[#e5e7eb]'
+      }`}
+    >
       <button
         type="button"
         disabled={idx <= 0}
         onClick={() => setIdx(Math.max(0, idx - 1))}
-        className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 text-xs font-bold shrink-0"
+        className={`h-7 px-2 text-[11px] font-bold disabled:opacity-30 shrink-0 ${
+          isNico ? 'rounded-[3px] bg-white/10 text-white' : 'rounded-full bg-[#f2f2f2] text-[#0f0f0f]'
+        }`}
       >
         ◀ 上一章
       </button>
 
       {/* 章节时间轴胶囊横滑 */}
-      <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+      <div className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto no-scrollbar">
         {chapters.map((ch, i) => (
           <button
             type="button"
             key={ch.id}
             onClick={() => setIdx(i)}
-            className={`h-7 px-2.5 rounded-full text-[11px] font-bold shrink-0 transition ${
+            className={`h-6 px-2.5 text-[11px] font-bold shrink-0 transition ${
+              isNico ? 'rounded-[3px]' : 'rounded-full'
+            } ${
               i === idx
                 ? isNico
                   ? 'bg-[#0080ff] text-white'
-                  : 'bg-[#ff0000] text-white'
-                : 'bg-white/10 text-white/75 hover:bg-white/20'
+                  : 'bg-[#FF0033] text-white'
+                : isNico
+                ? 'bg-white/10 text-white/75'
+                : 'bg-[#f2f2f2] text-[#606060]'
             }`}
           >
             {ch.timestampLabel} {ch.chapterTitle}
@@ -289,18 +374,28 @@ export function VodDetailView(props: {
         type="button"
         disabled={!chapter?.speechOriginal}
         onClick={() => chapter && props.onPlayChapterVoice(chapter)}
-        className={`h-8 px-2.5 rounded-lg text-xs font-bold shrink-0 ${
-          voiceOn ? 'bg-amber-500 text-black' : 'bg-white/10 text-white disabled:opacity-30'
+        className={`h-7 px-2.5 text-[11px] font-bold shrink-0 ${
+          isNico ? 'rounded-[3px]' : 'rounded-full'
+        } ${
+          voiceOn
+            ? isNico
+              ? 'bg-[#0080ff] text-white'
+              : 'bg-[#FF0033] text-white'
+            : isNico
+            ? 'bg-white/10 text-white disabled:opacity-30'
+            : 'bg-[#f2f2f2] text-[#0f0f0f] disabled:opacity-30'
         }`}
       >
-        🔊 {voiceOn ? '播音中' : '听这章'}
+        🔊 {voiceOn ? '播音中' : '听本章'}
       </button>
 
       <button
         type="button"
         disabled={idx >= maxIdx}
         onClick={() => setIdx(Math.min(maxIdx, idx + 1))}
-        className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 text-xs font-bold shrink-0"
+        className={`h-7 px-2 text-[11px] font-bold disabled:opacity-30 shrink-0 ${
+          isNico ? 'rounded-[3px] bg-white/10 text-white' : 'rounded-full bg-[#f2f2f2] text-[#0f0f0f]'
+        }`}
       >
         下一章 ▶
       </button>
@@ -364,7 +459,7 @@ export function VodDetailView(props: {
       )}
 
       {fullscreen ? (
-        <div className="flex-1 min-h-0 flex flex-col bg-black">
+        <div className="flex-1 min-h-0 flex flex-col bg-white">
           {renderPicture(true)}
           {renderChapterBar()}
         </div>
@@ -374,50 +469,9 @@ export function VodDetailView(props: {
           {renderChapterBar()}
 
           <div className="flex-1 min-h-0 overflow-y-auto">
-            {/* 当前章节完整画面与台词卡片 */}
-            {chapter && (
-              <article className="mx-3 my-2.5 rounded-2xl bg-slate-50 border border-slate-200 p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-slate-800">
-                    📍 {chapter.timestampLabel} · {chapter.chapterTitle}（第 {idx + 1}/{chapters.length} 章）
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openMenu(chapter, idx)}
-                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700"
-                  >
-                    ✏️ 编辑本章 / 语音
-                  </button>
-                </div>
-
-                <div className="flex items-start gap-2 text-[13.5px] leading-relaxed text-slate-600">
-                  <span className="shrink-0 mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
-                    画面
-                  </span>
-                  <p className="flex-1 break-words">{chapter.screen || '暂无画面描写'}</p>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <span className="shrink-0 mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-white">
-                    台词
-                  </span>
-                  <div className="flex-1">
-                    <p className="text-[15px] leading-relaxed font-bold text-slate-900 break-words">
-                      「{chapter.speechOriginal || '（无台词）'}」
-                    </p>
-                    {showTranslation && trans && trans !== chapter.speechOriginal && (
-                      <p className="mt-1 text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2.5 py-1">
-                        【同传】{trans}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </article>
-            )}
-
             {/* UP主置顶简介 */}
             {props.vod.streamerPinnedNote && (
-              <div className="mx-3 mb-2.5 px-3.5 py-2.5 rounded-xl bg-amber-50/70 border border-amber-200 text-xs leading-relaxed text-slate-800">
+              <div className="mx-3 my-2 px-3 py-2 rounded-xl bg-amber-50/70 border border-amber-200 text-xs leading-relaxed text-slate-800">
                 <span className="font-extrabold text-amber-900 mr-1.5">
                   📌 {props.channel.channelName} 置顶留言：
                 </span>
