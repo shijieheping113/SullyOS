@@ -13,7 +13,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import TokenImg from '../components/os/TokenImg';
 import { synthesizeSpeech } from '../utils/ttsRouter';
 import {
   StreamerChannelProfile,
@@ -46,6 +45,7 @@ import {
   loadLiveSessions,
   upsertLiveSession,
   deleteLiveSession,
+  deleteVodPost,
   loadVodPosts,
   upsertVodPost,
   loadNpcWatchSessions,
@@ -80,6 +80,7 @@ import {
   EndStreamSummaryModal,
 } from '../components/live/LiveStreamModals';
 import { LiveRoomView } from '../components/live/LiveRoomView';
+import { LiveLobby } from '../components/live/LiveLobby';
 import { VodDetailView, NpcWatchRoomView } from '../components/live/VodAndNpcViews';
 import { LiveFloatingPhone } from '../components/live/LiveSharedWidgets';
 
@@ -1350,705 +1351,162 @@ const LiveStreamApp: React.FC = () => {
     );
   }
 
-  // ==================== 主大厅首页（真实 YouTube Home vs 真实 ニコニコ生放送 番組表） ====================
-
   const charSessions = liveSessions.filter(s => s.charId === currentChar?.id);
   const charVods = vodPosts.filter(v => v.charId === currentChar?.id);
-  const activePersona =
-    viewerPersonas.find(p => p.id === activePersonaId) || viewerPersonas[0];
-  const isNico = platformTheme === 'niconico';
-  const displayAvatar = activeChannel?.avatar || currentChar?.avatar;
+  const charNpcSessions = npcSessions.filter(s => s.charId === currentChar?.id);
 
   return (
-    <div className={`h-full w-full flex flex-col overflow-hidden select-none ${isNico ? 'bg-[#f4f4f4]' : 'bg-white'}`}>
-      {/* ==================== 1. 顶部平台 Masthead ==================== */}
-      {isNico ? (
-        /* 真实 ニコニコ生放送 #252525 顶栏 */
-        <header className="h-12 px-3 bg-[#252525] text-white flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <button
-              type="button"
-              onClick={closeApp}
-              className="w-7 h-7 rounded bg-[#383838] flex items-center justify-center text-xs font-bold shrink-0"
-            >
-              ←
-            </button>
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-base">📺</span>
-              <span className="text-sm font-extrabold tracking-tight whitespace-nowrap">
-                ニコニコ生放送
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0">
-            <select
-              value={currentChar?.id || ''}
-              onChange={e => setActiveCharacterId(e.target.value)}
-              className="px-2 py-1 rounded bg-[#383838] text-white text-xs font-bold focus:outline-none max-w-[96px] truncate"
-            >
-              {characters.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setShowLobbyPhone(true)}
-              className="px-2 py-1 rounded bg-emerald-600 text-white text-[11px] font-bold whitespace-nowrap"
-            >
-              📱 私聊
-            </button>
-            <button
-              type="button"
-              onClick={() => handleChangePlatformTheme('youtube')}
-              className="px-2 py-1 rounded bg-[#0080ff] text-white text-[11px] font-bold whitespace-nowrap"
-            >
-              ▶ 切 YouTube
-            </button>
-          </div>
-        </header>
-      ) : (
-        /* 真实 YouTube 纯白 Masthead */
-        <header className="h-12 px-3.5 bg-white border-b border-slate-100 flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <button
-              type="button"
-              onClick={closeApp}
-              className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-[#0f0f0f] font-bold shrink-0"
-            >
-              ←
-            </button>
-            <div className="flex items-center gap-1.5">
-              <span className="w-6 h-4 rounded bg-[#ff0033] text-white flex items-center justify-center text-[10px] font-bold">
-                ▶
-              </span>
-              <span className="text-base font-extrabold tracking-tighter text-[#0f0f0f] whitespace-nowrap">
-                OnAir
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0">
-            <select
-              value={currentChar?.id || ''}
-              onChange={e => setActiveCharacterId(e.target.value)}
-              className="px-2.5 py-1 rounded-full bg-[#f2f2f2] text-[#0f0f0f] text-xs font-bold focus:outline-none max-w-[100px] truncate"
-            >
-              {characters.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setShowLobbyPhone(true)}
-              className="px-2.5 py-1 rounded-full bg-[#f2f2f2] text-[#0f0f0f] text-xs font-bold whitespace-nowrap"
-            >
-              📱 私聊
-            </button>
-            <button
-              type="button"
-              onClick={() => handleChangePlatformTheme('niconico')}
-              className="px-2.5 py-1 rounded-full bg-[#252525] text-white text-xs font-bold whitespace-nowrap"
-            >
-              📺 ニコ生
-            </button>
-          </div>
-        </header>
-      )}
-
-      {/* ==================== 2. 分类导航栏（YouTube Filter Chips vs ニコ生 番組タブ） ==================== */}
-      {isNico ? (
-        <div className="bg-white border-b border-slate-200 px-3 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-5">
-            {[
-              { id: 'char_live' as MainTab, label: '生放送 (ON AIR)' },
-              { id: 'char_vod' as MainTab, label: '動画 (ニコ動)' },
-              { id: 'npc_watch' as MainTab, label: '一緒に見る (ミラー)' },
-            ].map(tab => (
-              <button
-                type="button"
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`py-2.5 text-xs font-extrabold border-b-2 transition whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'border-[#0080ff] text-[#0080ff]'
-                    : 'border-transparent text-slate-500'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowPersonaModal(true)}
-            className="px-2 py-1 rounded bg-slate-100 text-slate-700 text-[11px] font-bold whitespace-nowrap"
-          >
-            {activePersona?.isMain ? 'なふだON' : '184匿名'}
-          </button>
-        </div>
-      ) : (
-        <div className="bg-white border-b border-slate-100 px-3.5 py-2 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar shrink-0">
-          <div className="flex items-center gap-2 shrink-0">
-            {[
-              { id: 'char_live' as MainTab, label: '🔴 Live 直播' },
-              { id: 'char_vod' as MainTab, label: '🎬 Videos 视频' },
-              { id: 'npc_watch' as MainTab, label: '🛋️ Watch Together 陪看' },
-            ].map(tab => (
-              <button
-                type="button"
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition ${
-                  activeTab === tab.id
-                    ? 'bg-[#0f0f0f] text-white'
-                    : 'bg-[#f2f2f2] text-[#0f0f0f] hover:bg-slate-200'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowPersonaModal(true)}
-            className="px-2.5 py-1.5 rounded-lg bg-[#f2f2f2] text-[#0f0f0f] text-xs font-bold whitespace-nowrap shrink-0"
-          >
-            🎭 {activePersona?.isMain ? '本尊' : '小号'}:{activePersona?.name}
-          </button>
-        </div>
-      )}
-
-      {/* ==================== 3. 主滚动区 ==================== */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-4">
-        {/* 当前角色频道卡（支持多频道切换 + 频道设置） */}
-        {activeChannel && activeTab !== 'npc_watch' && (
-          <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-sm">
-            {/* 明亮清透的频道横幅 */}
-            <div
-              className="h-16 px-4 flex items-center justify-between"
-              style={{ background: normalizeBrightGradient(activeChannel.bannerGradient) }}
-            >
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {channels.map(ch => (
-                  <button
-                    type="button"
-                    key={ch.id}
-                    onClick={() => setSelectedChannelId(ch.id)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-bold whitespace-nowrap transition ${
-                      ch.id === activeChannel.id
-                        ? 'bg-slate-900 text-white shadow-sm'
-                        : 'bg-white/80 text-slate-700 hover:bg-white'
-                    }`}
-                  >
-                    {ch.identityMode === 'secret_alt'
-                      ? '🎭 '
-                      : ch.identityMode === 'vtuber'
-                      ? '✨ '
-                      : ''}
-                    {ch.channelName}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingChannel(null);
-                    setShowChannelModal(true);
-                  }}
-                  className="px-2.5 py-1 rounded-full bg-white/90 text-slate-800 text-xs font-bold whitespace-nowrap"
-                >
-                  + 新频道
-                </button>
-              </div>
-            </div>
-
-            <div className="px-4 py-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                {displayAvatar ? (
-                  <TokenImg
-                    src={displayAvatar}
-                    alt={activeChannel.channelName}
-                    className="w-12 h-12 rounded-full object-cover border-2 border-white shadow shrink-0"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-slate-900 text-white flex items-center justify-center text-lg font-extrabold shrink-0">
-                    {activeChannel.channelName.slice(0, 1)}
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="text-sm font-extrabold text-slate-900 truncate">
-                    {activeChannel.channelName}
-                  </div>
-                  <div className="text-xs text-slate-500 truncate">
-                    {activeChannel.handle} · {(activeChannel.followerCount / 1000).toFixed(1)}K subscribers
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingChannel(activeChannel);
-                  setShowChannelModal(true);
-                }}
-                className="px-3 py-1.5 rounded-full bg-[#f2f2f2] hover:bg-slate-200 text-xs font-bold text-slate-800 whitespace-nowrap shrink-0"
-              >
-                ⚙️ 频道与语音设置
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ==================== TAB 1: 直播 (Live / 生放送) ==================== */}
-        {activeTab === 'char_live' && activeChannel && (
-          <div className="space-y-4">
-            {/* 开播企划卡片（所有自定义项均配 ✨ 辅助模型填写） */}
-            <div className="rounded-2xl bg-white border border-slate-200 p-4 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-extrabold text-slate-900">
-                  {isNico ? '📡 新規生放送番組を作成' : '🔴 开启一场新直播'}
-                </span>
-                <button
-                  type="button"
-                  disabled={aiHelperBusy}
-                  onClick={async () => {
-                    const preset = STREAM_PRESET_TEMPLATES.find(
-                      t => t.key === selectedPresetKey,
-                    );
-                    const res = await handleRequestAiField('live_title', {
-                      categoryLabel: preset?.label,
-                    });
-                    if (res.title) setCustomStreamTitle(res.title);
-                    if (res.topic) setCustomStreamTopic(res.topic);
-                  }}
-                  className="px-3 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200 text-xs font-bold whitespace-nowrap disabled:opacity-50"
-                >
-                  {aiHelperBusy ? '✨ 辅助模型构思中…' : '✨ 辅助模型一键写标题与企划'}
-                </button>
-              </div>
-
-              {/* 分区单行胶囊 */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-                {STREAM_PRESET_TEMPLATES.map(tpl => (
-                  <button
-                    type="button"
-                    key={tpl.key}
-                    onClick={() => setSelectedPresetKey(tpl.key)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
-                      selectedPresetKey === tpl.key
-                        ? isNico
-                          ? 'bg-[#0080ff] text-white'
-                          : 'bg-[#0f0f0f] text-white'
-                        : 'bg-[#f2f2f2] text-slate-700'
-                    }`}
-                  >
-                    {tpl.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="space-y-2">
-                <input
-                  value={customStreamTitle}
-                  onChange={e => setCustomStreamTitle(e.target.value)}
-                  placeholder="直播间标题（留空使用分区默认标题，或点右上角✨让AI写）"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-slate-400"
-                />
-                <textarea
-                  value={customStreamTopic}
-                  onChange={e => setCustomStreamTopic(e.target.value)}
-                  rows={2}
-                  placeholder="今日直播内容脚本 / 意外小插曲（选填）"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 leading-relaxed focus:outline-none focus:border-slate-400"
-                />
-              </div>
-
-              <button
-                type="button"
-                disabled={isGenerating}
-                onClick={() => void handleStartNewStream()}
-                className={`w-full py-2.5 rounded-xl text-white text-sm font-extrabold shadow-sm transition disabled:opacity-50 ${
-                  isNico ? 'bg-[#0080ff] hover:bg-[#006dda]' : 'bg-[#ff0033] hover:bg-[#cc0029]'
-                }`}
-              >
-                {isGenerating
-                  ? '正在接通直播间信号…'
-                  : isNico
-                  ? '📺 放送開始 (ON AIR)'
-                  : '🔴 立即开播 (Go Live)'}
-              </button>
-            </div>
-
-            {/* 正在直播或历史直播列表（按 YouTube 16:9 大卡 vs ニコ生 双列番组网格区分） */}
-            {charSessions.length > 0 && (
-              <div className="space-y-2.5">
-                <div className="text-xs font-extrabold text-slate-500 uppercase tracking-wider px-1">
-                  {isNico ? '放送中・タイムシフト一覧' : 'Streams & Replays'}
-                </div>
-
-                <div className={isNico ? 'grid grid-cols-2 gap-2.5' : 'space-y-3'}>
-                  {charSessions.map((sess, idx) => (
-                    <div
-                      key={sess.id}
-                      onClick={() => setActiveLiveSessionId(sess.id)}
-                      className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-sm cursor-pointer hover:border-slate-300 transition"
-                    >
-                      {/* 16:9 缩略图 */}
-                      <div
-                        className="relative aspect-video w-full flex items-center justify-center"
-                        style={{
-                          background: normalizeBrightGradient(activeChannel.bannerGradient, idx),
-                        }}
-                      >
-                        {sess.customBackgroundUrl && (
-                          <img
-                            src={sess.customBackgroundUrl}
-                            alt=""
-                            className="absolute inset-0 w-full h-full object-cover"
-                          />
-                        )}
-                        <span
-                          className={`absolute top-2 left-2 px-2 py-0.5 rounded text-[10px] font-extrabold text-white ${
-                            sess.status === 'live' ? 'bg-[#ff0033]' : 'bg-black/65'
-                          }`}
-                        >
-                          {sess.status === 'live' ? '● LIVE' : 'REPLAY'}
-                        </span>
-                        <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/65 text-white text-[10px] font-bold">
-                          👁 {sess.viewerCount}
-                        </span>
-                      </div>
-
-                      <div className="p-3 flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-bold text-slate-900 leading-snug break-words">
-                            {sess.title}
-                          </div>
-                          <div className="text-xs text-slate-500 mt-1">
-                            {sess.categoryLabel} · {sess.chunks.length} 段切片
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation();
-                            setLiveSessions(deleteLiveSession(sess.id));
-                          }}
-                          className="text-xs text-slate-400 hover:text-red-600 px-1.5 py-0.5 shrink-0"
-                          title="删除该场记录"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ==================== TAB 2: 视频投稿 (Videos / ニコニコ動画) ==================== */}
-        {activeTab === 'char_vod' && activeChannel && (
-          <div className="space-y-4">
-            <div className="rounded-2xl bg-white border border-slate-200 p-4 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-extrabold text-slate-900">
-                  🎬 发布新视频投稿 (VOD)
-                </span>
-                <button
-                  type="button"
-                  disabled={aiHelperBusy}
-                  onClick={async () => {
-                    const res = await handleRequestAiField('vod_topic');
-                    if (res.title) setCustomVodTitle(res.title);
-                    if (res.categoryLabel) setCustomVodCategory(res.categoryLabel);
-                  }}
-                  className="px-3 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200 text-xs font-bold whitespace-nowrap"
-                >
-                  {aiHelperBusy ? '✨ 构思中…' : '✨ 辅助模型构思选题'}
-                </button>
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  value={customVodCategory}
-                  onChange={e => setCustomVodCategory(e.target.value)}
-                  placeholder="分区标签"
-                  className="w-28 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 shrink-0"
-                />
-                <input
-                  value={customVodTitle}
-                  onChange={e => setCustomVodTitle(e.target.value)}
-                  placeholder="视频投稿标题（点右上角✨让AI结合人设构思）"
-                  className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-900"
-                />
-              </div>
-
-              <button
-                type="button"
-                disabled={isGenerating}
-                onClick={() => void handleCreateVodPost()}
-                className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-extrabold"
-              >
-                {isGenerating ? '正在生成分镜章节与热评…' : '🎬 生成并发布视频'}
-              </button>
-            </div>
-
-            <div className={isNico ? 'grid grid-cols-2 gap-2.5' : 'space-y-3'}>
-              {charVods.map((vod, idx) => (
-                <div
-                  key={vod.id}
-                  onClick={() => setActiveVodId(vod.id)}
-                  className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-sm cursor-pointer hover:border-slate-300 transition"
-                >
-                  <div
-                    className="relative aspect-video w-full flex items-center justify-center"
-                    style={{
-                      background: normalizeBrightGradient(vod.coverGradient, idx),
-                    }}
-                  >
-                    <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-mono">
-                      {vod.durationLabel}
-                    </span>
-                  </div>
-                  <div className="p-3">
-                    <div className="text-sm font-bold text-slate-900 leading-snug break-words">
-                      {vod.title}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      {vod.viewsCount.toLocaleString()} views · 💬 {vod.comments.length} 评论
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ==================== TAB 3: 双人陪看 (Watch Together / 一緒に見る) ==================== */}
-        {activeTab === 'npc_watch' && currentChar && (
-          <div className="space-y-3">
-            <div className="rounded-2xl bg-white border border-slate-200 p-4 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm font-extrabold text-slate-900">
-                    🛋️ 和 {currentChar.name} 一起刷直播
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    辅助模型演路人主播，主模型演身边陪你看的 {currentChar.name}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowNpcRuleBox(v => !v)}
-                    className="px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold whitespace-nowrap"
-                  >
-                    ⚙️ 偏好规则
-                  </button>
-                  <button
-                    type="button"
-                    disabled={aiHelperBusy}
-                    onClick={async () => {
-                      setAiHelperBusy(true);
-                      try {
-                        const nextPool = await generateNpcChannelPoolWithAi({
-                          apiConfig,
-                          char: currentChar,
-                          customRule: npcCustomRule,
-                        });
-                        setNpcPool(nextPool);
-                        saveNpcChannelPool(nextPool);
-                        addToast('已用辅助模型换了一批全新直播间！', 'success');
-                      } finally {
-                        setAiHelperBusy(false);
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-full bg-slate-900 text-white text-xs font-bold whitespace-nowrap disabled:opacity-50"
-                  >
-                    {aiHelperBusy ? '🎲 刷新中…' : '🎲 换一批频道'}
-                  </button>
-                </div>
-              </div>
-
-              {showNpcRuleBox && (
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-700">
-                      自定义想刷到什么样的 NPC 直播间：
-                    </span>
-                    <button
-                      type="button"
-                      disabled={aiHelperBusy}
-                      onClick={async () => {
-                        const res = await handleRequestAiField('npc_custom_rule');
-                        if (res.rule) {
-                          setNpcCustomRule(res.rule);
-                          saveNpcCustomRule(res.rule);
-                        }
-                      }}
-                      className="text-violet-700 font-bold hover:underline whitespace-nowrap"
-                    >
-                      ✨ 辅助模型帮写规则
-                    </button>
-                  </div>
-                  <input
-                    value={npcCustomRule}
-                    onChange={e => {
-                      setNpcCustomRule(e.target.value);
-                      saveNpcCustomRule(e.target.value);
-                    }}
-                    placeholder="例如：深夜城市散步、独立乐队排练、好笑的手作翻车现场…"
-                    className="w-full px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs text-slate-800"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* NPC 频道卡片池 */}
-            <div className={isNico ? 'grid grid-cols-2 gap-2.5' : 'space-y-3'}>
-              {npcPool.map((card, idx) => (
-                <div
-                  key={card.id}
-                  onClick={() => void handleStartNpcWatch(card)}
-                  className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-sm cursor-pointer hover:border-slate-300 transition"
-                >
-                  <div
-                    className="relative aspect-video w-full p-3 flex flex-col justify-between"
-                    style={{
-                      background: normalizeBrightGradient(card.coverGradient, idx),
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 rounded bg-[#ff0033] text-white text-[10px] font-extrabold">
-                        ● LIVE · {card.categoryLabel}
-                      </span>
-                      <span className="px-2 py-0.5 rounded bg-black/60 text-white text-[10px] font-bold">
-                        👁 {card.viewerCount}
-                      </span>
-                    </div>
-                    <div className="inline-flex items-center gap-2 bg-white/90 backdrop-blur px-2.5 py-1 rounded-full self-start">
-                      <span className="text-xs font-extrabold text-slate-900">
-                        {card.npcName}
-                      </span>
-                      <span className="text-[10px] text-slate-500">{card.styleTag}</span>
-                    </div>
-                  </div>
-                  <div className="p-3 space-y-1">
-                    <div className="text-sm font-bold text-slate-900 leading-snug break-words">
-                      {card.roomTitle}
-                    </div>
-                    <div className="text-xs text-slate-500 leading-relaxed break-words">
-                      {card.npcBio}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* 历史双人陪看记录（可点击随时重新进入查看或继续陪看） */}
-            {npcSessions.filter(s => s.charId === currentChar.id).length > 0 && (
-              <div className="space-y-2.5 pt-2">
-                <div className="text-xs font-extrabold text-slate-600 px-1">
-                  📂 历史陪看记录 ({npcSessions.filter(s => s.charId === currentChar.id).length})
-                </div>
-                <div className={isNico ? 'grid grid-cols-2 gap-2.5' : 'space-y-2.5'}>
-                  {npcSessions
-                    .filter(s => s.charId === currentChar.id)
-                    .map(sess => (
-                      <div
-                        key={sess.id}
-                        onClick={() => setActiveNpcSessionId(sess.id)}
-                        className="rounded-2xl bg-white border border-slate-200 p-3 shadow-sm cursor-pointer hover:border-slate-300 transition flex items-center justify-between gap-2"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-extrabold text-rose-600">
-                            🛋️ {sess.npcStreamerName} · {sess.npcCategoryLabel}
-                          </div>
-                          <div className="text-sm font-bold text-slate-900 leading-snug break-words mt-0.5">
-                            {sess.npcRoomTitle}
-                          </div>
-                          <div className="text-[11px] text-slate-500 mt-1">
-                            共 {sess.beats.length} 拍互动记录
-                          </div>
-                        </div>
-                        <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold whitespace-nowrap shrink-0">
-                          继续看 →
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 弹窗组件 */}
-      {currentChar && (
-        <ChannelEditorModal
-          isOpen={showChannelModal}
-          charId={currentChar.id}
-          charName={currentChar.name}
-          charAvatar={currentChar.avatar}
-          initialChannel={editingChannel}
-          aiGenerating={aiHelperBusy}
-          onRequestAiFillChannel={mode =>
-            handleRequestAiField('channel_profile', { identityMode: mode })
-          }
-          onRequestAiGenerateGifts={draft =>
-            generateStreamCustomGifts({
-              apiConfig,
-              char: currentChar,
-              channel: draft,
-            })
-          }
-          onClose={() => setShowChannelModal(false)}
-          onSave={ch => {
-            const all = upsertChannel(ch);
-            setChannels(all.filter(c => c.charId === currentChar.id));
-            setSelectedChannelId(ch.id);
-          }}
-          onDelete={id => {
-            const all = deleteChannelById(id);
-            const charChs = all.filter(c => c.charId === currentChar.id);
-            setChannels(charChs);
-            setSelectedChannelId(charChs[0]?.id || '');
-          }}
-        />
-      )}
-
-      <ViewerPersonaModal
-        isOpen={showPersonaModal}
-        personas={viewerPersonas}
-        activePersonaId={activePersonaId}
-        aiGenerating={aiHelperBusy}
-        onRequestAiPersona={() => handleRequestAiField('viewer_alt_persona')}
-        onSelect={setActivePersonaId}
-        onSaveAll={next => {
-          setViewerPersonas(next);
-          saveViewerPersonas(next);
+    <>
+      <LiveLobby
+        platformTheme={platformTheme}
+        onChangePlatformTheme={handleChangePlatformTheme}
+        closeApp={closeApp}
+        characters={characters}
+        currentChar={currentChar}
+        onSelectChar={setActiveCharacterId}
+        channels={channels}
+        activeChannel={activeChannel}
+        onSelectChannel={setSelectedChannelId}
+        onCreateChannel={() => {
+          setEditingChannel(null);
+          setShowChannelModal(true);
         }}
-        onClose={() => setShowPersonaModal(false)}
+        onEditChannel={() => {
+          if (!activeChannel) return;
+          setEditingChannel(activeChannel);
+          setShowChannelModal(true);
+        }}
+        viewerPersonas={viewerPersonas}
+        activePersonaId={activePersonaId}
+        onOpenPersonas={() => setShowPersonaModal(true)}
+        liveSessions={charSessions}
+        onOpenLive={setActiveLiveSessionId}
+        onDeleteLive={id => setLiveSessions(deleteLiveSession(id))}
+        vodPosts={charVods}
+        onOpenVod={setActiveVodId}
+        onDeleteVod={id => setVodPosts(deleteVodPost(id))}
+        npcPool={npcPool}
+        npcSessions={charNpcSessions}
+        onStartNpc={card => void handleStartNpcWatch(card)}
+        onOpenNpcSession={setActiveNpcSessionId}
+        npcCustomRule={npcCustomRule}
+        onChangeNpcRule={value => {
+          setNpcCustomRule(value);
+          saveNpcCustomRule(value);
+        }}
+        onAiNpcRule={() => {
+          void handleRequestAiField('npc_custom_rule').then(res => {
+            if (res.rule) {
+              setNpcCustomRule(res.rule);
+              saveNpcCustomRule(res.rule);
+            }
+          });
+        }}
+        onRefreshNpcPool={() => {
+          if (!currentChar) return;
+          setAiHelperBusy(true);
+          void generateNpcChannelPoolWithAi({
+            apiConfig,
+            char: currentChar,
+            customRule: npcCustomRule,
+          })
+            .then(nextPool => {
+              setNpcPool(nextPool);
+              saveNpcChannelPool(nextPool);
+              addToast('已换了一批直播', 'success');
+            })
+            .finally(() => setAiHelperBusy(false));
+        }}
+        showNpcRule={showNpcRuleBox}
+        onToggleNpcRule={() => setShowNpcRuleBox(v => !v)}
+        selectedPresetKey={selectedPresetKey}
+        onSelectPreset={setSelectedPresetKey}
+        customStreamTitle={customStreamTitle}
+        onChangeStreamTitle={setCustomStreamTitle}
+        customStreamTopic={customStreamTopic}
+        onChangeStreamTopic={setCustomStreamTopic}
+        onAiStream={() => {
+          const preset = STREAM_PRESET_TEMPLATES.find(t => t.key === selectedPresetKey);
+          void handleRequestAiField('live_title', { categoryLabel: preset?.label }).then(res => {
+            if (res.title) setCustomStreamTitle(res.title);
+            if (res.topic) setCustomStreamTopic(res.topic);
+          });
+        }}
+        onStartStream={() => void handleStartNewStream()}
+        customVodTitle={customVodTitle}
+        onChangeVodTitle={setCustomVodTitle}
+        customVodCategory={customVodCategory}
+        onChangeVodCategory={setCustomVodCategory}
+        onAiVod={() => {
+          void handleRequestAiField('vod_topic').then(res => {
+            if (res.title) setCustomVodTitle(res.title);
+            if (res.categoryLabel) setCustomVodCategory(res.categoryLabel);
+          });
+        }}
+        onCreateVod={() => void handleCreateVodPost()}
+        isGenerating={isGenerating}
+        aiHelperBusy={aiHelperBusy}
+        onOpenPhone={() => setShowLobbyPhone(true)}
+        channelModal={
+          currentChar ? (
+            <ChannelEditorModal
+              isOpen={showChannelModal}
+              charId={currentChar.id}
+              charName={currentChar.name}
+              charAvatar={currentChar.avatar}
+              initialChannel={editingChannel}
+              aiGenerating={aiHelperBusy}
+              onRequestAiFillChannel={mode =>
+                handleRequestAiField('channel_profile', { identityMode: mode })
+              }
+              onRequestAiGenerateGifts={draft =>
+                generateStreamCustomGifts({
+                  apiConfig,
+                  char: currentChar,
+                  channel: draft,
+                })
+              }
+              onClose={() => setShowChannelModal(false)}
+              onSave={ch => {
+                const all = upsertChannel(ch);
+                setChannels(all.filter(c => c.charId === currentChar.id));
+                setSelectedChannelId(ch.id);
+              }}
+              onDelete={id => {
+                const all = deleteChannelById(id);
+                const charChs = all.filter(c => c.charId === currentChar.id);
+                setChannels(charChs);
+                setSelectedChannelId(charChs[0]?.id || '');
+              }}
+            />
+          ) : null
+        }
+        personaModal={
+          <ViewerPersonaModal
+            isOpen={showPersonaModal}
+            personas={viewerPersonas}
+            activePersonaId={activePersonaId}
+            aiGenerating={aiHelperBusy}
+            onRequestAiPersona={() => handleRequestAiField('viewer_alt_persona')}
+            onSelect={setActivePersonaId}
+            onSaveAll={next => {
+              setViewerPersonas(next);
+              saveViewerPersonas(next);
+            }}
+            onClose={() => setShowPersonaModal(false)}
+          />
+        }
       />
-
       {currentChar && (
         <LiveFloatingPhone
           isOpen={showLobbyPhone}
           characterId={currentChar.id}
           charName={currentChar.name}
-          contextDescription={`【电波OnAir平台私聊】此刻 ${userProfile?.name || '对方'} 正在浏览电波(OnAir)直播与视频平台，并用私聊小窗找你聊天。`}
+          contextDescription={`【电波OnAir平台私聊】此刻 ${userProfile?.name || '对方'} 正在浏览电波直播与视频，并用私聊小窗找你聊天。`}
           onClose={() => setShowLobbyPhone(false)}
         />
       )}
-    </div>
+    </>
   );
 };
 
