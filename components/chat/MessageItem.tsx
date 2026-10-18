@@ -5,6 +5,7 @@ import { avatarDecorationImageStyle, isAnniversaryFrame } from '../../utils/anni
 import React, { useEffect, useRef, useState } from 'react';
 const AivenFishSaleReceipt = React.lazy(() => import('../../apps/vrWorld/AivenFishSaleReceipt').then(module => ({ default: module.AivenFishSaleReceipt })));
 import { Message, ChatTheme } from '../../types';
+import { DB } from '../../utils/db';
 import { phoneFieldToText } from '../../utils/phoneEvidence';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import { dedupeRepeatedLines, spokenWithoutBilingualMarker, textBeforeBilingualMarker, visibleVoiceSubtitle } from '../../utils/bilingualMarker';
@@ -1000,6 +1001,103 @@ const Like520ChatCard: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: any }> = ({ card, msgId, metadata }) => {
+    const [expanded, setExpanded] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [summaryText, setSummaryText] = useState<string>(card?.summary || '');
+
+    useEffect(() => {
+        setSummaryText(card?.summary || '');
+    }, [card?.summary]);
+
+    if (!card || card.type !== 'livestream_card') return null;
+
+    const kindBadge =
+        card.cardKind === 'live_summary' ? '🔴 下播全貌纪要'
+        : card.cardKind === 'live_clip' ? '✂️ 直播高能切片'
+        : card.cardKind === 'vod_share' ? '🎬 视频投稿'
+        : '🛋️ 陪看直播';
+
+    const handleSaveSummary = async () => {
+        const nextCard = { ...card, summary: summaryText };
+        if (typeof msgId === 'number' && msgId > 0) {
+            await DB.updateMessage(msgId, JSON.stringify(nextCard));
+            await DB.updateMessageMetadata(msgId, (prev: any) => ({
+                ...(prev || metadata || {}),
+                scoreCard: nextCard,
+            }));
+        }
+        setEditing(false);
+    };
+
+    return (
+        <div className="w-72 rounded-2xl overflow-hidden shadow-lg border border-rose-500/30 bg-zinc-900 text-zinc-100">
+            <div className="px-3.5 py-2.5 bg-gradient-to-r from-rose-950/90 via-zinc-900 to-violet-950/80 border-b border-zinc-800 flex items-center justify-between">
+                <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-bold text-rose-400 tracking-wide">
+                        {kindBadge} · {card.channelName || card.charName}
+                    </div>
+                    <div className="text-xs font-bold text-white truncate mt-0.5">
+                        《{card.title || '电波配信'}》
+                    </div>
+                </div>
+                {typeof card.viewerCount === 'number' && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 shrink-0">
+                        🔥 {card.viewerCount}
+                    </span>
+                )}
+            </div>
+
+            <div className="p-3 space-y-2 text-xs">
+                {editing ? (
+                    <div className="space-y-2" onClick={e => e.stopPropagation()}>
+                        <textarea
+                            value={summaryText}
+                            onChange={e => setSummaryText(e.target.value)}
+                            rows={6}
+                            className="w-full rounded-xl bg-zinc-950 border border-zinc-700 p-2 text-[11px] text-zinc-100 leading-relaxed"
+                        />
+                        <div className="flex justify-end gap-1.5">
+                            <button
+                                onClick={() => setEditing(false)}
+                                className="px-2.5 py-1 rounded-lg bg-zinc-800 text-[11px] text-zinc-300"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={() => void handleSaveSummary()}
+                                className="px-2.5 py-1 rounded-lg bg-rose-600 text-[11px] text-white font-bold"
+                            >
+                                保存纪要
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        <div className={`text-[11px] text-zinc-200 whitespace-pre-wrap leading-relaxed ${expanded ? '' : 'line-clamp-4'}`}>
+                            {summaryText}
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
+                            <button
+                                onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+                                className="text-rose-400 hover:underline font-semibold"
+                            >
+                                {expanded ? '收起详情 ↑' : '展开全部 ↓'}
+                            </button>
+                            <button
+                                onClick={e => { e.stopPropagation(); setEditing(true); }}
+                                className="text-amber-300 hover:underline"
+                            >
+                                ✏️ 编辑纪要
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const LifeSimResetCardView: React.FC<{ card: any }> = ({ card }) => {
     const parsed = tryParseLifeSimResetCard(card);
     if (!parsed) return null;
@@ -1458,6 +1556,24 @@ const MessageItem = React.memo(({
                         <div className="w-full px-4 my-3" {...interactionProps}>
                             <div className="mx-auto w-72">
                                 <LifeSimResetCardView card={scoreData} />
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+            if (scoreData?.type === 'livestream_card') {
+                return (
+                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                        {selectionMode && (
+                            <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                    {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                                </div>
+                            </div>
+                        )}
+                        <div className="w-full px-4 my-3" {...interactionProps}>
+                            <div className="mx-auto w-72">
+                                <LivestreamChatCardView card={scoreData} msgId={m.id} metadata={m.metadata} />
                             </div>
                         </div>
                     </div>
@@ -3156,6 +3272,10 @@ const MessageItem = React.memo(({
 
         if (scoreData?.type === 'lifesim_reset_card') {
             return commonLayout(<LifeSimResetCardView card={scoreData} />);
+        }
+
+        if (scoreData?.type === 'livestream_card') {
+            return commonLayout(<LivestreamChatCardView card={scoreData} msgId={m.id} metadata={m.metadata} />);
         }
 
         if (scoreData?.type === 'qixi_event_card') {

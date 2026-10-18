@@ -191,6 +191,17 @@ export function normalizeMessageContent(
                 const letterPart = letter ? ` ${charName}写给${userName}的信原文：${letter}` : '';
                 return `[520 特别活动] ${charName}和${userName}一起度过了"小小的下午"——${charName}"变小了"的版本被${userName}照顾着，最后${charName}对${userName}说了真心话，并写了一封信。${titlePart}${descPart}${letterPart}`;
             }
+            if (card?.type === 'livestream_card') {
+                const kindLabel =
+                    card.cardKind === 'live_summary' ? '下播全貌纪要'
+                    : card.cardKind === 'live_clip' ? '直播高能切片'
+                    : card.cardKind === 'vod_share' ? '视频投稿分享'
+                    : '陪看直播记录';
+                const chPart = card.channelName ? `（频道：${card.channelName}）` : '';
+                const titlePart = card.title ? `《${card.title}》` : '';
+                const sumPart = typeof card.summary === 'string' ? card.summary.trim() : '';
+                return `[电波·${kindLabel}] ${charName}${chPart}${titlePart}：\n${sumPart}`;
+            }
             // 其它结算卡类型（songwriting/study/lifesim 日常 等）：如果有 summary/content 字段优先用
             if (typeof card?.summary === 'string' && card.summary.trim()) return `[系统卡片] ${card.summary.trim()}`;
             return '[系统卡片]';

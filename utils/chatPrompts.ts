@@ -1186,8 +1186,11 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 
         return {
             apiMessages: historySlice.filter(m => {
-                if ((m.type as string) !== 'box_record') return true;
                 const bMeta: any = m.metadata || {};
+                if (bMeta.source === 'live' && (bMeta.archiveMode === 'forget' || bMeta.superseded)) {
+                    return false;
+                }
+                if ((m.type as string) !== 'box_record') return true;
                 return bMeta.archiveMode !== 'forget' && !bMeta.superseded;
             }).map((m, index) => {
                 if (m.type === 'secret_note') return {role: m.role, content: secretNoteContext(m.content)};
@@ -1198,6 +1201,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
                     if (source === 'home') return '[家园]';
+                    if (source === 'live') return '[直播间]';
                     if (source === 'story_theater_memory') return `[剧情：${m.metadata?.theaterTitle || '共同经历'}]`;
                     return '[聊天]';
                 })();

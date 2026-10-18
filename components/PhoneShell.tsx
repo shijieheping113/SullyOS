@@ -61,6 +61,7 @@ const QQBridge = lazyApp(() => import('../apps/QQBridge'));
 const HotNewsApp = lazyApp(() => import('../apps/HotNewsApp'));
 const VRWorldApp = lazyApp(() => import('../apps/VRWorldApp'));
 const WorldHomeApp = lazyApp(() => import('../apps/WorldHomeApp'));
+const LiveStreamApp = lazyApp(() => import('../apps/LiveStreamApp'));
 const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 const SpecialMomentsApp = lazyApp(() => import('./ValentineEvent').then(m => ({ default: m.SpecialMomentsApp })));
 const MiaomiaoBoxHost = lazyApp(() => import('../apps/miaomiaoBox/MiaomiaoBoxHost'));
@@ -95,7 +96,7 @@ const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
   [AppID.Guidebook]: GuidebookApp, [AppID.LifeSim]: LifeSimApp, [AppID.MemoryPalace]: MemoryPalaceApp,
   [AppID.Handbook]: HandbookApp, [AppID.QQBridge]: QQBridge, [AppID.HotNews]: HotNewsApp,
   [AppID.VRWorld]: VRWorldApp, [AppID.CharCreatorDev]: CharCreatorDevApp, [AppID.SpecialMoments]: SpecialMomentsApp,
-  [AppID.WorldHome]: WorldHomeApp,
+  [AppID.WorldHome]: WorldHomeApp, [AppID.LiveStream]: LiveStreamApp,
 };
 // AppIcon 的 pointerdown 只预取用户正在点的 App；失败时由 preloadableLazy 清缓存，点击可正常重试。
 setAppPayloadWarmer((id: AppID) => APP_BY_ID[id]?.preload());
@@ -978,6 +979,7 @@ const PhoneShell: React.FC = () => {
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.VRWorld: return <VRWorldApp />;
       case AppID.WorldHome: return <WorldHomeApp />;
+      case AppID.LiveStream: return <LiveStreamApp />;
       case AppID.CharCreatorDev: return <CharCreatorDevApp />;
       case AppID.Launcher:
       default: return <Launcher />;

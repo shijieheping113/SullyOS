@@ -36,6 +36,7 @@ import {
   Planet,
   Wrench,
   HouseLine,
+  Broadcast,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -76,6 +77,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   VRWorld: ({ className }) => <Planet className={className} weight="regular" />,
   CharCreatorDev: ({ className }) => <Wrench className={className} weight="regular" />,
   WorldHome: ({ className }) => <HouseLine className={className} weight="regular" />,
+  LiveStream: ({ className }) => <Broadcast className={className} weight="regular" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -113,6 +115,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
   { id: AppID.Music, name: '音乐', icon: 'Music', color: 'rose' },
+  { id: AppID.LiveStream, name: '电波', icon: 'LiveStream', color: 'rose' },
   { id: AppID.CharCreatorDev, name: '捏脸·开发', icon: 'CharCreatorDev', color: 'amber' }, // 仅开发模式显示（Launcher 过滤）
   // { id: AppID.QQBridge, name: 'QQ 桥', icon: 'QQBridge', color: 'sky' }, // Hidden temporarily
 ];

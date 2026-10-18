@@ -23,6 +23,7 @@ export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): 
     && message.metadata?.source !== 'date'
     && message.metadata?.source !== 'call'
     && message.metadata?.source !== 'home'
+    && message.metadata?.source !== 'live'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
     && !message.metadata?.batteryHint
