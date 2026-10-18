@@ -1,249 +1,485 @@
 /**
- * 直播与视频平台（OnAir / 电波）弹窗组件集：
- * 1. 频道新建/编辑弹窗（支持本尊号/匿名小号/皮套人、TTS语种、音色覆盖、野生同传开关）
- * 2. 大小号马甲管理弹窗（支持本尊大号 + 多个物理隔离真名的匿名马甲）
- * 3. 下播全貌总结预览弹窗（支持辅助模型重总结、原位手动编辑、三选一落入主聊天方式）
+ * 电波 (OnAir) —— 明亮现代风格配置弹窗：
+ * 1. ChannelEditorModal：主播频道设置（头像上传/恢复角色头像、全屏背景图设置、AI一键根据人设构思频道、AI定制直播间专属礼物、语种与音色设置）
+ * 2. ViewerPersonaModal：观众大小号马甲管理（支持「✨ AI 帮我构思小号马甲」，物理隔离真名）
+ * 3. EndStreamSummaryModal：下播全貌总结预览、编辑、重总结与落主聊天弹窗
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
+import TokenImg from '../os/TokenImg';
 import {
   StreamerChannelProfile,
   ChannelIdentityMode,
   ViewerPersona,
   LiveArchiveDropMode,
+  StreamGiftOption,
   STREAM_PRESET_TEMPLATES,
 } from '../../utils/liveStreamTypes';
 
-// ==================== 1. 频道新建 / 编辑弹窗 ====================
+// ==================== 1. 频道新建/编辑弹窗（明亮白底 + 头像/背景设置 + AI 代写） ====================
 
-export const ChannelEditorModal: React.FC<{
+interface ChannelEditorModalProps {
   isOpen: boolean;
   charId: string;
   charName: string;
   charAvatar?: string;
   initialChannel?: StreamerChannelProfile | null;
+  aiGenerating?: boolean;
+  onRequestAiFillChannel: (identityMode: ChannelIdentityMode) => Promise<Record<string, string>>;
+  onRequestAiGenerateGifts: (channelDraft: StreamerChannelProfile) => Promise<StreamGiftOption[]>;
   onClose: () => void;
   onSave: (channel: StreamerChannelProfile) => void;
   onDelete?: (channelId: string) => void;
-}> = ({ isOpen, charId, charName, charAvatar, initialChannel, onClose, onSave, onDelete }) => {
+}
+
+export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
+  isOpen,
+  charId,
+  charName,
+  charAvatar,
+  initialChannel,
+  onRequestAiFillChannel,
+  onRequestAiGenerateGifts,
+  onClose,
+  onSave,
+  onDelete,
+}) => {
   const [channelName, setChannelName] = useState('');
   const [handle, setHandle] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [roomBackgroundUrl, setRoomBackgroundUrl] = useState('');
   const [identityMode, setIdentityMode] = useState<ChannelIdentityMode>('public_main');
-  const [fanBadgeName, setFanBadgeName] = useState('');
-  const [followerCount, setFollowerCount] = useState(12800);
   const [bio, setBio] = useState('');
-  const [personaPrompt, setPersonaPrompt] = useState('');
+  const [streamerPersonaPrompt, setStreamerPersonaPrompt] = useState('');
+  const [fanBadgeName, setFanBadgeName] = useState('Member');
+  const [followerCount, setFollowerCount] = useState(12800);
   const [language, setLanguage] = useState('');
-  const [translationEnabled, setTranslationEnabled] = useState(true);
-  const [autoPlayTts, setAutoPlayTts] = useState(true);
+  const [enableTranslation, setEnableTranslation] = useState(false);
+  const [autoPlayTts, setAutoPlayTts] = useState(false);
   const [overrideVoiceId, setOverrideVoiceId] = useState('');
+  const [customGifts, setCustomGifts] = useState<StreamGiftOption[]>([]);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [giftAiBusy, setGiftAiBusy] = useState(false);
+
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const bgInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     if (initialChannel) {
       setChannelName(initialChannel.channelName);
       setHandle(initialChannel.handle);
+      setAvatarUrl(initialChannel.avatar || charAvatar || '');
+      setRoomBackgroundUrl(initialChannel.roomBackgroundUrl || '');
       setIdentityMode(initialChannel.identityMode);
-      setFanBadgeName(initialChannel.fanBadgeName);
-      setFollowerCount(initialChannel.followerCount);
       setBio(initialChannel.bio);
-      setPersonaPrompt(initialChannel.personaPrompt);
+      setStreamerPersonaPrompt(initialChannel.streamerPersonaPrompt);
+      setFanBadgeName(initialChannel.fanBadgeName || 'Member');
+      setFollowerCount(initialChannel.followerCount || 5000);
       setLanguage(initialChannel.voiceConfig?.language || '');
-      setTranslationEnabled(initialChannel.voiceConfig?.translationEnabled ?? true);
-      setAutoPlayTts(initialChannel.voiceConfig?.autoPlayTts ?? true);
+      setEnableTranslation(Boolean(initialChannel.voiceConfig?.enableTranslation));
+      setAutoPlayTts(Boolean(initialChannel.voiceConfig?.autoPlayTts));
       setOverrideVoiceId(initialChannel.voiceConfig?.overrideVoiceId || '');
+      setCustomGifts(
+        initialChannel.customGifts || [
+          { id: 'g1', name: 'Iced Coffee', emoji: '☕', price: 20, currencySymbol: '¥' },
+          { id: 'g2', name: 'Glow Stick', emoji: '🪄', price: 50, currencySymbol: '¥' },
+          { id: 'g3', name: 'Midnight Ramen', emoji: '🍜', price: 120, currencySymbol: '¥' },
+          { id: 'g4', name: 'Champagne', emoji: '🥂', price: 520, currencySymbol: '¥' },
+        ],
+      );
     } else {
-      setChannelName(`${charName}的深夜电波`);
-      setHandle(`@${charName.toLowerCase().replace(/\s+/g, '_')}_alt`);
-      setIdentityMode('secret_alt');
-      setFanBadgeName('夜猫');
-      setFollowerCount(3600);
-      setBio('不露脸随缘开播，别扒马甲。');
-      setPersonaPrompt('表面装作高冷神秘的不露脸技术/电台博主，遇到损友弹幕容易破功嘴硬。');
+      setChannelName(`${charName} Official`);
+      setHandle(`@${charName.replace(/\s+/g, '_').toLowerCase()}_live`);
+      setAvatarUrl(charAvatar || '');
+      setRoomBackgroundUrl('');
+      setIdentityMode('public_main');
+      setBio(`${charName} 的个人频道`);
+      setStreamerPersonaPrompt('');
+      setFanBadgeName('Member');
+      setFollowerCount(6800);
       setLanguage('');
-      setTranslationEnabled(true);
-      setAutoPlayTts(true);
+      setEnableTranslation(false);
+      setAutoPlayTts(false);
       setOverrideVoiceId('');
+      setCustomGifts([
+        { id: 'g1', name: 'Iced Coffee', emoji: '☕', price: 20, currencySymbol: '¥' },
+        { id: 'g2', name: 'Glow Stick', emoji: '🪄', price: 50, currencySymbol: '¥' },
+        { id: 'g3', name: 'Midnight Ramen', emoji: '🍜', price: 120, currencySymbol: '¥' },
+        { id: 'g4', name: 'Champagne', emoji: '🥂', price: 520, currencySymbol: '¥' },
+      ]);
     }
-  }, [isOpen, initialChannel, charName]);
+  }, [isOpen, initialChannel, charName, charAvatar]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = () => {
-    if (!channelName.trim()) return;
-    const saved: StreamerChannelProfile = {
-      id: initialChannel?.id || `ch_${charId}_${Date.now()}`,
-      charId,
-      channelName: channelName.trim(),
-      handle: handle.trim() || `@channel_${Date.now().toString().slice(-4)}`,
-      avatar: initialChannel?.avatar || charAvatar,
-      coverGradient: initialChannel?.coverGradient || STREAM_PRESET_TEMPLATES[Math.floor(Math.random() * STREAM_PRESET_TEMPLATES.length)].coverGradient,
-      bio: bio.trim() || `${charName}的直播频道`,
-      identityMode,
-      fanBadgeName: fanBadgeName.trim() || '铁粉',
-      followerCount: Number(followerCount) || 1000,
-      personaPrompt: personaPrompt.trim() || '自然松弛的真实直播状态。',
-      voiceConfig: {
-        language,
-        translationEnabled: !!language ? translationEnabled : false,
-        autoPlayTts,
-        overrideVoiceId: overrideVoiceId.trim() || undefined,
-      },
-      createdAt: initialChannel?.createdAt || Date.now(),
+  const handleFileUpload = (file: File | undefined, onLoaded: (dataUri: string) => void) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') onLoaded(reader.result);
     };
-    onSave(saved);
-    onClose();
+    reader.readAsDataURL(file);
   };
 
+  const buildCurrentChannelObject = (): StreamerChannelProfile => ({
+    id: initialChannel?.id || `ch_${charId}_${Date.now()}`,
+    charId,
+    channelName: channelName.trim() || `${charName} Channel`,
+    handle: handle.trim() || `@${charName}_ch`,
+    avatar: avatarUrl.trim() || charAvatar,
+    roomBackgroundUrl: roomBackgroundUrl.trim(),
+    bannerGradient:
+      initialChannel?.bannerGradient ||
+      STREAM_PRESET_TEMPLATES[Math.floor(Math.random() * STREAM_PRESET_TEMPLATES.length)].bannerGradient,
+    identityMode,
+    bio: bio.trim(),
+    streamerPersonaPrompt: streamerPersonaPrompt.trim(),
+    followerCount: Number(followerCount) || 1000,
+    fanBadgeName: fanBadgeName.trim() || 'Member',
+    defaultCategory: initialChannel?.defaultCategory || 'just_chatting',
+    voiceConfig: {
+      language,
+      enableTranslation: language && language !== 'zh' ? enableTranslation : false,
+      autoPlayTts,
+      overrideVoiceId: overrideVoiceId.trim(),
+    },
+    customGifts,
+    createdAt: initialChannel?.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  });
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl p-5 text-zinc-100 max-h-[88vh] overflow-y-auto space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-          <h3 className="text-base font-bold">{initialChannel ? '编辑频道与语音设定' : `为 ${charName} 新建频道`}</h3>
-          <button onClick={onClose} className="text-xs text-zinc-400 px-2 py-1 rounded-lg bg-zinc-800">关闭</button>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md max-h-[88vh] overflow-y-auto rounded-3xl bg-white text-slate-800 border border-slate-200 p-4 shadow-2xl space-y-4"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-base font-bold text-slate-900">
+              {initialChannel ? '编辑主播频道设置' : `为 ${charName} 新建频道`}
+            </h3>
+            <p className="text-[11px] text-slate-500">支持自定义主播头像、舞台背景图与 AI 人设构思</p>
+          </div>
+          <button
+            disabled={aiBusy}
+            onClick={async () => {
+              setAiBusy(true);
+              try {
+                const res = await onRequestAiFillChannel(identityMode);
+                if (res.channelName) setChannelName(res.channelName);
+                if (res.handle) setHandle(res.handle);
+                if (res.fanBadgeName) setFanBadgeName(res.fanBadgeName);
+                if (res.bio) setBio(res.bio);
+                if (res.streamerPersonaPrompt) setStreamerPersonaPrompt(res.streamerPersonaPrompt);
+              } finally {
+                setAiBusy(false);
+              }
+            }}
+            className="px-3 py-1.5 rounded-full bg-gradient-to-r from-rose-500 to-violet-600 text-white text-xs font-bold shadow-sm disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            {aiBusy ? '✨ 构思中…' : '✨ 辅助模型填频道'}
+          </button>
         </div>
 
-        <div className="space-y-3 text-xs">
-          <div>
-            <label className="block text-zinc-400 mb-1">频道身份性质（支持一人多号）</label>
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { id: 'public_main', label: '公开本尊号', desc: '熟人皆知' },
-                { id: 'secret_alt', label: '匿名小号/马甲', desc: '不露脸防掉马' },
-                { id: 'vtuber', label: '虚拟皮套人', desc: '中之人反差' },
-              ] as const).map(opt => (
+        {/* 1. 头像与全屏舞台背景图设置 */}
+        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
+          <div className="text-xs font-bold text-slate-700">1. 主播头像与直播间背景（融入画面设计）</div>
+          <div className="flex items-center gap-3">
+            <div className="relative w-14 h-14 rounded-full overflow-hidden border-2 border-rose-500 shadow shrink-0 bg-slate-200">
+              {avatarUrl || charAvatar ? (
+                <TokenImg src={avatarUrl || charAvatar || ''} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center font-bold text-slate-600">
+                  {charName[0]}
+                </div>
+              )}
+            </div>
+            <div className="flex-1 space-y-1.5">
+              <div className="flex flex-wrap gap-1.5">
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => handleFileUpload(e.target.files?.[0], setAvatarUrl)}
+                />
                 <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setIdentityMode(opt.id)}
-                  className={`p-2 rounded-xl border text-left transition ${
-                    identityMode === opt.id
-                      ? 'border-rose-500 bg-rose-500/15 text-white'
-                      : 'border-zinc-800 bg-zinc-800/60 text-zinc-400'
-                  }`}
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
                 >
-                  <div className="font-bold">{opt.label}</div>
-                  <div className="text-[10px] opacity-75">{opt.desc}</div>
+                  上传主播头像
                 </button>
-              ))}
+                {charAvatar && (
+                  <button
+                    onClick={() => setAvatarUrl(charAvatar)}
+                    className="px-2.5 py-1 rounded-lg bg-slate-200/70 text-[11px] text-slate-600 hover:bg-slate-200"
+                  >
+                    用角色默认头像
+                  </button>
+                )}
+              </div>
+              <input
+                value={avatarUrl}
+                onChange={e => setAvatarUrl(e.target.value)}
+                placeholder="或粘贴主播头像图片 URL…"
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] text-slate-700"
+              />
             </div>
           </div>
 
+          <div className="pt-2 border-t border-slate-200/70 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-semibold text-slate-600">
+                全屏/取景框背景图（留空默认用主播头像氛围背景）
+              </span>
+              <div className="flex gap-1.5">
+                <input
+                  ref={bgInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => handleFileUpload(e.target.files?.[0], setRoomBackgroundUrl)}
+                />
+                <button
+                  onClick={() => bgInputRef.current?.click()}
+                  className="text-rose-600 font-bold hover:underline"
+                >
+                  上传背景图
+                </button>
+                {roomBackgroundUrl && (
+                  <button
+                    onClick={() => setRoomBackgroundUrl('')}
+                    className="text-slate-400 hover:text-slate-600"
+                  >
+                    恢复默认头像背景
+                  </button>
+                )}
+              </div>
+            </div>
+            <input
+              value={roomBackgroundUrl}
+              onChange={e => setRoomBackgroundUrl(e.target.value)}
+              placeholder="可选：粘贴直播间自定义背景图 URL（留空则直接展示主播头像海报）"
+              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] text-slate-700"
+            />
+          </div>
+        </div>
+
+        {/* 2. 频道身份模式 */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-700">2. 频道身份定位</label>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            {[
+              { key: 'public_main', label: '公开主频道', desc: '本人实名营业' },
+              { key: 'secret_alt', label: '匿名小号', desc: '不露脸反差马甲' },
+              { key: 'vtuber', label: '虚拟皮套 V', desc: 'Live2D 虚拟形象' },
+            ].map(item => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setIdentityMode(item.key as ChannelIdentityMode)}
+                className={`p-2 rounded-xl border text-left transition ${
+                  identityMode === item.key
+                    ? 'border-rose-500 bg-rose-50 text-rose-900'
+                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}
+              >
+                <div className="font-bold">{item.label}</div>
+                <div className="text-[10px] opacity-75 mt-0.5">{item.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 3. 名称、Handle、会员铭牌與简介 */}
+        <div className="space-y-2.5">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-zinc-400 mb-1">频道名称</label>
+              <label className="text-[11px] font-semibold text-slate-600">频道名称</label>
               <input
                 value={channelName}
                 onChange={e => setChannelName(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white"
-                placeholder="例如：夜猫电台"
+                className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
               />
             </div>
             <div>
-              <label className="block text-zinc-400 mb-1">粉丝牌名称（≤4字）</label>
+              <label className="text-[11px] font-semibold text-slate-600">Handle (@ID)</label>
               <input
-                value={fanBadgeName}
-                onChange={e => setFanBadgeName(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white"
-                placeholder="如：夜猫"
+                value={handle}
+                onChange={e => setHandle(e.target.value)}
+                className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-zinc-400 mb-1">账号 Handle</label>
+              <label className="text-[11px] font-semibold text-slate-600">
+                会员徽章名 (YouTube/Nico)
+              </label>
               <input
-                value={handle}
-                onChange={e => setHandle(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white"
+                value={fanBadgeName}
+                onChange={e => setFanBadgeName(e.target.value)}
+                placeholder="如 Member / 常連 / Club"
+                className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
               />
             </div>
             <div>
-              <label className="block text-zinc-400 mb-1">粉丝数量</label>
+              <label className="text-[11px] font-semibold text-slate-600">订阅者数量 (Subscribers)</label>
               <input
                 type="number"
                 value={followerCount}
-                onChange={e => setFollowerCount(Number(e.target.value))}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white"
+                onChange={e => setFollowerCount(Number(e.target.value) || 0)}
+                className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-zinc-400 mb-1">频道简介</label>
+            <label className="text-[11px] font-semibold text-slate-600">频道简介 (Bio)</label>
             <input
               value={bio}
               onChange={e => setBio(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white"
+              className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
             />
           </div>
 
           <div>
-            <label className="block text-zinc-400 mb-1">镜头前营业人设 & 台上台下反差</label>
+            <label className="text-[11px] font-semibold text-slate-600">
+              镜头前状态与反差人设（可点右上角「✨ 交给 AI 填写」）
+            </label>
             <textarea
+              value={streamerPersonaPrompt}
+              onChange={e => setStreamerPersonaPrompt(e.target.value)}
               rows={2}
-              value={personaPrompt}
-              onChange={e => setPersonaPrompt(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white"
-              placeholder="描写TA在这个号直播时的口吻、小习惯或伪装设定"
+              placeholder="例如：平时高冷，在这个深夜匿名频道打游戏却很容易破防嘴硬…"
+              className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
             />
-          </div>
-
-          {/* 语音与多语种同传翻译设置 */}
-          <div className="p-3 rounded-2xl bg-zinc-800/70 border border-zinc-700/80 space-y-2.5">
-            <div className="font-bold text-rose-400 flex items-center justify-between">
-              <span>语音合成（TTS）与外语同传模式</span>
-              <label className="flex items-center gap-1.5 text-[11px] text-zinc-300 font-normal cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoPlayTts}
-                  onChange={e => setAutoPlayTts(e.target.checked)}
-                />
-                自动朗读台词
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-zinc-400 mb-1">主播配信语种</label>
-                <select
-                  value={language}
-                  onChange={e => setLanguage(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-2 text-white"
-                >
-                  {VOICE_LANGUAGE_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.value === '' ? '中文（默认）' : `${opt.label} (${opt.value})`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-zinc-400 mb-1">单独覆盖音色 ID（可选）</label>
-                <input
-                  value={overrideVoiceId}
-                  onChange={e => setOverrideVoiceId(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-2 text-white"
-                  placeholder="留空则用角色默认音色"
-                />
-              </div>
-            </div>
-
-            {language !== '' && (
-              <label className="flex items-center justify-between pt-1 text-zinc-200 cursor-pointer">
-                <span>开启「外语原声 + 中文野生同传 + 多国弹幕翻译」</span>
-                <input
-                  type="checkbox"
-                  checked={translationEnabled}
-                  onChange={e => setTranslationEnabled(e.target.checked)}
-                />
-              </label>
-            )}
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-2 gap-2">
+        {/* 4. 直播间专属礼物定制（由 AI 随人设生成） */}
+        <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-900">🎁 频道专属礼物（区别于纯金额 SC）</span>
+            <button
+              disabled={giftAiBusy}
+              onClick={async () => {
+                setGiftAiBusy(true);
+                try {
+                  const generated = await onRequestAiGenerateGifts(buildCurrentChannelObject());
+                  setCustomGifts(generated);
+                } finally {
+                  setGiftAiBusy(false);
+                }
+              }}
+              className="px-2.5 py-1 rounded-full bg-amber-500 text-white text-[11px] font-bold shadow-sm disabled:opacity-50"
+            >
+              {giftAiBusy ? '✨ 设计中…' : '✨ AI 根据人设生成礼物'}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {customGifts.map((g, idx) => (
+              <div
+                key={g.id || idx}
+                className="flex items-center gap-1.5 bg-white border border-amber-200 rounded-xl px-2 py-1.5 text-xs"
+              >
+                <input
+                  value={g.emoji}
+                  onChange={e => {
+                    const next = [...customGifts];
+                    next[idx] = { ...g, emoji: e.target.value };
+                    setCustomGifts(next);
+                  }}
+                  className="w-6 text-center bg-slate-50 rounded"
+                />
+                <input
+                  value={g.name}
+                  onChange={e => {
+                    const next = [...customGifts];
+                    next[idx] = { ...g, name: e.target.value };
+                    setCustomGifts(next);
+                  }}
+                  className="flex-1 min-w-0 bg-transparent font-semibold text-slate-800 text-[11px]"
+                />
+                <input
+                  type="number"
+                  value={g.price}
+                  onChange={e => {
+                    const next = [...customGifts];
+                    next[idx] = { ...g, price: Number(e.target.value) || 10 };
+                    setCustomGifts(next);
+                  }}
+                  className="w-12 text-right bg-slate-50 rounded px-1 text-[11px] font-bold text-amber-700"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 5. 语音语种与同传设置 */}
+        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+          <div className="text-xs font-bold text-slate-700">🔊 配信语种、同传翻译与 TTS 音色</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] text-slate-500">配信原声语种</label>
+              <select
+                value={language}
+                onChange={e => {
+                  const val = e.target.value;
+                  setLanguage(val);
+                  if (val && val !== 'zh') setEnableTranslation(true);
+                }}
+                className="w-full mt-1 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
+              >
+                {VOICE_LANGUAGE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-slate-500">覆盖音色 ID（留空用角色默认）</label>
+              <input
+                value={overrideVoiceId}
+                onChange={e => setOverrideVoiceId(e.target.value)}
+                placeholder="可选专属音色 ID"
+                className="w-full mt-1 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
+              />
+            </div>
+          </div>
+
+          {language && language !== 'zh' && (
+            <label className="flex items-center justify-between text-xs text-slate-700 pt-1">
+              <span>开启双语同传字幕与弹幕翻译（无“译：”前缀）</span>
+              <input
+                type="checkbox"
+                checked={enableTranslation}
+                onChange={e => setEnableTranslation(e.target.checked)}
+                className="accent-rose-600"
+              />
+            </label>
+          )}
+
+          <label className="flex items-center justify-between text-xs text-slate-700 pt-1">
+            <span>切到新一拍时自动合成并播放主播语音</span>
+            <input
+              type="checkbox"
+              checked={autoPlayTts}
+              onChange={e => setAutoPlayTts(e.target.checked)}
+              className="accent-rose-600"
+            />
+          </label>
+        </div>
+
+        {/* 底部操作栏 */}
+        <div className="flex items-center justify-between pt-2">
           {initialChannel && onDelete ? (
             <button
               type="button"
@@ -251,14 +487,31 @@ export const ChannelEditorModal: React.FC<{
                 onDelete(initialChannel.id);
                 onClose();
               }}
-              className="px-3 py-2.5 rounded-xl bg-red-950/80 text-red-300 text-xs font-semibold"
+              className="text-xs text-red-500 hover:underline px-2 py-1"
             >
               删除频道
             </button>
-          ) : <div />}
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs">取消</button>
-            <button onClick={handleSubmit} className="px-5 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold">保存频道</button>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-semibold text-slate-600"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onSave(buildCurrentChannelObject());
+                onClose();
+              }}
+              className="px-5 py-2 rounded-xl bg-rose-600 text-xs font-bold text-white shadow-md hover:bg-rose-500"
+            >
+              保存设置
+            </button>
           </div>
         </div>
       </div>
@@ -266,62 +519,84 @@ export const ChannelEditorModal: React.FC<{
   );
 };
 
-// ==================== 2. 大小号马甲管理弹窗 ====================
+// ==================== 2. 观众大小号马甲管理弹窗（支持 AI 构思小号 + 物理防穿帮） ====================
 
-export const ViewerPersonaModal: React.FC<{
+interface ViewerPersonaModalProps {
   isOpen: boolean;
   personas: ViewerPersona[];
   activePersonaId: string;
+  aiGenerating?: boolean;
   onSelect: (id: string) => void;
-  onSavePersonas: (next: ViewerPersona[]) => void;
+  onSavePersonas?: (next: ViewerPersona[]) => void;
+  onSaveAll?: (next: ViewerPersona[]) => void;
+  onRequestAiAltPersona?: () => Promise<Record<string, string>>;
+  onRequestAiPersona?: () => Promise<Record<string, string>>;
   onClose: () => void;
-}> = ({ isOpen, personas, activePersonaId, onSelect, onSavePersonas, onClose }) => {
+}
+
+export const ViewerPersonaModal: React.FC<ViewerPersonaModalProps> = ({
+  isOpen,
+  personas,
+  activePersonaId,
+  onSelect,
+  onSavePersonas,
+  onSaveAll,
+  onRequestAiAltPersona,
+  onRequestAiPersona,
+  onClose,
+}) => {
   const [newName, setNewName] = useState('');
-  const [newLevel, setNewLevel] = useState(15);
-  const [newBadge, setNewBadge] = useState('舰长');
+  const [newBadge, setNewBadge] = useState('Member');
   const [newNote, setNewNote] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
 
   if (!isOpen) return null;
 
+  const commitPersonas = (next: ViewerPersona[]) => {
+    if (onSavePersonas) onSavePersonas(next);
+    if (onSaveAll) onSaveAll(next);
+  };
+
   const handleAddAlt = () => {
-    if (!newName.trim()) return;
+    const trimmed = newName.trim();
+    if (!trimmed) return;
     const alt: ViewerPersona = {
       id: `viewer_alt_${Date.now()}`,
+      name: trimmed,
       isMain: false,
-      name: newName.trim(),
-      fanLevel: Number(newLevel) || 10,
-      badgeText: newBadge.trim() || '粉丝',
-      note: newNote.trim() || '自定义匿名小号（物理隔离真名，Char 认不出是你）',
+      fanLevel: Math.floor(Math.random() * 15) + 1,
+      badgeText: newBadge.trim() || 'Member',
+      note: newNote.trim() || '匿名小号（主播不知道是我的马甲）',
     };
     const next = [...personas, alt];
-    onSavePersonas(next);
+    commitPersonas(next);
     onSelect(alt.id);
     setNewName('');
     setNewNote('');
   };
 
-  const handleDeleteAlt = (id: string) => {
-    const next = personas.filter(p => p.id !== id || p.isMain);
-    onSavePersonas(next);
-    if (activePersonaId === id && next[0]) {
-      onSelect(next[0].id);
-    }
-  };
-
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl p-5 text-zinc-100 max-h-[85vh] overflow-y-auto space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl bg-white text-slate-800 border border-slate-200 p-4 shadow-2xl space-y-3.5"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
           <div>
-            <h3 className="text-base font-bold">切换观众身份（大号 / 匿名小号马甲）</h3>
-            <p className="text-[11px] text-zinc-400 mt-0.5">
-              用小号发言时，系统在底层物理屏蔽你的真名，Char 只会把你当成对应 ID 的陌生网友或榜一老板。
+            <h3 className="text-base font-bold text-slate-900">切换观看身份（本尊大号 / 匿名小号）</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+              用小号发言时，系统物理隔离你的真名，主播绝不会未卜先知认出你，也不会替你的小号乱发弹幕。
             </p>
           </div>
-          <button onClick={onClose} className="text-xs text-zinc-400 px-2 py-1 rounded-lg bg-zinc-800 shrink-0">关闭</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-sm px-2 shrink-0">
+            ✕
+          </button>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
           {personas.map(p => {
             const active = p.id === activePersonaId;
             return (
@@ -333,30 +608,38 @@ export const ViewerPersonaModal: React.FC<{
                 }}
                 className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition ${
                   active
-                    ? 'border-rose-500 bg-rose-500/15'
-                    : 'border-zinc-800 bg-zinc-800/50 hover:bg-zinc-800'
+                    ? 'border-rose-500 bg-rose-50/70'
+                    : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
                 }`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${p.isMain ? 'bg-emerald-600 text-white' : 'bg-violet-600 text-white'}`}>
-                      {p.isMain ? '本尊大号' : '匿名小号'}
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0 ${
+                        p.isMain ? 'bg-emerald-600 text-white' : 'bg-violet-600 text-white'
+                      }`}
+                    >
+                      {p.isMain ? '本尊大号' : '匿名马甲'}
                     </span>
-                    <span className="text-xs font-bold text-white truncate">{p.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700 text-amber-300">
-                      Lv.{p.fanLevel} {p.badgeText || '粉'}
-                    </span>
+                    <span className="text-xs font-bold text-slate-900 truncate">{p.name}</span>
+                    {p.badgeText && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium whitespace-nowrap shrink-0">
+                        {p.badgeText}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-[11px] text-zinc-400 mt-1 truncate">{p.note}</div>
+                  {p.note && <div className="text-[11px] text-slate-500 mt-1">{p.note}</div>}
                 </div>
                 {!p.isMain && (
                   <button
                     type="button"
                     onClick={e => {
                       e.stopPropagation();
-                      handleDeleteAlt(p.id);
+                      const next = personas.filter(x => x.id !== p.id);
+                      commitPersonas(next);
+                      if (activePersonaId === p.id && next[0]) onSelect(next[0].id);
                     }}
-                    className="ml-2 text-[11px] text-zinc-500 hover:text-red-400 px-2 py-1"
+                    className="text-xs text-slate-400 hover:text-red-500 px-2 shrink-0 whitespace-nowrap"
                   >
                     删除
                   </button>
@@ -366,149 +649,204 @@ export const ViewerPersonaModal: React.FC<{
           })}
         </div>
 
-        {/* 新增小号马甲 */}
-        <div className="p-3 rounded-2xl bg-zinc-800/60 border border-zinc-700/70 space-y-2.5 text-xs">
-          <div className="font-bold text-zinc-200">+ 新建匿名小号马甲</div>
+        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-slate-700">+ 新增匿名小号马甲</span>
+            <button
+              disabled={aiBusy}
+              onClick={async () => {
+                setAiBusy(true);
+                try {
+                  const fn = onRequestAiAltPersona || onRequestAiPersona;
+                  if (fn) {
+                    const res = await fn();
+                    if (res.name) setNewName(res.name);
+                    if (res.badgeText) setNewBadge(res.badgeText);
+                    if (res.note) setNewNote(res.note);
+                  }
+                } finally {
+                  setAiBusy(false);
+                }
+              }}
+              className="px-2.5 py-1 rounded-full bg-violet-600 text-white text-[11px] font-bold disabled:opacity-50 whitespace-nowrap shrink-0"
+            >
+              {aiBusy ? '✨ 构思中…' : '✨ 辅助模型构思小号'}
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             <input
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              placeholder="小号昵称（如：榜一富婆）"
-              className="col-span-2 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white"
+              placeholder="小号昵称"
+              className="col-span-2 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
             />
-            <input
-              type="number"
-              value={newLevel}
-              onChange={e => setNewLevel(Number(e.target.value))}
-              placeholder="等级"
-              className="bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white"
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
             <input
               value={newBadge}
               onChange={e => setNewBadge(e.target.value)}
-              placeholder="头衔（如：总督/黑粉）"
-              className="bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white"
+              placeholder="徽章(VIP)"
+              className="rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
             />
+          </div>
+          <div className="flex gap-2">
             <input
               value={newNote}
               onChange={e => setNewNote(e.target.value)}
-              placeholder="人设备注（仅自己可见）"
-              className="col-span-2 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white"
+              placeholder="小号人设备注（可选）"
+              className="flex-1 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
             />
+            <button
+              type="button"
+              onClick={handleAddAlt}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold shrink-0 whitespace-nowrap"
+            >
+              添加
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={handleAddAlt}
-            className="w-full py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold"
-          >
-            添加并切换至该小号
-          </button>
         </div>
       </div>
     </div>
   );
 };
 
-// ==================== 3. 下播全貌总结预览 · 编辑 · 重总结 · 主聊天落库弹窗 ====================
+// ==================== 3. 下播全貌总结预览与落主聊天弹窗 ====================
 
-export const EndStreamSummaryModal: React.FC<{
+interface EndStreamSummaryModalProps {
   isOpen: boolean;
   sessionTitle: string;
-  summaryText: string;
-  isSummarizing: boolean;
-  onChangeSummaryText: (val: string) => void;
-  onRegenerateSummary: () => void;
-  onConfirmDrop: (mode: LiveArchiveDropMode) => void;
+  channelName?: string;
+  summaryText?: string;
+  initialSummary?: string;
+  isSummarizing?: boolean;
+  isGenerating?: boolean;
+  onChangeSummaryText?: (text: string) => void;
+  onRegenerateSummary?: () => void;
+  onRegenerate?: () => void;
+  onConfirmDrop?: (mode: LiveArchiveDropMode) => void;
+  onConfirm?: (text: string, mode: LiveArchiveDropMode) => void;
   onClose: () => void;
-}> = ({
+}
+
+export const EndStreamSummaryModal: React.FC<EndStreamSummaryModalProps> = ({
   isOpen,
   sessionTitle,
   summaryText,
+  initialSummary,
   isSummarizing,
+  isGenerating,
   onChangeSummaryText,
   onRegenerateSummary,
+  onRegenerate,
   onConfirmDrop,
+  onConfirm,
   onClose,
 }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [localText, setLocalText] = useState('');
+
+  const externalText = summaryText ?? initialSummary ?? '';
+  const busy = Boolean(isSummarizing || isGenerating);
+
+  useEffect(() => {
+    setLocalText(externalText);
+  }, [externalText, isOpen]);
+
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl p-5 text-zinc-100 max-h-[90vh] overflow-y-auto space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-          <div>
-            <h3 className="text-base font-bold">下播全貌总结 & 落入主聊天</h3>
-            <p className="text-[11px] text-zinc-400 mt-0.5">
-              由辅助模型提炼四栏保真细节，落库后自动顶替散碎过程记录，防止主聊天 Token 爆炸。
-            </p>
-          </div>
-          <button onClick={onClose} className="text-xs text-zinc-400 px-2 py-1 rounded-lg bg-zinc-800">返回直播</button>
-        </div>
+  const handleTextChange = (val: string) => {
+    setLocalText(val);
+    if (onChangeSummaryText) onChangeSummaryText(val);
+  };
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-zinc-300 font-semibold">《{sessionTitle}》全貌纪要（可直接手改编辑）：</span>
+  const triggerConfirm = (mode: LiveArchiveDropMode) => {
+    if (onConfirm) onConfirm(localText, mode);
+    else if (onConfirmDrop) onConfirmDrop(mode);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md max-h-[88vh] overflow-y-auto rounded-3xl bg-white text-slate-800 border border-slate-200 p-4 shadow-2xl space-y-3.5"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold text-slate-900">🎬 下播归档 · 本场全貌纪要</h3>
+            <p className="text-[11px] text-slate-500 truncate">《{sessionTitle}》</p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              disabled={isSummarizing}
-              onClick={onRegenerateSummary}
-              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-[11px] disabled:opacity-40"
+              disabled={busy}
+              onClick={() => setIsEditing(v => !v)}
+              className="px-2.5 py-1 rounded-xl bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap"
             >
-              {isSummarizing ? '辅助模型总结中…' : '🔄 重新总结'}
+              {isEditing ? '完成编辑' : '✏️ 编辑'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (onRegenerateSummary) onRegenerateSummary();
+                else if (onRegenerate) onRegenerate();
+              }}
+              className="px-2.5 py-1 rounded-xl bg-slate-100 text-xs font-semibold text-rose-600 disabled:opacity-40 whitespace-nowrap"
+            >
+              {busy ? '生成中…' : '🔄 重总结'}
             </button>
           </div>
-
-          <textarea
-            rows={8}
-            value={summaryText}
-            onChange={e => onChangeSummaryText(e.target.value)}
-            disabled={isSummarizing}
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-2xl p-3 text-xs text-zinc-100 leading-relaxed"
-            placeholder="正在使用辅助模型汇总本场直播主线、名场面、SC台账、微信捣乱反差与未完Flag…"
-          />
         </div>
 
+        {busy ? (
+          <div className="py-12 text-center text-xs text-slate-500 animate-pulse">
+            正在由辅助模型提炼本场直播名场面、Super Chat 台账与私聊互动细节…
+          </div>
+        ) : isEditing ? (
+          <textarea
+            value={localText}
+            onChange={e => handleTextChange(e.target.value)}
+            rows={10}
+            className="w-full rounded-2xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800 leading-relaxed"
+          />
+        ) : (
+          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3.5 text-xs text-slate-700 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+            {localText || '暂无总结内容，可点击右上角重总结或手动填写。'}
+          </div>
+        )}
+
         <div className="space-y-2 pt-1">
+          <div className="text-[11px] text-slate-500">
+            选择下播后如何处理（会自动折叠顶替过程碎片，防止主聊天爆 Token）：
+          </div>
           <button
             type="button"
-            disabled={isSummarizing || !summaryText.trim()}
-            onClick={() => onConfirmDrop('card_and_memory')}
-            className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold text-left flex items-center justify-between disabled:opacity-40"
+            disabled={busy}
+            onClick={() => triggerConfirm('card_and_memory')}
+            className="w-full py-2.5 px-3 rounded-2xl bg-rose-600 text-white text-xs font-bold shadow-md hover:bg-rose-500 text-left flex items-center justify-between"
           >
-            <div>
-              <div>1. 记在心里 + 发「下播纪念卡」到主聊天（推荐）</div>
-              <div className="text-[10px] opacity-80 font-normal">顶替散碎过程并进记忆宫殿，同时在微信聊天气泡落下可编辑的下播卡片</div>
-            </div>
+            <span>💌 记在心里 + 发「下播纪念卡」到主聊天（推荐）</span>
             <span>→</span>
           </button>
-
-          <button
-            type="button"
-            disabled={isSummarizing || !summaryText.trim()}
-            onClick={() => onConfirmDrop('silent_memory')}
-            className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold text-left flex items-center justify-between disabled:opacity-40"
-          >
-            <div>
-              <div>2. 静默记在心里（不在主聊天弹卡片）</div>
-              <div className="text-[10px] text-zinc-400 font-normal">后台记住本场完整纪要供后续聊天提起，微信界面保持安静</div>
-            </div>
-            <span>→</span>
-          </button>
-
-          <button
-            type="button"
-            disabled={isSummarizing}
-            onClick={() => onConfirmDrop('forget')}
-            className="w-full py-2 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-red-300 text-xs text-left flex items-center justify-between"
-          >
-            <div>
-              <div>3. 本场忘掉（不进主聊天与记忆）</div>
-              <div className="text-[10px] text-zinc-500">清理本场后台临时记录，当作纯整活测试局</div>
-            </div>
-            <span>×</span>
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => triggerConfirm('silent_memory')}
+              className="py-2 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 whitespace-nowrap"
+            >
+              🤫 静默记在心里
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => triggerConfirm('forget')}
+              className="py-2 px-3 rounded-xl bg-slate-100 text-slate-500 text-xs hover:text-red-500 whitespace-nowrap"
+            >
+              🗑️ 本场忘掉
+            </button>
+          </div>
         </div>
       </div>
     </div>

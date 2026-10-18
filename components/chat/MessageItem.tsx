@@ -1031,19 +1031,19 @@ const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: a
     };
 
     return (
-        <div className="w-72 rounded-2xl overflow-hidden shadow-lg border border-rose-500/30 bg-zinc-900 text-zinc-100">
-            <div className="px-3.5 py-2.5 bg-gradient-to-r from-rose-950/90 via-zinc-900 to-violet-950/80 border-b border-zinc-800 flex items-center justify-between">
+        <div className="w-72 rounded-2xl overflow-hidden shadow-md border border-slate-200 bg-white text-slate-800">
+            <div className="px-3.5 py-2.5 bg-gradient-to-r from-red-50 via-rose-50/70 to-slate-50 border-b border-slate-200 flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-bold text-rose-400 tracking-wide">
+                    <div className="text-[10px] font-bold text-red-600 tracking-wide">
                         {kindBadge} · {card.channelName || card.charName}
                     </div>
-                    <div className="text-xs font-bold text-white truncate mt-0.5">
-                        《{card.title || '电波配信'}》
+                    <div className="text-xs font-bold text-slate-900 leading-snug break-words mt-0.5">
+                        {card.title || '电波配信'}
                     </div>
                 </div>
                 {typeof card.viewerCount === 'number' && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 shrink-0">
-                        🔥 {card.viewerCount}
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold shrink-0">
+                        👁 {card.viewerCount}
                     </span>
                 )}
             </div>
@@ -1055,18 +1055,18 @@ const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: a
                             value={summaryText}
                             onChange={e => setSummaryText(e.target.value)}
                             rows={6}
-                            className="w-full rounded-xl bg-zinc-950 border border-zinc-700 p-2 text-[11px] text-zinc-100 leading-relaxed"
+                            className="w-full rounded-xl bg-slate-50 border border-slate-200 p-2 text-[11px] text-slate-800 leading-relaxed"
                         />
                         <div className="flex justify-end gap-1.5">
                             <button
                                 onClick={() => setEditing(false)}
-                                className="px-2.5 py-1 rounded-lg bg-zinc-800 text-[11px] text-zinc-300"
+                                className="px-2.5 py-1 rounded-lg bg-slate-100 text-[11px] text-slate-600"
                             >
                                 取消
                             </button>
                             <button
                                 onClick={() => void handleSaveSummary()}
-                                className="px-2.5 py-1 rounded-lg bg-rose-600 text-[11px] text-white font-bold"
+                                className="px-2.5 py-1 rounded-lg bg-red-600 text-[11px] text-white font-bold"
                             >
                                 保存纪要
                             </button>
@@ -1074,19 +1074,19 @@ const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: a
                     </div>
                 ) : (
                     <>
-                        <div className={`text-[11px] text-zinc-200 whitespace-pre-wrap leading-relaxed ${expanded ? '' : 'line-clamp-4'}`}>
+                        <div className={`text-[11px] text-slate-700 whitespace-pre-wrap leading-relaxed ${expanded ? '' : 'line-clamp-4'}`}>
                             {summaryText}
                         </div>
-                        <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
+                        <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-[10px] text-slate-500">
                             <button
                                 onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
-                                className="text-rose-400 hover:underline font-semibold"
+                                className="text-red-600 hover:underline font-semibold"
                             >
                                 {expanded ? '收起详情 ↑' : '展开全部 ↓'}
                             </button>
                             <button
                                 onClick={e => { e.stopPropagation(); setEditing(true); }}
-                                className="text-amber-300 hover:underline"
+                                className="text-slate-600 hover:text-slate-900 font-medium hover:underline"
                             >
                                 ✏️ 编辑纪要
                             </button>

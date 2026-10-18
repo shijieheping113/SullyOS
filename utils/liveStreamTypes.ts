@@ -1,121 +1,168 @@
 /**
- * 直播与视频平台 App（电波 / OnAir）核心类型与预设模板定义
- * 注意：兼容永恒浏览器（ES2020 标准），不使用过新语法。
+ * 电波 (OnAir) —— 直播间、视频投稿(VOD)、双人陪刷 NPC 配信的数据结构定义
+ * 支持双套真实视频平台 UI 主题：YouTube 明亮现代风 ('youtube') / NicoNico 经典弹幕风 ('niconico')
  */
 
+export type LivePlatformTheme = 'youtube' | 'niconico';
+
+/** 频道身份模式：公开本尊号 / 匿名小号马甲 / 虚拟皮套人(VTuber) */
 export type ChannelIdentityMode = 'public_main' | 'secret_alt' | 'vtuber';
 
-export type DanmakuTranslateMode = 'bilingual' | 'zh_only' | 'original_only';
+/** 弹幕与字幕翻译显示模式 */
+export type DanmakuTranslateMode = 'bilingual' | 'zh_only' | 'orig_only';
 
+/** 频道独立语音与翻译配置 */
 export interface ChannelVoiceConfig {
-  /** 配信语种：'' 默认中文，或 'ja' | 'en' | 'yue' | 'ko' | 'fr' | 'es' | 'de' | 'ru' */
+  /** 直播/视频使用的原声语种（空字符串代表跟随角色默认或中文，'ja'|'en'|'yue'|'ko'|'fr'|'ru' 等） */
   language: string;
-  /** 是否开启外语原声 + 中文野生同传双轨字幕与多国弹幕翻译 */
-  translationEnabled: boolean;
-  /** 是否自动合成并朗读主播每一拍的台词 */
+  /** 开启外语配信时，是否同时输出中文同传字幕与弹幕翻译 */
+  enableTranslation: boolean;
+  /** 切到新的一拍(Beat)时是否自动播放 TTS 语音 */
   autoPlayTts: boolean;
-  /** 可选：该频道单独覆盖的音色 ID（留空则使用角色自身的 voiceProfile） */
+  /** 可选：该频道专属覆盖的音色 ID（用于皮套人/小号变声；留空则直接用角色主 voiceProfile） */
   overrideVoiceId?: string;
 }
 
+/** 直播间专属礼物项（随频道/直播间由 AI 根据人设动态生成，也可自定义） */
+export interface StreamGiftOption {
+  id: string;
+  name: string;
+  emoji: string;
+  price: number;
+  currencySymbol: string;
+}
+
+/** 角色旗下的单个主播/视频频道档案（一个 Char 可拥有多个独立频道） */
 export interface StreamerChannelProfile {
   id: string;
   charId: string;
+  /** 频道显示名称 */
   channelName: string;
+  /** 频道 handle（如 @Sully_Official） */
   handle: string;
+  /** 频道头像（支持图片 URL / DataURI；默认继承角色头像，可在主播设置中单独上传/更换） */
   avatar?: string;
-  coverGradient: string;
-  bio: string;
+  /** 直播间全屏/舞台自定义背景图 URL（留空则默认使用频道头像/角色头像的高斯柔和氛围背景） */
+  roomBackgroundUrl?: string;
+  /** 频道封面横幅渐变或色值 */
+  bannerGradient: string;
+  /** 身份模式：本尊公开 / 匿名小号（熟人不一定认出） / 虚拟皮套人 */
   identityMode: ChannelIdentityMode;
-  fanBadgeName: string;
+  /** 频道简介 / 签名 */
+  bio: string;
+  /** 镜头前人设补充 */
+  streamerPersonaPrompt: string;
+  /** 订阅数 / 关注数 (Subscribers / Followers) */
   followerCount: number;
-  /** 镜头前的营业人设 / 台上台下反差描述 */
-  personaPrompt: string;
+  /** 频道会员铭牌名称（YouTube Membership / Nico 会员徽章，例如「Member」「常連」） */
+  fanBadgeName: string;
+  /** 常用配信分类标签 */
+  defaultCategory: string;
+  /** 频道独立语音与外语同传配置 */
   voiceConfig: ChannelVoiceConfig;
+  /** 该频道的专属礼物列表（可由 AI 根据人设生成或手动编辑） */
+  customGifts?: StreamGiftOption[];
   createdAt: number;
+  updatedAt: number;
 }
 
+/** 用户在直播间/评论区切换的观众马甲（本尊大号 vs 多个匿名小号） */
 export interface ViewerPersona {
   id: string;
-  /** true 表示用户本尊大号（读取 userProfile），false 表示自定义小号马甲（物理隔离真名） */
-  isMain: boolean;
+  /** 观众显示昵称 */
   name: string;
-  avatar?: string;
+  /** 是否为用户本尊大号 */
+  isMain: boolean;
+  /** 会员等级（Months / Level） */
   fanLevel: number;
+  /** 会员徽章文案 */
   badgeText?: string;
-  /** 仅供用户在马甲列表分辨或作为马甲发言语气参考，绝不向模型泄露这是用户的马甲 */
-  note: string;
+  /** 马甲人设备注（仅供 UI 标识，小号发言时绝不把用户真名传给 AI，物理防穿帮） */
+  note?: string;
 }
 
-export type DanmakuRoleType = 'passerby' | 'old_fan' | 'troll' | 'coach' | 'foreigner' | 'user_main' | 'user_alt';
-
+/** 单条弹幕 / Super Chat (SC) / 专属礼物投喂 */
 export interface LiveDanmakuItem {
   id: string;
   senderName: string;
-  /** 若是用户发出的，记录所用马甲 id，前端用来渲染「我的大号 / 我的马甲」高亮，但喂模型时若为小号绝不带 userName */
+  /** 若是用户发的，记录当时使用的马甲 ID */
   viewerPersonaId?: string;
+  /** 是否为用户本尊大号 */
   isUserMain?: boolean;
+  /** 是否为用户匿名小号 */
   isUserAlt?: boolean;
+  /** 会员徽章 */
   fanBadge?: string;
   fanLevel?: number;
-  roleType: DanmakuRoleType;
-  /** 弹幕原文（外语配信时可能是日语/英语等） */
+  /** 弹幕角色类型：老粉会员 / 损友弹幕 / 考据党 / 路人 / 外国观众 */
+  roleType?: 'old_fan' | 'troll' | 'coach' | 'passerby' | 'foreigner' | 'user_main' | 'user_alt';
+  /** 弹幕原文 */
   text: string;
-  /** 中文翻译（外语弹幕时由模型或辅助模型附带） */
+  /** 若原文为外语，附带中文翻译 */
   translation?: string;
-  /** 若为 SC 醒目留言，记录金额（如 30 / 100 / 500 / 1000） */
+  /** Super Chat 金额（>0 表示这是一条付费高亮 Super Chat） */
   scAmount?: number;
-  scColor?: 'blue' | 'yellow' | 'orange' | 'red';
+  /** Super Chat 货币符号（默认 ¥ 或 $） */
+  scCurrency?: string;
+  /** Super Chat 颜色档位 */
+  scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
+  /** 投喂的专属礼物名称與图标（独立于纯文字 SC，也可附带） */
   giftName?: string;
+  giftEmoji?: string;
+  giftCount?: number;
   timestamp: number;
 }
 
+/** 直播中的单拍（Beat） */
 export interface LiveBeat {
   id: string;
   chunkId: string;
   index: number;
-  /** 镜头画面、动作、生理细节或设备突发小插曲描写 */
+  /** 镜头画面、肢体小动作、环境音或突发小意外 */
   screen: string;
-  /** 主播开口说的原声台词（留白拍允许为空字符串） */
+  /** 主播开口说的原声台词（允许为空字符串，代表专注做某事没说话的留白拍） */
   speechOriginal: string;
-  /** 外语配信模式下的中文野生同传译文 */
+  /** 若开启外语配信与同传，这里存放中文同传翻译 */
   speechTranslated?: string;
-  /** 情绪标记（供 TTS 使用：happy/sad/angry/surprised/calm 等） */
+  /** 主播当前情绪标签（供 TTS 情绪参数与画面微表情使用） */
   emotion?: string;
-  /** 这一拍伴随飘过的弹幕与 SC */
+  /** 已经合成好的 TTS 语音 URL（支持直接点击播放与下载音频） */
+  audioUrl?: string;
+  /** 本拍同步飘过的弹幕列表 */
   danmaku: LiveDanmakuItem[];
-  /** 在线人数变化量 */
+  /** 在线人数微调变化 */
   viewerDelta?: number;
-  /** 缓存的 TTS 音频地址 */
-  ttsAudioUrl?: string;
 }
 
+/** 直播中的一段切片（Chunk，每次请求 LLM 生成 4~5 个连续 Beat） */
 export interface LiveChunk {
   id: string;
   index: number;
   createdAt: number;
   beats: LiveBeat[];
-  /** 用户在本段开始前积攒发送的弹幕/SC */
+  /** 生成该段时用户投递的弹幕 / SC / 礼物 */
   userInputs: LiveDanmakuItem[];
-  /** 写入主聊天 DB 的临时过程消息 ID（source: 'live'），重 Roll 或总结折叠时用它更新/顶替 */
-  dbMessageId?: number;
-  /** 是否已被阶段滚动总结折叠（true 时留在界面可翻看，但不再把原文发给主模型） */
+  /** 是否已被阶段滚动摘要折叠 */
   folded?: boolean;
   foldedBySummaryId?: string;
+  /** 同步写入主聊天 DB 的消息 ID（source: 'live'，下播后由总结顶替 superseded） */
+  dbMessageId?: number;
 }
 
+/** 直播过程中的阶段滚动摘要（防长直播爆 Token，由辅助模型提炼） */
 export interface LiveRollingSummary {
   id: string;
   fromChunkIndex: number;
   toChunkIndex: number;
   content: string;
   createdAt: number;
-  /** 写入主聊天 DB 顶替散碎切片的阶段摘要消息 ID */
   dbMessageId?: number;
 }
 
+/** 下播后落入主聊天的方式 */
 export type LiveArchiveDropMode = 'card_and_memory' | 'silent_memory' | 'forget';
 
+/** 单场直播完整会话 */
 export interface LiveStreamSession {
   id: string;
   channelId: string;
@@ -124,38 +171,49 @@ export interface LiveStreamSession {
   categoryKey: string;
   categoryLabel: string;
   customTopic?: string;
+  /** 本场自定义背景图（优先于频道背景图） */
+  customBackgroundUrl?: string;
+  /** 本场直播间专属礼物（开播时由 AI 结合主题生成或继承频道） */
+  sessionGifts?: StreamGiftOption[];
   status: 'live' | 'ended';
   viewerCount: number;
   likeCount: number;
   chunks: LiveChunk[];
   rollingSummaries: LiveRollingSummary[];
-  /** 攒着等下一段生成时一起结算的观众弹幕/SC 队列 */
+  /** 用户在当前拍已发出、等待下一段响应的弹幕/SC队列 */
   pendingDanmakuQueue: LiveDanmakuItem[];
-  /** 下播后生成的全貌纪要正文（可随时二次编辑或重总结） */
-  finalSummary?: string;
-  finalArchiveMode?: LiveArchiveDropMode;
-  /** 下播落入主聊天的总结消息 ID 或卡片消息 ID */
-  finalDbMessageId?: number;
-  finalCardMessageId?: number;
-  /** 每满多少段自动触发一次阶段滚动总结（默认 4，保留最近 2 段） */
   foldEveryNChunks: number;
   foldKeepRecentChunks: number;
+  finalSummary?: string;
+  finalArchiveMode?: LiveArchiveDropMode;
+  finalDbMessageId?: number;
+  finalCardMessageId?: number;
   startedAt: number;
   endedAt?: number;
 }
 
-// ==================== 视频博主投稿（VOD） ====================
+// ==================== 视频博主投稿 (VOD) ====================
 
 export interface VodChapterBeat {
   id: string;
-  timestampLabel: string; // 如 "00:00", "01:25"
+  timestampLabel: string;
   chapterTitle: string;
   screen: string;
   speechOriginal: string;
   speechTranslated?: string;
-  emotion?: string;
+  audioUrl?: string;
   danmaku: LiveDanmakuItem[];
-  ttsAudioUrl?: string;
+}
+
+export interface VodCommentReply {
+  id: string;
+  authorName: string;
+  isStreamer?: boolean;
+  isUserMain?: boolean;
+  isUserAlt?: boolean;
+  content: string;
+  translation?: string;
+  timestamp: number;
 }
 
 export interface VodCommentItem {
@@ -171,15 +229,7 @@ export interface VodCommentItem {
   likes: number;
   isPinned?: boolean;
   likedByStreamer?: boolean;
-  /** UP 主（Char）翻牌回复列表 */
-  replies: Array<{
-    id: string;
-    authorName: string;
-    isStreamer: boolean;
-    content: string;
-    translation?: string;
-    timestamp: number;
-  }>;
+  replies: VodCommentReply[];
   timestamp: number;
 }
 
@@ -189,35 +239,46 @@ export interface VodVideoPost {
   charId: string;
   title: string;
   categoryLabel: string;
-  coverGradient: string;
   durationLabel: string;
+  coverGradient: string;
+  coverImageUrl?: string;
   viewsCount: number;
   likesCount: number;
-  coinsCount: number;
-  favoritesCount: number;
-  streamerPinNote: string;
+  streamerPinnedNote: string;
+  streamerPinnedNoteTranslated?: string;
   chapters: VodChapterBeat[];
   comments: VodCommentItem[];
-  summaryText?: string;
   dbMessageId?: number;
   createdAt: number;
 }
 
-// ==================== 刷 NPC 配信/视频（Char 陪看） ====================
+// ==================== 刷其他 NPC 配信/视频（双人陪看模式） ====================
 
-export interface NpcBeatItem {
+/** NPC 频道卡片模板（支持用户重 Roll 换一批、自定义生成规则、去刻板化） */
+export interface NpcStreamerChannelCard {
   id: string;
+  npcName: string;
+  handle: string;
+  categoryLabel: string;
+  roomTitle: string;
+  npcBio: string;
+  styleTag: string;
+  coverGradient: string;
+  viewerCount: number;
+}
+
+export interface NpcWatchBeat {
+  id: string;
+  index: number;
   npcScreen: string;
   npcSpeech: string;
-  npcDanmaku: string[];
-  /** Char 在旁边陪看时的实时动作与吐槽反应 */
+  npcSpeechTranslated?: string;
+  npcDanmaku: LiveDanmakuItem[];
   charReactionAction: string;
   charReactionSpeech: string;
-  charReactionTranslated?: string;
   charEmotion?: string;
-  /** 用户与 Char 的私语或发出去的搞事弹幕 */
+  charAudioUrl?: string;
   userActionNote?: string;
-  ttsAudioUrl?: string;
   dbMessageId?: number;
 }
 
@@ -225,17 +286,18 @@ export interface NpcWatchSession {
   id: string;
   charId: string;
   npcStreamerName: string;
+  npcHandle?: string;
   npcCategoryLabel: string;
   npcRoomTitle: string;
   npcBio: string;
+  customRulePrompt?: string;
   coverGradient: string;
   viewerCount: number;
-  beats: NpcBeatItem[];
-  summaryText?: string;
+  beats: NpcWatchBeat[];
   createdAt: number;
 }
 
-// ==================== 转发到主聊天的卡片结构 ====================
+// ==================== 主聊天卡片载荷 (type: 'livestream_card') ====================
 
 export interface LivestreamChatCardPayload {
   type: 'livestream_card';
@@ -249,21 +311,17 @@ export interface LivestreamChatCardPayload {
   title: string;
   categoryLabel: string;
   viewerCount?: number;
-  /** 核心展示摘录或整场纪要正文 */
   summary: string;
-  /** 若为单拍高能切片，附上画面与台词 */
   clipBeat?: {
     screen: string;
     speechOriginal: string;
     speechTranslated?: string;
-    highlightDanmaku: string[];
+    highlightDanmaku?: string[];
   };
-  /** 严守大小号物理隔离：只记录已知的大号互动或匿名观众名，绝不将小号映射回真名 */
-  notableInteractions?: string[];
   createdAt: number;
 }
 
-// ==================== 预设模板与常量 ====================
+// ==================== 预设直播分类模板 ====================
 
 export interface StreamPresetTemplate {
   key: string;
@@ -271,119 +329,161 @@ export interface StreamPresetTemplate {
   badge: string;
   defaultTitle: string;
   promptHint: string;
-  coverGradient: string;
+  bannerGradient: string;
 }
 
 export const STREAM_PRESET_TEMPLATES: StreamPresetTemplate[] = [
   {
-    key: 'gaming',
-    label: '游戏实况',
-    badge: 'GAME',
-    defaultTitle: '今晚打不赢这关绝对不下播',
-    promptHint: '正在打高难度动作/竞技游戏，操作专注时经常说半截话、手忙脚乱、翻车后嘴硬怪设备或怪延迟，和弹幕教练互怼。',
-    coverGradient: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4c1d95 100%)',
-  },
-  {
-    key: 'radio',
-    label: '深夜电台',
-    badge: 'RADIO',
-    defaultTitle: '深夜匿名树洞：读你们寄来的信',
-    promptHint: '房间只开一盏暖黄台灯，离麦克风很近，一边喝水或转笔一边读观众的匿名烦恼投稿，语气松弛真实，偶尔跑题聊起自己的事。',
-    coverGradient: 'linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #334155 100%)',
-  },
-  {
-    key: 'asmr',
-    label: '助眠哄睡',
-    badge: 'ASMR',
-    defaultTitle: '轻声耳语 · 睡前故事与助眠',
-    promptHint: '使用双耳麦克风，压低声音轻声说话，夹杂翻书声、指尖轻敲或呼吸声，节奏极慢，偶尔因为弹幕刷太快小声警告大家快闭眼睡觉。',
-    coverGradient: 'linear-gradient(135deg, #17153b 0%, #2e236c 55%, #433d8b 100%)',
-  },
-  {
-    key: 'chatting',
-    label: '日常杂谈',
+    key: 'just_chatting',
+    label: '杂谈 Just Chatting',
     badge: 'TALK',
-    defaultTitle: '刚忙完，开播随便聊两句吃个夜宵',
-    promptHint: '毫无偶像包袱的日常唠嗑，可能正在拆外卖包装、吸溜饮料、整理桌面或者跟宠物搭话，看到哪条弹幕顺眼就拎出来聊。',
-    coverGradient: 'linear-gradient(135deg, #1f2937 0%, #374151 50%, #4b5563 100%)',
+    defaultTitle: 'Late Night Chat · 随便聊聊近况',
+    promptHint: '主播在家或工作室一边喝东西或收拾手头杂事，一边跟观众漫无目的地闲聊近况、吐槽日常小事。75%精力在讲自己的事，偶尔瞥一眼聊天栏接梗。',
+    bannerGradient: 'linear-gradient(135deg, #dbeafe 0%, #ede9fe 55%, #fce7f3 100%)',
   },
   {
-    key: 'singing',
-    label: '歌回弹唱',
+    key: 'gaming_carry',
+    label: '游戏实况 Gaming',
+    badge: 'GAME',
+    defaultTitle: 'Ranked Grind · 不上分不下播',
+    promptHint: '主播正全神贯注打高难度游戏或排位，80%注意力在操作、报点、因为失误破防或打出高光操作上，只有在等复活或读条间隙才扫一眼弹幕回嘴。',
+    bannerGradient: 'linear-gradient(135deg, #d1fae5 0%, #e0f2fe 60%, #dbeafe 100%)',
+  },
+  {
+    key: 'study_work',
+    label: '陪伴工坊 Study / Work',
+    badge: 'FOCUS',
+    defaultTitle: 'Pomodoro Session · 专注陪伴工作/写曲',
+    promptHint: '主播正在做自己的专业事务（写代码、看书、画画、练琴或处理工作），话不多，经常有安静专注只传出翻页/键盘声的留白拍，休息间隙才抬头轻声跟聊天栏说话。',
+    bannerGradient: 'linear-gradient(135deg, #e0e7ff 0%, #ccfbf1 60%, #f0fdf4 100%)',
+  },
+  {
+    key: 'asmr_sleep',
+    label: '深夜电台 Radio',
+    badge: 'RADIO',
+    defaultTitle: 'Midnight Radio · 助眠低语与读信',
+    promptHint: '房间只开了一盏暖光台灯，离麦克风很近，声音放得极轻极缓，有调试麦克风、倒水、翻信纸的细微环境音，慢节奏读观众来信或分享睡前思绪。',
+    bannerGradient: 'linear-gradient(135deg, #f3e8ff 0%, #fce7f3 60%, #ffe4e6 100%)',
+  },
+  {
+    key: 'cooking_vlog',
+    label: '料理下厨 Kitchen',
+    badge: 'LIFE',
+    defaultTitle: 'Kitchen Lab · 今日料理实验室',
+    promptHint: '把手机架在厨房吧台旁做吃的或冲咖啡，镜头会因为拿食材偶尔晃动，伴随切菜、油锅滋滋声，忙得手忙脚乱时根本顾不上看屏幕。',
+    bannerGradient: 'linear-gradient(135deg, #ffedd5 0%, #fef3c7 55%, #ffe4e6 100%)',
+  },
+  {
+    key: 'singing_music',
+    label: '歌回弹唱 Music',
     badge: 'MUSIC',
-    defaultTitle: '随便唱唱 · 弹幕点歌（会的才唱）',
-    promptHint: '抱着吉他或调着伴奏轨试音，唱几句歌词、停下来喝口水点评伴奏或忘词笑场，跟弹幕抢拍子互动。',
-    coverGradient: 'linear-gradient(135deg, #3b0764 0%, #581c87 50%, #701a75 100%)',
-  },
-  {
-    key: 'challenge',
-    label: '惩罚整活局',
-    badge: 'DARE',
-    defaultTitle: '愿赌服输！兑现上次立下的 Flag',
-    promptHint: '因为上次打赌输了被迫营业（如戴羞耻头饰、念羞耻台词或做黑暗料理），全程耳根发红、疯狂叹气想逃跑，弹幕全在截图狂欢。',
-    coverGradient: 'linear-gradient(135deg, #450a0a 0%, #7f1d1d 50%, #991b1b 100%)',
+    defaultTitle: 'Unplugged Session · 随性歌回与点歌',
+    promptHint: '抱着吉他或对着伴奏唱歌、试音、调混响，唱到一半可能会忘词笑场、喝口润喉茶，在两首歌之间跟观众聊这首歌的故事。',
+    bannerGradient: 'linear-gradient(135deg, #fce7f3 0%, #e0e7ff 55%, #dbeafe 100%)',
   },
 ];
 
-export interface NpcPresetRoomTemplate {
-  key: string;
-  npcName: string;
-  categoryLabel: string;
-  roomTitle: string;
-  npcBio: string;
-  promptHint: string;
-  coverGradient: string;
-}
-
-export const NPC_PRESET_ROOMS: NpcPresetRoomTemplate[] = [
+/** 默认初始 NPC 频道池（自然生活化、国际化，不再夸张刻板；支持用户在界面一键 AI 换一批或按自定义规则生成） */
+export const DEFAULT_NPC_CHANNELS: NpcStreamerChannelCard[] = [
   {
-    key: 'fortune',
-    npcName: '赛博半仙·王铁嘴',
-    categoryLabel: '玄学算命',
-    roomTitle: '不准不要钱！在线连麦合八字算正缘桃花',
-    npcBio: '戴着墨镜摇着折扇的江湖术士，说话一套一套的，最爱一惊一乍点破小情侣心思。',
-    promptHint: 'NPC主播正在神神叨叨地摇铜钱算姻缘，满嘴“哎呀你身边这人命里带醋坛子啊”，弹幕全是算卦和看热闹的网友。',
-    coverGradient: 'linear-gradient(135deg, #27272a 0%, #451a03 60%, #78350f 100%)',
+    id: 'npc_tokyo_walk',
+    npcName: 'Kenji Walks',
+    handle: '@kenji_nightwalk',
+    categoryLabel: 'IRL 街头漫步',
+    roomTitle: '4K Tokyo Rainy Walk · 下北泽散步实况',
+    npcBio: '拿着手持云台在东京小巷子里安静散步的摄影师，偶尔进便利店买热饮，环境音很治愈。',
+    styleTag: '街头漫步 · 治愈',
+    coverGradient: 'linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%)',
+    viewerCount: 1420,
   },
   {
-    key: 'flirt_idol',
-    npcName: '腹肌小野猫·Leo',
-    categoryLabel: '颜值热舞',
-    roomTitle: '姐姐点个关注，满10万赞现场掀衣擦汗~',
-    npcBio: '油腻又卖力的擦边颜值男主播，疯狂对着镜头眨眼比心喊宝贝。',
-    promptHint: 'NPC主播正在对着镜头疯狂抛媚眼、用气泡音喊“谢谢姐姐的小心心”，极易引发陪看 Char 的强烈吃醋、冷笑或想抢你手机划走。',
-    coverGradient: 'linear-gradient(135deg, #4c0519 0%, #881337 55%, #be123c 100%)',
+    id: 'npc_retro_game',
+    npcName: 'PixelLeo',
+    handle: '@pixel_leo99',
+    categoryLabel: '怀旧速通',
+    roomTitle: 'Mario 64 Speedrun Attempt #42 · 怀旧速通挑战',
+    npcBio: '较真又带点冷幽默的速通玩家，每次在同一个悬崖掉下去就会沉默三秒然后深呼吸重开。',
+    styleTag: '硬核速通 · 冷幽默',
+    coverGradient: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)',
+    viewerCount: 2850,
   },
   {
-    key: 'crazy_shop',
-    npcName: '咆哮严选·大强哥',
-    categoryLabel: '离谱带货',
-    roomTitle: '最后三单！会发光的纯金色的不锈钢大砍刀雨伞！',
-    npcBio: '嗓门极大、卖的东西千奇百怪的搞笑带货主播，助播在旁边疯狂配合演双簧。',
-    promptHint: 'NPC主播正在声嘶力竭地推销离谱沙雕发明（结果当场演示翻车坏掉），弹幕全在刷“哈哈哈哈退钱”。',
-    coverGradient: 'linear-gradient(135deg, #431407 0%, #7c2d12 55%, #b45309 100%)',
+    id: 'npc_cat_cafe',
+    npcName: 'Momo & 7 Cats',
+    handle: '@momo_cat_cam',
+    categoryLabel: '萌宠慢直播',
+    roomTitle: '24/7 Kittens Cam · 看看哪只小猫先把饭碗踩翻',
+    npcBio: '架在猫窝前的固定机位，店主偶尔伸手进来添粮，聊天栏全在给几只小猫配音押注。',
+    styleTag: '治愈萌宠 · 轻松',
+    coverGradient: 'linear-gradient(135deg, #fef3c7 0%, #fce7f3 100%)',
+    viewerCount: 3610,
   },
   {
-    key: 'drama_mic',
-    npcName: '情感调解员·翠花',
-    categoryLabel: '抓马连麦',
-    roomTitle: '【连麦调解】怀疑对象偷偷用小号看我直播怎么办？',
-    npcBio: '午夜档狗血情感连麦主持人，连上来的观众一个比一个抓马。',
-    promptHint: 'NPC直播间正在连麦讲一段离谱又搞笑的情侣捉迷藏八卦，弹幕全在吃瓜站队。',
-    coverGradient: 'linear-gradient(135deg, #1e1b4b 0%, #4a044e 55%, #701a75 100%)',
+    id: 'npc_indie_tarot',
+    npcName: 'Clara Tea & Sketch',
+    handle: '@clara_tealeaves',
+    categoryLabel: '插画茶话',
+    roomTitle: 'Afternoon Tea & Sketchbook · 泡壶伯爵茶边画边聊',
+    npcBio: '声音温和的独立插画师，桌面摆满手绘水彩和干花，一边画稿一边和观众聊日常。',
+    styleTag: '水彩电台 · 温和',
+    coverGradient: 'linear-gradient(135deg, #d1fae5 0%, #ccfbf1 100%)',
+    viewerCount: 890,
   },
 ];
 
+/** YouTube / 国际化风格的 Super Chat (付费醒目留言) 档位配置（纯金额+高亮卡片阶梯，不绑定死板礼物名） */
 export const SC_TIER_OPTIONS: Array<{
   amount: number;
-  color: 'blue' | 'yellow' | 'orange' | 'red';
   label: string;
-  giftName: string;
-  bgClass: string;
-  borderClass: string;
+  color: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
+  pinDurationLabel: string;
+  headerBg: string;
+  bodyBg: string;
+  textColor: string;
 }> = [
-  { amount: 30, color: 'blue', label: '¥30 醒目留言', giftName: '荧光棒×10', bgClass: 'bg-sky-600/90', borderClass: 'border-sky-400' },
-  { amount: 100, color: 'yellow', label: '¥100 进阶 SC', giftName: '告白气球', bgClass: 'bg-amber-500/90', borderClass: 'border-amber-300' },
-  { amount: 500, color: 'orange', label: '¥500 高能 SC', giftName: '星际飞船', bgClass: 'bg-orange-600/90', borderClass: 'border-orange-300' },
-  { amount: 1000, color: 'red', label: '¥1000 榜一置顶', giftName: '全服嘉年华', bgClass: 'bg-rose-600/95', borderClass: 'border-rose-300' },
+  {
+    amount: 20,
+    label: '¥20',
+    color: 'blue',
+    pinDurationLabel: '置顶 2 分钟',
+    headerBg: '#1565c0',
+    bodyBg: '#1e88e5',
+    textColor: '#ffffff',
+  },
+  {
+    amount: 50,
+    label: '¥50',
+    color: 'cyan',
+    pinDurationLabel: '置顶 5 分钟',
+    headerBg: '#00b8d4',
+    bodyBg: '#00e5ff',
+    textColor: '#00363a',
+  },
+  {
+    amount: 100,
+    label: '¥100',
+    color: 'amber',
+    pinDurationLabel: '置顶 15 分钟',
+    headerBg: '#ffb300',
+    bodyBg: '#ffca28',
+    textColor: '#3e2723',
+  },
+  {
+    amount: 500,
+    label: '¥500',
+    color: 'magenta',
+    pinDurationLabel: '置顶 1 小时',
+    headerBg: '#c2185b',
+    bodyBg: '#e91e63',
+    textColor: '#ffffff',
+  },
+  {
+    amount: 1000,
+    label: '¥1000',
+    color: 'red',
+    pinDurationLabel: '置顶 5 小时',
+    headerBg: '#d00000',
+    bodyBg: '#e62117',
+    textColor: '#ffffff',
+  },
 ];

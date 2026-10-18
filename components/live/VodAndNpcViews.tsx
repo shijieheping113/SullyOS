@@ -1,420 +1,826 @@
 /**
- * VOD 视频详情页（分段进度条 + 飘屏弹幕 + 楼层评论翻牌 + 编辑/重Roll）
- * 与 NPC 陪看双人房视图（上屏辅助模型演奇葩 NPC + 下屏主模型演 Char 吐槽咬耳朵）
+ * 电波 (OnAir) —— 真实 YouTube & 真实 ニコニコ動画/生放送 的 VOD 视频页与双人陪看视图
+ *
+ * 彻底解决：
+ * 1. 明亮通透的 16:9 播放器 + 点击画面显隐控制层 + 可自由拖动的时间轴进度条（绝不压死按键）。
+ * 2. 画面描写与台词完整显示在播放器下方独立面板，绝不截断（无 line-clamp）。
+ * 3. 长按菜单（BeatLongPressSheet）：点击台词直接播语音；长按任意章节或角色陪看反应弹出底部菜单（重新生成语音、下载 .mp3、编辑、重 Roll、转发卡片）。
+ * 4. 内置真·私聊小窗（LiveFloatingPhone），随时切出原汁原味的私聊窗口。
  */
 import React, { useState } from 'react';
+import TokenImg from '../os/TokenImg';
 import {
   StreamerChannelProfile,
   ViewerPersona,
   VodVideoPost,
+  VodChapterBeat,
   VodCommentItem,
   NpcWatchSession,
-  DanmakuTranslateMode,
+  NpcWatchBeat,
+  LivePlatformTheme,
 } from '../../utils/liveStreamTypes';
+import {
+  normalizeBrightGradient,
+  downloadVoiceAudioUrl,
+} from '../../utils/liveStreamStorage';
+import {
+  FloatingDanmakuOverlay,
+  LiveFloatingPhone,
+  BeatLongPressSheet,
+  BeatActionSheetTarget,
+  useLongPressMenu,
+} from './LiveSharedWidgets';
 
-export const VodDetailView: React.FC<{
-  vod: VodVideoPost;
+// ==================== 1. VOD 视频详情页（YouTube Watch Page / ニコニコ動画） ====================
+
+interface VodDetailViewProps {
+  charId: string;
+  charName: string;
+  charAvatar?: string;
+  userName: string;
   channel: StreamerChannelProfile;
-  activePersona: ViewerPersona;
-  translateMode: DanmakuTranslateMode;
-  busy: boolean;
-  onBack: () => void;
-  onPlayTts: (text: string) => void;
+  vod: VodVideoPost;
+  viewerPersonas: ViewerPersona[];
+  activePersonaId: string;
+  platformTheme: LivePlatformTheme;
+  isGeneratingReplyId: string | null;
+  ttsPlayingId: string | null;
+  onChangePlatformTheme: (theme: LivePlatformTheme) => void;
+  onSelectPersona: (id: string) => void;
   onOpenPersonaModal: () => void;
-  onUpdateVod: (next: VodVideoPost) => void;
-  onRequestStreamerReply: (comment: VodCommentItem) => void;
-  onShareToChat: () => void;
-}> = ({
-  vod,
+  onBack: () => void;
+  onPlayChapterVoice: (ch: VodChapterBeat, options?: { skipCache?: boolean }) => void;
+  onEditChapter: (
+    chapterId: string,
+    nextScreen: string,
+    nextSpeech: string,
+    nextTrans?: string,
+  ) => void;
+  onAddComment: (text: string) => void;
+  onTriggerStreamerReply: (comment: VodCommentItem) => void;
+  onShareVodToChat: () => void;
+}
+
+export const VodDetailView: React.FC<VodDetailViewProps> = ({
+  charId,
+  charName,
+  charAvatar,
+  userName,
   channel,
-  activePersona,
-  translateMode,
-  busy,
-  onBack,
-  onPlayTts,
+  vod,
+  viewerPersonas,
+  activePersonaId,
+  platformTheme,
+  isGeneratingReplyId,
+  ttsPlayingId,
+  onChangePlatformTheme,
   onOpenPersonaModal,
-  onUpdateVod,
-  onRequestStreamerReply,
-  onShareToChat,
+  onBack,
+  onPlayChapterVoice,
+  onEditChapter,
+  onAddComment,
+  onTriggerStreamerReply,
+  onShareVodToChat,
 }) => {
-  const [chapterIdx, setChapterIdx] = useState(0);
+  const [activeChapterIdx, setActiveChapterIdx] = useState(0);
+  const [showPlayerControls, setShowPlayerControls] = useState(false);
+  const [showDanmaku, setShowDanmaku] = useState(true);
+  const [showTranslation, setShowTranslation] = useState(true);
   const [commentInput, setCommentInput] = useState('');
-  const [editingChapter, setEditingChapter] = useState(false);
-  const [editScreen, setEditScreen] = useState('');
-  const [editSpeech, setEditSpeech] = useState('');
-  const [editTrans, setEditTrans] = useState('');
+  const [showFloatingPhone, setShowFloatingPhone] = useState(false);
+  const [actionSheetTarget, setActionSheetTarget] = useState<BeatActionSheetTarget | null>(null);
+  const { bindLongPress, wasLongPressTriggered } = useLongPressMenu();
 
-  const curChapter = vod.chapters[chapterIdx] || vod.chapters[0];
+  const currentChapter: VodChapterBeat | undefined =
+    vod.chapters[activeChapterIdx] || vod.chapters[0];
+  const activePersona =
+    viewerPersonas.find(p => p.id === activePersonaId) || viewerPersonas[0];
+  const displayAvatar = channel.avatar || charAvatar;
+  const brightGradient = normalizeBrightGradient(vod.coverGradient || channel.bannerGradient);
+  const isNico = platformTheme === 'niconico';
 
-  const startEditChapter = () => {
-    if (!curChapter) return;
-    setEditScreen(curChapter.screen);
-    setEditSpeech(curChapter.speechOriginal);
-    setEditTrans(curChapter.speechTranslated || '');
-    setEditingChapter(true);
+  const openChapterMenu = (ch: VodChapterBeat, idx: number) => {
+    setActionSheetTarget({
+      title: `章节 ${idx + 1} (${ch.timestampLabel}) · ${ch.chapterTitle}`,
+      screen: ch.screen,
+      speechOriginal: ch.speechOriginal,
+      speechTranslated: ch.speechTranslated,
+      audioUrl: ch.audioUrl,
+      canPlayVoice: Boolean(ch.speechOriginal?.trim()),
+      canEdit: true,
+      canShareClip: true,
+      onPlayVoice: () => onPlayChapterVoice(ch),
+      onRetryVoice: () => onPlayChapterVoice(ch, { skipCache: true }),
+      onDownloadVoice: () => {
+        if (ch.audioUrl) {
+          void downloadVoiceAudioUrl(ch.audioUrl, `${vod.title}_ch${idx + 1}`);
+        } else {
+          onPlayChapterVoice(ch);
+        }
+      },
+      onSaveEdit: (nextScreen, nextSpeech, nextTrans) => {
+        onEditChapter(ch.id, nextScreen, nextSpeech, nextTrans);
+      },
+      onShareClip: onShareVodToChat,
+    });
   };
 
-  const saveEditChapter = () => {
-    if (!curChapter) return;
-    const nextChapters = vod.chapters.map((c, i) =>
-      i === chapterIdx
-        ? { ...c, screen: editScreen.trim(), speechOriginal: editSpeech.trim(), speechTranslated: editTrans.trim() || undefined }
-        : c,
-    );
-    onUpdateVod({ ...vod, chapters: nextChapters });
-    setEditingChapter(false);
-  };
-
-  const handleSendComment = () => {
-    if (!commentInput.trim()) return;
-    const newComment: VodCommentItem = {
-      id: `vcm_u_${Date.now()}`,
-      authorName: activePersona.name,
-      viewerPersonaId: activePersona.id,
-      isUserMain: activePersona.isMain,
-      isUserAlt: !activePersona.isMain,
-      fanBadge: activePersona.badgeText || channel.fanBadgeName,
-      fanLevel: activePersona.fanLevel,
-      content: commentInput.trim(),
-      likes: 1,
-      replies: [],
-      timestamp: Date.now(),
-    };
-    const nextVod = { ...vod, comments: [newComment, ...vod.comments] };
-    onUpdateVod(nextVod);
-    setCommentInput('');
-  };
+  const cleanTrans = currentChapter?.speechTranslated
+    ? currentChapter.speechTranslated.replace(/^译[：:]\s*/, '').trim()
+    : '';
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100">
+    <div className={`h-full w-full flex flex-col overflow-hidden ${isNico ? 'bg-[#f4f4f4]' : 'bg-white'}`}>
       {/* 顶栏 */}
-      <div className="flex items-center justify-between px-3 py-2.5 bg-zinc-900 border-b border-zinc-800">
-        <button onClick={onBack} className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300">← 返回</button>
-        <div className="text-xs font-bold truncate max-w-[180px]">{vod.title}</div>
-        <button onClick={onShareToChat} className="text-xs px-2.5 py-1 rounded-lg bg-rose-600/20 text-rose-300 border border-rose-500/30">
-          转发私聊
-        </button>
+      {isNico ? (
+        <header className="h-11 px-3 bg-[#252525] text-white flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={onBack}
+              className="px-2 py-1 rounded bg-[#383838] text-xs font-bold whitespace-nowrap shrink-0"
+            >
+              ← 戻る
+            </button>
+            <span className="text-xs font-bold truncate">📺 ニコニコ動画 · {vod.title}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChangePlatformTheme('youtube')}
+            className="px-2 py-1 rounded bg-[#383838] text-[11px] font-bold whitespace-nowrap shrink-0"
+          >
+            切 YouTube
+          </button>
+        </header>
+      ) : (
+        <header className="h-11 px-3 bg-white border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-800 font-bold shrink-0"
+            >
+              ←
+            </button>
+            <span className="text-xs font-bold text-[#0f0f0f] truncate">{vod.title}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowFloatingPhone(true)}
+              className="px-2.5 py-1 rounded-full bg-[#f2f2f2] text-[#0f0f0f] text-[11px] font-bold whitespace-nowrap"
+            >
+              📱 私聊
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangePlatformTheme('niconico')}
+              className="px-2.5 py-1 rounded-full bg-[#f2f2f2] text-[#0f0f0f] text-[11px] font-bold whitespace-nowrap"
+            >
+              📺 切 NicoNico
+            </button>
+          </div>
+        </header>
+      )}
+
+      {/* 16:9 明亮视频舞台（点击显隐控制层） */}
+      <div
+        className="relative w-full aspect-video shrink-0 overflow-hidden select-none"
+        style={{
+          background: vod.coverImageUrl || channel.roomBackgroundUrl ? '#f8fafc' : brightGradient,
+        }}
+        onClick={() => setShowPlayerControls(v => !v)}
+      >
+        {(vod.coverImageUrl || channel.roomBackgroundUrl) ? (
+          <img
+            src={vod.coverImageUrl || channel.roomBackgroundUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            {displayAvatar ? (
+              <TokenImg
+                src={displayAvatar}
+                alt={channel.channelName}
+                className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-xl"
+              />
+            ) : (
+              <div className="w-20 h-20 rounded-full bg-white text-slate-800 flex items-center justify-center text-2xl font-extrabold shadow-xl">
+                {channel.channelName.slice(0, 1)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 左上角章节角标 */}
+        <div className="pointer-events-none absolute top-2.5 left-3 right-3 flex items-center justify-between z-[14]">
+          <span className="px-2 py-0.5 rounded bg-black/60 text-white text-[11px] font-bold">
+            {currentChapter?.timestampLabel || '00:00'} · {currentChapter?.chapterTitle}
+          </span>
+          <span className="px-2 py-0.5 rounded bg-black/60 text-white text-[11px] font-mono">
+            {vod.durationLabel}
+          </span>
+        </div>
+
+        {/* 上半区无底色飘屏弹幕 */}
+        <FloatingDanmakuOverlay
+          danmakuList={currentChapter?.danmaku || []}
+          showTranslation={showTranslation}
+          visible={showDanmaku}
+          platformTheme={platformTheme}
+        />
+
+        {/* 点击画面浮现的播放控制层 */}
+        {showPlayerControls && (
+          <div
+            className="absolute inset-0 z-[20] bg-black/35 flex flex-col justify-between p-3"
+            onClick={() => setShowPlayerControls(false)}
+          >
+            <div className="flex justify-end gap-2" onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => setShowDanmaku(v => !v)}
+                className="px-2.5 py-1 rounded-full bg-white text-slate-900 text-xs font-bold whitespace-nowrap"
+              >
+                {showDanmaku ? '弹幕 ON' : '弹幕 OFF'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTranslation(v => !v)}
+                className="px-2.5 py-1 rounded-full bg-white text-slate-900 text-xs font-bold whitespace-nowrap"
+              >
+                CC 译文
+              </button>
+            </div>
+
+            <div className="flex items-center justify-center gap-6" onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                disabled={activeChapterIdx <= 0}
+                onClick={() => setActiveChapterIdx(i => Math.max(0, i - 1))}
+                className="w-10 h-10 rounded-full bg-black/65 text-white flex items-center justify-center text-base font-bold disabled:opacity-35"
+              >
+                ⏮
+              </button>
+              <button
+                type="button"
+                onClick={() => currentChapter && onPlayChapterVoice(currentChapter)}
+                className="w-12 h-12 rounded-full bg-white text-slate-900 shadow-lg flex items-center justify-center text-base font-extrabold"
+              >
+                🔊
+              </button>
+              <button
+                type="button"
+                disabled={activeChapterIdx >= vod.chapters.length - 1}
+                onClick={() => setActiveChapterIdx(i => Math.min(vod.chapters.length - 1, i + 1))}
+                className="w-10 h-10 rounded-full bg-black/65 text-white flex items-center justify-center text-base font-bold disabled:opacity-35"
+              >
+                ⏭
+              </button>
+            </div>
+
+            <div className="text-xs text-white font-bold">
+              章节 {activeChapterIdx + 1} / {vod.chapters.length}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 16:9 视频分镜取景框 */}
-      {curChapter && (
-        <div className="relative p-4 border-b border-zinc-800" style={{ background: vod.coverGradient }}>
-          <div className="flex items-center justify-between text-[11px] text-white/80 mb-2">
-            <span className="px-2 py-0.5 rounded bg-black/40 font-mono">
-              {curChapter.timestampLabel} · {curChapter.chapterTitle}
-            </span>
-            <div className="flex items-center gap-1.5">
-              {curChapter.speechOriginal && (
-                <button
-                  onClick={() => onPlayTts(curChapter.speechOriginal)}
-                  className="px-2 py-0.5 rounded bg-black/50 hover:bg-black/70 text-emerald-300"
-                >
-                  🔊 听原声
-                </button>
-              )}
-              <button onClick={startEditChapter} className="px-2 py-0.5 rounded bg-black/50 text-zinc-200">
-                ✏️ 编辑本段
-              </button>
-            </div>
-          </div>
+      {/* 可拖动章节进度条 + 章节胶囊条 */}
+      <div className="bg-white border-b border-slate-200 px-3 py-2 shrink-0 space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[11px] font-mono text-slate-500 whitespace-nowrap">
+            {currentChapter?.timestampLabel || '00:00'}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, vod.chapters.length - 1)}
+            value={activeChapterIdx}
+            onChange={e => setActiveChapterIdx(Number(e.target.value))}
+            className="flex-1 h-1.5 rounded-lg cursor-pointer"
+            style={{ accentColor: isNico ? '#0080ff' : '#ff0033' }}
+          />
+          <span className="text-[11px] font-mono text-slate-500 whitespace-nowrap">
+            {vod.durationLabel}
+          </span>
+        </div>
 
-          {/* 飘屏弹幕 */}
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {(curChapter.danmaku || []).map(d => (
-              <span key={d.id} className="text-[11px] px-2 py-0.5 rounded-full bg-black/45 text-white/90 backdrop-blur-xs">
-                {translateMode === 'zh_only' && d.translation ? d.translation : d.text}
-                {translateMode === 'bilingual' && d.translation ? ` (${d.translation})` : ''}
-              </span>
-            ))}
-          </div>
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          {vod.chapters.map((ch, idx) => (
+            <button
+              type="button"
+              key={ch.id}
+              onClick={() => setActiveChapterIdx(idx)}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
+                idx === activeChapterIdx
+                  ? isNico
+                    ? 'bg-[#0080ff] text-white'
+                    : 'bg-[#0f0f0f] text-white'
+                  : 'bg-[#f2f2f2] text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              {ch.timestampLabel} {ch.chapterTitle}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          {editingChapter ? (
-            <div className="space-y-2 bg-black/60 p-3 rounded-xl text-xs">
-              <textarea
-                rows={2}
-                value={editScreen}
-                onChange={e => setEditScreen(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2 text-white"
-                placeholder="分镜画面描写"
-              />
-              <input
-                value={editSpeech}
-                onChange={e => setEditSpeech(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2 text-white"
-                placeholder="主播原声台词"
-              />
-              <input
-                value={editTrans}
-                onChange={e => setEditTrans(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2 text-amber-200"
-                placeholder="同传译文（可选）"
-              />
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setEditingChapter(false)} className="px-3 py-1 rounded bg-zinc-800">取消</button>
-                <button onClick={saveEditChapter} className="px-3 py-1 rounded bg-rose-600 text-white font-bold">保存</button>
+      {/* 当前章节完整画面与台词卡片（点按播语音，长按弹操作菜单） */}
+      {currentChapter && (
+        <div
+          {...bindLongPress(() => openChapterMenu(currentChapter, activeChapterIdx))}
+          onClick={() => {
+            if (wasLongPressTriggered()) return;
+            if (currentChapter.speechOriginal?.trim()) {
+              onPlayChapterVoice(currentChapter);
+            }
+          }}
+          className="bg-slate-50 border-b border-slate-200 px-4 py-3 cursor-pointer shrink-0"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="text-[13px] text-slate-600 leading-relaxed break-words">
+                <span className="font-bold text-slate-800 mr-1.5">
+                  🎬 分镜 {activeChapterIdx + 1}：
+                </span>
+                {currentChapter.screen}
               </div>
-            </div>
-          ) : (
-            <>
-              <div className="text-xs text-zinc-100/95 bg-black/35 rounded-xl p-3 leading-relaxed">
-                <span className="text-rose-300 font-bold mr-1">[画面]</span>
-                {curChapter.screen}
-              </div>
-              {curChapter.speechOriginal && (
-                <div className="mt-2.5 bg-black/65 rounded-xl px-3 py-2 border-l-2 border-rose-500">
-                  <div className="text-xs font-medium text-white">「{curChapter.speechOriginal}」</div>
-                  {curChapter.speechTranslated && translateMode !== 'original_only' && (
-                    <div className="text-[11px] text-amber-300/95 mt-0.5">
-                      【同传字幕】{curChapter.speechTranslated}
-                    </div>
-                  )}
+              {currentChapter.speechOriginal && (
+                <div className="text-[14px] font-bold text-slate-900 leading-relaxed break-words">
+                  <span className="inline-block px-1.5 py-0.5 mr-1.5 rounded bg-slate-200 text-slate-700 text-[10px]">
+                    {ttsPlayingId === currentChapter.id ? '🔊 朗读中' : '🔊 点按听语音'}
+                  </span>
+                  「{currentChapter.speechOriginal}」
                 </div>
               )}
-            </>
-          )}
-
-          {/* 时间轴章节切换条 */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pt-3 mt-2">
-            {vod.chapters.map((ch, idx) => (
-              <button
-                key={ch.id}
-                onClick={() => setChapterIdx(idx)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] shrink-0 transition ${
-                  idx === chapterIdx ? 'bg-rose-600 text-white font-bold' : 'bg-black/45 text-zinc-300'
-                }`}
-              >
-                {ch.timestampLabel} {ch.chapterTitle}
-              </button>
-            ))}
+              {showTranslation && cleanTrans && cleanTrans !== currentChapter.speechOriginal && (
+                <div className="text-xs text-sky-700">{cleanTrans}</div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                openChapterMenu(currentChapter, activeChapterIdx);
+              }}
+              className="w-7 h-7 rounded-full hover:bg-slate-200 text-slate-500 flex items-center justify-center text-base font-bold shrink-0"
+            >
+              ⋮
+            </button>
           </div>
         </div>
       )}
 
-      {/* 评论区与盖楼 */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs">
-          <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1">
-            <span>UP主：{channel.channelName} · 播放 {vod.viewsCount} · 硬币 {vod.coinsCount}</span>
-            <span className="text-rose-400 font-semibold">置顶碎碎念</span>
+      {/* 下方评论区列表 */}
+      <div className="flex-1 min-h-0 overflow-y-auto bg-white p-3.5 space-y-3">
+        {/* 视频标题与创作者置顶说明 */}
+        <div className="pb-2.5 border-b border-slate-100 space-y-1.5">
+          <h1 className="text-[15px] font-bold text-[#0f0f0f] leading-snug break-words">
+            {vod.title}
+          </h1>
+          <div className="flex items-center justify-between text-xs text-[#606060]">
+            <span>
+              {vod.viewsCount.toLocaleString()} views · 👍 {vod.likesCount.toLocaleString()}
+            </span>
+            <button
+              type="button"
+              onClick={onShareVodToChat}
+              className="px-2.5 py-1 rounded-full bg-[#f2f2f2] text-[#0f0f0f] font-bold whitespace-nowrap"
+            >
+              📤 分享到私聊
+            </button>
           </div>
-          <div className="text-zinc-200">{vod.streamerPinNote}</div>
+          {vod.streamerPinnedNote && (
+            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed">
+              <span className="font-bold text-slate-900 mr-1">📌 {channel.channelName} 置顶：</span>
+              {vod.streamerPinnedNote}
+            </div>
+          )}
         </div>
 
-        <div className="text-xs font-bold text-zinc-400">评论区（{vod.comments.length}）</div>
-
-        {vod.comments.map(c => (
-          <div key={c.id} className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800/80 space-y-1.5 text-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-zinc-200">{c.authorName}</span>
-                {c.isUserMain && <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-600/30 text-emerald-300">我的大号</span>}
-                {c.isUserAlt && <span className="text-[10px] px-1.5 py-0.2 rounded bg-violet-600/30 text-violet-300">我的小号马甲</span>}
-                {c.likedByStreamer && <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300">UP主觉得很赞</span>}
-              </div>
-              <button
-                disabled={busy}
-                onClick={() => onRequestStreamerReply(c)}
-                className="text-[11px] text-amber-400 hover:underline disabled:opacity-40"
-              >
-                {c.replies.length > 0 ? '🔄 重Roll翻牌' : '✨ 让UP主翻牌回复'}
-              </button>
-            </div>
-
-            <div className="text-zinc-100">{c.content}</div>
-            {c.translation && translateMode !== 'original_only' && (
-              <div className="text-[11px] text-zinc-400">译：{c.translation}</div>
-            )}
-
-            {c.replies.map(r => (
-              <div key={r.id} className="mt-2 pl-2.5 border-l-2 border-rose-500/60 bg-zinc-950/60 p-2 rounded-lg">
-                <span className="text-rose-400 font-bold">{r.authorName} (UP主)：</span>
-                <span className="text-zinc-200">{r.content}</span>
-                {r.translation && <div className="text-[11px] text-amber-300/90 mt-0.5">同传：{r.translation}</div>}
-              </div>
-            ))}
+        {/* 评论列表 */}
+        <div className="space-y-3">
+          <div className="text-xs font-extrabold text-slate-800">
+            Comments ({vod.comments.length})
           </div>
-        ))}
+          {vod.comments.map(cm => (
+            <div key={cm.id} className="p-3 rounded-2xl bg-slate-50/70 border border-slate-100 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                  <span className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px]">
+                    {cm.authorName.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span>{cm.authorName}</span>
+                  {cm.fanBadge && (
+                    <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 text-[10px]">
+                      {cm.fanBadge}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={isGeneratingReplyId === cm.id}
+                  onClick={() => onTriggerStreamerReply(cm)}
+                  className="text-[11px] font-bold text-red-600 hover:underline whitespace-nowrap"
+                >
+                  {isGeneratingReplyId === cm.id
+                    ? '创作者回复中…'
+                    : cm.replies.length > 0
+                    ? '🎲 重Roll创作者回复'
+                    : '💬 让创作者翻牌回复'}
+                </button>
+              </div>
+
+              <div className="text-[13px] text-slate-800 leading-relaxed break-words">
+                {cm.content}
+              </div>
+
+              {cm.replies.map(rp => (
+                <div
+                  key={rp.id}
+                  className="ml-3 pl-3 border-l-2 border-red-400 py-1 space-y-0.5 text-xs bg-white rounded-r-xl pr-2"
+                >
+                  <div className="font-bold text-red-600">
+                    {rp.authorName} <span className="px-1 rounded bg-red-50 text-[10px]">Creator</span>
+                  </div>
+                  <div className="text-slate-800 leading-relaxed">{rp.content}</div>
+                  {rp.translation && (
+                    <div className="text-sky-700 text-[11px]">
+                      {rp.translation.replace(/^译[：:]\s*/, '')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* 底部发评论栏 */}
-      <div className="p-2.5 bg-zinc-900 border-t border-zinc-800 flex items-center gap-2">
+      {/* 底部写评论栏 */}
+      <div className="px-3 py-2 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
         <button
+          type="button"
           onClick={onOpenPersonaModal}
-          className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold shrink-0 ${
-            activePersona.isMain ? 'bg-emerald-600 text-white' : 'bg-violet-600 text-white'
-          }`}
+          className="px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-800 text-xs font-bold whitespace-nowrap shrink-0"
         >
-          {activePersona.isMain ? '大号' : '马甲'}: {activePersona.name.slice(0, 4)}
+          {activePersona?.isMain ? '本尊' : '小号'} · {activePersona?.name}
         </button>
         <input
           value={commentInput}
           onChange={e => setCommentInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSendComment()}
-          placeholder={`以「${activePersona.name}」发评论盖楼…`}
-          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white"
+          onKeyDown={e => {
+            if (e.key === 'Enter' && commentInput.trim()) {
+              onAddComment(commentInput.trim());
+              setCommentInput('');
+            }
+          }}
+          placeholder="Add a comment…"
+          className="flex-1 min-w-0 px-3.5 py-2 rounded-full bg-[#f2f2f2] text-sm text-[#0f0f0f] focus:outline-none"
         />
-        <button onClick={handleSendComment} className="px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold">
-          发送
+        <button
+          type="button"
+          disabled={!commentInput.trim()}
+          onClick={() => {
+            if (!commentInput.trim()) return;
+            onAddComment(commentInput.trim());
+            setCommentInput('');
+          }}
+          className="px-3.5 py-2 rounded-full bg-[#0f0f0f] text-white text-xs font-bold whitespace-nowrap disabled:opacity-40"
+        >
+          评论
         </button>
       </div>
+
+      <LiveFloatingPhone
+        isOpen={showFloatingPhone}
+        characterId={charId}
+        charName={charName}
+        contextDescription={`【看视频私聊】此刻 ${userName} 正在观看你的视频投稿《${vod.title}》，并用手机私聊找你聊天。`}
+        onClose={() => setShowFloatingPhone(false)}
+      />
+      <BeatLongPressSheet
+        target={actionSheetTarget}
+        onClose={() => setActionSheetTarget(null)}
+      />
     </div>
   );
 };
 
-// ==================== NPC 陪看双人房视图 ====================
+// ==================== 2. 双人陪刷其他 NPC 主播视图（Watch Together / ミラー視聴） ====================
 
-export const NpcWatchRoomView: React.FC<{
-  npcSession: NpcWatchSession;
+interface NpcWatchRoomViewProps {
+  charId: string;
   charName: string;
-  busy: boolean;
+  charAvatar?: string;
+  userName: string;
+  npcSession: NpcWatchSession;
+  platformTheme: LivePlatformTheme;
+  isGenerating: boolean;
+  isRerollingBeatId: string | null;
+  ttsPlayingId: string | null;
+  onChangePlatformTheme: (theme: LivePlatformTheme) => void;
   onBack: () => void;
-  onSwitchNextNpc: () => void;
-  onNextNpcBeat: (text?: string, mode?: 'whisper_to_char' | 'send_npc_danmaku') => void;
-  onRerollCharOnly: (beatIdx: number) => void;
-  onPlayCharTts: (text: string) => void;
-  onShareToChat: () => void;
-}> = ({
-  npcSession,
+  onAdvanceBeat: (userText?: string, mode?: 'whisper_char' | 'send_npc_danmaku') => void;
+  onRerollCharReaction: (beat: NpcWatchBeat) => void;
+  onPlayCharVoice: (beat: NpcWatchBeat, options?: { skipCache?: boolean }) => void;
+  onShareNpcWatchToChat: () => void;
+}
+
+export const NpcWatchRoomView: React.FC<NpcWatchRoomViewProps> = ({
+  charId,
   charName,
-  busy,
+  charAvatar,
+  userName,
+  npcSession,
+  platformTheme,
+  isGenerating,
+  isRerollingBeatId,
+  ttsPlayingId,
+  onChangePlatformTheme,
   onBack,
-  onSwitchNextNpc,
-  onNextNpcBeat,
-  onRerollCharOnly,
-  onPlayCharTts,
-  onShareToChat,
+  onAdvanceBeat,
+  onRerollCharReaction,
+  onPlayCharVoice,
+  onShareNpcWatchToChat,
 }) => {
+  const [currentBeatIdx, setCurrentBeatIdx] = useState(
+    Math.max(0, npcSession.beats.length - 1),
+  );
+  const [inputMode, setInputMode] = useState<'whisper_char' | 'send_npc_danmaku'>('whisper_char');
   const [inputText, setInputText] = useState('');
-  const [inputMode, setInputMode] = useState<'whisper_to_char' | 'send_npc_danmaku'>('whisper_to_char');
+  const [showFloatingPhone, setShowFloatingPhone] = useState(false);
+  const [actionSheetTarget, setActionSheetTarget] = useState<BeatActionSheetTarget | null>(null);
+  const { bindLongPress, wasLongPressTriggered } = useLongPressMenu();
 
-  const latestBeat = npcSession.beats[npcSession.beats.length - 1];
+  // 当新拍生成时跳到最新拍
+  React.useEffect(() => {
+    if (npcSession.beats.length > 0) {
+      setCurrentBeatIdx(npcSession.beats.length - 1);
+    }
+  }, [npcSession.beats.length]);
 
-  const handleSend = () => {
-    const t = inputText.trim();
-    setInputText('');
-    onNextNpcBeat(t || undefined, inputMode);
+  const currentBeat: NpcWatchBeat | undefined =
+    npcSession.beats[currentBeatIdx] || npcSession.beats[npcSession.beats.length - 1];
+  const brightGradient = normalizeBrightGradient(npcSession.coverGradient);
+  const isNico = platformTheme === 'niconico';
+
+  const openNpcBeatMenu = (beat: NpcWatchBeat) => {
+    setActionSheetTarget({
+      title: `${charName} 的陪看反应 (#${beat.index + 1})`,
+      screen: beat.charReactionAction,
+      speechOriginal: beat.charReactionSpeech,
+      audioUrl: beat.charAudioUrl,
+      canPlayVoice: Boolean(beat.charReactionSpeech?.trim()),
+      canRerollChunk: true,
+      canShareClip: true,
+      onPlayVoice: () => onPlayCharVoice(beat),
+      onRetryVoice: () => onPlayCharVoice(beat, { skipCache: true }),
+      onDownloadVoice: () => {
+        if (beat.charAudioUrl) {
+          void downloadVoiceAudioUrl(beat.charAudioUrl, `${charName}_watch_${beat.index + 1}`);
+        } else {
+          onPlayCharVoice(beat);
+        }
+      },
+      onRerollChunk: () => onRerollCharReaction(beat),
+      onShareClip: onShareNpcWatchToChat,
+    });
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100">
-      <div className="flex items-center justify-between px-3 py-2.5 bg-zinc-900 border-b border-zinc-800">
-        <button onClick={onBack} className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300">← 退出陪看</button>
-        <div className="text-xs font-bold truncate">与 {charName} 陪看：{npcSession.npcStreamerName}</div>
-        <div className="flex gap-1.5">
-          <button onClick={onSwitchNextNpc} className="text-xs px-2 py-1 rounded-lg bg-amber-500/20 text-amber-300">
-            换一间刷
+    <div className={`h-full w-full flex flex-col overflow-hidden ${isNico ? 'bg-[#f4f4f4]' : 'bg-white'}`}>
+      {/* 顶栏 */}
+      <header
+        className={`h-11 px-3 flex items-center justify-between gap-2 shrink-0 border-b ${
+          isNico ? 'bg-[#252525] border-[#333] text-white' : 'bg-white border-slate-200 text-[#0f0f0f]'
+        }`}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={onBack}
+            className="px-2 py-1 rounded text-xs font-bold whitespace-nowrap shrink-0"
+          >
+            ← 返回
           </button>
-          <button onClick={onShareToChat} className="text-xs px-2 py-1 rounded-lg bg-rose-600/20 text-rose-300">
-            分享私聊
+          <span className="text-xs font-bold truncate">
+            🛋️ 与 {charName} 陪看：{npcSession.npcRoomTitle}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowFloatingPhone(true)}
+            className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold whitespace-nowrap"
+          >
+            📱 私聊
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangePlatformTheme(isNico ? 'youtube' : 'niconico')}
+            className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-800 text-[11px] font-bold whitespace-nowrap"
+          >
+            {isNico ? '切 YouTube' : '切 Nico'}
           </button>
         </div>
+      </header>
+
+      {/* 16:9 明亮 NPC 直播舞台 */}
+      <div
+        className="relative w-full aspect-video shrink-0 overflow-hidden select-none flex flex-col items-center justify-center"
+        style={{ background: brightGradient }}
+      >
+        <div className="pointer-events-none absolute top-2.5 left-3 right-3 flex items-center justify-between z-[14]">
+          <span className="px-2 py-0.5 rounded bg-black/60 text-white text-[11px] font-bold">
+            LIVE · {npcSession.npcStreamerName} ({npcSession.npcCategoryLabel})
+          </span>
+          <span className="px-2 py-0.5 rounded bg-black/60 text-white text-[11px]">
+            👁 {npcSession.viewerCount}
+          </span>
+        </div>
+
+        <div className="w-16 h-16 rounded-full bg-white/90 border-4 border-white shadow-lg flex items-center justify-center text-xl font-extrabold text-slate-800">
+          {npcSession.npcStreamerName.slice(0, 1)}
+        </div>
+        <div className="mt-1.5 px-3 py-0.5 rounded-full bg-white/80 text-slate-800 text-xs font-bold">
+          {npcSession.npcStreamerName}
+        </div>
+
+        <FloatingDanmakuOverlay
+          danmakuList={currentBeat?.npcDanmaku || []}
+          visible={true}
+          platformTheme={platformTheme}
+        />
       </div>
 
-      {/* 上半屏：辅助模型演的奇葩 NPC 直播画面 */}
-      <div className="p-4 border-b border-zinc-800 space-y-2.5" style={{ background: npcSession.coverGradient }}>
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="px-2 py-0.5 rounded bg-rose-600 text-white font-bold">
-            NPC LIVE · {npcSession.npcCategoryLabel}
-          </span>
-          <span className="text-zinc-200">{npcSession.npcRoomTitle}</span>
-        </div>
+      {/* 进度条与下一拍按钮 */}
+      <div className="px-3 py-1.5 bg-white border-b border-slate-200 flex items-center gap-2.5 shrink-0">
+        <span className="text-[11px] font-mono text-slate-500 whitespace-nowrap">
+          {npcSession.beats.length > 0 ? currentBeatIdx + 1 : 0}/{npcSession.beats.length}拍
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(0, npcSession.beats.length - 1)}
+          value={currentBeatIdx}
+          onChange={e => setCurrentBeatIdx(Number(e.target.value))}
+          className="flex-1 h-1.5 rounded-lg cursor-pointer accent-[#ff0033]"
+        />
+        <button
+          type="button"
+          disabled={isGenerating}
+          onClick={() => onAdvanceBeat()}
+          className="px-3 py-1 rounded-full bg-[#ff0033] text-white text-xs font-bold whitespace-nowrap disabled:opacity-50"
+        >
+          {isGenerating ? '生成中…' : '✨ 继续看下一拍'}
+        </button>
+      </div>
 
-        {latestBeat ? (
+      {/* 主内容区：屏幕里的 NPC 实况 + 身边 Char 的陪看吐槽 */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3 bg-slate-50/50">
+        {currentBeat ? (
           <>
-            <div className="text-xs bg-black/45 rounded-xl p-3 text-zinc-100 leading-relaxed">
-              <span className="text-amber-300 font-bold mr-1">[NPC画面]</span>
-              {latestBeat.npcScreen}
+            {/* 1. 屏幕里的 NPC 主播正在演什么 */}
+            <div className="rounded-2xl bg-white border border-slate-200 p-3.5 space-y-1.5 shadow-sm">
+              <div className="text-xs font-bold text-slate-400">
+                📺 屏幕里的主播「{npcSession.npcStreamerName}」
+              </div>
+              <div className="text-[13px] text-slate-600 leading-relaxed break-words">
+                {currentBeat.npcScreen}
+              </div>
+              <div className="text-[14px] font-bold text-slate-900 leading-relaxed break-words">
+                「{currentBeat.npcSpeech}」
+              </div>
             </div>
-            <div className="text-xs bg-black/65 rounded-xl px-3 py-2 text-white font-medium">
-              {npcSession.npcStreamerName}：「{latestBeat.npcSpeech}」
-            </div>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {latestBeat.npcDanmaku.map((dm, idx) => (
-                <span key={idx} className="text-[11px] px-2 py-0.5 rounded-full bg-black/45 text-zinc-200">
-                  {dm}
-                </span>
-              ))}
+
+            {/* 2. 身边 Char 的陪看反应（点击播语音，长按弹菜单重Roll/下载语音） */}
+            <div
+              {...bindLongPress(() => openNpcBeatMenu(currentBeat))}
+              onClick={() => {
+                if (wasLongPressTriggered()) return;
+                onPlayCharVoice(currentBeat);
+              }}
+              className="rounded-2xl bg-white border-2 border-red-200 p-3.5 space-y-2 shadow-sm cursor-pointer transition hover:border-red-300"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {charAvatar ? (
+                    <TokenImg
+                      src={charAvatar}
+                      alt={charName}
+                      className="w-7 h-7 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                      {charName.slice(0, 1)}
+                    </div>
+                  )}
+                  <span className="text-xs font-extrabold text-slate-900 truncate">
+                    身边陪看的 {charName}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 text-[10px] font-bold whitespace-nowrap">
+                    {ttsPlayingId === currentBeat.id ? '🔊 朗读中' : '🔊 点按听语音'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    openNpcBeatMenu(currentBeat);
+                  }}
+                  className="w-7 h-7 rounded-full hover:bg-slate-100 text-slate-500 flex items-center justify-center text-base font-bold shrink-0"
+                  title="长按或点击打开操作菜单"
+                >
+                  ⋮
+                </button>
+              </div>
+
+              {currentBeat.userActionNote && (
+                <div className="px-2.5 py-1 rounded-lg bg-slate-100 text-xs text-slate-600">
+                  你刚才{currentBeat.userActionNote}
+                </div>
+              )}
+
+              <div className="text-[13px] text-slate-600 leading-relaxed break-words">
+                {currentBeat.charReactionAction}
+              </div>
+
+              <div className="text-[14px] font-bold text-slate-900 leading-relaxed break-words">
+                {isRerollingBeatId === currentBeat.id
+                  ? '正在重新生成反应…'
+                  : `「${currentBeat.charReactionSpeech}」`}
+              </div>
             </div>
           </>
         ) : (
-          <div className="text-xs text-zinc-300 py-6 text-center">点击下方「继续看下一拍」开始刷这个直播间</div>
+          <div className="py-12 text-center text-slate-400 text-xs">
+            正在进入直播间…
+          </div>
         )}
       </div>
 
-      {/* 下半屏：双人陪看沙发席（主模型演的 Char 实时吐槽与历史） */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-rose-400">🛋️ 身边 {charName} 的实时反应（主副模型双擎解耦）</span>
-          <button
-            disabled={busy}
-            onClick={() => onNextNpcBeat()}
-            className="text-xs px-3 py-1 rounded-lg bg-rose-600 text-white font-bold disabled:opacity-40"
-          >
-            {busy ? '推进中…' : '▶ 继续看下一拍'}
-          </button>
-        </div>
-
-        {npcSession.beats.map((b, idx) => (
-          <div key={b.id} className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2 text-xs">
-            {b.userActionNote && (
-              <div className="text-[11px] text-emerald-300 bg-emerald-950/40 px-2.5 py-1 rounded-lg">
-                你：{b.userActionNote}
-              </div>
-            )}
-            <div className="text-zinc-400 italic">{b.charReactionAction}</div>
-            <div className="flex items-center justify-between gap-2 bg-zinc-950 p-2.5 rounded-xl border-l-2 border-rose-500">
-              <span className="text-zinc-100 font-medium">{charName}：「{b.charReactionSpeech}」</span>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => onPlayCharTts(b.charReactionSpeech)}
-                  className="px-2 py-0.5 rounded bg-zinc-800 text-emerald-300 text-[11px]"
-                >
-                  🔊
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={() => onRerollCharOnly(idx)}
-                  className="px-2 py-0.5 rounded bg-zinc-800 text-amber-300 text-[11px]"
-                  title="只重Roll身边Char的吐槽反应"
-                >
-                  🔄 重Roll反应
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* 底部互动栏 */}
-      <div className="p-2.5 bg-zinc-900 border-t border-zinc-800 flex items-center gap-2">
+      {/* 底部互动栏：跟身边角色咬耳朵 vs 往直播间发弹幕 */}
+      <div className="p-2.5 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
         <button
           type="button"
-          onClick={() => setInputMode(m => (m === 'whisper_to_char' ? 'send_npc_danmaku' : 'whisper_to_char'))}
-          className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold shrink-0 ${
-            inputMode === 'whisper_to_char' ? 'bg-pink-600 text-white' : 'bg-amber-600 text-white'
+          onClick={() =>
+            setInputMode(m => (m === 'whisper_char' ? 'send_npc_danmaku' : 'whisper_char'))
+          }
+          className={`px-2.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 ${
+            inputMode === 'whisper_char'
+              ? 'bg-slate-900 text-white'
+              : 'bg-sky-100 text-sky-800'
           }`}
         >
-          {inputMode === 'whisper_to_char' ? `跟${charName.slice(0, 2)}咬耳朵` : '发NPC弹幕搞事'}
+          {inputMode === 'whisper_char' ? `💬 对${charName}说` : '📺 发弹幕'}
         </button>
+
         <input
           value={inputText}
           onChange={e => setInputText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSend()}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && inputText.trim() && !isGenerating) {
+              onAdvanceBeat(inputText.trim(), inputMode);
+              setInputText('');
+            }
+          }}
           placeholder={
-            inputMode === 'whisper_to_char'
-              ? `凑近 ${charName} 小声吐槽这个主播…`
-              : '在 NPC 直播间公屏发弹幕整活…'
+            inputMode === 'whisper_char'
+              ? `凑过去跟 ${charName} 吐槽…`
+              : `在 ${npcSession.npcStreamerName} 直播间发弹幕…`
           }
-          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white"
+          className="flex-1 min-w-0 px-3.5 py-2 rounded-full bg-[#f2f2f2] text-sm text-[#0f0f0f] focus:outline-none"
         />
+
         <button
-          disabled={busy}
-          onClick={handleSend}
-          className="px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold disabled:opacity-40"
+          type="button"
+          disabled={!inputText.trim() || isGenerating}
+          onClick={() => {
+            if (!inputText.trim()) return;
+            onAdvanceBeat(inputText.trim(), inputMode);
+            setInputText('');
+          }}
+          className="px-3.5 py-2 rounded-full bg-[#0f0f0f] text-white text-xs font-bold whitespace-nowrap disabled:opacity-40"
         >
           发送
         </button>
       </div>
+
+      <LiveFloatingPhone
+        isOpen={showFloatingPhone}
+        characterId={charId}
+        charName={charName}
+        contextDescription={`【陪看直播手机私聊】此刻你正和 ${userName} 一起看第三方主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》，你们正在用手机私聊发信息。`}
+        onClose={() => setShowFloatingPhone(false)}
+      />
+      <BeatLongPressSheet
+        target={actionSheetTarget}
+        onClose={() => setActionSheetTarget(null)}
+      />
     </div>
   );
 };
