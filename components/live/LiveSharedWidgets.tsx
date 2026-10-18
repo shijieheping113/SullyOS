@@ -478,7 +478,7 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
   );
 };
 
-// ==================== 3. 严格限定在画面上半区的无底色横滚飘屏弹幕 ====================
+// ==================== 3. 真实多轨防截断横滚飘屏弹幕（YouTube 轻飘屏 / ニコニコ 多轨立体描边弹幕） ====================
 
 interface FloatingDanmakuOverlayProps {
   danmakuList: LiveDanmakuItem[];
@@ -495,14 +495,22 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
 }) => {
   if (!visible || !danmakuList || danmakuList.length === 0) return null;
 
-  // 只走画面最上沿，字号收小，下面留给台词。
-  const items = danmakuList.slice(-4);
-  const trackTops = ['0px', '16px'];
+  const isNico = platformTheme === 'niconico';
+  // 一轨只放一条：同轨永远不会有第二条追上来，彻底消灭"叠成一坨"。
+  // 速度按字符估算，保证长短句看起来一样快；不截断，长句就慢慢走完全程。
+  const items = danmakuList.slice(-2);
+  const trackTops = ['0px', '21px'];
+
+  const estimateWidth = (text: string) => {
+    let w = 0;
+    for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 12.5 : 7;
+    return w;
+  };
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-1 h-8 overflow-hidden select-none"
-      style={{ zIndex: 12, containerType: 'inline-size' }}
+      className="pointer-events-none absolute inset-x-0 select-none overflow-hidden"
+      style={{ zIndex: 15, height: 42, containerType: 'inline-size' }}
     >
       <style>{`
         @keyframes onAirDanmakuFlow {
@@ -512,12 +520,12 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
       `}</style>
       {items.map((dm, idx) => {
         const top = trackTops[idx % trackTops.length];
-        const duration = 9 + (idx % 3) * 1.6;
-        const delay = (idx % 3) * 1.1;
         const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
         const isGift = Boolean(dm.giftName);
         const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
         const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
+        const full = `${dm.text}${showTranslation && cleanTrans && cleanTrans !== dm.text ? `（${cleanTrans}）` : ''}`;
+        const duration = Math.max(7, (384 + estimateWidth(full)) / 52);
 
         return (
           <div
@@ -529,36 +537,32 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
               left: 0,
               width: 'max-content',
               whiteSpace: 'nowrap',
-              animation: `onAirDanmakuFlow ${duration}s linear ${delay}s infinite`,
+              lineHeight: '21px',
+              animation: `onAirDanmakuFlow ${duration}s linear infinite`,
+              animationDelay: `${idx * 0.35}s`,
               willChange: 'transform',
             }}
           >
             <span
-              className={`inline-flex items-center gap-1 font-medium ${
-                platformTheme === 'niconico' ? 'text-[12px]' : 'text-[11px]'
+              className={`inline-flex items-center gap-1 ${
+                isNico ? 'text-[12.5px] font-bold tracking-tight' : 'text-[12px] font-semibold'
               } ${
-                isSc
-                  ? 'text-amber-300'
-                  : isGift
-                  ? 'text-pink-200'
-                  : isMine
-                  ? 'text-emerald-200 underline decoration-2 underline-offset-4'
-                  : 'text-white'
+                isSc ? 'text-amber-700' : isGift ? 'text-pink-600' : isMine ? 'text-emerald-700' : 'text-slate-700'
               }`}
-              style={{
-                textShadow:
-                  platformTheme === 'niconico'
-                    ? '1.5px 1.5px 0 #000, -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 0 2px 4px rgba(0,0,0,0.65)'
-                    : '0 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.65)',
-              }}
             >
-              {isSc && <span>[¥{dm.scAmount}]</span>}
-              {isGift && <span>[{dm.giftEmoji || '🎁'}{dm.giftName}]</span>}
+              {isSc && (
+                <span className="px-1 rounded bg-[#ffb300] text-black text-[10px] font-extrabold">
+                  ¥{dm.scAmount}
+                </span>
+              )}
+              {isGift && (
+                <span className="px-1 rounded bg-pink-500/90 text-white text-[10px] font-bold">
+                  {dm.giftEmoji || '🎁'}{dm.giftName}
+                </span>
+              )}
               <span>{dm.text}</span>
               {showTranslation && cleanTrans && cleanTrans !== dm.text && (
-                <span className="text-[11px] font-medium text-sky-200">
-                  （{cleanTrans}）
-                </span>
+                <span className="text-[11px] font-medium text-slate-500">（{cleanTrans}）</span>
               )}
             </span>
           </div>
