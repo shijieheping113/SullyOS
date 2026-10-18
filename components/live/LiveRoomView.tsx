@@ -33,6 +33,8 @@ interface LiveRoomViewProps {
   isSummarizing: boolean;
   ttsPlayingBeatId: string | null;
   ttsLoadingBeatId: string | null;
+  voiceEnd: { id: string; n: number } | null;
+  onBindBack: (fn: () => boolean) => void;
   onChangePlatformTheme: (theme: LivePlatformTheme) => void;
   onSelectPersona: (id: string) => void;
   onOpenPersonaModal: () => void;
@@ -79,6 +81,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   isSummarizing,
   ttsPlayingBeatId,
   ttsLoadingBeatId,
+  voiceEnd,
+  onBindBack,
   onChangePlatformTheme,
   onSelectPersona,
   onOpenPersonaModal,
@@ -101,8 +105,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   // 视图与播放器控制状态
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showPlayerControls, setShowPlayerControls] = useState(false);
-  const [autoPlayStep, setAutoPlayStep] = useState(true);
-  const [showDanmakuOverlay, setShowDanmakuOverlay] = useState(platformTheme === 'niconico');
+  const [autoPlayStep, setAutoPlayStep] = useState(false);
+  const [showDanmakuOverlay, setShowDanmakuOverlay] = useState(true);
   const [showTranslation, setShowTranslation] = useState(
     Boolean(channel.voiceConfig?.enableTranslation || (channel.voiceConfig?.language && channel.voiceConfig.language !== 'zh')),
   );
@@ -148,34 +152,50 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   }, [session.chunks]);
 
   // 当前播放到的全局拍索引（支持进度条自由拖动回看或快进）
-  const [currentGlobalBeatIdx, setCurrentGlobalBeatIdx] = useState<number>(0);
+  const [currentGlobalBeatIdx, setCurrentGlobalBeatIdx] = useState<number>(() => {
+    if (session.status === 'ended') return 0;
+    const count = session.chunks.reduce((n, chunk) => n + chunk.beats.length, 0);
+    return Math.max(0, count - 1);
+  });
 
-  // 当新 Chunk 生成出来时，自动跳到新 Chunk 的第一拍开始逐拍推进
+  // 第一次进来停在最新一句，推进按钮才在眼前。新切片写出来后，从这一段的第一句看起。
   const prevChunksLenRef = useRef(session.chunks.length);
+  const landedRef = useRef(false);
   useEffect(() => {
+    if (!landedRef.current) {
+      if (allTimelineBeats.length === 0) return;
+      landedRef.current = true;
+      prevChunksLenRef.current = session.chunks.length;
+      if (session.status !== 'ended') {
+        setCurrentGlobalBeatIdx(allTimelineBeats.length - 1);
+      }
+      return;
+    }
     if (session.chunks.length > prevChunksLenRef.current && latestChunk) {
       const firstNewBeatId = latestChunk.beats[0]?.id;
       const foundIdx = allTimelineBeats.findIndex(item => item.beat.id === firstNewBeatId);
-      if (foundIdx >= 0) {
-        setCurrentGlobalBeatIdx(foundIdx);
-      } else {
-        setCurrentGlobalBeatIdx(Math.max(0, allTimelineBeats.length - 1));
-      }
+      if (foundIdx >= 0) setCurrentGlobalBeatIdx(foundIdx);
+      else setCurrentGlobalBeatIdx(Math.max(0, allTimelineBeats.length - 1));
     } else if (currentGlobalBeatIdx >= allTimelineBeats.length && allTimelineBeats.length > 0) {
       setCurrentGlobalBeatIdx(allTimelineBeats.length - 1);
     }
     prevChunksLenRef.current = session.chunks.length;
-  }, [session.chunks.length, allTimelineBeats.length]);
+  }, [session.chunks.length, allTimelineBeats.length, session.status]);
 
-  // 自动逐拍推进定时器（每 5.5 秒推进到下一拍）
+  // 「播完自动下一句」只在声音真正播完时跳到已经写好的下一句，不向模型要新内容。
+  const seenVoiceEnd = useRef(0);
+  const playRef = useRef(onPlayBeatVoice);
+  playRef.current = onPlayBeatVoice;
   useEffect(() => {
-    if (!autoPlayStep || isGenerating || allTimelineBeats.length === 0) return;
-    if (currentGlobalBeatIdx >= allTimelineBeats.length - 1) return;
-    const timer = setTimeout(() => {
-      setCurrentGlobalBeatIdx(prev => Math.min(prev + 1, allTimelineBeats.length - 1));
-    }, 5500);
-    return () => clearTimeout(timer);
-  }, [autoPlayStep, isGenerating, currentGlobalBeatIdx, allTimelineBeats.length]);
+    if (!voiceEnd || voiceEnd.n === seenVoiceEnd.current) return;
+    seenVoiceEnd.current = voiceEnd.n;
+    if (!autoPlayStep) return;
+    const idx = allTimelineBeats.findIndex(item => item.beat.id === voiceEnd.id);
+    if (idx < 0 || idx >= allTimelineBeats.length - 1) return;
+    const next = allTimelineBeats[idx + 1].beat;
+    setCurrentGlobalBeatIdx(idx + 1);
+    if (next.speechOriginal?.trim()) playRef.current(next);
+  }, [voiceEnd, autoPlayStep, allTimelineBeats]);
 
   const currentTimelineItem =
     allTimelineBeats[currentGlobalBeatIdx] || allTimelineBeats[allTimelineBeats.length - 1];
@@ -206,7 +226,6 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     [visibleDanmakuFeed],
   );
 
-  // 弹幕更新时自动滚到底部
   useEffect(() => {
     if (chatScrollRef.current && lowerTab === 'chat') {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -358,6 +377,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       onOpenPersonaModal={onOpenPersonaModal}
       onOpenChannelSettings={onOpenChannelSettings}
       onBackToLobby={onBackToLobby}
+      onBindBack={onBindBack}
       onGenerateNextChunk={onGenerateNextChunk}
       onPlayBeatVoice={onPlayBeatVoice}
       onRequestRefreshGifts={onRequestRefreshGifts}

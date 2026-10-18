@@ -95,6 +95,7 @@ const LiveStreamApp: React.FC = () => {
     apiConfig,
     userProfile,
     addToast,
+    registerBackHandler,
   } = useOS();
 
   const currentChar = useMemo(
@@ -153,30 +154,71 @@ const LiveStreamApp: React.FC = () => {
   const [npcRerollingBeatId, setNpcRerollingBeatId] = useState<string | null>(null);
   const [ttsPlayingBeatId, setTtsPlayingBeatId] = useState<string | null>(null);
   const [ttsLoadingBeatId, setTtsLoadingBeatId] = useState<string | null>(null);
+  const [voiceEnd, setVoiceEnd] = useState<{ id: string; n: number } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const screenBackRef = useRef<() => boolean>(() => false);
 
   const stopVoiceAudio = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.onended = null;
+    audio.onerror = null;
+    audio.pause();
+    audioRef.current = null;
   }, []);
 
   const playVoiceUrl = useCallback(
-    async (url: string, id: string) => {
+    async (url: string, id: string): Promise<boolean> => {
       stopVoiceAudio();
-      const audio = new Audio(url);
+      if (!url) return false;
+      const audio = new Audio();
       audioRef.current = audio;
-      audio.onended = () => setTtsPlayingBeatId(prev => (prev === id ? null : prev));
+      audio.onended = () => {
+        setTtsPlayingBeatId(prev => (prev === id ? null : prev));
+        setVoiceEnd(prev => ({ id, n: (prev?.n ?? 0) + 1 }));
+      };
       audio.onerror = () => setTtsPlayingBeatId(prev => (prev === id ? null : prev));
+      audio.src = url;
+      setTtsPlayingBeatId(id);
       try {
         await audio.play();
+        return true;
       } catch {
+        if (audioRef.current === audio) audioRef.current = null;
         setTtsPlayingBeatId(prev => (prev === id ? null : prev));
+        return false;
       }
     },
     [stopVoiceAudio],
   );
+
+  useEffect(() => {
+    return registerBackHandler(() => {
+      if (showEndSummaryModal) {
+        setShowEndSummaryModal(false);
+        return true;
+      }
+      if (showChannelModal) {
+        setShowChannelModal(false);
+        return true;
+      }
+      if (showPersonaModal) {
+        setShowPersonaModal(false);
+        return true;
+      }
+      if (showLobbyPhone) {
+        setShowLobbyPhone(false);
+        return true;
+      }
+      return screenBackRef.current();
+    });
+  }, [
+    registerBackHandler,
+    showEndSummaryModal,
+    showChannelModal,
+    showPersonaModal,
+    showLobbyPhone,
+  ]);
 
   const [pendingUserInputs, setPendingUserInputs] = useState<
     Array<{
@@ -277,11 +319,11 @@ const LiveStreamApp: React.FC = () => {
         setTtsPlayingBeatId(null);
         return;
       }
+      if (ttsLoadingBeatId === id) return;
 
       if (!options?.skipCache && options?.cachedUrl) {
-        setTtsPlayingBeatId(id);
-        await playVoiceUrl(options.cachedUrl, id);
-        return;
+        const cachedOk = await playVoiceUrl(options.cachedUrl, id);
+        if (cachedOk) return;
       }
 
       setTtsLoadingBeatId(id);
@@ -304,15 +346,17 @@ const LiveStreamApp: React.FC = () => {
         });
         options?.onAudioUrlReady?.(audioUrl);
         setTtsLoadingBeatId(null);
-        setTtsPlayingBeatId(id);
-        await playVoiceUrl(audioUrl, id);
+        const played = await playVoiceUrl(audioUrl, id);
+        if (!played) {
+          addToast('这句声音没播出来。再点一次「听这句」，或到「这一段的操作」里重新合成。', 'error');
+        }
       } catch (err: any) {
         setTtsLoadingBeatId(null);
         setTtsPlayingBeatId(null);
-        addToast(err?.message || 'TTS 语音合成失败，请检查设置中的语音配置', 'error');
+        addToast(err?.message || '语音合成失败，请检查设置里的语音', 'error');
       }
     },
-    [currentChar, activeChannel, apiConfig, ttsPlayingBeatId, addToast],
+    [currentChar, activeChannel, apiConfig, ttsPlayingBeatId, ttsLoadingBeatId, addToast, playVoiceUrl, stopVoiceAudio],
   );
 
   // ==================== 1. Char 直播间核心流程 ====================
@@ -926,6 +970,10 @@ const LiveStreamApp: React.FC = () => {
           isSummarizing={isSummarizing}
           ttsPlayingBeatId={ttsPlayingBeatId}
           ttsLoadingBeatId={ttsLoadingBeatId}
+          voiceEnd={voiceEnd}
+          onBindBack={fn => {
+            screenBackRef.current = fn;
+          }}
           onChangePlatformTheme={handleChangePlatformTheme}
           onSelectPersona={setActivePersonaId}
           onOpenPersonaModal={() => setShowPersonaModal(true)}
@@ -1123,6 +1171,9 @@ const LiveStreamApp: React.FC = () => {
           platformTheme={platformTheme}
           isGeneratingReplyId={vodReplyGeneratingId}
           ttsPlayingId={ttsPlayingBeatId}
+          onBindBack={fn => {
+            screenBackRef.current = fn;
+          }}
           onChangePlatformTheme={handleChangePlatformTheme}
           onSelectPersona={setActivePersonaId}
           onOpenPersonaModal={() => setShowPersonaModal(true)}
@@ -1267,6 +1318,9 @@ const LiveStreamApp: React.FC = () => {
         isGenerating={isGenerating}
         isRerollingBeatId={npcRerollingBeatId}
         ttsPlayingId={ttsPlayingBeatId}
+        onBindBack={fn => {
+          screenBackRef.current = fn;
+        }}
         onChangePlatformTheme={handleChangePlatformTheme}
         onBack={() => setActiveNpcSessionId(null)}
         onAdvanceBeat={(text, mode) =>
@@ -1361,6 +1415,9 @@ const LiveStreamApp: React.FC = () => {
         platformTheme={platformTheme}
         onChangePlatformTheme={handleChangePlatformTheme}
         closeApp={closeApp}
+        onBindBack={fn => {
+          screenBackRef.current = fn;
+        }}
         characters={characters}
         currentChar={currentChar}
         onSelectChar={setActiveCharacterId}

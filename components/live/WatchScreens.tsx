@@ -1,7 +1,7 @@
 /**
  * 视频页和陪看页。
- * YouTube：播放器、全文台词、评论按头像排。
- * ニコニコ：播放器、实况、评论三列。陪看时旁边的人单独成一段，不做成第二套皮肤。
+ * 画面只留两行字幕。全文在白底上。操作是字：听这句、全屏、上一句、下一句、再看一段。
+ * 章节用下拉。陪看时旁边的人单独成一段。
  */
 import React, { useState } from 'react';
 import TokenImg from '../os/TokenImg';
@@ -23,7 +23,14 @@ import {
   BeatActionSheetTarget,
   useLongPressMenu,
 } from './LiveSharedWidgets';
-import { Icon, IconButton, Sheet, Seek, LiveUiStyle, formatCount } from './platformChrome';
+import { Icon, IconButton, Sheet, DropDown, LiveUiStyle, formatCount } from './platformChrome';
+
+const twoLines: React.CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+};
 
 const ytFont = 'Roboto, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif';
 const nicoFont = '"Yu Gothic UI", "Hiragino Sans", Meiryo, "PingFang SC", "Noto Sans SC", sans-serif';
@@ -44,6 +51,7 @@ export function VodDetailView(props: {
   onSelectPersona: (id: string) => void;
   onOpenPersonaModal: () => void;
   onBack: () => void;
+  onBindBack: (fn: () => boolean) => void;
   onPlayChapterVoice: (ch: VodChapterBeat, options?: { skipCache?: boolean }) => void;
   onEditChapter: (chapterId: string, nextScreen: string, nextSpeech: string, nextTrans?: string) => void;
   onAddComment: (text: string) => void;
@@ -51,7 +59,6 @@ export function VodDetailView(props: {
   onShareVodToChat: () => void;
 }) {
   const [idx, setIdx] = useState(0);
-  const [playing, setPlaying] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [showDanmaku, setShowDanmaku] = useState(props.platformTheme === 'niconico');
   const [showTranslation, setShowTranslation] = useState(true);
@@ -61,7 +68,6 @@ export function VodDetailView(props: {
   const [sheet, setSheet] = useState<BeatActionSheetTarget | null>(null);
   const isNico = props.platformTheme === 'niconico';
   const chapter = props.vod.chapters[idx] || props.vod.chapters[0];
-  const max = Math.max(0, props.vod.chapters.length - 1);
   const persona = props.viewerPersonas.find(p => p.id === props.activePersonaId) || props.viewerPersonas[0];
   const toggle184 = () => {
     const main = props.viewerPersonas.find(p => p.isMain);
@@ -75,12 +81,31 @@ export function VodDetailView(props: {
   const avatar = props.channel.avatar || props.charAvatar;
   const trans = chapter?.speechTranslated?.replace(/^译[：:]\s*/, '').trim() || '';
 
-  React.useEffect(() => {
-    if (!playing || props.vod.chapters.length < 2) return;
-    if (idx >= max) return;
-    const t = window.setTimeout(() => setIdx(i => Math.min(max, i + 1)), 7000);
-    return () => window.clearTimeout(t);
-  }, [playing, idx, max, props.vod.chapters.length]);
+  const voiceOn = Boolean(chapter && props.ttsPlayingId === chapter.id);
+  const popInner = () => {
+    if (sheet) {
+      setSheet(null);
+      return true;
+    }
+    if (menu) {
+      setMenu(false);
+      return true;
+    }
+    if (phone) {
+      setPhone(false);
+      return true;
+    }
+    if (fullscreen) {
+      setFullscreen(false);
+      return true;
+    }
+    return false;
+  };
+  props.onBindBack(() => {
+    if (popInner()) return true;
+    props.onBack();
+    return true;
+  });
 
   const openMenu = (ch: VodChapterBeat, i: number) => {
     setSheet({
@@ -111,7 +136,7 @@ export function VodDetailView(props: {
   };
 
   const picture = (fill: boolean) => (
-    <div className={`relative bg-[#141414] overflow-hidden ${fill ? 'flex-1 min-h-[120px]' : 'aspect-video shrink-0'}`}>
+    <div className={`relative bg-[#141414] overflow-hidden ${fill ? 'h-[46vh] shrink-0' : 'aspect-video shrink-0'}`}>
       {props.vod.coverImageUrl ? (
         <TokenImg value={props.vod.coverImageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
       ) : (
@@ -119,50 +144,52 @@ export function VodDetailView(props: {
           <Face src={avatar} name={props.channel.channelName} size={fill ? 88 : 64} />
         </div>
       )}
-      {showDanmaku && isNico && chapter && (
+      {showDanmaku && chapter && (
         <FloatingDanmakuOverlay danmakuList={chapter.danmaku || []} showTranslation={showTranslation} visible platformTheme={props.platformTheme} />
       )}
-      <span className="absolute right-2 bottom-2 h-5 px-1.5 bg-black/80 text-white text-[12px] inline-flex items-center">
-        {chapter?.timestampLabel || props.vod.durationLabel}
-      </span>
+      {chapter?.speechOriginal ? (
+        <div className="absolute inset-x-0 bottom-0 z-20 px-3 py-2 bg-black/80">
+          <p className="text-[14px] leading-5 text-white break-words" style={twoLines}>{chapter.speechOriginal}</p>
+        </div>
+      ) : null}
     </div>
   );
 
   const caption = chapter ? (
-    <div className={`bg-white px-4 py-3 ${fullscreen ? 'max-h-[38%] overflow-y-auto' : ''}`}>
-      <div className="text-[12px] text-[#606060]">{chapter.chapterTitle}</div>
-      <p className="mt-1 text-[14px] leading-[22px] break-words">{chapter.screen}</p>
-      {chapter.speechOriginal ? (
-        <>
-          <p className="mt-2 text-[15px] leading-6 font-medium break-words">{chapter.speechOriginal}</p>
-          <button type="button" onClick={() => props.onPlayChapterVoice(chapter)} className="mt-1 h-11 inline-flex items-center gap-1.5 text-[14px] font-medium">
-            <Icon name={props.ttsPlayingId === chapter.id ? 'pause' : 'play'} size={18} />
-            {props.ttsPlayingId === chapter.id ? '正在念' : '听这一句'}
-          </button>
-        </>
-      ) : null}
+    <article className="bg-white px-4 py-3">
+      <p className="text-[12px] leading-5 text-[#606060]">{chapter.timestampLabel} · {chapter.chapterTitle}</p>
+      <h2 className="mt-3 text-[12px] leading-4 text-[#606060]">画面</h2>
+      <p className="mt-1 text-[15px] leading-7 text-[#0f0f0f] break-words">{chapter.screen || '这一段没有画面。'}</p>
+      <h2 className="mt-4 text-[12px] leading-4 text-[#606060]">台词</h2>
+      <p className="mt-1 text-[15px] leading-7 text-[#0f0f0f] break-words">{chapter.speechOriginal || '这一段没有说话。'}</p>
       {showTranslation && trans && trans !== chapter.speechOriginal ? (
-        <p className="mt-2 text-[13px] leading-5 text-[#606060] break-words">{trans}</p>
+        <p className="mt-3 text-[14px] leading-6 text-[#606060] break-words">{trans}</p>
       ) : null}
-      <button type="button" onClick={() => openMenu(chapter, idx)} className="h-11 ml-4 text-[14px] underline">
+      <button type="button" onClick={() => openMenu(chapter, idx)} className="h-11 text-[14px] underline">
         这一段的操作
       </button>
-    </div>
+    </article>
   ) : (
     <p className="px-4 py-6 text-[14px] text-[#606060]">这条视频还没有分镜。</p>
   );
 
   const bar = (
-    <div className={`shrink-0 flex items-center gap-1 px-1 ${isNico ? 'bg-[#141414] text-white' : 'bg-white'}`}>
-      <IconButton label={playing ? '暂停' : '播放'} onClick={() => setPlaying(v => !v)}>
-        <Icon name={playing ? 'pause' : 'play'} />
-      </IconButton>
-      <div className="flex-1">
-        <Seek label="章节" min={0} max={max} value={Math.min(idx, max)} onChange={n => { setIdx(n); setPlaying(false); }} variant={isNico ? 'nico' : 'ytLight'} />
-      </div>
-      <IconButton label={fullscreen ? '退出全屏' : '全屏'} onClick={() => setFullscreen(v => !v)}>
-        <Icon name={fullscreen ? 'collapse' : 'expand'} />
-      </IconButton>
+    <div className="shrink-0 flex gap-2 px-3 py-2 bg-white border-b border-[#eee]">
+      <button
+        type="button"
+        disabled={!chapter?.speechOriginal}
+        onClick={() => chapter && props.onPlayChapterVoice(chapter)}
+        className="h-12 flex-1 border border-[#111] text-[15px] font-medium disabled:opacity-40"
+      >
+        {voiceOn ? '停止' : '听这句'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setFullscreen(v => !v)}
+        className="h-12 px-4 border border-[#111] text-[15px] font-medium"
+      >
+        {fullscreen ? '退出全屏' : '全屏'}
+      </button>
     </div>
   );
 
@@ -171,24 +198,16 @@ export function VodDetailView(props: {
       <LiveUiStyle />
       {!fullscreen && (
         <header className="h-12 px-1 border-b border-[#eee] flex items-center shrink-0">
-          <IconButton label="返回" onClick={props.onBack}><Icon name="back" /></IconButton>
+          <IconButton label="返回" onClick={() => { if (!popInner()) props.onBack(); }}><Icon name="back" /></IconButton>
           <div className="flex-1 min-w-0 text-[14px] font-medium truncate px-1">{props.vod.title}</div>
           <IconButton label="私聊" onClick={() => setPhone(true)}><Icon name="chat" /></IconButton>
           <IconButton label="更多" onClick={() => setMenu(true)}><Icon name="more" /></IconButton>
         </header>
       )}
-      {fullscreen ? (
-        <div className="flex-1 min-h-0 flex flex-col bg-black">
-          {picture(true)}
-          {caption}
-          {bar}
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {picture(false)}
-          {isNico && bar}
-          {caption}
-          {!isNico && bar}
+      {picture(fullscreen)}
+      {bar}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {caption}
           <div className="px-4 pb-3">
             <h1 className="text-[16px] leading-6 font-medium break-words">{props.vod.title}</h1>
             <p className="mt-1 text-[12px] leading-5 text-[#606060] break-words">
@@ -197,17 +216,16 @@ export function VodDetailView(props: {
             {props.vod.streamerPinnedNote ? (
               <p className="mt-3 text-[14px] leading-[22px] break-words">{props.vod.streamerPinnedNote}</p>
             ) : null}
-            <div className="mt-2 flex gap-2 overflow-x-auto">
-              {props.vod.chapters.map((ch, i) => (
-                <button
-                  key={ch.id}
-                  type="button"
-                  onClick={() => { setIdx(i); setPlaying(false); }}
-                  className={`h-11 px-3 shrink-0 text-[13px] ${i === idx ? 'bg-[#111] text-white' : 'bg-[#f2f2f2] text-[#111]'}`}
-                >
-                  {ch.timestampLabel} {ch.chapterTitle}
-                </button>
-              ))}
+            <div className="mt-2">
+              <DropDown
+                label="章节"
+                value={chapter?.id || ''}
+                onChange={id => {
+                  const next = props.vod.chapters.findIndex(ch => ch.id === id);
+                  if (next >= 0) setIdx(next);
+                }}
+                options={props.vod.chapters.map(ch => ({ id: ch.id, label: `${ch.timestampLabel} ${ch.chapterTitle}` }))}
+              />
             </div>
           </div>
           <div className="px-4 py-2 border-t border-[#eee] text-[14px] font-medium">
@@ -246,8 +264,7 @@ export function VodDetailView(props: {
               </li>
             ))}
           </ul>
-        </div>
-      )}
+      </div>
       <form
         className="shrink-0 border-t border-[#eee] px-2 py-1.5 flex items-center gap-2 bg-white pb-[max(6px,env(safe-area-inset-bottom))]"
         onSubmit={e => { e.preventDefault(); send(); }}
@@ -274,12 +291,26 @@ export function VodDetailView(props: {
       </form>
 
       <Sheet open={menu} title="这条视频" onClose={() => setMenu(false)}>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => { setMenu(false); props.onShareVodToChat(); }}>发到私聊</button>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => { setMenu(false); props.onOpenPersonaModal(); }}>观众身份：{persona?.name}</button>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => setShowDanmaku(v => !v)}>{showDanmaku ? '画面飘字：开' : '画面飘字：关'}</button>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => setShowTranslation(v => !v)}>{showTranslation ? '译文：开' : '译文：关'}</button>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => props.onChangePlatformTheme(isNico ? 'youtube' : 'niconico')}>
-          {isNico ? '改成 YouTube 外观' : '改成ニコニコ外观'}
+        <p className="text-[12px] leading-5 text-[#606060] mb-2">点一行就做那一件。做完回到这条视频。</p>
+        <button type="button" className="w-full min-h-11 py-2 text-left border-b border-[#f3f3f3]" onClick={() => { setMenu(false); props.onShareVodToChat(); }}>
+          <span className="block text-[15px]">发到私聊</span>
+          <span className="block text-[12px] text-[#606060]">把这条视频做成卡片，发进和主播的聊天。</span>
+        </button>
+        <button type="button" className="w-full min-h-11 py-2 text-left border-b border-[#f3f3f3]" onClick={() => { setMenu(false); props.onOpenPersonaModal(); }}>
+          <span className="block text-[15px]">观众身份：{persona?.name}</span>
+          <span className="block text-[12px] text-[#606060]">换一个名字再评论。换完回到这条视频。</span>
+        </button>
+        <button type="button" className="w-full min-h-11 py-2 text-left border-b border-[#f3f3f3]" onClick={() => setShowDanmaku(v => !v)}>
+          <span className="block text-[15px]">{showDanmaku ? '画面飘字：开' : '画面飘字：关'}</span>
+          <span className="block text-[12px] text-[#606060]">开着时，弹幕从画面上半飞过。</span>
+        </button>
+        <button type="button" className="w-full min-h-11 py-2 text-left border-b border-[#f3f3f3]" onClick={() => setShowTranslation(v => !v)}>
+          <span className="block text-[15px]">{showTranslation ? '译文：开' : '译文：关'}</span>
+          <span className="block text-[12px] text-[#606060]">开着时，外语句子下面多一行中文。</span>
+        </button>
+        <button type="button" className="w-full min-h-11 py-2 text-left" onClick={() => props.onChangePlatformTheme(isNico ? 'youtube' : 'niconico')}>
+          <span className="block text-[15px]">{isNico ? '改成 YouTube 外观' : '改成ニコニコ外观'}</span>
+          <span className="block text-[12px] text-[#606060]">只换外壳，这条视频还在。</span>
         </button>
       </Sheet>
       <LiveFloatingPhone
@@ -306,6 +337,7 @@ export function NpcWatchRoomView(props: {
   ttsPlayingId: string | null;
   onChangePlatformTheme: (theme: LivePlatformTheme) => void;
   onBack: () => void;
+  onBindBack: (fn: () => boolean) => void;
   onAdvanceBeat: (userText?: string, mode?: 'whisper_char' | 'send_npc_danmaku') => void;
   onRerollCharReaction: (beat: NpcWatchBeat) => void;
   onPlayCharVoice: (beat: NpcWatchBeat, options?: { skipCache?: boolean }) => void;
@@ -327,6 +359,31 @@ export function NpcWatchRoomView(props: {
 
   const beat = props.npcSession.beats[idx] || props.npcSession.beats[props.npcSession.beats.length - 1];
   const max = Math.max(0, props.npcSession.beats.length - 1);
+  const voiceOn = Boolean(beat && props.ttsPlayingId === beat.id);
+  const popInner = () => {
+    if (sheet) {
+      setSheet(null);
+      return true;
+    }
+    if (menu) {
+      setMenu(false);
+      return true;
+    }
+    if (phone) {
+      setPhone(false);
+      return true;
+    }
+    if (fullscreen) {
+      setFullscreen(false);
+      return true;
+    }
+    return false;
+  };
+  props.onBindBack(() => {
+    if (popInner()) return true;
+    props.onBack();
+    return true;
+  });
 
   const openBeat = (b: NpcWatchBeat) => {
     setSheet({
@@ -356,8 +413,8 @@ export function NpcWatchRoomView(props: {
   };
 
   const picture = (fill: boolean) => (
-    <div className={`relative bg-[#141414] overflow-hidden ${fill ? 'flex-1 min-h-[120px]' : 'aspect-video shrink-0'}`}>
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+    <div className={`relative bg-[#141414] overflow-hidden ${fill ? 'h-[46vh] shrink-0' : 'aspect-video shrink-0'}`}>
+      <div className="absolute inset-x-0 top-8 flex flex-col items-center text-white pointer-events-none">
         <Face name={props.npcSession.npcStreamerName} size={64} light />
         <div className="mt-2 text-[14px]">{props.npcSession.npcStreamerName}</div>
       </div>
@@ -365,20 +422,26 @@ export function NpcWatchRoomView(props: {
       <span className="absolute right-2 top-2 h-6 px-2 bg-black/70 text-white text-[12px] inline-flex items-center">
         {formatCount(props.npcSession.viewerCount)}
       </span>
-      {isNico && beat && (
+      {beat && (
         <FloatingDanmakuOverlay danmakuList={beat.npcDanmaku || []} visible platformTheme={props.platformTheme} />
       )}
+      {beat?.npcSpeech ? (
+        <div className="absolute inset-x-0 bottom-0 z-20 px-3 py-2 bg-black/80">
+          <p className="text-[14px] leading-5 text-white break-words" style={twoLines}>{beat.npcSpeech}</p>
+        </div>
+      ) : null}
     </div>
   );
 
   const body = beat ? (
-    <div className={`bg-white ${fullscreen ? 'max-h-[42%] overflow-y-auto' : ''}`}>
-      <div className="px-4 py-3">
-        <div className="text-[12px] text-[#606060]">{isNico ? '画面' : '屏幕里'}</div>
-        <p className="mt-1 text-[14px] leading-[22px] break-words">{beat.npcScreen}</p>
-        <p className="mt-2 text-[15px] leading-6 font-medium break-words">{beat.npcSpeech}</p>
-        {beat.npcSpeechTranslated ? <p className="mt-1 text-[13px] text-[#606060] break-words">{beat.npcSpeechTranslated}</p> : null}
-      </div>
+    <div className="bg-white">
+      <article className="px-4 py-3 border-b border-[#eee]">
+        <p className="text-[12px] leading-5 text-[#606060]">{props.npcSession.npcStreamerName} · 现在这一句</p>
+        <h2 className="mt-3 text-[12px] leading-4 text-[#606060]">画面</h2>
+        <p className="mt-1 text-[15px] leading-7 break-words">{beat.npcScreen || '这一拍还没有画面。'}</p>
+        <h2 className="mt-4 text-[12px] leading-4 text-[#606060]">台词</h2>
+        <p className="mt-1 text-[15px] leading-7 break-words">{beat.npcSpeech || '这一拍没有说话。'}</p>
+      </article>
       <div
         className="px-4 py-3 border-t border-[#eee]"
         {...bindLongPress(() => openBeat(beat))}
@@ -387,7 +450,13 @@ export function NpcWatchRoomView(props: {
         <div className="flex items-center gap-2">
           <Face src={props.charAvatar} name={props.charName} size={28} />
           <span className="text-[14px] font-medium">{props.charName}</span>
-          <span className="text-[12px] text-[#606060]">{props.ttsPlayingId === beat.id ? '正在念' : '听这一句'}</span>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); props.onPlayCharVoice(beat); }}
+            className="h-11 ml-auto px-2 text-[15px] font-medium"
+          >
+            {voiceOn ? '停止' : '听这句'}
+          </button>
         </div>
         {beat.userActionNote ? <p className="mt-2 text-[13px] text-[#606060] break-words">你刚才{beat.userActionNote}</p> : null}
         <p className="mt-2 text-[14px] leading-[22px] break-words">{beat.charReactionAction}</p>
@@ -405,8 +474,9 @@ export function NpcWatchRoomView(props: {
       {!isNico && beat.npcDanmaku?.length > 0 && (
         <ul className="px-4 pb-3">
           {beat.npcDanmaku.map(dm => (
-            <li key={dm.id} className="text-[13px] leading-5 py-1 break-words">
-              <span className="font-medium">{dm.senderName}</span> {dm.text}
+            <li key={dm.id} className="py-2.5 border-b border-[#f2f2f2]">
+              <div className="text-[13px] font-medium text-[#606060]">{dm.senderName}</div>
+              <p className="text-[15px] leading-6 break-words">{dm.text}</p>
             </li>
           ))}
         </ul>
@@ -416,8 +486,10 @@ export function NpcWatchRoomView(props: {
           <tbody>
             {beat.npcDanmaku.map(dm => (
               <tr key={dm.id} className="border-t border-[#eee]">
-                <td className="px-3 py-1.5 text-[13px] break-words">{dm.text}</td>
-                <td className="w-[72px] px-2 py-1.5 text-[11px] text-[#888] text-right break-words">{dm.senderName}</td>
+                <td className="px-3 py-2.5">
+                  <div className="text-[12px] text-[#888]">{dm.senderName}</div>
+                  <p className="text-[15px] leading-6 break-words">{dm.text}</p>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -433,7 +505,7 @@ export function NpcWatchRoomView(props: {
       <LiveUiStyle />
       {!fullscreen && (
         <header className="h-12 px-1 border-b border-[#eee] flex items-center shrink-0">
-          <IconButton label="返回" onClick={props.onBack}><Icon name="back" /></IconButton>
+          <IconButton label="返回" onClick={() => { if (!popInner()) props.onBack(); }}><Icon name="back" /></IconButton>
           <div className="flex-1 min-w-0 px-1">
             <div className="text-[14px] font-medium truncate">{props.npcSession.npcRoomTitle}</div>
             <div className="text-[11px] text-[#606060] truncate">{props.npcSession.npcStreamerName}</div>
@@ -442,37 +514,49 @@ export function NpcWatchRoomView(props: {
           <IconButton label="更多" onClick={() => setMenu(true)}><Icon name="more" /></IconButton>
         </header>
       )}
-      <div className={`flex-1 min-h-0 ${fullscreen ? 'flex flex-col bg-black' : 'overflow-y-auto'}`}>
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {picture(fullscreen)}
         {body}
       </div>
-      <div className={`shrink-0 flex items-center gap-1 px-1 ${isNico ? 'bg-[#141414] text-white' : 'bg-white border-t border-[#eee]'}`}>
-        <div className="flex-1">
-          <Seek label="进度" min={0} max={max} value={Math.min(idx, max)} onChange={setIdx} variant={isNico ? 'nico' : 'ytLight'} />
-        </div>
-        <button
-          type="button"
-          disabled={props.isGenerating}
-          onClick={() => props.onAdvanceBeat()}
-          className={`h-11 px-3 text-[13px] font-medium text-white disabled:opacity-40 shrink-0 ${isNico ? 'bg-[#333]' : 'rounded-full bg-[#ff0000]'}`}
-        >
-          {props.isGenerating ? '正在演…' : isNico ? '次へ' : '继续看'}
+      <div className="shrink-0 flex gap-2 px-3 py-2 bg-white border-t border-[#eee]">
+        {idx > 0 && (
+          <button type="button" onClick={() => setIdx(idx - 1)} className="h-12 px-3 border border-[#111] text-[15px] font-medium">
+            上一句
+          </button>
+        )}
+        {idx < max ? (
+          <button type="button" onClick={() => setIdx(idx + 1)} className="h-12 flex-1 bg-[#111] text-white text-[15px] font-medium">
+            下一句
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={props.isGenerating}
+            onClick={() => props.onAdvanceBeat()}
+            className="h-12 flex-1 text-[15px] font-medium text-white bg-[#ff0000] disabled:opacity-40"
+          >
+            {props.isGenerating ? '正在演…' : '再看一段'}
+          </button>
+        )}
+        <button type="button" onClick={() => setFullscreen(v => !v)} className="h-12 px-3 border border-[#111] text-[15px] font-medium">
+          {fullscreen ? '退出' : '全屏'}
         </button>
-        <IconButton label={fullscreen ? '退出全屏' : '全屏'} onClick={() => setFullscreen(v => !v)}>
-          <Icon name={fullscreen ? 'collapse' : 'expand'} />
-        </IconButton>
       </div>
       <form
         className="shrink-0 bg-white border-t border-[#eee] px-2 py-1.5 flex items-center gap-1 pb-[max(6px,env(safe-area-inset-bottom))]"
         onSubmit={e => { e.preventDefault(); send(); }}
       >
-        <button
-          type="button"
-          onClick={() => setMode(m => (m === 'whisper_char' ? 'send_npc_danmaku' : 'whisper_char'))}
-          className="h-11 px-2 text-[13px] font-medium shrink-0 underline"
-        >
-          {mode === 'whisper_char' ? `对${props.charName}说` : '发弹幕'}
-        </button>
+        <div className="w-[148px] shrink-0">
+          <DropDown
+            label=""
+            value={mode}
+            onChange={id => setMode(id as 'whisper_char' | 'send_npc_danmaku')}
+            options={[
+              { id: 'whisper_char', label: `对${props.charName}说` },
+              { id: 'send_npc_danmaku', label: '发到直播间' },
+            ]}
+          />
+        </div>
         <input
           value={text}
           onChange={e => setText(e.target.value)}
@@ -486,9 +570,14 @@ export function NpcWatchRoomView(props: {
       </form>
 
       <Sheet open={menu} title="一起看" onClose={() => setMenu(false)}>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => { setMenu(false); props.onShareNpcWatchToChat(); }}>发到私聊</button>
-        <button type="button" className="w-full min-h-11 text-left text-[15px]" onClick={() => props.onChangePlatformTheme(isNico ? 'youtube' : 'niconico')}>
-          {isNico ? '改成 YouTube 外观' : '改成ニコニコ外观'}
+        <p className="text-[12px] leading-5 text-[#606060] mb-2">旁边的人是你自己的角色。屏幕里是别人的直播。</p>
+        <button type="button" className="w-full min-h-11 py-2 text-left border-b border-[#f3f3f3]" onClick={() => { setMenu(false); props.onShareNpcWatchToChat(); }}>
+          <span className="block text-[15px]">发到私聊</span>
+          <span className="block text-[12px] text-[#606060]">把现在这一段做成卡片，发进聊天。</span>
+        </button>
+        <button type="button" className="w-full min-h-11 py-2 text-left" onClick={() => props.onChangePlatformTheme(isNico ? 'youtube' : 'niconico')}>
+          <span className="block text-[15px]">{isNico ? '改成 YouTube 外观' : '改成ニコニコ外观'}</span>
+          <span className="block text-[12px] text-[#606060]">只换外壳。还是这一场陪看。</span>
         </button>
       </Sheet>
       <LiveFloatingPhone

@@ -264,6 +264,37 @@ export function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="block text-[12px] leading-4 text-[#606060] mb-1">{children}</label>;
 }
 
+/** 下拉，不用横滑芯片。手机上会打开系统清单。 */
+export function DropDown({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { id: string; label: string }[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 min-h-11 w-full">
+      <span className="text-[13px] text-[#606060] shrink-0">{label}</span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="flex-1 min-w-0 h-11 px-3 bg-[#f2f2f2] text-[14px] text-[#0f0f0f] focus:outline-none"
+      >
+        {options.map(opt => (
+          <option key={opt.id} value={opt.id}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
@@ -340,7 +371,7 @@ export function LiveUiStyle() {
         margin-top: -5.5px;
       }
       @media (prefers-reduced-motion: reduce) {
-        .live-ui * { animation: none !important; transition: none !important; }
+        .live-ui *:not(.danmaku-fly) { animation: none !important; transition: none !important; }
       }
     `}</style>
   );

@@ -1,7 +1,8 @@
 /**
  * 直播间。
- * YouTube：黑槽播放器贴顶，标题和台词在白底上全文展开，聊天是名字加正文，不是气泡。
- * ニコニコ：播放器下是黑控制条，再下面是实况全文，再下面是时间 / 评论 / 名字三列。
+ * 上屏是一块够高的画面：背景、居中头像、最上沿小弹幕、台词只写在画面里。
+ * 点台词出声，长按出台词菜单。画面下是进度条和「推进」「总结」。
+ * 下屏弹幕一行一条，名字贴着内容。分镜和阶段总结在下拉里。
  */
 import React from 'react';
 import TokenImg from '../os/TokenImg';
@@ -23,12 +24,14 @@ import {
   LiveFloatingPhone,
   BeatLongPressSheet,
   BeatActionSheetTarget,
+  useLongPressMenu,
 } from './LiveSharedWidgets';
 import {
   Icon,
   IconButton,
   Sheet,
   Seek,
+  DropDown,
   LiveUiStyle,
   formatCount,
   clockFromIndex,
@@ -98,6 +101,7 @@ export function LiveWatchScreen(props: {
   onOpenPersonaModal: () => void;
   onOpenChannelSettings: () => void;
   onBackToLobby: () => void;
+  onBindBack: (fn: () => boolean) => void;
   onGenerateNextChunk: () => void;
   onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean }) => void;
   onRequestRefreshGifts: () => void;
@@ -118,6 +122,7 @@ export function LiveWatchScreen(props: {
   } = props;
   const isNico = platformTheme === 'niconico';
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const { bindLongPress, wasLongPressTriggered } = useLongPressMenu();
   const item = allTimelineBeats[currentGlobalBeatIdx] || allTimelineBeats[allTimelineBeats.length - 1];
   const beat = item?.beat;
   const atEnd = allTimelineBeats.length === 0 || currentGlobalBeatIdx >= allTimelineBeats.length - 1;
@@ -130,8 +135,44 @@ export function LiveWatchScreen(props: {
 
   const seek = (n: number) => {
     props.setCurrentGlobalBeatIdx(Math.max(0, Math.min(maxIdx, n)));
-    if (n < maxIdx) props.setAutoPlayStep(false);
   };
+
+  const voiceOn = Boolean(beat && props.ttsPlayingBeatId === beat.id);
+  const voiceBusy = Boolean(beat && props.ttsLoadingBeatId === beat.id);
+
+  const toggleVoice = () => {
+    if (!beat?.speechOriginal?.trim() || voiceBusy) return;
+    props.onPlayBeatVoice(beat);
+  };
+
+  const popInner = () => {
+    if (props.actionSheetTarget) {
+      props.setActionSheetTarget(null);
+      return true;
+    }
+    if (props.activeBottomDrawer !== 'none') {
+      props.setActiveBottomDrawer('none');
+      return true;
+    }
+    if (menuOpen) {
+      setMenuOpen(false);
+      return true;
+    }
+    if (props.showFloatingPhone) {
+      props.setShowFloatingPhone(false);
+      return true;
+    }
+    if (props.isFullscreen) {
+      props.setIsFullscreen(false);
+      return true;
+    }
+    return false;
+  };
+  props.onBindBack(() => {
+    if (popInner()) return true;
+    props.onBackToLobby();
+    return true;
+  });
 
   const toggle184 = () => {
     const main = props.viewerPersonas.find(p => p.isMain);
@@ -143,116 +184,113 @@ export function LiveWatchScreen(props: {
     else props.onOpenPersonaModal();
   };
 
-  const picture = (fill: boolean) => (
-    <div
-      className={`relative overflow-hidden ${fill ? 'flex-1 min-h-[120px]' : 'aspect-video shrink-0'}`}
-      style={{ background: props.displayBackgroundUrl ? '#111' : '#141414' }}
-      onClick={() => props.setShowPlayerControls(v => !v)}
-    >
+  const speechLines = splitLines(beat?.speechOriginal || '');
+
+  const advance = () => {
+    if (!atEnd) {
+      seek(currentGlobalBeatIdx + 1);
+      return;
+    }
+    if (!ended && !props.isGenerating) props.onGenerateNextChunk();
+  };
+
+  const openThisBeat = () => {
+    if (beat && item) props.openBeatMenu(item.chunkId, beat, '这一段');
+  };
+
+  const stage = (fill: boolean) => (
+    <div className={`relative overflow-hidden bg-[#141414] ${fill ? 'flex-1 min-h-0' : 'h-[46vh] min-h-[300px] shrink-0'}`}>
       {props.displayBackgroundUrl ? (
         <TokenImg value={props.displayBackgroundUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <Avatar src={props.displayAvatar} name={channel.channelName} size={fill ? 96 : 72} />
-        </div>
-      )}
-      <div className="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 h-6 px-2 bg-[#ff0000] text-white text-[12px] font-medium">
+      ) : null}
+      <div className="pointer-events-none absolute inset-x-0 top-0 bottom-[46%] flex items-center justify-center">
+        <Avatar src={props.displayAvatar} name={channel.channelName} size={fill ? 112 : 96} />
+      </div>
+      <div className="pointer-events-none absolute left-2 top-2 z-20 inline-flex items-center gap-1.5 h-6 px-2 bg-[#ff0000] text-white text-[12px] font-medium">
         <span className="w-1.5 h-1.5 rounded-full bg-white" />
-        {ended ? (isNico ? 'タイムシフト' : '回放') : isNico ? 'LIVE' : '直播'}
+        {ended ? '回放' : '直播'}
       </div>
-      <div className="pointer-events-none absolute right-3 top-3 h-6 px-2 inline-flex items-center bg-black/70 text-white text-[12px]">
-        {isNico ? `${formatCount(session.viewerCount)}来場` : `${formatCount(session.viewerCount)} 人正在看`}
+      <div className="pointer-events-none absolute right-2 top-2 z-20 h-6 max-w-[42%] px-2 inline-flex items-center bg-black/70 text-white text-[12px] truncate">
+        {formatCount(session.viewerCount)} 在看
       </div>
-      {props.showDanmakuOverlay && isNico && (
+      {props.showDanmakuOverlay && (
         <FloatingDanmakuOverlay
-          danmakuList={beat?.danmaku || []}
+          danmakuList={visibleDanmakuFeed}
           showTranslation={props.showTranslation}
           visible
           platformTheme={platformTheme}
         />
       )}
-      {props.showPlayerControls && !isNico && (
-        <button
-          type="button"
-          aria-label={props.autoPlayStep ? '暂停' : '播放'}
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-black/55 text-white inline-flex items-center justify-center"
-          onClick={e => {
-            e.stopPropagation();
-            props.setAutoPlayStep(v => !v);
-          }}
-        >
-          <Icon name={props.autoPlayStep ? 'pause' : 'play'} />
-        </button>
-      )}
-    </div>
-  );
-
-  const caption = (
-    <div className={`${props.isFullscreen ? 'max-h-[38%] overflow-y-auto' : ''} bg-white px-4 py-3`}>
-      <div className="text-[12px] leading-4 text-[#606060]">{isNico ? '実況' : '这一幕'}</div>
-      <p className="mt-1 text-[14px] leading-[22px] text-[#111] break-words">
-        {beat?.screen || (props.isGenerating ? '正在接这一拍…' : '这一拍还没有画面。')}
-      </p>
-      {beat?.speechOriginal ? (
-        <>
-          <div className="mt-3 text-[12px] leading-4 text-[#606060]">{isNico ? '発言' : '台词'}</div>
-          <p className="mt-1 text-[15px] leading-6 font-medium text-[#111] break-words">{beat.speechOriginal}</p>
-          <button
-            type="button"
-            onClick={() => props.onPlayBeatVoice(beat)}
-            className="mt-1 h-11 inline-flex items-center gap-1.5 text-[14px] font-medium text-[#0f0f0f]"
-          >
-            <Icon name={props.ttsPlayingBeatId === beat.id ? 'pause' : 'play'} size={18} />
-            {props.ttsPlayingBeatId === beat.id ? '正在念' : props.ttsLoadingBeatId === beat.id ? '正在合成' : '听这一句'}
-          </button>
-        </>
-      ) : (
-        <p className="mt-3 text-[14px] leading-[22px] text-[#606060]">这一拍没有说话。</p>
-      )}
-      {props.showTranslation && trans && trans !== beat?.speechOriginal ? (
-        <p className="mt-2 text-[13px] leading-5 text-[#606060] break-words">{trans}</p>
-      ) : null}
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          onClick={() => beat && item && props.openBeatMenu(item.chunkId, beat, isNico ? 'この場面' : '这一段')}
-          className="h-11 px-3 text-[14px] font-medium underline"
-        >
-          {isNico ? 'この場面の操作' : '这一段的操作'}
-        </button>
+      <div
+        className="absolute inset-x-0 bottom-0 z-20 max-h-[52%] overflow-y-auto px-3 py-2 bg-black/80 text-white"
+        {...bindLongPress(openThisBeat)}
+        onClick={() => {
+          if (wasLongPressTriggered()) return;
+          toggleVoice();
+        }}
+      >
+        <p className="text-[12px] leading-4 text-white/70">
+          {voiceOn ? '正在念' : voiceBusy ? '正在合成' : '点台词听这句，长按出菜单'}
+          {allTimelineBeats.length ? ` · ${currentGlobalBeatIdx + 1}/${allTimelineBeats.length}` : ''}
+        </p>
+        <p className="mt-1 text-[13px] leading-5 text-white/85 break-words">
+          {beat?.screen || (props.isGenerating ? '正在接这一拍…' : '这一拍还没有画面。')}
+        </p>
+        {beat?.speechOriginal ? (
+          speechLines.map((line, i) => (
+            <p key={`${beat.id}-${i}`} className="mt-1.5 text-[15px] leading-6 font-medium break-words">{line}</p>
+          ))
+        ) : (
+          <p className="mt-1.5 text-[14px] leading-5 text-white/70">这一拍没有说话。</p>
+        )}
+        {props.showTranslation && trans && trans !== beat?.speechOriginal ? (
+          <p className="mt-1 text-[13px] leading-5 text-white/70 break-words">{trans}</p>
+        ) : null}
       </div>
     </div>
   );
 
   const transport = (
-    <div className={`shrink-0 flex items-center gap-1 px-1 ${isNico ? 'bg-[#141414] text-white' : 'bg-white text-[#0f0f0f]'}`}>
-      <IconButton label={props.autoPlayStep ? '暂停' : '播放'} onClick={() => props.setAutoPlayStep(v => !v)}>
-        <Icon name={props.autoPlayStep ? 'pause' : 'play'} />
-      </IconButton>
-      <IconButton label="上一段" onClick={() => seek(currentGlobalBeatIdx - 1)} disabled={currentGlobalBeatIdx <= 0}>
-        <Icon name="skipBack" />
-      </IconButton>
-      <div className="flex-1 min-w-0">
+    <div className="shrink-0 bg-[#0f0f0f] text-white">
+      <div className="px-3 pt-1">
         <Seek
-          label="播放进度"
+          label="这场进度"
           min={0}
           max={maxIdx}
           value={Math.min(currentGlobalBeatIdx, maxIdx)}
           onChange={seek}
-          variant={isNico ? 'nico' : 'ytLight'}
+          variant={isNico ? 'nico' : 'yt'}
         />
       </div>
-      <span className="text-[12px] tabular-nums shrink-0 pr-1">
-        {clockFromIndex(currentGlobalBeatIdx)}
-      </span>
-      {!atEnd && (
-        <button type="button" onClick={() => seek(maxIdx)} className="h-11 px-2 text-[12px] font-medium text-[#ff0000] shrink-0">
-          {isNico ? 'LIVEへ' : '回到直播'}
+      <div className="h-11 px-1 flex items-center">
+        <span className="px-2 text-[12px] tabular-nums text-white/80">
+          {clockFromIndex(currentGlobalBeatIdx)} · {currentGlobalBeatIdx + 1}/{allTimelineBeats.length || 0}
+        </span>
+        <button
+          type="button"
+          onClick={advance}
+          disabled={(ended && atEnd) || props.isGenerating}
+          className="h-11 px-3 inline-flex items-center gap-1 text-[14px] font-medium disabled:opacity-40"
+        >
+          <Icon name="skipForward" size={18} />
+          推进
         </button>
-      )}
-      <IconButton label={props.isFullscreen ? '退出全屏' : '全屏'} onClick={() => props.setIsFullscreen(!props.isFullscreen)}>
-        <Icon name={props.isFullscreen ? 'collapse' : 'expand'} />
-      </IconButton>
+        <button
+          type="button"
+          onClick={props.onEndStreamClick}
+          className="h-11 px-3 text-[14px] font-medium"
+        >
+          总结
+        </button>
+        <button
+          type="button"
+          onClick={() => props.setIsFullscreen(!props.isFullscreen)}
+          className="ml-auto h-11 px-3 inline-flex items-center"
+          aria-label={props.isFullscreen ? '退出全屏' : '全屏'}
+        >
+          <Icon name={props.isFullscreen ? 'collapse' : 'expand'} size={20} />
+        </button>
+      </div>
     </div>
   );
 
@@ -297,18 +335,20 @@ export function LiveWatchScreen(props: {
         aria-label={isNico ? '评论' : '聊天'}
         className={`flex-1 min-w-0 h-11 px-3 text-[14px] bg-[#f2f2f2] focus:outline-none ${isNico ? '' : 'rounded-full'}`}
       />
-      <IconButton
-        label={isNico ? '礼物' : '礼物'}
+      <button
+        type="button"
         onClick={() => props.setActiveBottomDrawer(props.activeBottomDrawer === 'gift' ? 'none' : 'gift')}
+        className="h-11 px-2 text-[14px] shrink-0"
       >
-        <Icon name="gift" size={22} />
-      </IconButton>
-      <IconButton
-        label={isNico ? '付费评论' : '醒目留言'}
+        礼物
+      </button>
+      <button
+        type="button"
         onClick={() => props.setActiveBottomDrawer(props.activeBottomDrawer === 'sc' ? 'none' : 'sc')}
+        className="h-11 px-2 text-[14px] shrink-0"
       >
-        <Icon name="yen" size={22} />
-      </IconButton>
+        {isNico ? '广告' : '醒目'}
+      </button>
       <button
         type="submit"
         disabled={!props.danmakuInput.trim()}
@@ -320,28 +360,14 @@ export function LiveWatchScreen(props: {
     </form>
   );
 
-  const caughtUp =
-    atEnd && !ended ? (
-      <div className="px-4 py-2 bg-white">
-        <button
-          type="button"
-          disabled={props.isGenerating}
-          onClick={props.onGenerateNextChunk}
-          className={`w-full h-12 text-[15px] font-medium text-white disabled:opacity-40 ${isNico ? 'bg-[#111]' : 'rounded-full bg-[#ff0000]'}`}
-        >
-          {props.isGenerating ? (isNico ? '放送をつないでいます…' : '正在往下演…') : isNico ? '放送を続ける' : '继续这场直播'}
-        </button>
-      </div>
-    ) : null;
-
   return (
     <div className="live-ui relative h-full w-full flex flex-col overflow-hidden bg-white text-[#111]" style={{ fontFamily: font }}>
       <LiveUiStyle />
       <input ref={props.bgFileInputRef as React.Ref<HTMLInputElement>} type="file" accept="image/*" className="hidden" onChange={props.handleUploadBgFile} />
 
       {!props.isFullscreen && (
-        <header className={`h-12 px-1 flex items-center shrink-0 border-b border-[#eee] ${isNico ? 'bg-white' : 'bg-white'}`}>
-          <IconButton label="返回" onClick={props.onBackToLobby}>
+        <header className="h-12 px-1 flex items-center shrink-0 border-b border-[#eee] bg-white">
+          <IconButton label="返回上一层" onClick={() => { if (!popInner()) props.onBackToLobby(); }}>
             <Icon name="back" />
           </IconButton>
           <div className="flex-1 min-w-0 px-1">
@@ -359,72 +385,33 @@ export function LiveWatchScreen(props: {
 
       {props.isFullscreen ? (
         <div className="flex-1 min-h-0 flex flex-col bg-black">
-          <div className="relative flex-1 min-h-0 flex flex-col">
-            {picture(true)}
-            <div className="absolute top-1 left-1 z-20" onClick={e => e.stopPropagation()}>
-              <IconButton label="退出全屏" onClick={() => props.setIsFullscreen(false)}>
-                <span className="text-white"><Icon name="collapse" /></span>
-              </IconButton>
-            </div>
+          <div className="relative flex-1 min-h-0">
+            {stage(true)}
+            <button
+              type="button"
+              onClick={() => props.setIsFullscreen(false)}
+              className="absolute top-2 left-2 z-30 h-11 px-3 bg-black/75 text-white text-[14px]"
+            >
+              退出全屏
+            </button>
           </div>
-          {caption}
           {transport}
-          {caughtUp}
           {composer}
         </div>
       ) : (
         <>
-          {picture(false)}
+          {stage(false)}
           {transport}
-          {caughtUp}
-          <div className="shrink-0 max-h-[220px] overflow-y-auto bg-white">
-            {caption}
-          </div>
-          <div className="shrink-0">
-            {!isNico && (
-              <button
-                type="button"
-                onClick={props.onOpenChannelSettings}
-                className="w-full min-h-11 px-4 py-2 text-left text-[12px] leading-5 text-[#606060] break-words"
-              >
-                {ended ? '回放' : `${formatCount(session.viewerCount)} 人正在看`}
-                {' · '}
-                {session.categoryLabel}
-                {' · '}
-                {channel.channelName}
-                {' · 频道设置'}
-              </button>
-            )}
-            {isNico && (
-              <div className="px-3 py-2 bg-[#f6f6f6] text-[12px] leading-5 text-[#333] border-y border-[#e6e6e6] break-words">
-                {ended ? 'タイムシフト' : '放送中'}
-                {' · '}
-                {formatCount(session.viewerCount)}来場
-                {' · '}
-                コメント {visibleDanmakuFeed.length}
-                {' · '}
-                {channel.channelName}
-              </div>
-            )}
-          </div>
-          <div className="flex border-b border-[#eee] bg-white shrink-0">
-            {(
-              [
-                ['chat', isNico ? 'コメント' : '聊天'],
-                ['script', isNico ? 'タイムシフト' : '分镜'],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => props.setLowerTab(id)}
-                className={`flex-1 h-11 text-[14px] font-medium border-b-2 ${
-                  props.lowerTab === id ? 'border-[#111] text-[#111]' : 'border-transparent text-[#767676]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="shrink-0 px-3 bg-white border-b border-[#eee]">
+            <DropDown
+              label="下面"
+              value={props.lowerTab}
+              onChange={id => props.setLowerTab(id as 'chat' | 'script')}
+              options={[
+                { id: 'chat', label: `弹幕 ${visibleDanmakuFeed.length}` },
+                { id: 'script', label: '分镜和阶段总结' },
+              ]}
+            />
           </div>
           <div ref={props.chatScrollRef as React.Ref<HTMLDivElement>} className="flex-1 min-h-0 overflow-y-auto">
             {chatRows}
@@ -435,39 +422,58 @@ export function LiveWatchScreen(props: {
 
       {props.isGenerating && !props.isFullscreen && (
         <div className="pointer-events-none absolute left-3 bottom-24 z-30 h-8 px-3 inline-flex items-center bg-black/75 text-white text-[12px]">
-          {isNico ? '反応を生成中' : '主播正在接话'}
+          主播正在接话
         </div>
       )}
 
       <Sheet open={menuOpen} title="这场直播" onClose={() => setMenuOpen(false)}>
-        <Row label="私聊" onClick={() => { setMenuOpen(false); props.setShowFloatingPhone(true); }} />
-        <Row label={`观众身份：${activePersona.name}`} hint={activePersona.isMain ? '名牌' : '匿名'} onClick={() => { setMenuOpen(false); props.onOpenPersonaModal(); }} />
-        <Row label="频道和语音" onClick={() => { setMenuOpen(false); props.onOpenChannelSettings(); }} />
-        <Row label="更换画面背景" onClick={() => { setMenuOpen(false); props.bgFileInputRef.current?.click(); }} />
-        <Row label="重新生成本场礼物" onClick={() => { setMenuOpen(false); props.onRequestRefreshGifts(); }} />
+        <p className="text-[12px] leading-5 text-[#606060] mb-2">点一行就做那一件事。做完这个单子会关上，回到直播间。</p>
+        <Row label="从头看" detail="回到第一句。想看最后一句，再点「跳到最新」。" onClick={() => { setMenuOpen(false); seek(0); }} />
+        {currentGlobalBeatIdx > 0 && (
+          <Row label="上一句" detail="回到刚才那一句。" onClick={() => { setMenuOpen(false); seek(currentGlobalBeatIdx - 1); }} />
+        )}
+        {!atEnd && (
+          <Row label="跳到最新" detail="直接看到最后一句。最后一句旁边才是「往下演一段」。" onClick={() => { setMenuOpen(false); seek(maxIdx); }} />
+        )}
+        <Row label="全屏看画面" detail="画面铺满。全文在退出全屏之后。" onClick={() => { setMenuOpen(false); props.setIsFullscreen(true); }} />
         <Row
-          label={props.immediateReplyOnSend ? '发出后马上让主播接：开' : '发出后马上让主播接：关'}
+          label={props.autoPlayStep ? '播完自动下一句：开' : '播完自动下一句：关'}
+          detail="开了之后，这句念完会跳到已经写好的下一句。不会自己去请模型写新的。"
+          onClick={() => props.setAutoPlayStep(v => !v)}
+        />
+        <Row label="私聊" detail="打开旁边的手机，跟主播私下说话。" onClick={() => { setMenuOpen(false); props.setShowFloatingPhone(true); }} />
+        <Row label={`观众身份：${activePersona.name}`} detail={activePersona.isMain ? '现在是名牌。点开可以换成匿名小号。' : '现在是匿名。点开可以换回名牌。'} onClick={() => { setMenuOpen(false); props.onOpenPersonaModal(); }} />
+        <Row label="频道和语音" detail="改频道名字、声音和同传。改完回到这场直播。" onClick={() => { setMenuOpen(false); props.onOpenChannelSettings(); }} />
+        <Row label="更换画面背景" detail="选一张图，铺满上面的视频。" onClick={() => { setMenuOpen(false); props.bgFileInputRef.current?.click(); }} />
+        <Row label="重新生成本场礼物" detail="请辅助模型换一组礼物。会用到接口。" onClick={() => { setMenuOpen(false); props.onRequestRefreshGifts(); }} />
+        <Row
+          label={props.immediateReplyOnSend ? '发弹幕后让主播接：开' : '发弹幕后让主播接：关'}
+          detail="开着时，你一发弹幕就会请模型写主播的反应。"
           onClick={() => props.setImmediateReplyOnSend(v => !v)}
         />
         <Row
           label={props.showDanmakuOverlay ? '画面飘字：开' : '画面飘字：关'}
+          detail="开着时，小字从画面最上沿飞过，不盖住下面的台词。"
           onClick={() => props.setShowDanmakuOverlay(v => !v)}
         />
         <Row
           label={props.showTranslation ? '同传译文：开' : '同传译文：关'}
+          detail="开着时，外语句子下面多一行中文。"
           onClick={() => props.setShowTranslation(v => !v)}
         />
         <Row
-          label={props.unfoldedChunks.length >= 2 ? (props.isSummarizing ? '正在整理早期切片…' : '把早期切片收成摘要') : '早期切片还不够，先不用收'}
+          label={props.unfoldedChunks.length >= 2 ? (props.isSummarizing ? '正在整理早期切片…' : '把早期切片收成摘要') : '早期切片还不够'}
+          detail="收成摘要后，最早的几段会折起来，给后面的内容腾地方。"
           onClick={() => {
             if (props.unfoldedChunks.length < 2 || props.isSummarizing) return;
             setMenuOpen(false);
             props.onManualFoldChunks();
           }}
         />
-        {!ended && <Row label="结束直播" danger onClick={() => { setMenuOpen(false); props.onEndStreamClick(); }} />}
+        {!ended && <Row label="结束直播" detail="先给你看总结，确认后这场才结束。" danger onClick={() => { setMenuOpen(false); props.onEndStreamClick(); }} />}
         <Row
           label={isNico ? '改成 YouTube 外观' : '改成ニコニコ生放送外观'}
+          detail="只换这层壳。直播内容还是这一场。"
           onClick={() => {
             setMenuOpen(false);
             props.onChangePlatformTheme(isNico ? 'youtube' : 'niconico');
@@ -558,7 +564,7 @@ function YtChat({ items, showTranslation }: { items: LiveDanmakuItem[]; showTran
     return <p className="px-4 py-8 text-[14px] text-[#606060]">聊天还是空的。在下面写一句，主播会看见。</p>;
   }
   return (
-    <ul className="px-3 py-2">
+    <ul className="px-3 py-1">
       {items.map(dm => {
         const paid = Boolean(dm.scAmount && dm.scAmount > 0);
         const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
@@ -570,19 +576,14 @@ function YtChat({ items, showTranslation }: { items: LiveDanmakuItem[]; showTran
           );
         }
         return (
-          <li key={dm.id} className="py-1.5 flex gap-2">
-            <Avatar src={undefined} name={dm.senderName} size={28} />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] leading-5 break-words">
-                <span className="font-medium text-[#0f0f0f]">{dm.senderName}</span>
-                {dm.fanBadge ? <span className="ml-1 text-[11px] text-[#606060]">{dm.fanBadge}</span> : null}
-                {dm.giftName ? <span className="ml-1 text-[12px] text-[#606060]">{dm.giftEmoji} {dm.giftName}</span> : null}
-                <span className="text-[#0f0f0f]"> {dm.text}</span>
-              </div>
-              {showTranslation && trans && trans !== dm.text ? (
-                <div className="text-[12px] leading-4 text-[#606060] break-words">{trans}</div>
-              ) : null}
-            </div>
+          <li key={dm.id} className="py-0.5 leading-[18px]">
+            <span className="text-[12px] font-medium text-[#606060]">{dm.senderName}</span>
+            {dm.fanBadge ? <span className="ml-1 text-[11px] text-[#909090]">{dm.fanBadge}</span> : null}
+            {dm.giftName ? <span className="ml-1 text-[12px]">{dm.giftEmoji}{dm.giftName}</span> : null}
+            <span className="ml-1.5 text-[13px] leading-[18px] text-[#0f0f0f] break-words">{dm.text}</span>
+            {showTranslation && trans && trans !== dm.text ? (
+              <span className="ml-1 text-[12px] text-[#606060]">{trans}</span>
+            ) : null}
           </li>
         );
       })}
@@ -604,16 +605,16 @@ function NicoCommentTable({ items, showTranslation }: { items: LiveDanmakuItem[]
           const hh = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
           return (
             <tr key={dm.id || i} className={`border-b border-[#eee] align-top ${paid ? 'bg-[#fff8e1]' : ''}`}>
-              <td className="w-12 px-2 py-1.5 text-[11px] text-[#999] tabular-nums">{hh}</td>
-              <td className="px-1 py-1.5 text-[13px] leading-[18px] text-[#222] break-words">
-                {dm.scAmount ? <span className="mr-1 font-medium">¥{dm.scAmount}</span> : null}
-                {dm.giftName ? <span className="mr-1">{dm.giftEmoji}{dm.giftName}</span> : null}
-                {dm.text}
+              <td className="px-3 py-0.5 leading-[18px]">
+                <span className="text-[11px] text-[#888]">{hh}</span>
+                <span className="ml-1.5 text-[12px] text-[#555]">{dm.senderName}</span>
+                {dm.scAmount ? <span className="ml-1 text-[12px] font-medium text-[#111]">¥{dm.scAmount}</span> : null}
+                {dm.giftName ? <span className="ml-1 text-[12px]">{dm.giftEmoji}{dm.giftName}</span> : null}
+                <span className="ml-1.5 text-[13px] leading-[18px] text-[#222] break-words">{dm.text}</span>
                 {showTranslation && trans && trans !== dm.text ? (
-                  <span className="block text-[12px] text-[#767676]">{trans}</span>
+                  <span className="ml-1 text-[12px] text-[#767676]">{trans}</span>
                 ) : null}
               </td>
-              <td className="w-[72px] px-2 py-1.5 text-[11px] text-[#888] text-right break-words">{dm.senderName}</td>
             </tr>
           );
         })}
@@ -710,13 +711,21 @@ function ScriptList(props: {
   );
 }
 
-function Row({ label, hint, onClick, danger }: { label: string; hint?: string; onClick: () => void; danger?: boolean }) {
+function Row({ label, detail, onClick, danger }: { label: string; detail?: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button type="button" onClick={onClick} className={`w-full min-h-11 py-2 flex items-center justify-between text-left border-b border-[#f3f3f3] ${danger ? 'text-[#c62828]' : ''}`}>
-      <span className="text-[15px] leading-5 pr-3">{label}</span>
-      {hint ? <span className="text-[12px] text-[#606060] shrink-0">{hint}</span> : null}
+    <button type="button" onClick={onClick} className={`w-full min-h-11 py-2 text-left border-b border-[#f3f3f3] ${danger ? 'text-[#c62828]' : ''}`}>
+      <span className="block text-[15px] leading-5">{label}</span>
+      {detail ? <span className="block text-[12px] leading-5 text-[#606060] mt-0.5">{detail}</span> : null}
     </button>
   );
+}
+
+function splitLines(text: string): string[] {
+  const parts = text
+    .split(/(?<=[。！？!?…])\s*/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : text.trim() ? [text.trim()] : [];
 }
 
 function Avatar({ src, name, size }: { src?: string; name: string; size: number }) {

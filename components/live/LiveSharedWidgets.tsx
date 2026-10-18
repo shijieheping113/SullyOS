@@ -266,7 +266,7 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[130] bg-black/40 backdrop-blur-[2px] flex items-end justify-center"
+      className="absolute inset-0 z-[90] bg-black/40 flex items-end justify-center"
       onClick={onClose}
     >
       <div
@@ -495,25 +495,25 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
 }) => {
   if (!visible || !danmakuList || danmakuList.length === 0) return null;
 
-  // 只取最近 6 条，严格分布在画面顶部 10% ~ 42% 的 3 条轨道，绝不往下遮挡人脸与文字！
-  const items = danmakuList.slice(-6);
-  const trackTops = ['10%', '24%', '38%'];
+  // 只走画面最上沿，字号收小，下面留给台词。
+  const items = danmakuList.slice(-4);
+  const trackTops = ['0px', '16px'];
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-0 h-[48%] overflow-hidden select-none"
-      style={{ zIndex: 12 }}
+      className="pointer-events-none absolute inset-x-0 top-1 h-8 overflow-hidden select-none"
+      style={{ zIndex: 12, containerType: 'inline-size' }}
     >
       <style>{`
         @keyframes onAirDanmakuFlow {
-          0% { transform: translate3d(100%, 0, 0); }
-          100% { transform: translate3d(-135%, 0, 0); }
+          0% { transform: translate3d(100cqw, 0, 0); }
+          100% { transform: translate3d(-100%, 0, 0); }
         }
       `}</style>
       {items.map((dm, idx) => {
         const top = trackTops[idx % trackTops.length];
-        const duration = 8.5 + (idx % 3) * 1.4;
-        const delay = (idx % 3) * 0.85;
+        const duration = 9 + (idx % 3) * 1.6;
+        const delay = (idx % 3) * 1.1;
         const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
         const isGift = Boolean(dm.giftName);
         const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
@@ -522,19 +522,20 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
         return (
           <div
             key={dm.id || `${idx}_${dm.text}`}
+            className="danmaku-fly"
             style={{
               position: 'absolute',
               top,
               left: 0,
-              right: 0,
+              width: 'max-content',
               whiteSpace: 'nowrap',
               animation: `onAirDanmakuFlow ${duration}s linear ${delay}s infinite`,
               willChange: 'transform',
             }}
           >
             <span
-              className={`inline-flex items-center gap-1.5 font-bold tracking-wide ${
-                platformTheme === 'niconico' ? 'text-[14px]' : 'text-[13px]'
+              className={`inline-flex items-center gap-1 font-medium ${
+                platformTheme === 'niconico' ? 'text-[12px]' : 'text-[11px]'
               } ${
                 isSc
                   ? 'text-amber-300'

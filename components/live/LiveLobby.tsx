@@ -24,6 +24,7 @@ import {
   FieldLabel,
   TextInput,
   TextArea,
+  DropDown,
   LiveUiStyle,
   formatCount,
 } from './platformChrome';
@@ -38,6 +39,7 @@ export function LiveLobby({
   platformTheme,
   onChangePlatformTheme,
   closeApp,
+  onBindBack,
   characters,
   currentChar,
   onSelectChar,
@@ -88,6 +90,7 @@ export function LiveLobby({
   platformTheme: LivePlatformTheme;
   onChangePlatformTheme: (t: LivePlatformTheme) => void;
   closeApp: () => void;
+  onBindBack: (fn: () => boolean) => void;
   characters: CharLite[];
   currentChar?: CharLite;
   onSelectChar: (id: string) => void;
@@ -162,6 +165,35 @@ export function LiveLobby({
 
   const openGoLive = () => setSheet('goLive');
   const openUpload = () => setSheet('upload');
+
+  const popInner = () => {
+    if (sheet !== 'none') {
+      setSheet('none');
+      return true;
+    }
+    if (menu) {
+      setMenu(null);
+      return true;
+    }
+    if (searchOpen) {
+      setSearchOpen(false);
+      setQuery('');
+      return true;
+    }
+    if (showNpcRule) {
+      onToggleNpcRule();
+      return true;
+    }
+    if (tab !== 'live') {
+      setTab('live');
+      return true;
+    }
+    return false;
+  };
+  onBindBack(() => popInner());
+  const stepBack = () => {
+    if (!popInner()) closeApp();
+  };
 
   const youPage = (
     <div className="px-4 pt-4 pb-8">
@@ -246,25 +278,17 @@ export function LiveLobby({
         youPage
       ) : tab === 'live' ? (
         <>
-          <div className="flex gap-2 px-3 py-2 overflow-x-auto">
-            {(
-              [
-                ['all', '全部'],
-                ['live', '正在直播'],
-                ['replay', '回放'],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setLiveFilter(id)}
-                className={`h-11 px-4 rounded-lg text-[14px] shrink-0 font-medium ${
-                  liveFilter === id ? 'bg-[#0f0f0f] text-white' : 'bg-[#f2f2f2] text-[#0f0f0f]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="px-3 py-2">
+            <DropDown
+              label="显示"
+              value={liveFilter}
+              onChange={id => setLiveFilter(id as 'all' | 'live' | 'replay')}
+              options={[
+                { id: 'all', label: '全部' },
+                { id: 'live', label: '正在直播' },
+                { id: 'replay', label: '回放' },
+              ]}
+            />
           </div>
           {lives.length === 0 ? (
             <Empty
@@ -395,7 +419,7 @@ export function LiveLobby({
       <LiveUiStyle />
       {isNico ? (
         <header className="h-12 px-1 bg-white border-b border-[#e6e6e6] flex items-center shrink-0">
-          <IconButton label="离开电波" onClick={closeApp}>
+          <IconButton label="返回" onClick={stepBack}>
             <Icon name="back" />
           </IconButton>
           <NicoMark />
@@ -412,7 +436,7 @@ export function LiveLobby({
         </header>
       ) : (
         <header className="h-12 px-1 bg-white flex items-center shrink-0">
-          <IconButton label="离开电波" onClick={closeApp}>
+          <IconButton label="返回" onClick={stepBack}>
             <Icon name="back" />
           </IconButton>
           {searchOpen ? (
@@ -540,21 +564,12 @@ export function LiveLobby({
             {aiHelperBusy ? '正在写…' : '让辅助模型写标题'}
           </button>
         </div>
-        <FieldLabel>分类</FieldLabel>
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {STREAM_PRESET_TEMPLATES.map(tpl => (
-            <button
-              key={tpl.key}
-              type="button"
-              onClick={() => onSelectPreset(tpl.key)}
-              className={`h-11 px-3 shrink-0 text-[13px] font-medium ${
-                selectedPresetKey === tpl.key ? 'bg-[#0f0f0f] text-white' : 'bg-[#f2f2f2] text-[#0f0f0f]'
-              } ${isNico ? '' : 'rounded-lg'}`}
-            >
-              {tpl.label}
-            </button>
-          ))}
-        </div>
+        <DropDown
+          label="分类"
+          value={selectedPresetKey}
+          onChange={onSelectPreset}
+          options={STREAM_PRESET_TEMPLATES.map(tpl => ({ id: tpl.key, label: tpl.label }))}
+        />
         <button
           type="button"
           disabled={isGenerating || !activeChannel}
@@ -606,6 +621,7 @@ export function LiveLobby({
       <Sheet open={Boolean(menu)} title={menu?.title || '操作'} onClose={() => setMenu(null)}>
         <MenuRow
           label="打开"
+          detail="进入这一场，停在最新一句。"
           onClick={() => {
             if (!menu) return;
             if (menu.kind === 'live') onOpenLive(menu.id);
@@ -615,6 +631,7 @@ export function LiveLobby({
         />
         <MenuRow
           label="删除这条记录"
+          detail="从手机里删掉。删了就没有了。"
           danger
           onClick={() => {
             if (!menu) return;
@@ -904,11 +921,13 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function MenuRow({
   label,
   hint,
+  detail,
   onClick,
   danger,
 }: {
   label: string;
   hint?: string;
+  detail?: string;
   onClick: () => void;
   danger?: boolean;
 }) {
@@ -916,10 +935,13 @@ function MenuRow({
     <button
       type="button"
       onClick={onClick}
-      className={`w-full min-h-11 py-2 flex items-center justify-between text-left border-b border-[#f0f0f0] ${danger ? 'text-[#c62828]' : ''}`}
+      className={`w-full min-h-11 py-2 text-left border-b border-[#f0f0f0] ${danger ? 'text-[#c62828]' : ''}`}
     >
-      <span className="text-[15px]">{label}</span>
-      {hint ? <span className="text-[12px] text-[#606060] ml-3 truncate max-w-[50%]">{hint}</span> : null}
+      <span className="flex items-center justify-between gap-3">
+        <span className="text-[15px]">{label}</span>
+        {hint ? <span className="text-[12px] text-[#606060] truncate max-w-[50%]">{hint}</span> : null}
+      </span>
+      {detail ? <span className="block text-[12px] leading-5 text-[#606060] mt-0.5">{detail}</span> : null}
     </button>
   );
 }
