@@ -221,7 +221,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   touch-action: pan-y;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -267,7 +267,7 @@
   min-height: 44px;
 }
 .sully-voice-b .vb-k-user {
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.7;
   color: var(--vb-user);
   white-space: pre-wrap;
@@ -320,7 +320,7 @@
   display: inline-block;
   max-width: 85%;
   text-align: right;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.7;
   color: var(--vb-user);
   overflow-wrap: anywhere;
@@ -367,26 +367,72 @@
   font-weight: 600;
   color: var(--vb-line-now);
   display: inline-block;
+  max-width: 100%;
   padding: 4px 10px;
   border-radius: 14px;
   background: rgba(118, 118, 128, 0.36);
 }
 .sully-voice-b .vb-line-off { color: var(--vb-line-off); }
 .sully-voice-b .vb-line-on { color: var(--vb-line-on); }
-.sully-voice-b .vb-caption .vb-line-old { font-size: 10px; }
+/* 四键字幕：句子差不多大，正在念的只加一点字重。远近的淡出由滚动时的透明度负责，不再把旧句缩成 10px。 */
+.sully-voice-b .vb-caption .vb-line,
+.sully-voice-b .vb-caption .vb-line-old,
+.sully-voice-b .vb-caption .vb-line-off,
+.sully-voice-b .vb-caption .vb-line-on,
 .sully-voice-b .vb-caption .vb-line-now {
-  font-size: 15px;
+  display: block;
+  font-size: 17px;
+  line-height: 1.55;
+  font-weight: 500;
+  color: var(--vb-line-now);
   background: none;
   padding: 0;
   border-radius: 0;
-  display: inline;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto 6px;
+  text-align: center;
+  transform-origin: center center;
 }
-.sully-voice-b .vb-caption .vb-line-off { font-size: 12px; }
-.sully-voice-b .vb-caption .vb-line-on { font-size: 13px; }
-.sully-voice-b .vb-read .vb-line-old { font-size: 11px; }
-.sully-voice-b .vb-read .vb-line-now { font-size: 14px; }
-.sully-voice-b .vb-read .vb-line-off { font-size: 12px; }
-.sully-voice-b .vb-read .vb-line-on { font-size: 13px; }
+.sully-voice-b .vb-caption .vb-line-now { font-weight: 600; }
+.sully-voice-b .vb-caption .vb-k-user { transform-origin: center center; }
+/* 句子收成字宽之后，调速钮贴着右缘会盖住最后一个字。钮最宽是「-5.0s」，让开这么多。 */
+.sully-voice-b .vb-caption .vb-line:has(.vb-speed),
+.sully-voice-b .vb-read .vb-line:has(.vb-speed) { padding-right: 30px; }
+/* 全屏：字只大一点点。正在念的那句仍用灰色底，宽窄跟着这句话。 */
+.sully-voice-b .vb-read .vb-line,
+.sully-voice-b .vb-read .vb-line-old,
+.sully-voice-b .vb-read .vb-line-off,
+.sully-voice-b .vb-read .vb-line-on,
+.sully-voice-b .vb-read .vb-line-now {
+  font-size: 16px;
+  line-height: 1.55;
+  font-weight: 500;
+  color: var(--vb-line-now);
+  transform-origin: left center;
+}
+.sully-voice-b .vb-read .vb-line-now { font-weight: 600; }
+.sully-voice-b .vb-read .vb-you-text { transform-origin: right center; }
+/* 句子统一用正在念的颜色，方便透明度做远近。名字仍走原来的主题变量，不跟句子变白。 */
+.sully-voice-b .vb-caption .vb-k-name,
+.sully-voice-b .vb-read .vb-who {
+  color: var(--vb-read-name);
+  opacity: 1;
+  filter: none;
+}
+.sully-voice-b .vb-top .vb-name {
+  color: var(--vb-top-name);
+  opacity: 1;
+  filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sully-voice-b .vb-line,
+  .sully-voice-b .vb-k-user,
+  .sully-voice-b .vb-you-text {
+    transform: none !important;
+    filter: none !important;
+  }
+}
 /* 长按某句后浮在句尾的小控件：上下两个小三角 + 中间偏移数字。
    故意不做外框/底板/阴影——贴着句尾一小片半透明，不遮正文、不抢视线。
    点页面别处由 VoicePhoneB 的 pointerdown 捕获统一收起。 */
@@ -631,7 +677,7 @@
   overflow-y: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   touch-action: pan-y;
   background: var(--vb-glass-bg);
   -webkit-backdrop-filter: var(--vb-glass);

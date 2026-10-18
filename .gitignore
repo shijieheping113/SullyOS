@@ -30,6 +30,8 @@ public/amsg-worker.bundle.js
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+.cursor/
+_tmp_bubble_tail/
 .idea
 .DS_Store
 *.suo

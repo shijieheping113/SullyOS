@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>电话字幕滚动预览</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: #000;
+    color: #f2f2f7;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 12px 12px calc(20px + env(safe-area-inset-bottom)); }
+  .page { max-width: 420px; margin: 0 auto; }
+  .note {
+    margin: 0 2px 10px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: #8e8e93;
+  }
+  .note b { color: #fff; font-weight: 600; }
+  .toolbar { position: sticky; top: 0; z-index: 30; background: #000; padding: 2px 0 10px; }
+  .seg {
+    display: flex;
+    padding: 2px;
+    margin-bottom: 8px;
+    border-radius: 9px;
+    background: #2c2c2e;
+  }
+  .seg button {
+    flex: 1;
+    min-height: 44px;
+    border: 0;
+    background: transparent;
+    color: #8e8e93;
+    font-size: 14px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .seg button.on { background: #3a3a3c; color: #fff; }
+  .seg button:focus-visible,
+  .controls button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+  .phone {
+    --fill: rgba(255,255,255,.16);
+    --muted: #8e8e93;
+    --red: #ff3b30;
+    position: relative;
+    overflow: hidden;
+    height: 760px;
+    height: min(760px, calc(100dvh - 250px));
+    min-height: 580px;
+    border-radius: 36px;
+    background: #1c1c1e;
+    box-shadow: 0 0 0 1px #3a3a3c, 0 24px 60px rgba(0,0,0,.55);
+    display: flex;
+    flex-direction: column;
+  }
+  .top {
+    position: relative;
+    z-index: 2;
+    flex-shrink: 0;
+    text-align: center;
+    padding: 20px 20px 0;
+  }
+  .back {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    font-size: 22px;
+    line-height: 44px;
+    padding: 0;
+  }
+  .phone.is-keys .back { display: none; }
+  .avatar {
+    margin: 0 auto 6px;
+    border-radius: 50%;
+    background: #3a3a3c;
+    color: #fff;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.12);
+  }
+  .phone.is-keys .avatar { width: 72px; height: 72px; font-size: 22px; margin-bottom: 8px; }
+  .phone.is-full .avatar { width: 52px; height: 52px; font-size: 16px; margin-bottom: 6px; }
+  .name { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .timer {
+    margin-top: 1px;
+    font-size: 12px;
+    color: rgba(255,255,255,.45);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.06em;
+  }
+  .meta {
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .state { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; }
+  .viz { display: flex; align-items: flex-end; height: 12px; }
+  .viz i {
+    display: block;
+    width: 2px;
+    height: 12px;
+    margin: 0 2px;
+    border-radius: 99px;
+    background: #fff;
+    transform-origin: center bottom;
+    animation: wave 0.62s ease-in-out infinite;
+  }
+  @keyframes wave {
+    0%, 100% { transform: scaleY(0.22); }
+    50% { transform: scaleY(1); }
+  }
+
+  .caption {
+    position: relative;
+    z-index: 2;
+    flex: 1;
+    min-height: 0;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .stage, .now-scroll {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+  .stage {
+    touch-action: none;
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 22px), transparent 100%);
+    mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 22px), transparent 100%);
+  }
+  .stack {
+    position: absolute;
+    top: 0;
+    will-change: transform;
+  }
+  .phone.is-keys .stack { left: 26px; right: 26px; }
+  .phone.is-full .stack { left: 22px; right: 22px; }
+  .line { margin: 0; overflow-wrap: anywhere; }
+  .words { display: inline-block; max-width: 100%; }
+  .phone.is-apple.is-keys .line {
+    padding: 5px 4px;
+    font-size: 17px;
+    line-height: 1.55;
+    font-weight: 500;
+    color: #fff;
+    text-align: center;
+    transform-origin: center center;
+  }
+  .phone.is-keys .line.on { font-weight: 600; }
+  .phone.is-apple.is-full .line {
+    padding: 3px 0 8px;
+    font-size: 16px;
+    line-height: 1.55;
+    font-weight: 500;
+    color: #fff;
+    text-align: left;
+    transform-origin: left center;
+  }
+  .phone.is-apple.is-full .line.you {
+    text-align: right;
+    font-size: 15px;
+    font-weight: 400;
+    color: #c7c7cc;
+    padding-bottom: 8px;
+    transform-origin: right center;
+  }
+  .phone.is-full .line.on .words {
+    padding: 4px 10px;
+    border-radius: 14px;
+    background: rgba(118, 118, 128, 0.36);
+    font-weight: 600;
+  }
+
+  .now-scroll {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+    mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+  }
+  .phone.is-keys .now-scroll { padding: 0 26px; }
+  .phone.is-full .now-scroll { padding: 0 22px; }
+  .now-scroll::-webkit-scrollbar { display: none; }
+  .now-line {
+    display: block;
+    margin: 0 0 8px;
+    line-height: 1.7;
+    font-weight: 400;
+    overflow-wrap: anywhere;
+  }
+  .phone.is-keys .now-line { text-align: center; color: rgba(255,255,255,.9); font-size: 13px; }
+  .phone.is-keys .now-line.old { font-size: 10px; color: rgba(255,255,255,.28); }
+  .phone.is-keys .now-line.now { font-size: 15px; font-weight: 600; color: #fff; }
+  .phone.is-keys .now-line.off { font-size: 12px; color: rgba(255,255,255,.22); }
+  .phone.is-full .now-line { text-align: left; color: rgba(255,255,255,.9); font-size: 13px; }
+  .phone.is-full .now-line.you { text-align: right; color: #c7c7cc; }
+  .phone.is-full .now-line.old { font-size: 11px; color: rgba(255,255,255,.32); }
+  .phone.is-full .now-line.off { font-size: 12px; color: rgba(255,255,255,.28); }
+  .phone.is-full .now-line.now { font-size: 14px; }
+  .phone.is-full .now-line.now .words {
+    padding: 4px 10px;
+    border-radius: 14px;
+    background: rgba(118, 118, 128, 0.36);
+    color: #fff;
+    font-weight: 600;
+  }
+  .phone.is-now .stage { display: none; }
+  .phone.is-apple .now-scroll { display: none; }
+
+  .hint {
+    position: relative;
+    z-index: 2;
+    flex-shrink: 0;
+    min-height: 16px;
+    margin: 2px 16px 4px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .phone.is-full .keys-foot { display: none; }
+  .phone.is-keys .full-foot { display: none; }
+  .composer { position: relative; z-index: 2; flex-shrink: 0; margin: 0 20px 8px; }
+  .field {
+    height: 44px;
+    border-radius: 22px;
+    background: rgba(255,255,255,.12);
+    color: #8e8e93;
+    font-size: 16px;
+    line-height: 44px;
+    padding: 0 16px;
+  }
+  .pad { position: relative; z-index: 2; flex-shrink: 0; padding: 0 16px 2px; }
+  .grid { display: flex; justify-content: space-between; }
+  .btn {
+    width: 25%;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+  .btn .c {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 6px;
+    border-radius: 50%;
+    background: var(--fill);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+  }
+  .btn.end .c { background: var(--red); }
+  .btn svg, .mic svg { width: 22px; height: 22px; display: block; }
+  .full-foot { position: relative; z-index: 2; flex-shrink: 0; padding-bottom: 4px; }
+  .dock { display: flex; justify-content: center; padding-top: 4px; }
+  .mic {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.16);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .home {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    margin: 2px auto 6px;
+  }
+  .home span {
+    width: 134px;
+    height: 5px;
+    border-radius: 100px;
+    background: rgba(255,255,255,.34);
+  }
+  .controls { display: flex; gap: 8px; margin-top: 12px; }
+  .controls button {
+    flex: 1;
+    min-height: 44px;
+    border: 0;
+    border-radius: 12px;
+    background: #2c2c2e;
+    color: #fff;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .viz i { animation: none; transform: scaleY(0.45); }
+    .now-scroll { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="note">预览，真电话没改。字只比原来大一点点。全屏正在念的那句，底下仍有一条<b>灰色的底</b>，宽窄跟着这句话走。</p>
+  <div class="toolbar">
+    <div class="seg" role="tablist" aria-label="哪一页">
+      <button type="button" id="tabKeys" class="on" role="tab" aria-selected="true">四键</button>
+      <button type="button" id="tabFull" role="tab" aria-selected="false">全屏</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="滚动方式">
+      <button type="button" id="tabNow" role="tab">现在的滚法</button>
+      <button type="button" id="tabApple" class="on" role="tab" aria-selected="true">苹果歌词</button>
+    </div>
+  </div>
+
+  <div class="phone is-keys is-apple" id="phone">
+    <div class="top">
+      <button type="button" class="back" id="btnBack" aria-label="返回四键">‹</button>
+      <div class="avatar" aria-hidden="true">对</div>
+      <div class="name">对方</div>
+      <div class="timer">02:14</div>
+      <div class="meta">
+        <div class="viz" aria-hidden="true">
+          <i style="animation-delay:0s"></i>
+          <i style="animation-delay:.12s"></i>
+          <i style="animation-delay:.28s"></i>
+          <i style="animation-delay:.08s"></i>
+          <i style="animation-delay:.2s"></i>
+        </div>
+        <div class="state">正在说话</div>
+      </div>
+    </div>
+
+    <div class="caption">
+      <div class="stage" id="stage"><div class="stack" id="stack"></div></div>
+      <div class="now-scroll" id="nowScroll">
+        <div class="pad-spacer" id="padTop"></div>
+        <div id="nowLines"></div>
+        <div class="pad-spacer" id="padBot"></div>
+      </div>
+    </div>
+    <div class="hint" id="hint">按住可以拉开，松手弹回正在念的这句</div>
+
+    <div class="keys-foot">
+      <div class="composer"><div class="field">说点什么</div></div>
+      <div class="pad">
+        <div class="grid" aria-hidden="true">
+          <div class="btn"><div class="c"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M11.26 3.69A.75.75 0 0112 4.5v15a.75.75 0 01-1.28.53L5.53 15.75H3.75A1.75 1.75 0 012 14V10c0-.97.78-1.75 1.75-1.75h1.78l5.19-4.28a.75.75 0 011.04.07zm5.52 3.42a.75.75 0 011.06 0 6.75 6.75 0 010 9.55.75.75 0 11-1.06-1.06 5.25 5.25 0 000-7.43.75.75 0 010-1.06z"/></svg></div>外放</div>
+          <div class="btn"><div class="c"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M4.5 5.25A2.25 2.25 0 016.75 3h7.5A2.25 2.25 0 0116.5 5.25v6A2.25 2.25 0 0114.25 13.5H9.31L5.6 16.4A.75.75 0 014.5 15.8V5.25z"/></svg></div>对话</div>
+          <div class="btn"><div class="c"><svg viewBox="0 0 256 256"><path fill="currentColor" d="M247.15,212.42l-56-112a8,8,0,0,0-14.31,0l-21.71,43.43A88,88,0,0,1,108,126.93,103.65,103.65,0,0,0,135.69,64H160a8,8,0,0,0,0-16H104V32a8,8,0,0,0-16,0V48H32a8,8,0,0,0,0,16h87.63A87.76,87.76,0,0,1,96,116.35a87.74,87.74,0,0,1-19-31,8,8,0,1,0-15.08,5.34A103.63,103.63,0,0,0,84,127a87.55,87.55,0,0,1-52,17,8,8,0,0,0,0,16,103.46,103.46,0,0,0,64-22.08,104.18,104.18,0,0,0,51.44,21.31l-26.6,53.19a8,8,0,0,0,14.31,7.16L148.94,192h70.11l13.79,27.58A8,8,0,0,0,240,224a8,8,0,0,0,7.15-11.58ZM156.94,176,184,121.89,211.05,176Z"/></svg></div>翻译</div>
+          <div class="btn end"><div class="c"><svg viewBox="0 0 256 256"><path fill="currentColor" d="M236.28,161.84a16,16,0,0,1-18.38,5.06l-49-17.39a16,16,0,0,1-9.72-11.59l-6.21-29.75a76.52,76.52,0,0,0-49.68.11l-5.9,29.52a16,16,0,0,1-9.75,11.73l-49,17.37A16,16,0,0,1,19.72,161.86c-17.23-22.22-15.3-51.71,4.69-71.71,56.15-56.17,151-56.17,207.18,0C251.58,110.13,253.51,139.62,236.28,161.84Z"/></svg></div>结束</div>
+        </div>
+      </div>
+      <div class="home" aria-hidden="true"><span></span></div>
+    </div>
+    <div class="full-foot">
+      <div class="dock" aria-hidden="true">
+        <div class="mic"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M8.25 4.5A3.75 3.75 0 0112 .75 3.75 3.75 0 0115.75 4.5v4.5a3.75 3.75 0 01-7.5 0V4.5zM6.75 11.25a.75.75 0 01.75.75 4.5 4.5 0 009 0 .75.75 0 011.5 0 6 6 0 01-5.25 5.95V20.25h2.25a.75.75 0 010 1.5h-6a.75.75 0 010-1.5H11.25v-2.3A6 6 0 016 12a.75.75 0 01.75-.75z"/></svg></div>
+      </div>
+      <div class="home" aria-hidden="true"><span></span></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button type="button" id="btnPlay">暂停</button>
+    <button type="button" id="btnPrev">上一句</button>
+    <button type="button" id="btnNext">下一句</button>
+  </div>
+  <div class="sr" id="live" aria-live="polite"></div>
+</div>
+<script>
+(function () {
+  var AI = [
+    '你今天吃饭了吗',
+    '吃了，刚热了一碗面',
+    '面有点咸，可是热乎',
+    '你那边下雨了没',
+    '下了。我把窗户关好了，雨声还是听得见，像有人用指节敲玻璃',
+    '那你别出门',
+    '我不出，就在这儿跟你说话',
+    '说慢一点，我听得见'
+  ];
+  var FULL = [
+    { role: 'you', text: '今天天气也太好了吧' },
+    { role: 'you', text: '风也软软的' }
+  ];
+  var i;
+  for (i = 0; i < AI.length; i++) FULL.push({ role: 'ai', text: AI[i] });
+
+  var reduced = false;
+  if (window.matchMedia) reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var phone = document.getElementById('phone');
+  var stage = document.getElementById('stage');
+  var stack = document.getElementById('stack');
+  var nowScroll = document.getElementById('nowScroll');
+  var nowLines = document.getElementById('nowLines');
+  var padTop = document.getElementById('padTop');
+  var padBot = document.getElementById('padBot');
+  var hint = document.getElementById('hint');
+  var live = document.getElementById('live');
+  var tabKeys = document.getElementById('tabKeys');
+  var tabFull = document.getElementById('tabFull');
+  var tabNow = document.getElementById('tabNow');
+  var tabApple = document.getElementById('tabApple');
+  var btnPlay = document.getElementById('btnPlay');
+
+  var face = 'keys';
+  var mode = 'apple';
+  var items = [];
+  var active = 2;
+  var playing = !reduced;
+  var timer = 0;
+  var centers = [];
+  var unit = 56;
+  var y = 0;
+  var v = 0;
+  var target = 0;
+  var stiffness = 180;
+  var damping = 24;
+  var dragging = false;
+  var dragPointer = null;
+  var dragStartClient = 0;
+  var dragStartY = 0;
+  var lastT = 0;
+
+  if (location.search.indexOf('face=full') >= 0) face = 'full';
+
+  function listForFace() {
+    if (face === 'keys') {
+      var out = [];
+      var n;
+      for (n = 0; n < AI.length; n++) out.push({ role: 'ai', text: AI[n] });
+      return out;
+    }
+    return FULL;
+  }
+
+  function firstFocus() {
+    var n;
+    var seen = 0;
+    for (n = 0; n < items.length; n++) {
+      if (items[n].role !== 'ai') continue;
+      seen += 1;
+      if (seen === 3) return n;
+    }
+    return 0;
+  }
+
+  function build() {
+    items = listForFace();
+    stack.innerHTML = '';
+    nowLines.innerHTML = '';
+    var n;
+    for (n = 0; n < items.length; n++) {
+      var item = items[n];
+      var line = document.createElement('p');
+      line.className = 'line ' + item.role;
+      var words = document.createElement('span');
+      words.className = 'words';
+      words.textContent = item.text;
+      line.appendChild(words);
+      stack.appendChild(line);
+
+      var old = document.createElement('p');
+      old.className = 'now-line ' + item.role;
+      var oldWords = document.createElement('span');
+      oldWords.className = 'words';
+      oldWords.textContent = item.text;
+      old.appendChild(oldWords);
+      nowLines.appendChild(old);
+    }
+  }
+
+  function applyClass() {
+    phone.className = 'phone is-' + face + ' is-' + mode;
+    tabKeys.className = face === 'keys' ? 'on' : '';
+    tabFull.className = face === 'full' ? 'on' : '';
+    tabNow.className = mode === 'now' ? 'on' : '';
+    tabApple.className = mode === 'apple' ? 'on' : '';
+    tabKeys.setAttribute('aria-selected', face === 'keys' ? 'true' : 'false');
+    tabFull.setAttribute('aria-selected', face === 'full' ? 'true' : 'false');
+    tabNow.setAttribute('aria-selected', mode === 'now' ? 'true' : 'false');
+    tabApple.setAttribute('aria-selected', mode === 'apple' ? 'true' : 'false');
+    if (face === 'full') {
+      hint.textContent = '正在念的这句底下有灰色的底。按住可以拉开，松手弹回去';
+    } else {
+      hint.textContent = '按住可以拉开，松手弹回正在念的这句';
+    }
+  }
+
+  function mark() {
+    var nodes = stack.children;
+    var olds = nowLines.children;
+    var n;
+    for (n = 0; n < nodes.length; n++) {
+      var role = items[n].role;
+      var on = n === active && role === 'ai';
+      nodes[n].className = 'line ' + role + (on ? ' on' : '');
+      var kind = 'off';
+      if (role === 'you') kind = 'you';
+      else if (n < active) kind = 'old';
+      else if (n === active) kind = 'now';
+      olds[n].className = 'now-line ' + role + ' ' + kind;
+      if (n === active) olds[n].setAttribute('data-now', '1');
+      else olds[n].removeAttribute('data-now');
+    }
+  }
+
+  function measure() {
+    centers = [];
+    var nodes = stack.children;
+    var sum = 0;
+    var n;
+    for (n = 0; n < nodes.length; n++) {
+      var el = nodes[n];
+      centers.push(el.offsetTop + el.offsetHeight / 2);
+      sum += el.offsetHeight;
+    }
+    unit = nodes.length ? (sum / nodes.length) : 56;
+    if (unit < 36) unit = 36;
+    var h = nowScroll.clientHeight * 0.42;
+    if (h < 72) h = 72;
+    padTop.style.height = h + 'px';
+    padBot.style.height = h + 'px';
+  }
+
+  function anchorY() {
+    return stage.clientHeight * 0.42;
+  }
+
+  function targetFor(index) {
+    if (!centers.length || index < 0 || index >= centers.length) return 0;
+    return anchorY() - centers[index];
+  }
+
+  function look(dist) {
+    var u = Math.abs(dist) / unit;
+    var scale = 1 - Math.min(0.06, u * 0.035);
+    var opacity = Math.pow(0.78, u);
+    if (opacity < 0.4) opacity = 0.4;
+    if (opacity > 1) opacity = 1;
+    var blur = 0;
+    if (!reduced) blur = Math.min(0.6, Math.max(0, (u - 1.1) * 0.35));
+    return { scale: scale, opacity: opacity, blur: blur };
+  }
+
+  function paintApple() {
+    stack.style.transform = 'translate3d(0,' + y.toFixed(2) + 'px,0)';
+    var anchor = anchorY();
+    var nodes = stack.children;
+    var n;
+    for (n = 0; n < nodes.length; n++) {
+      var dist = centers[n] + y - anchor;
+      var style = look(dist);
+      var el = nodes[n];
+      var origin = 'center center';
+      if (face === 'full') origin = items[n].role === 'you' ? 'right center' : 'left center';
+      el.style.transformOrigin = origin;
+      el.style.transform = 'scale(' + style.scale.toFixed(3) + ')';
+      el.style.opacity = String(Math.round(style.opacity * 1000) / 1000);
+      if (style.blur < 0.3) {
+        el.style.webkitFilter = '';
+        el.style.filter = '';
+      } else {
+        var b = 'blur(' + style.blur.toFixed(2) + 'px)';
+        el.style.webkitFilter = b;
+        el.style.filter = b;
+      }
+    }
+  }
+
+  function stepSpring(dt) {
+    if (reduced) { y = target; v = 0; return; }
+    if (dt > 0.05) dt = 0.05;
+    var acc = -stiffness * (y - target) - damping * v;
+    v += acc * dt;
+    y += v * dt;
+    if (Math.abs(y - target) < 0.3 && Math.abs(v) < 8) { y = target; v = 0; }
+  }
+
+  function frame(t) {
+    window.requestAnimationFrame(frame);
+    if (mode !== 'apple') return;
+    if (!lastT) lastT = t;
+    var dt = (t - lastT) / 1000;
+    lastT = t;
+    if (!dragging) stepSpring(dt);
+    paintApple();
+  }
+
+  function centerNow() {
+    var el = nowLines.querySelector('[data-now="1"]');
+    if (!el) return;
+    var boxRect = nowScroll.getBoundingClientRect();
+    var lineRect = el.getBoundingClientRect();
+    var delta = (lineRect.top + lineRect.height / 2) - (boxRect.top + boxRect.height / 2);
+    if (Math.abs(delta) < 2) return;
+    var next = nowScroll.scrollTop + delta;
+    if (reduced) { nowScroll.scrollTop = next; return; }
+    try { nowScroll.scrollTo({ top: next, behavior: 'smooth' }); }
+    catch (err) { nowScroll.scrollTop = next; }
+  }
+
+  function paint() {
+    mark();
+    if (mode === 'apple') paintApple();
+    else {
+      centerNow();
+      window.setTimeout(centerNow, 40);
+    }
+  }
+
+  function go(index, snap) {
+    if (index < 0) index = 0;
+    if (index > items.length - 1) index = items.length - 1;
+    while (index > 0 && items[index].role !== 'ai') index -= 1;
+    while (index < items.length - 1 && items[index].role !== 'ai') index += 1;
+    active = index;
+    live.textContent = items[active].text;
+    measure();
+    target = targetFor(active);
+    if (snap || reduced) { y = target; v = 0; }
+    paint();
+  }
+
+  function show(nextFace, nextMode, keep) {
+    if (nextFace) face = nextFace;
+    if (nextMode) mode = nextMode;
+    var keepIndex = keep ? active : -1;
+    applyClass();
+    build();
+    active = keepIndex >= 0 && keepIndex < items.length ? keepIndex : firstFocus();
+    if (items[active] && items[active].role !== 'ai') active = firstFocus();
+    window.requestAnimationFrame(function () {
+      measure();
+      target = targetFor(active);
+      y = target;
+      v = 0;
+      live.textContent = items[active] ? items[active].text : '';
+      paint();
+    });
+  }
+
+  function arm() {
+    if (timer) window.clearInterval(timer);
+    timer = 0;
+    btnPlay.textContent = playing ? '暂停' : '继续';
+    if (!playing) return;
+    timer = window.setInterval(function () {
+      var next = active + 1;
+      if (next >= items.length) next = 0;
+      go(next, false);
+    }, 2400);
+  }
+
+  document.getElementById('btnBack').addEventListener('click', function () { show('keys', null, false); });
+  tabKeys.addEventListener('click', function () { show('keys', null, false); });
+  tabFull.addEventListener('click', function () { show('full', null, false); });
+  tabNow.addEventListener('click', function () { show(null, 'now', true); });
+  tabApple.addEventListener('click', function () { show(null, 'apple', true); });
+  btnPlay.addEventListener('click', function () { playing = !playing; arm(); });
+  document.getElementById('btnPrev').addEventListener('click', function () { go(active - 1, false); });
+  document.getElementById('btnNext').addEventListener('click', function () { go(active + 1, false); });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); go(active + 1, false); }
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); go(active - 1, false); }
+    else if (event.key === ' ') { event.preventDefault(); playing = !playing; arm(); }
+  });
+
+  stage.addEventListener('pointerdown', function (event) {
+    if (mode !== 'apple' || !event.isPrimary) return;
+    dragging = true;
+    dragPointer = event.pointerId;
+    dragStartClient = event.clientY;
+    dragStartY = y;
+    try { stage.setPointerCapture(event.pointerId); } catch (err) {}
+  });
+  stage.addEventListener('pointermove', function (event) {
+    if (!dragging || event.pointerId !== dragPointer) return;
+    y = dragStartY + (event.clientY - dragStartClient);
+    target = y;
+    paintApple();
+  });
+  function endDrag(event) {
+    if (!dragging) return;
+    if (event && dragPointer != null && event.pointerId !== dragPointer) return;
+    dragging = false;
+    dragPointer = null;
+    target = targetFor(active);
+  }
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('resize', function () {
+    measure();
+    target = targetFor(active);
+    y = target;
+    v = 0;
+    paint();
+  });
+
+  show(face, 'apple', false);
+  arm();
+  window.requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

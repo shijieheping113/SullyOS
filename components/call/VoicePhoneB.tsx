@@ -155,17 +155,22 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   const dockApi = useRef(props);
   dockApi.current = props;
   const sheetOpenedAt = useRef(0);
-  const capHold = useRef(false);
-  const capDrag = useRef(false);
-  const capStartY = useRef(0);
-  const logHold = useRef(false);
-  const logDrag = useRef(false);
-  const logStartY = useRef(0);
-  /** 「按住」是从哪一刻开始的。手指/鼠标如果在框外松开，框上的 onPointerUp 收不到，
-   *  按住状态就会一直挂着——而跟读滚动第一件事就是看它，于是永久不动。
-   *  这里记个时间，配下面那条全局兜底一起用。 */
-  const holdAt = useRef(0);
+  /** 程序自己写 scrollTop 的那一瞬间。这一下冒出来的 scroll 不算用户拖。 */
+  const ownScroll = useRef(false);
+  /** 最近约 40 毫秒内程序写下的位置。只用来认回声，手指按下就清空。 */
+  const ownEcho = useRef<{ y: number; t: number }[]>([]);
+  /** 用户还占着列表。占着的时候，弹簧和跟读都不许写 scrollTop。 */
+  const blockFollow = useRef(false);
+  const userMoved = useRef(false);
+  const scrollWhich = useRef<'keys' | 'log' | null>(null);
+  /** 手指还按在字幕上。指针被浏览器取消不算松开。 */
+  const fingerDown = useRef(false);
+  const idleTimer = useRef(0);
+  const wantFollow = useRef(false);
+  const settleRef = useRef<() => void>(() => {});
   const lingerLine = useRef<string | null>(null);
+  /** 每句当前亮到哪。换句时从这里缓过去，不跟屏幕正中走。 */
+  const lyricShown = useRef(new WeakMap<HTMLElement, { scale: number; opacity: number; blur: number }>());
   const nameHold = useRef<number | null>(null);
   const didInitScroll = useRef(false);
   // 跟读偏移档位：长按某一句 → 旁边浮出上下箭头，点箭头一档一档调。
@@ -222,38 +227,242 @@ const VoicePhoneB: React.FC<Props> = (props) => {
   }, [tuningKey]);
 
   /**
-   * 让一个框滚到指定位置。
+   * 字幕滚动。不用浏览器自带的平滑滚动：老内核上会静默失败，手感也是匀速滑。
    *
-   * 只写 `scrollTo({ …, behavior: 'smooth' })` 在有些内核上是**静默失败**的：不报错、也不动。
-   * 所以平滑之后再留一手——过一小会儿看位置有没有真的动过，没动就直接赋值硬滚过去。
-   * （老内核连字典参数都不认，那一下 try 会抛，catch 里直接跳。）
+   * 手指还按着，弹簧不许写 scrollTop。手机一滑动就会取消指针，那一下不算松手。
+   * 只有 touchend / pointerup 才算手离开。离开之后列表若还在滑，也不托回。
+   * 最后一次滚动停稳约 360 毫秒，四键和全屏才把正在念的那句托回正中。
+   *
+   * 亮、淡、糊绑在正在念的那句上，不绑在屏幕正中。拖动时正中换句也不许轮流变亮。
+   * 糊是慢坡：旁边一句已经柔，再远继续加重，最远约 1.15px。换句时大约 0.18 秒缓过去。
+   * 播放结束、暂停，正在念的标记没了，这三样立刻清掉。名字不参与绘制。
    */
+  const lyricSpring = useRef({ box: null as HTMLElement | null, target: 0, y: 0, v: 0, active: false });
+  const motionReduced = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const stopLyricSpring = () => { lyricSpring.current.active = false; };
+  const clearOwnEcho = () => { ownEcho.current = []; };
+  const armIdle = (ms: number) => {
+    window.clearTimeout(idleTimer.current);
+    idleTimer.current = window.setTimeout(() => {
+      if (fingerDown.current) return;
+      settleRef.current();
+    }, ms);
+  };
+  /** 手指落下：先把弹簧停死。取消指针、窗口失焦都不从这里放行。 */
+  const claimScroll = (which: 'keys' | 'log') => {
+    blockFollow.current = true;
+    scrollWhich.current = which;
+    fingerDown.current = true;
+    stopLyricSpring();
+    clearOwnEcho();
+    window.clearTimeout(idleTimer.current);
+  };
+  const rememberOwn = (y: number) => {
+    const now = Date.now();
+    const list = ownEcho.current;
+    list.push({ y: y, t: now });
+    while (list.length && now - list[0].t > 40) list.shift();
+  };
+  const isOwnPosition = (top: number) => {
+    if (ownScroll.current) return true;
+    const now = Date.now();
+    const list = ownEcho.current;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (now - list[i].t > 40) break;
+      if (Math.abs(list[i].y - top) < 2) return true;
+    }
+    return false;
+  };
+  /** 只有手真正离开才开始等列表停。pointercancel 不准进这里。 */
+  const notePointerEnd = () => {
+    const wasDown = fingerDown.current;
+    fingerDown.current = false;
+    if (!wasDown || !blockFollow.current) return;
+    armIdle(360);
+  };
+  const markUserScroll = (which: 'keys' | 'log') => {
+    blockFollow.current = true;
+    userMoved.current = true;
+    scrollWhich.current = which;
+    clearOwnEcho();
+    stopLyricSpring();
+    if (fingerDown.current) {
+      window.clearTimeout(idleTimer.current);
+      return;
+    }
+    armIdle(360);
+  };
+  const writeScrollTop = (box: HTMLElement, y: number) => {
+    const max = Math.max(0, box.scrollHeight - box.clientHeight);
+    const next = Math.max(0, Math.min(max, y));
+    rememberOwn(next);
+    ownScroll.current = true;
+    box.scrollTop = next;
+    ownScroll.current = false;
+  };
   const scrollBoxTo = (box: HTMLElement | null, next: number) => {
     if (!box || !Number.isFinite(next)) return;
-    const before = box.scrollTop;
-    try {
-      box.scrollTo({ top: next, behavior: 'smooth' });
-    } catch (e) {
-      box.scrollTop = next;
+    if (blockFollow.current) return;
+    const max = Math.max(0, box.scrollHeight - box.clientHeight);
+    const target = Math.max(0, Math.min(max, next));
+    if (motionReduced()) {
+      stopLyricSpring();
+      writeScrollTop(box, target);
+      return;
     }
-    window.setTimeout(() => {
-      if (Math.abs(box.scrollTop - before) < 1 && Math.abs(box.scrollTop - next) > 1) box.scrollTop = next;
-    }, 360);
+    const spring = lyricSpring.current;
+    if (!spring.active || spring.box !== box) {
+      spring.box = box;
+      spring.y = box.scrollTop;
+      spring.v = 0;
+    }
+    spring.target = target;
+    spring.active = true;
   };
+  const lyricNodes = (box: HTMLElement, keysMode: boolean) => (
+    box.querySelectorAll(keysMode ? '.vb-line, .vb-k-user' : '.vb-line, .vb-you-text')
+  );
+  const clearLyricPaint = (box: HTMLElement, keysMode: boolean) => {
+    const shown = lyricShown.current;
+    const nodes = lyricNodes(box, keysMode);
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i] as HTMLElement;
+      shown.delete(el);
+      if (!el.style.transform && !el.style.filter && !el.style.opacity) continue;
+      el.style.transform = '';
+      el.style.filter = '';
+      el.style.opacity = '';
+    }
+  };
+  /** 名字是旁边的按钮，不是句子。每帧清掉可能沾上的行内样式，颜色交给原来的变量。 */
+  const clearNamePaint = (box: HTMLElement) => {
+    const root = (box.closest && box.closest('.sully-voice-b')) || box;
+    const names = root.querySelectorAll('.vb-name, .vb-k-name, .vb-who');
+    for (let i = 0; i < names.length; i++) {
+      const el = names[i] as HTMLElement;
+      if (!el.style.opacity && !el.style.filter && !el.style.transform && !el.style.color) continue;
+      el.style.opacity = '';
+      el.style.filter = '';
+      el.style.transform = '';
+      el.style.color = '';
+    }
+  };
+  const paintLyricFocus = (box: HTMLElement, keysMode: boolean, dt: number) => {
+    clearNamePaint(box);
+    const spoken = box.querySelector('.sully-speaking-line') as HTMLElement | null;
+    if (!spoken) {
+      clearLyricPaint(box, keysMode);
+      return;
+    }
+    const reduced = motionReduced();
+    const spokenRect = spoken.getBoundingClientRect();
+    const anchor = spokenRect.top + spokenRect.height / 2;
+    const nodes = lyricNodes(box, keysMode);
+    const sample = box.querySelector('.vb-line') as HTMLElement | null;
+    const unit = Math.max(28, sample ? sample.offsetHeight : 36);
+    const ease = reduced ? 1 : (1 - Math.exp(-Math.max(0.001, dt) / 0.18));
+    const shown = lyricShown.current;
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i] as HTMLElement;
+      const rect = el.getBoundingClientRect();
+      if (rect.height < 1) continue;
+      const dist = Math.abs((rect.top + rect.height / 2) - anchor);
+      const u = dist / unit;
+      let tScale = 1 - Math.min(0.06, u * 0.035);
+      let tOpacity = Math.pow(0.78, u);
+      if (tOpacity < 0.4) tOpacity = 0.4;
+      if (tOpacity > 1) tOpacity = 1;
+      const tBlur = reduced ? 0 : Math.min(1.15, (1 - Math.exp(-u * 0.42)) * 1.15);
+      const prev = shown.get(el);
+      let scale = tScale;
+      let opacity = tOpacity;
+      let blur = tBlur;
+      if (prev && !reduced) {
+        scale = prev.scale + (tScale - prev.scale) * ease;
+        opacity = prev.opacity + (tOpacity - prev.opacity) * ease;
+        blur = prev.blur + (tBlur - prev.blur) * ease;
+        if (Math.abs(scale - tScale) < 0.001) scale = tScale;
+        if (Math.abs(opacity - tOpacity) < 0.004) opacity = tOpacity;
+        if (Math.abs(blur - tBlur) < 0.01) blur = tBlur;
+      }
+      shown.set(el, { scale: scale, opacity: opacity, blur: blur });
+      if (reduced) {
+        el.style.transform = '';
+        el.style.filter = '';
+        el.style.opacity = opacity.toFixed(3);
+        continue;
+      }
+      el.style.transform = 'scale(' + scale.toFixed(3) + ')';
+      el.style.opacity = opacity.toFixed(3);
+      el.style.filter = blur < 0.04 ? '' : 'blur(' + blur.toFixed(2) + 'px)';
+    }
+  };
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const loop = (now: number) => {
+      const dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016;
+      last = now;
+      const spring = lyricSpring.current;
+      if (blockFollow.current || fingerDown.current) {
+        spring.active = false;
+      } else if (spring.active && spring.box) {
+        if (!spring.box.isConnected) {
+          spring.active = false;
+        } else {
+          const acc = -180 * (spring.y - spring.target) - 24 * spring.v;
+          spring.v += acc * dt;
+          spring.y += spring.v * dt;
+          if (Math.abs(spring.y - spring.target) < 0.35 && Math.abs(spring.v) < 8) {
+            spring.y = spring.target;
+            spring.v = 0;
+            spring.active = false;
+          }
+          const max = Math.max(0, spring.box.scrollHeight - spring.box.clientHeight);
+          const y = Math.max(0, Math.min(max, spring.y));
+          rememberOwn(y);
+          ownScroll.current = true;
+          spring.box.scrollTop = y;
+          ownScroll.current = false;
+        }
+      }
+      const box = props.voiceView === 'keys' ? capBox.current : readBox.current;
+      if (box) paintLyricFocus(box, props.voiceView === 'keys', dt);
+      raf = window.requestAnimationFrame(loop);
+    };
+    raf = window.requestAnimationFrame(loop);
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [props.voiceView]);
 
-  /** 「按住」还作数吗。手指不可能按十分钟，真按着最久也就是长按调速那一下。
-   *  超过 10 秒一律算已经松手，顺手把四个状态清干净——一次漏接不该把跟读永久锁死。 */
-  const holdAlive = (hold: { current: boolean }) => {
-    if (!hold.current) return false;
-    if (Date.now() - holdAt.current > 10000) {
-      capHold.current = false;
-      capDrag.current = false;
-      logHold.current = false;
-      logDrag.current = false;
-      return false;
-    }
-    return true;
-  };
+  useEffect(() => {
+    blockFollow.current = false;
+    userMoved.current = false;
+    fingerDown.current = false;
+    const box = props.voiceView === 'keys' ? capBox.current : readBox.current;
+    if (!box) return;
+    const which: 'keys' | 'log' = props.voiceView === 'keys' ? 'keys' : 'log';
+    const onScroll = () => {
+      if (isOwnPosition(box.scrollTop)) return;
+      markUserScroll(which);
+    };
+    const onDown = () => claimScroll(which);
+    const onUp = () => notePointerEnd();
+    box.addEventListener('scroll', onScroll);
+    box.addEventListener('pointerdown', onDown);
+    box.addEventListener('pointerup', onUp);
+    box.addEventListener('touchstart', onDown, { passive: true });
+    box.addEventListener('touchend', onUp);
+    return () => {
+      box.removeEventListener('scroll', onScroll);
+      box.removeEventListener('pointerdown', onDown);
+      box.removeEventListener('pointerup', onUp);
+      box.removeEventListener('touchstart', onDown);
+      box.removeEventListener('touchend', onUp);
+      window.clearTimeout(idleTimer.current);
+    };
+  }, [props.voiceView]);
 
   /** 按 data-k-line 找行。key 里有冒号，选择器万一写坏整个查询会抛，所以套一层壳。 */
   const lineByKey = (box: HTMLElement | null, key: string) => {
@@ -265,22 +474,14 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     }
   };
 
-  // 全局兜底：不管手指/鼠标在哪松手、窗口失焦、页面被藏起来，一律把「按住」解开。
-  // 光靠框上那几个 onPointerUp / onPointerCancel，漏一次就够把跟读拦死。
+  // 手在列表外抬起时，框上收不到 touchend。pointercancel 和失焦不算松手。
   useEffect(() => {
-    const release = () => {
-      capHold.current = false;
-      capDrag.current = false;
-      logHold.current = false;
-      logDrag.current = false;
-    };
-    window.addEventListener('pointerup', release);
-    window.addEventListener('pointercancel', release);
-    window.addEventListener('blur', release);
+    window.addEventListener('pointerup', notePointerEnd);
+    window.addEventListener('touchend', notePointerEnd);
     return () => {
-      window.removeEventListener('pointerup', release);
-      window.removeEventListener('pointercancel', release);
-      window.removeEventListener('blur', release);
+      window.removeEventListener('pointerup', notePointerEnd);
+      window.removeEventListener('touchend', notePointerEnd);
+      window.clearTimeout(idleTimer.current);
     };
   }, []);
 
@@ -396,18 +597,22 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     prevLen.current = bubbleLen;
     if (props.voiceView === 'keys') {
       if (grew && last && last.role === 'user') {
+        if (blockFollow.current) return;
         const node = lineByKey(capBox.current, last.id + ':u');
         if (node) {
           centerCapLine(node, true);
           // 新气泡刚进 DOM，行高可能还没量准；下一帧再对一次，第二次多半就正了。
-          window.requestAnimationFrame(() => centerCapLine(node, true));
+          window.requestAnimationFrame(() => {
+            if (blockFollow.current) return;
+            centerCapLine(node, true);
+          });
         }
       }
       return;
     }
     const el = (props.scrollRef && props.scrollRef.current) || readBox.current;
     if (!el) return;
-    if (holdAlive(logHold)) return;
+    if (blockFollow.current) return;
     if (switched || grew) {
       scrollBoxTo(el, el.scrollHeight);
     }
@@ -530,15 +735,15 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     if (smooth) {
       scrollBoxTo(box, next);
     } else {
-      box.scrollTop = next;
+      stopLyricSpring();
+      writeScrollTop(box, next);
     }
   };
 
-  const lineAtCapCenter = () => {
-    const box = capBox.current;
+  const lineAtBoxCenter = (box: HTMLElement | null) => {
     if (!box) return null;
     const mid = box.getBoundingClientRect().top + box.clientHeight / 2;
-    const nodes = box.querySelectorAll('[data-k-line]');
+    const nodes = box.querySelectorAll('.vb-line, .vb-k-user, .vb-you-text');
     let best: HTMLElement | null = null;
     let bestDist = Infinity;
     for (let i = 0; i < nodes.length; i++) {
@@ -577,7 +782,60 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     if (smooth) {
       scrollBoxTo(box, next);
     } else {
-      box.scrollTop = next;
+      stopLyricSpring();
+      writeScrollTop(box, next);
+    }
+  };
+
+  const runKeysFollow = () => {
+    if (!followKey) return;
+    if (lingerLine.current === followKey) return;
+    lingerLine.current = null;
+    const box = capBox.current;
+    // 先找「正在念」那一行；万一标记没贴上，就按 key 直接找——别整段放弃。
+    const el = box
+      ? ((box.querySelector('[data-k-now]') || lineByKey(box, followKey)) as HTMLElement | null)
+      : null;
+    if (el) centerCapLine(el, true);
+  };
+  const runLogFollow = () => {
+    if (!followKey) return;
+    if (lingerLine.current === followKey) return;
+    lingerLine.current = null;
+    const box = readBox.current;
+    const el = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
+    if (el) centerLogLine(el, true);
+  };
+
+  // 列表停稳、手也离开了，才走到这里。四键和全屏同一套：正中不是正在念的那句才托回去。
+  settleRef.current = () => {
+    if (fingerDown.current) return;
+    const which = scrollWhich.current;
+    const moved = userMoved.current;
+    blockFollow.current = false;
+    userMoved.current = false;
+    scrollWhich.current = null;
+    clearOwnEcho();
+    if (moved && (which === 'keys' || which === 'log')) {
+      wantFollow.current = false;
+      const box = which === 'keys' ? capBox.current : readBox.current;
+      const spoken = box
+        ? (box.querySelector('.sully-speaking-line') as HTMLElement | null)
+        : null;
+      const at = lineAtBoxCenter(box);
+      if (spoken && at && at !== spoken) {
+        lingerLine.current = null;
+        if (which === 'keys') centerCapLine(spoken, true);
+        else centerLogLine(spoken, true);
+      } else {
+        lingerLine.current = followKey || null;
+      }
+      return;
+    }
+    if (wantFollow.current) {
+      wantFollow.current = false;
+      if (props.voiceView === 'keys') runKeysFollow();
+      else runLogFollow();
     }
   };
 
@@ -593,25 +851,24 @@ const VoicePhoneB: React.FC<Props> = (props) => {
       return;
     }
     const el = (props.scrollRef && props.scrollRef.current) || readBox.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) {
+      stopLyricSpring();
+      writeScrollTop(el, el.scrollHeight);
+    }
   }, [bubbleLen, props.voiceView]);
 
   useEffect(() => {
     if (props.voiceView !== 'keys') return;
     if (!followKey) return;
     const follow = () => {
-      if (holdAlive(capHold)) return;
-      if (lingerLine.current === followKey) return;
-      lingerLine.current = null;
-      const box = capBox.current;
-      // 先找「正在念」那一行；万一标记没贴上，就按 key 直接找——别整段放弃。
-      const el = box
-        ? ((box.querySelector('[data-k-now]') || lineByKey(box, followKey)) as HTMLElement | null)
-        : null;
-      if (el) centerCapLine(el, true);
+      if (blockFollow.current) {
+        wantFollow.current = true;
+        return;
+      }
+      runKeysFollow();
     };
     follow();
-    // 行刚换，换行/字号要下一帧才量得准：再对一次。
+    // 行刚换，高度要下一帧才量得准：再对一次。
     const raf = window.requestAnimationFrame(follow);
     return () => window.cancelAnimationFrame(raf);
   }, [props.voiceView, followKey]);
@@ -620,12 +877,11 @@ const VoicePhoneB: React.FC<Props> = (props) => {
     if (props.voiceView !== 'log') return;
     if (!followKey) return;
     const follow = () => {
-      if (holdAlive(logHold)) return;
-      if (lingerLine.current === followKey) return;
-      lingerLine.current = null;
-      const box = readBox.current;
-      const el = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
-      if (el) centerLogLine(el, true);
+      if (blockFollow.current) {
+        wantFollow.current = true;
+        return;
+      }
+      runLogFollow();
     };
     follow();
     const raf = window.requestAnimationFrame(follow);
@@ -870,36 +1126,6 @@ const VoicePhoneB: React.FC<Props> = (props) => {
             <div
               className="vb-caption-scroll"
               ref={capBox}
-              onPointerDown={(event) => {
-                capHold.current = true;
-                capDrag.current = false;
-                capStartY.current = event.clientY;
-                holdAt.current = Date.now();
-              }}
-              onPointerMove={(event) => {
-                if (!capHold.current) return;
-                if (Math.abs(event.clientY - capStartY.current) > 8) capDrag.current = true;
-              }}
-              onPointerUp={() => {
-                const dragged = capDrag.current;
-                capHold.current = false;
-                capDrag.current = false;
-                if (!dragged) return;
-                const at = lineAtCapCenter();
-                const cur = capBox.current ? (capBox.current.querySelector('[data-k-now]') as HTMLElement | null) : null;
-                const atKey = at ? at.getAttribute('data-k-line') : '';
-                const curKey = cur ? cur.getAttribute('data-k-line') : '';
-                if (cur && atKey && curKey && atKey !== curKey) {
-                  lingerLine.current = null;
-                  centerCapLine(cur, true);
-                } else {
-                  lingerLine.current = curKey || followKey || null;
-                }
-              }}
-              onPointerCancel={() => {
-                capHold.current = false;
-                capDrag.current = false;
-              }}
             >
               <div className="vb-k-pad" />
               <div className="vb-caption-inner">
@@ -945,29 +1171,6 @@ const VoicePhoneB: React.FC<Props> = (props) => {
             ref={(el) => {
               readBox.current = el;
               if (props.scrollRef) (props.scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-            }}
-            onPointerDown={(event) => {
-              logHold.current = true;
-              logDrag.current = false;
-              logStartY.current = event.clientY;
-              holdAt.current = Date.now();
-            }}
-            onPointerMove={(event) => {
-              if (!logHold.current) return;
-              if (Math.abs(event.clientY - logStartY.current) > 8) logDrag.current = true;
-            }}
-            onPointerUp={() => {
-              const dragged = logDrag.current;
-              logHold.current = false;
-              logDrag.current = false;
-              if (!dragged) return;
-              const box = readBox.current;
-              const cur = box ? (box.querySelector('.sully-speaking-line') as HTMLElement | null) : null;
-              if (cur && followKey) lingerLine.current = followKey;
-            }}
-            onPointerCancel={() => {
-              logHold.current = false;
-              logDrag.current = false;
             }}
           >
             {!props.bubbles.length && <div className="vb-empty">{props.emptyPrompt}</div>}
