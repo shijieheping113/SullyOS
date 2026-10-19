@@ -40,7 +40,8 @@ interface LiveFloatingPhoneProps {
   isOpen: boolean;
   characterId: string;
   charName: string;
-  contextDescription: string;
+  /** 可选：不传就完全不加任何场景说明，走普通私聊上下文 */
+  contextDescription?: string;
   onClose: () => void;
   onUnreadChange?: (unread: boolean) => void;
 }
@@ -55,8 +56,9 @@ export const LiveFloatingPhone: React.FC<LiveFloatingPhoneProps> = ({
   const [unread, setUnread] = useState(false);
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
-  const contextRef = useRef(contextDescription);
-  contextRef.current = contextDescription;
+  // 电波四个入口都不再注入场景说明：没有就是空串，Chat 请求里不会拼出占位文案
+  const contextRef = useRef<string>(contextDescription || '');
+  contextRef.current = contextDescription || '';
 
   useEffect(() => {
     if (isOpen) {

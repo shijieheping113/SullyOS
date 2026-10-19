@@ -2,6 +2,8 @@
  * 电波 (OnAir) —— AI 辅助代写、动态专属礼物生成、NPC 频道池重 Roll、VOD 与总结生成器
  */
 import { ContextBuilder } from './context';
+import { buildLiveGenerationPayload } from './liveStreamContext';
+import { clampManualContextLimit } from './chatContextRange';
 import { resolveDialogueApi } from './characterApi';
 import { isSecondaryLlmReady } from './secondaryLlmApi';
 import { secondaryLlmCall } from './secondaryLlmCall';
@@ -19,7 +21,7 @@ import {
   NpcStreamerChannelCard,
   DEFAULT_NPC_CHANNELS,
 } from './liveStreamTypes';
-import type { APIConfig, CharacterProfile, Message, UserProfile } from '../types';
+import type { APIConfig, CharacterProfile, Message, RealtimeConfig, UserProfile } from '../types';
 
 // ==================== 主模型 & 辅助模型（Secondary LLM）双擎调用 ====================
 
@@ -280,47 +282,54 @@ export async function generateNpcChannelPoolWithAi(opts: {
 
 // ==================== 阶段滚动总结 & 下播全貌总结（四栏保真） ====================
 
-export async function generateLiveRollingSummary(opts: {
+/**
+ * 只压缩**这一轮**（一个 LiveChunk）。
+ * 不跨轮合并、不做整场总结、不带任何私聊内容或「场外私聊互动」栏。
+ * 公屏弹幕不筛：普通路人、礼物、SC、用户弹幕按顺序全部进摘要。
+ */
+export async function generateLiveRoundSummary(opts: {
   apiConfig: APIConfig;
   char: CharacterProfile;
   channel: StreamerChannelProfile;
   session: LiveStreamSession;
-  chunksToFold: LiveChunk[];
+  chunk: LiveChunk;
 }): Promise<string> {
-  const { apiConfig, char, channel, session, chunksToFold } = opts;
-  const rawTranscript = chunksToFold
-    .map(c => {
-      const lines = c.beats.map((b, bi) => {
-        const sp = b.speechTranslated ? `「${b.speechOriginal}」（${b.speechTranslated}）` : `「${b.speechOriginal}」`;
-        const scAndUser = (b.danmaku || [])
-          .filter(d => (d.scAmount && d.scAmount > 0) || d.giftName || d.isUserMain || d.isUserAlt)
-          .map(d => {
-            const who = d.isUserMain ? `[熟人本尊：${d.senderName}]` : `[观众：「${d.senderName}」]`;
-            const sc = d.scAmount ? `(SC ¥${d.scAmount})` : d.giftName ? `(送出 ${d.giftEmoji || ''}${d.giftName})` : '';
-            return `${who}${sc}: ${d.text}`;
-          })
-          .join('；');
-        return `  (${bi + 1}) 画面：${b.screen} ｜ 台词：${sp}${scAndUser ? ` ｜ 互动：${scAndUser}` : ''}`;
-      });
-      return `【第 ${c.index + 1} 段】\n${lines.join('\n')}`;
+  const { apiConfig, char, channel, session, chunk } = opts;
+  const rawTranscript = chunk.beats
+    .map((b, bi) => {
+      const sp = b.speechTranslated ? `「${b.speechOriginal}」（同传：${b.speechTranslated}）` : b.speechOriginal ? `「${b.speechOriginal}」` : '（专注动作未开口）';
+      const dm = (b.danmaku || [])
+        .map(d => {
+          const tag = [
+            d.scAmount && d.scAmount > 0 ? `SC ¥${d.scAmount}` : '',
+            d.giftName ? `送出 ${d.giftEmoji || ''}${d.giftName}` : '',
+            d.isUserMain ? '熟人本尊' : d.isUserAlt ? '熟人小号' : '',
+          ]
+            .filter(Boolean)
+            .join('·');
+          return `      ${d.senderName}${tag ? `（${tag}）` : ''}：${d.text}${d.translation ? `（译：${d.translation}）` : ''}`;
+        })
+        .join('\n');
+      return `  (${bi + 1}) 画面：${b.screen} ｜ 台词：${sp}${dm ? `\n    公屏：\n${dm}` : ''}`;
     })
-    .join('\n\n');
+    .join('\n');
 
-  const prompt = `请你为「${char.name}」的直播《${session.title}》（频道：${channel.channelName}）整理第 ${chunksToFold[0].index + 1} 至第 ${chunksToFold[chunksToFold.length - 1].index + 1} 段的**高保真阶段纪要**。
-请严格按以下四个小标题输出（约 180~280 字，保留具体金额、观众昵称、主播原话金句与反差细节，禁止笼统套话）：
-【主线进程与高能名场面】
-【Super Chat、礼物与重点互动台账】
-【场外私聊消息与镜头微表情反差】
-【未完待续与遗留Flag】
+  const prompt = `请把「${char.name}」的直播《${session.title}》（频道：${channel.channelName}）的**第 ${chunk.index + 1} 轮**压成一段逐轮摘要（约 150~260 字，纯文字，可分两三段，不要小标题清单）。
 
-待整理直播记录：
+要求：
+1. 只写这一轮：按发生顺序保留关键画面、台词要点、公屏里值得记的互动（含礼物、SC、普通路人弹幕），以及结尾停在哪、留了什么钩子。
+2. 具体一点：留着人名、金额、原话里的关键词；不要「气氛热烈」「互动良好」这类空话，也不要升华抒情。
+3. 不写整场总结，不提前写后面还没发生的事。
+4. **只写直播里真实发生的内容**：不要编造或提及任何私聊、手机消息、场外对话。
+
+这一轮的直播记录：
 ${rawTranscript}`;
 
   const raw = await callAuxOrMainLlm({
     apiConfig,
     char,
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.5,
+    temperature: 0.45,
     purpose: 'live_rolling_summary',
   });
   return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -526,14 +535,33 @@ export async function generateNpcWatchBeatDualEngine(opts: {
   npcSession: NpcWatchSession;
   userInteractionText?: string;
   interactionType?: 'whisper_char' | 'send_npc_danmaku';
-  allMsgs: Message[];
+  /** 兼容旧调用；这条路径不再用整库消息，改为下面两份 */
+  allMsgs?: Message[];
+  /** 角色反应阶段用的正常聊天范围原文 */
+  charHistoryMessages?: Message[];
+  /** 角色反应阶段的实时背景配置（已按电波总控过滤） */
+  realtimeConfig?: RealtimeConfig;
+  /** 第三方主播阶段可见的公开实时背景文本：不含定位、不含角色私聊与记忆 */
+  publicRealtimeText?: string;
 }): Promise<NpcWatchBeat> {
-  const { apiConfig, char, userProfile, npcSession, userInteractionText, interactionType } = opts;
+  const {
+    apiConfig,
+    char,
+    userProfile,
+    npcSession,
+    userInteractionText,
+    interactionType,
+    charHistoryMessages = [],
+    realtimeConfig,
+    publicRealtimeText,
+  } = opts;
   const userName = (userProfile?.name || '你').trim() || '你';
   const prevBeat = npcSession.beats[npcSession.beats.length - 1];
 
+  // 第三方主播只拿到自己的频道资料、这一场的公开进度和用户明确投递的弹幕；
+  // 拿不到 Ann 与角色的私聊、记忆宫殿召回，也拿不到用户位置。
   const npcPrompt = `你正在扮演直播平台上的第三方主播「${npcSession.npcStreamerName}」（分区：${npcSession.npcCategoryLabel}，标题：《${npcSession.npcRoomTitle}》，风格简介：${npcSession.npcBio}）。
-${npcSession.customRulePrompt ? `补充设定规则：${npcSession.customRulePrompt}\n` : ''}${prevBeat ? `上一拍画面：${prevBeat.npcScreen}\n上一拍台词：「${prevBeat.npcSpeech}」\n` : ''}${interactionType === 'send_npc_danmaku' && userInteractionText ? `观众刚发来弹幕：「${userInteractionText}」，请顺着做出反应！` : '请自然往下演新的一拍画面与台词（真实自然，拒绝浮夸套路）！'}
+${npcSession.customRulePrompt ? `补充设定规则：${npcSession.customRulePrompt}\n` : ''}${prevBeat ? `上一拍画面：${prevBeat.npcScreen}\n上一拍台词：「${prevBeat.npcSpeech}」\n` : ''}${interactionType === 'send_npc_danmaku' && userInteractionText ? `观众刚发来弹幕：「${userInteractionText}」，请顺着做出反应！` : '请自然往下演新的一拍画面与台词（真实自然，拒绝浮夸套路）！'}${publicRealtimeText ? `\n（以下是此刻的现实背景，只在自然相关时顺口带一句，不要刻意播报：\n${publicRealtimeText}\n）\n` : ''}
 只输出 JSON：\`{"npcScreen": "镜头画面描写(40~80字)", "npcSpeech": "NPC主播台词", "danmaku": [{"senderName": "网友A", "text": "弹幕"}, {"senderName": "网友B", "text": "弹幕"}]}\``;
 
   const npcRaw = await callAuxOrMainLlm({
@@ -554,17 +582,24 @@ ${npcSession.customRulePrompt ? `补充设定规则：${npcSession.customRulePro
     if (Array.isArray(obj.danmaku)) npcDanmaku = obj.danmaku;
   } catch {}
 
-  const charPrompt = `你（${char.name}）正和 ${userName} 坐在一起，用手机刷第三方主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》。
-此刻直播画面：${npcScreen}
+  const charPrompt = `此刻直播画面：${npcScreen}
 主播正说：「${npcSpeech}」
 ${userInteractionText ? (interactionType === 'whisper_char' ? `${userName} 凑过来跟你说：「${userInteractionText}」` : `${userName} 刚在直播间发了条弹幕：「${userInteractionText}」`) : ''}
 请写出你（${char.name}）在旁边陪看时的真实反应动作与对 ${userName} 说的话！
 只输出 JSON：\`{"charReactionAction": "动作神态(25~50字)", "charReactionSpeech": "你对${userName}说的话", "charEmotion": "calm"}\``;
 
-  const charMessages = await ContextBuilder.buildCharacterRequest(
-    { char, user: userProfile },
-    [{ role: 'user', content: charPrompt }],
-  );
+  // 角色这一侧才用正常聊天范围 + 记忆召回 + 实时背景；情绪/日程不注入。
+  const charRules = `你现在和 ${userName} 坐在一起，用手机看第三方主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》。
+直播画面和主播的话由对方提供，你只负责写自己陪看时的反应。不要替对方主播说话，也不要复述 ${userName} 的私聊原文。`;
+  const charMessages = await buildLiveGenerationPayload({
+    char,
+    userProfile,
+    rules: charRules,
+    task: charPrompt,
+    historyMessages: charHistoryMessages,
+    realtimeConfig,
+    contextLimit: clampManualContextLimit(char.contextLimit),
+  });
   const charRaw = await callMainStreamerLlm({ apiConfig, char, messages: charMessages, temperature: 0.88 });
 
   let charReactionAction = `${char.name}看向屏幕。`;
@@ -607,19 +642,27 @@ export async function rerollCharNpcReactionOnly(opts: {
   userProfile: UserProfile;
   npcSession: NpcWatchSession;
   beat: NpcWatchBeat;
-  allMsgs: Message[];
+  /** 兼容旧调用 */
+  allMsgs?: Message[];
+  charHistoryMessages?: Message[];
+  realtimeConfig?: RealtimeConfig;
 }): Promise<{ charReactionAction: string; charReactionSpeech: string; charEmotion: string }> {
-  const { apiConfig, char, userProfile, npcSession, beat } = opts;
+  const { apiConfig, char, userProfile, npcSession, beat, charHistoryMessages = [], realtimeConfig } = opts;
   const userName = (userProfile?.name || '你').trim() || '你';
-  const prompt = `你（${char.name}）正和 ${userName} 一起看 NPC 主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》。
-当前画面：${beat.npcScreen} ｜ 台词：「${beat.npcSpeech}」
+  const prompt = `当前画面：${beat.npcScreen} ｜ 台词：「${beat.npcSpeech}」
 【重Roll要求】：上一版你的反应（「${beat.charReactionSpeech}」）已被弃用，请彻底换一个角度、动作和吐槽台词，严禁雷同！
 只输出 JSON：\`{"charReactionAction": "...", "charReactionSpeech": "...", "charEmotion": "calm"}\``;
 
-  const messages = await ContextBuilder.buildCharacterRequest(
-    { char, user: userProfile },
-    [{ role: 'user', content: prompt }],
-  );
+  const rules = `你现在和 ${userName} 坐在一起，用手机看第三方主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》。直播画面和主播的话由对方提供，你只写自己陪看时的反应；不要替对方主播说话，也不复述私聊原文。`;
+  const messages = await buildLiveGenerationPayload({
+    char,
+    userProfile,
+    rules,
+    task: prompt,
+    historyMessages: charHistoryMessages,
+    realtimeConfig,
+    contextLimit: clampManualContextLimit(char.contextLimit),
+  });
   const raw = await callMainStreamerLlm({ apiConfig, char, messages, temperature: 0.96 });
   try {
     const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();

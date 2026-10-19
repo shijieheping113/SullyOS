@@ -142,10 +142,16 @@ export interface LiveChunk {
   beats: LiveBeat[];
   /** 生成该段时用户投递的弹幕 / SC / 礼物 */
   userInputs: LiveDanmakuItem[];
-  /** 是否已被阶段滚动摘要折叠 */
+  /** 是否已被阶段滚动摘要折叠（旧字段，仅兼容读取） */
   folded?: boolean;
   foldedBySummaryId?: string;
-  /** 同步写入主聊天 DB 的消息 ID（source: 'live'，下播后由总结顶替 superseded） */
+  /**
+   * 这一轮自己的逐轮摘要。压缩后聊天里的原卡正文就是它，续播前情也用它。
+   * 与 rollingSummaries 的区别：这里只写这一轮，不跨轮合并。
+   */
+  roundSummary?: string;
+  summaryUpdatedAt?: number;
+  /** 这一轮同步写入主聊天的那条轮次卡消息 ID（source: 'live_round'） */
   dbMessageId?: number;
 }
 
@@ -314,7 +320,7 @@ export interface NpcWatchSession {
 
 export interface LivestreamChatCardPayload {
   type: 'livestream_card';
-  cardKind: 'live_summary' | 'live_clip' | 'vod_share' | 'npc_watch';
+  cardKind: 'live_summary' | 'live_clip' | 'vod_share' | 'npc_watch' | 'live_round' | 'npc_watch_round';
   sessionId: string;
   channelId?: string;
   charId: string;
@@ -323,6 +329,24 @@ export interface LivestreamChatCardPayload {
   identityMode?: ChannelIdentityMode;
   title: string;
   categoryLabel: string;
+  /**
+   * 逐轮卡：这一轮在聊天里的正文。未压缩时是本轮原文，压缩后换成逐轮摘要。
+   * 旧卡（下播总结等）不带这个字段，仍读 summary。
+   */
+  body?: string;
+  /** 逐轮卡：收起状态下显示的一行预览 */
+  preview?: string;
+  /** 逐轮卡：轮次序号（从 1 开始，对应 chunk.index + 1 / beat.index + 1） */
+  roundIndex?: number;
+  /** 逐轮卡：轮次标签，如「第 3 轮」 */
+  roundLabel?: string;
+  /** 逐轮卡：这一轮是否已被压缩成逐轮摘要 */
+  isCompressed?: boolean;
+  /** 逐轮卡：最近一次原位更新的时间（压缩/编辑/重 Roll），不是消息时间 */
+  updatedAt?: number;
+  /** 陪看逐拍卡：第三方主播名与房间名 */
+  npcStreamerName?: string;
+  npcRoomTitle?: string;
   viewerCount?: number;
   summary: string;
   clipBeat?: {
@@ -333,6 +357,34 @@ export interface LivestreamChatCardPayload {
   };
   createdAt: number;
 }
+
+/**
+ * 电波总控里的实时背景开关。
+ * 只作用于电波（直播 / VOD / 陪看）生成请求，不反向修改系统「实时感知」设置。
+ */
+export interface OnAirRealtimeSettings {
+  /** 总开关：关掉时一个实时背景类别都不请求 */
+  enabled: boolean;
+  /** 天气 */
+  weather: boolean;
+  /** 国内新闻/热点 */
+  news: boolean;
+  /** 日本热点 */
+  jpHot: boolean;
+  /** 当前时间/日期/节日（仍受角色「时间感知」开关约束） */
+  time: boolean;
+  /** 真实定位（仍受系统定位授权约束，只给主角私密上下文） */
+  location: boolean;
+}
+
+export const DEFAULT_ONAIR_REALTIME_SETTINGS: OnAirRealtimeSettings = {
+  enabled: true,
+  weather: true,
+  news: true,
+  jpHot: true,
+  time: true,
+  location: true,
+};
 
 // ==================== 预设直播分类模板 ====================
 

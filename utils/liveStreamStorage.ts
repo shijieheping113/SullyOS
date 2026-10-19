@@ -6,11 +6,16 @@ import {
   StreamerChannelProfile,
   ViewerPersona,
   LiveStreamSession,
+  LiveChunk,
   VodVideoPost,
   NpcWatchSession,
+  NpcWatchBeat,
   NpcStreamerChannelCard,
   LivePlatformTheme,
   LiveBeat,
+  LivestreamChatCardPayload,
+  OnAirRealtimeSettings,
+  DEFAULT_ONAIR_REALTIME_SETTINGS,
   STREAM_PRESET_TEMPLATES,
   DEFAULT_NPC_CHANNELS,
 } from './liveStreamTypes';
@@ -373,6 +378,7 @@ export async function deleteChannelById(channelId: string): Promise<void> {
 const KV_VIEWER_PERSONAS = 'viewer_personas';
 const KV_NPC_POOL = 'npc_pool';
 const KV_NPC_CUSTOM_RULE = 'npc_custom_rule';
+const KV_ONAIR_REALTIME = 'onair_realtime';
 
 /** live_kv 里的键名，迁移要按同样的名字写，所以对外公开一份 */
 export const LIVE_KV_IDS = {
@@ -494,6 +500,26 @@ export async function loadNpcCustomRule(): Promise<string> {
 
 export async function saveNpcCustomRule(rule: string): Promise<void> {
   await liveKvDb.put(KV_NPC_CUSTOM_RULE, rule);
+}
+
+// ---- 电波总控 · 实时背景开关（存现有 live_kv，不新增表、不动 DB 版本）----
+
+export async function loadOnAirRealtimeSettings(): Promise<OnAirRealtimeSettings> {
+  const saved = await liveKvDb.get<Partial<OnAirRealtimeSettings>>(KV_ONAIR_REALTIME);
+  if (!saved || typeof saved !== 'object') return { ...DEFAULT_ONAIR_REALTIME_SETTINGS };
+  // 旧版本可能只存了部分分类：缺的按默认值补，不因为多加了分类就把用户原来的选择清掉
+  return {
+    enabled: saved.enabled !== false,
+    weather: saved.weather !== false,
+    news: saved.news !== false,
+    jpHot: saved.jpHot !== false,
+    time: saved.time !== false,
+    location: saved.location !== false,
+  };
+}
+
+export async function saveOnAirRealtimeSettings(settings: OnAirRealtimeSettings): Promise<void> {
+  await liveKvDb.put(KV_ONAIR_REALTIME, settings);
 }
 
 export async function loadNpcWatchSessions(): Promise<NpcWatchSession[]> {
@@ -623,32 +649,305 @@ export function formatChunkForDbMemory(
   return lines.join('\n');
 }
 
+/**
+ * 这一轮的指纹。压缩请求发出去之后，这轮可能又被重 Roll / 编辑，
+ * 晚回来的旧摘要要拿它比对，指纹不一样就整份丢掉，不许覆盖新内容。
+ */
+export function liveRoundSignature(chunk: LiveChunk): string {
+  return JSON.stringify({
+    index: chunk.index,
+    beats: chunk.beats.map(b => [b.screen, b.speechOriginal, (b.danmaku || []).length]),
+  });
+}
+
+/**
+ * 四轮一压，一次只压一轮：返回这一趟该压的那一轮，也就是**最早一条还没有摘要**的。
+ * 未压缩的轮次没超过 keepRecent（默认 3）时返回 null——最新几轮永远留原文。
+ * 不返回数组、不做批量：一段会话里绝不把两轮合并成一条摘要。
+ */
+export function pickRoundToFold(chunks: LiveChunk[], keepRecent = 3): LiveChunk | null {
+  const uncompressed = [...chunks]
+    .sort((a, b) => a.index - b.index)
+    .filter(c => !(c.roundSummary && c.roundSummary.trim()));
+  if (uncompressed.length <= keepRecent) return null;
+  return uncompressed[0];
+}
+
+/** 把一轮的摘要写回它自己那条 chunk，其余轮次原样不动 */
+export function applyRoundSummary(
+  session: LiveStreamSession,
+  chunkId: string,
+  summary: string,
+): LiveStreamSession {
+  const now = Date.now();
+  return {
+    ...session,
+    chunks: session.chunks.map(c =>
+      c.id === chunkId ? { ...c, roundSummary: summary, summaryUpdatedAt: now } : c,
+    ),
+  };
+}
+
+/** 逐轮卡正文的一行预览：去掉换行，掐到一个卡片的宽度 */
+function buildRoundPreview(body: string): string {
+  const flat = (body || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('【'))
+    .join(' ')
+    .replace(/\s+/g, ' ');
+  return flat.length > 70 ? `${flat.slice(0, 70)}…` : flat;
+}
+
+/**
+ * 一轮直播的原文正文（给聊天卡显示，也给摘要模型当输入）。
+ * 与旧 formatChunkForDbMemory 的差别：这里**不筛弹幕**，普通路人、礼物、SC、用户弹幕全在，
+ * 因为施工单要求这一轮摘要必须覆盖整轮公屏，而不是只留付费和熟人。
+ */
+export function formatRoundBody(
+  channel: StreamerChannelProfile,
+  session: LiveStreamSession,
+  chunk: LiveChunk,
+): string {
+  const modeTag =
+    channel.identityMode === 'secret_alt'
+      ? `匿名马甲频道「${channel.channelName}」`
+      : channel.identityMode === 'vtuber'
+      ? `VTuber皮套频道「${channel.channelName}」`
+      : `直播频道「${channel.channelName}」`;
+  const lines: string[] = [
+    `【${modeTag}《${session.title}》· 第 ${chunk.index + 1} 轮】`,
+  ];
+
+  chunk.beats.forEach((b, idx) => {
+    const speechPart = b.speechTranslated
+      ? `「${b.speechOriginal}」（同传：${b.speechTranslated}）`
+      : b.speechOriginal
+      ? `「${b.speechOriginal}」`
+      : '（专注动作未开口）';
+    lines.push(`${idx + 1}. 画面：${b.screen} ｜ 台词：${speechPart}`);
+    (b.danmaku || []).forEach(d => {
+      const tags = [
+        d.scAmount && d.scAmount > 0 ? `SC ¥${d.scAmount}` : '',
+        d.giftName ? `送出 ${d.giftEmoji || ''}${d.giftName}` : '',
+        d.isUserMain ? '熟人本尊' : d.isUserAlt ? '熟人小号' : '',
+        d.translation ? `译：${d.translation}` : '',
+      ].filter(Boolean);
+      const who = tags.length > 0 ? `${d.senderName}（${tags.join('·')}）` : d.senderName;
+      lines.push(`   弹幕 ${who}：${d.text}`);
+    });
+  });
+
+  return lines.join('\n');
+}
+
+/** 一轮直播在聊天里那张卡要写什么 */
+export function buildLiveRoundCard(opts: {
+  charId: string;
+  charName?: string;
+  channel: StreamerChannelProfile;
+  session: LiveStreamSession;
+  chunk: LiveChunk;
+  /** 压缩后传进来：卡正文换成这一轮的逐轮摘要 */
+  summary?: string;
+  /** 这一轮是重 Roll / 编辑出来的，只影响 updatedAt */
+  regenerated?: boolean;
+}): LivestreamChatCardPayload {
+  const { channel, session, chunk } = opts;
+  const summaryText = (opts.summary || chunk.roundSummary || '').trim();
+  const body = summaryText || formatRoundBody(channel, session, chunk);
+  return {
+    type: 'livestream_card',
+    cardKind: 'live_round',
+    sessionId: session.id,
+    channelId: channel.id,
+    charId: opts.charId,
+    charName: opts.charName || '',
+    channelName: channel.channelName,
+    identityMode: channel.identityMode,
+    title: session.title,
+    categoryLabel: session.categoryLabel,
+    body,
+    preview: buildRoundPreview(body),
+    roundIndex: chunk.index + 1,
+    roundLabel: `第 ${chunk.index + 1} 轮`,
+    isCompressed: Boolean(summaryText),
+    updatedAt: Date.now(),
+    viewerCount: session.viewerCount,
+    summary: body,
+    createdAt: chunk.createdAt || Date.now(),
+  };
+}
+
+/** 原位更新一张已有的轮次卡。返回 false = 这张卡已经被用户删了，不重建 */
+async function writeRoundCardInPlace(messageId: number, card: LivestreamChatCardPayload): Promise<boolean> {
+  try {
+    await DB.updateMessage(messageId, JSON.stringify(card));
+  } catch (e: any) {
+    if (String(e?.message || '').includes('not found')) return false;
+    throw e;
+  }
+  await DB.updateMessageMetadata(messageId, prev => ({
+    ...(prev || {}),
+    scoreCard: card,
+  }));
+  return true;
+}
+
+/**
+ * 把一轮直播写成聊天时间线上的一张可见轮次卡。
+ * - 已有 dbMessageId：原位更新那一条（ID / 时间戳 / 位置都不动）
+ * - 卡被用户删掉了：不重建，也不另发一张
+ * - 没有：新建一条位置在当下
+ */
 export async function syncLiveChunkToDb(opts: {
   charId: string;
+  charName?: string;
   channel: StreamerChannelProfile;
   session: LiveStreamSession;
   chunkIndex: number;
   beats: LiveBeat[];
   existingDbMsgId?: number;
+  /** 压缩完成时把逐轮摘要一起写进原卡 */
+  summary?: string;
 }): Promise<number> {
-  const content = formatChunkForDbMemory(opts.channel, opts.session, opts.chunkIndex, opts.beats);
+  const chunk: LiveChunk = {
+    id: `chunk-db-${opts.session.id}-${opts.chunkIndex}`,
+    index: opts.chunkIndex,
+    createdAt: Date.now(),
+    beats: opts.beats,
+    userInputs: [],
+    roundSummary: opts.summary,
+  };
+  const card = buildLiveRoundCard({
+    charId: opts.charId,
+    charName: opts.charName,
+    channel: opts.channel,
+    session: opts.session,
+    chunk,
+    summary: opts.summary,
+  });
+
   if (opts.existingDbMsgId && opts.existingDbMsgId > 0) {
-    await DB.updateMessage(opts.existingDbMsgId, content);
+    await writeRoundCardInPlace(opts.existingDbMsgId, card);
     return opts.existingDbMsgId;
   }
-  const id = await DB.saveMessage({
+
+  return DB.saveMessage({
     charId: opts.charId,
     role: 'assistant',
-    type: 'text',
-    content,
+    type: 'score_card',
+    content: JSON.stringify(card),
     metadata: {
-      source: 'live',
+      source: 'live_round',
+      scoreCard: card,
       liveSessionId: opts.session.id,
       liveChannelId: opts.channel.id,
       liveChunkIndex: opts.chunkIndex,
     },
   });
-  return id;
+}
+
+/**
+ * 这一轮压缩完成（或重算摘要）后，把摘要写回它自己的原卡。
+ * 不新建消息、不改时间戳。卡若已被删，返回 false，调用方只需记住「这轮没有可见卡」。
+ */
+export async function updateLiveRoundCardSummary(opts: {
+  messageId: number;
+  charId: string;
+  charName?: string;
+  channel: StreamerChannelProfile;
+  session: LiveStreamSession;
+  chunk: LiveChunk;
+  summary: string;
+}): Promise<boolean> {
+  const card = buildLiveRoundCard({
+    charId: opts.charId,
+    charName: opts.charName,
+    channel: opts.channel,
+    session: opts.session,
+    chunk: opts.chunk,
+    summary: opts.summary,
+  });
+  return writeRoundCardInPlace(opts.messageId, card);
+}
+
+/** 一轮陪看在这一拍里的正文：NPC 画面/台词/弹幕 + 角色反应 + 本轮用户互动 */
+export function formatNpcBeatBody(session: NpcWatchSession, beat: NpcWatchBeat, charName?: string): string {
+  const lines = [
+    `【陪看 · ${session.npcStreamerName}《${session.npcRoomTitle}》· 第 ${beat.index + 1} 拍】`,
+    `1. 直播画面：${beat.npcScreen}`,
+    `   主播说：「${beat.npcSpeech}」`,
+  ];
+  (beat.npcDanmaku || []).forEach(d => {
+    lines.push(`   弹幕 ${d.senderName}：${d.text}`);
+  });
+  const who = charName || '角色';
+  let no = 2;
+  if (beat.userActionNote) {
+    lines.push(`${no}. 这一拍你的互动：${beat.userActionNote}`);
+    no += 1;
+  }
+  lines.push(`${no}. ${who}的反应：${beat.charReactionAction}「${beat.charReactionSpeech}」`);
+  return lines.join('\n');
+}
+
+export function buildNpcRoundCard(opts: {
+  charId: string;
+  charName?: string;
+  session: NpcWatchSession;
+  beat: NpcWatchBeat;
+}): LivestreamChatCardPayload {
+  const { session, beat } = opts;
+  const body = formatNpcBeatBody(session, beat, opts.charName);
+  return {
+    type: 'livestream_card',
+    cardKind: 'npc_watch_round',
+    sessionId: session.id,
+    charId: opts.charId,
+    charName: opts.charName || '',
+    channelName: session.npcStreamerName,
+    title: session.npcRoomTitle,
+    categoryLabel: session.npcCategoryLabel,
+    npcStreamerName: session.npcStreamerName,
+    npcRoomTitle: session.npcRoomTitle,
+    body,
+    preview: buildRoundPreview(body),
+    roundIndex: beat.index + 1,
+    roundLabel: `第 ${beat.index + 1} 拍`,
+    isCompressed: false,
+    updatedAt: Date.now(),
+    viewerCount: session.viewerCount,
+    summary: body,
+    createdAt: Date.now(),
+  };
+}
+
+/** 一拍陪看写一张可见卡；已有 dbMessageId 时原位更新 */
+export async function syncNpcBeatToDb(opts: {
+  charId: string;
+  charName?: string;
+  session: NpcWatchSession;
+  beat: NpcWatchBeat;
+  existingDbMsgId?: number;
+}): Promise<number> {
+  const card = buildNpcRoundCard(opts);
+  if (opts.existingDbMsgId && opts.existingDbMsgId > 0) {
+    await writeRoundCardInPlace(opts.existingDbMsgId, card);
+    return opts.existingDbMsgId;
+  }
+  return DB.saveMessage({
+    charId: opts.charId,
+    role: 'assistant',
+    type: 'score_card',
+    content: JSON.stringify(card),
+    metadata: {
+      source: 'live_npc_round',
+      scoreCard: card,
+      npcSessionId: opts.session.id,
+      npcBeatIndex: opts.beat.index,
+    },
+  });
 }
 
 export async function supersedeLiveMessagesWithSummary(opts: {

@@ -611,6 +611,72 @@ describe('重摇', () => {
         expect(user.content).toBe('来');
     });
 
+    it('直播/陪看轮次卡不算私聊回复：末尾是它时越过它往前找', async () => {
+        const user = message({ id: 1, role: 'user', type: 'text', content: '在吗', timestamp: 1 });
+        const reply = message({ id: 2, role: 'assistant', type: 'text', content: '在', timestamp: 2 });
+        const liveRound = message({
+            id: 3,
+            type: 'score_card',
+            content: '{"type":"livestream_card","cardKind":"live_round"}',
+            timestamp: 3,
+            metadata: { source: 'live_round', liveSessionId: 's1' },
+        });
+        const npcRound = message({
+            id: 4,
+            type: 'score_card',
+            content: '{"type":"livestream_card","cardKind":"npc_watch_round"}',
+            timestamp: 4,
+            metadata: { source: 'live_npc_round', npcSessionId: 'n1' },
+        });
+
+        expect(canRerollGameTurn([user, reply, liveRound, npcRound])).toBe(true);
+        // 越过事件卡之后看到的是用户消息：这一轮没得重 Roll
+        expect(canRerollGameTurn([user, liveRound, npcRound])).toBe(false);
+        // 整段只有事件卡，也没有私聊回复
+        expect(canRerollGameTurn([liveRound, npcRound])).toBe(false);
+
+        const outcome = await rerollTrailingAiGames([user, reply, liveRound, npcRound]);
+        expect(outcome.deleteIds).toEqual([2]);
+    });
+
+    it('事件卡夹在私聊回复中间时原位留着，只拿掉私聊回复', async () => {
+        const user = message({ id: 1, role: 'user', type: 'text', content: '看直播了', timestamp: 1 });
+        const liveRound = message({
+            id: 2,
+            type: 'score_card',
+            content: '{"type":"livestream_card","cardKind":"live_round"}',
+            timestamp: 2,
+            metadata: { source: 'live_round' },
+        });
+        const reply = message({ id: 3, role: 'assistant', type: 'text', content: '好看吗', timestamp: 3 });
+
+        const outcome = await rerollTrailingAiGames([user, liveRound, reply]);
+        expect(outcome.deleteIds).toEqual([3]);
+        expect(outcome.deleteIds).not.toContain(2);
+    });
+
+    it('骰子/猜拳这类 score_card 照旧参与重 Roll（不能被直播保护误伤）', async () => {
+        const user = message({ id: 1, role: 'user', type: 'text', content: '掷骰子', timestamp: 1 });
+        const dice = message({
+            id: 2,
+            type: 'score_card',
+            content: '江野掷出了 4 点',
+            timestamp: 2,
+            metadata: { chatGame: { game: 'dice', by: 'ai', value: 4 } },
+        });
+        const liveRound = message({
+            id: 3,
+            type: 'score_card',
+            content: '{"type":"livestream_card","cardKind":"live_round"}',
+            timestamp: 3,
+            metadata: { source: 'live_round' },
+        });
+
+        expect(canRerollGameTurn([user, dice, liveRound])).toBe(true);
+        const outcome = await rerollTrailingAiGames([user, dice, liveRound]);
+        expect(outcome.deleteIds).toEqual([2]);
+    });
+
     it('骰子六点、猜拳三手大致均匀', () => {
         const faces = [0, 0, 0, 0, 0, 0, 0];
         for (let i = 0; i < 12000; i++) faces[diceGame.roll()] += 1;

@@ -62,9 +62,8 @@ interface LiveRoomViewProps {
   onUpdateCustomBackground: (url: string) => void;
   onRequestRefreshGifts: () => void;
   onManualFoldChunks: () => void;
-  onEditRollingSummary: (summaryId: string, nextText: string) => void;
-  onRegenerateRollingSummary: (summary: LiveRollingSummary) => void;
-  onDissolveRollingSummary: (summaryId: string) => void;
+  onEditRoundSummary: (chunkId: string, nextText: string) => void;
+  onRegenerateRoundSummary: (chunk: LiveChunk) => void;
   onEndStreamClick: () => void;
   onShareClipToChat: (beat: LiveBeat) => void;
 }
@@ -98,9 +97,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onUpdateCustomBackground,
   onRequestRefreshGifts,
   onManualFoldChunks,
-  onEditRollingSummary,
-  onRegenerateRollingSummary,
-  onDissolveRollingSummary,
+  onEditRoundSummary,
+  onRegenerateRoundSummary,
   onEndStreamClick,
   onShareClipToChat,
 }) => {
@@ -135,7 +133,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   // 展开所有未折叠的拍子，构建平坦进度轴（Beat 1 ~ N）
-  const unfoldedChunks = useMemo(() => session.chunks.filter(c => !c.folded), [session.chunks]);
+  // 「未压缩」= 还没有逐轮摘要的轮次；folded 是旧字段，只给旧数据兼容读
+  const unfoldedChunks = useMemo(
+    () => session.chunks.filter(c => !(c.roundSummary && c.roundSummary.trim())),
+    [session.chunks],
+  );
   const latestChunk: LiveChunk | undefined = session.chunks[session.chunks.length - 1];
 
   const allTimelineBeats = useMemo(() => {
@@ -389,9 +391,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       onPlayBeatVoice={onPlayBeatVoice}
       onRequestRefreshGifts={onRequestRefreshGifts}
       onManualFoldChunks={onManualFoldChunks}
-      onEditRollingSummary={onEditRollingSummary}
-      onRegenerateRollingSummary={onRegenerateRollingSummary}
-      onDissolveRollingSummary={onDissolveRollingSummary}
+      onEditRoundSummary={onEditRoundSummary}
+      onRegenerateRoundSummary={onRegenerateRoundSummary}
       onEndStreamClick={onEndStreamClick}
     />
   );

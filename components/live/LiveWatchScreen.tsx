@@ -108,9 +108,8 @@ export function LiveWatchScreen(props: {
   onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean }) => void;
   onRequestRefreshGifts: () => void;
   onManualFoldChunks: () => void;
-  onEditRollingSummary: (summaryId: string, nextText: string) => void;
-  onRegenerateRollingSummary: (summary: LiveRollingSummary) => void;
-  onDissolveRollingSummary: (summaryId: string) => void;
+  onEditRoundSummary: (chunkId: string, nextText: string) => void;
+  onRegenerateRoundSummary: (chunk: LiveChunk) => void;
   onEndStreamClick: () => void;
 }) {
   const {
@@ -1085,9 +1084,8 @@ export function LiveWatchScreen(props: {
                 summaryDraft={props.summaryDraft}
                 setSummaryDraft={props.setSummaryDraft}
                 onManualFoldChunks={props.onManualFoldChunks}
-                onEditRollingSummary={props.onEditRollingSummary}
-                onRegenerateRollingSummary={props.onRegenerateRollingSummary}
-                onDissolveRollingSummary={props.onDissolveRollingSummary}
+                onEditRoundSummary={props.onEditRoundSummary}
+                onRegenerateRoundSummary={props.onRegenerateRoundSummary}
               />
             )}
           </div>
@@ -1334,7 +1332,6 @@ export function LiveWatchScreen(props: {
         isOpen={props.showFloatingPhone}
         characterId={props.charId}
         charName={props.charName}
-        contextDescription={`【直播间手机私聊】此刻你正在直播间《${session.title}》（频道：${channel.channelName}）开着直播，镜头正对着你。${props.userName} 正在台下用手机给你发私聊消息；你在直播间隙低头看手机回复TA，沿用正常私聊的交流方式。`}
         onClose={() => props.setShowFloatingPhone(false)}
         onUnreadChange={props.onPhoneUnread}
       />
@@ -1630,7 +1627,7 @@ function FullScriptTimeline(props: {
   );
 }
 
-// ==================== 阶段滚动摘要管理 Tab ====================
+// ==================== 逐轮摘要管理 Tab ====================
 
 function RollingSummaryPanel(props: {
   session: LiveStreamSession;
@@ -1641,105 +1638,109 @@ function RollingSummaryPanel(props: {
   summaryDraft: string;
   setSummaryDraft: (v: string) => void;
   onManualFoldChunks: () => void;
-  onEditRollingSummary: (summaryId: string, nextText: string) => void;
-  onRegenerateRollingSummary: (summary: LiveRollingSummary) => void;
-  onDissolveRollingSummary: (summaryId: string) => void;
+  onEditRoundSummary: (chunkId: string, nextText: string) => void;
+  onRegenerateRoundSummary: (chunk: LiveChunk) => void;
 }) {
+  const rounds = [...(props.session.chunks || [])].sort((a, b) => a.index - b.index);
+  const compressible = props.unfoldedCount > 3;
+
   return (
     <div className="p-3.5 space-y-3">
-      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-start justify-between gap-2">
         <div className="text-xs text-slate-600 leading-relaxed">
-          <div className="font-bold text-slate-800">防爆 Token 阶段滚动折叠</div>
-          <div>当前未折叠切片：{props.unfoldedCount} 段（满 2 段可随时手动压缩）</div>
+          <div className="font-bold text-slate-800">逐轮压缩（不满 4 轮不压）</div>
+          <div>
+            当前有 {props.unfoldedCount} 轮还是原文。
+            {compressible ? '可以手动重试最早那一轮的压缩。' : '最近 3 轮保留原文。'}
+          </div>
         </div>
         <button
           type="button"
-          disabled={props.unfoldedCount < 2 || props.isSummarizing}
+          disabled={!compressible || props.isSummarizing}
           onClick={props.onManualFoldChunks}
           className="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold shrink-0 disabled:opacity-35"
         >
-          {props.isSummarizing ? '正在提炼…' : '📝 立即压缩旧段'}
+          {props.isSummarizing ? '正在压缩…' : compressible ? '📝 重试最早一轮' : '保留最近 3 轮原文'}
         </button>
       </div>
 
-      {props.session.rollingSummaries.length === 0 ? (
-        <p className="py-8 text-center text-xs text-slate-400">
-          本场直播还没有生成阶段摘要卡。直播满 {props.session.foldEveryNChunks || 4} 段会自动折叠，也可点击上方按钮手动压缩。
-        </p>
+      {rounds.length === 0 ? (
+        <p className="py-8 text-center text-xs text-slate-400">这一场还没有推进过任何一轮。</p>
       ) : (
-        props.session.rollingSummaries.map(sum => (
-          <div
-            key={sum.id}
-            className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/80 space-y-2"
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-extrabold text-amber-900">
-                📌 第 {sum.fromChunkIndex + 1} ～ {sum.toChunkIndex + 1} 段阶段摘要
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    props.setEditingSummaryId(sum.id);
-                    props.setSummaryDraft(sum.content);
-                  }}
-                  className="text-amber-800 font-bold hover:underline"
-                >
-                  ✏️ 编辑
-                </button>
-                <button
-                  type="button"
-                  disabled={props.isSummarizing}
-                  onClick={() => props.onRegenerateRollingSummary(sum)}
-                  className="text-amber-800 font-bold hover:underline disabled:opacity-40"
-                >
-                  🔄 重总结
-                </button>
-                <button
-                  type="button"
-                  onClick={() => props.onDissolveRollingSummary(sum.id)}
-                  className="text-red-600 font-bold hover:underline"
-                >
-                  📂 解散还原
-                </button>
-              </div>
-            </div>
-
-            {props.editingSummaryId === sum.id ? (
-              <div className="space-y-2">
-                <textarea
-                  value={props.summaryDraft}
-                  onChange={e => props.setSummaryDraft(e.target.value)}
-                  rows={4}
-                  className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-xs leading-relaxed focus:outline-none"
-                />
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => props.setEditingSummaryId(null)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs font-bold"
-                  >
-                    取消
-                  </button>
+        rounds.map(chunk => {
+          const compressed = Boolean(chunk.roundSummary && chunk.roundSummary.trim());
+          return (
+            <div
+              key={chunk.id}
+              className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/80 space-y-2"
+            >
+              <div className="flex items-center justify-between text-xs gap-2">
+                <span className="font-extrabold text-amber-900">
+                  📌 第 {chunk.index + 1} 轮 · {compressed ? '逐轮摘要' : '原文'}
+                </span>
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      props.onEditRollingSummary(sum.id, props.summaryDraft);
-                      props.setEditingSummaryId(null);
+                      props.setEditingSummaryId(chunk.id);
+                      props.setSummaryDraft(chunk.roundSummary || '');
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold"
+                    className="text-amber-800 font-bold hover:underline"
                   >
-                    保存摘要
+                    ✏️ 编辑
+                  </button>
+                  <button
+                    type="button"
+                    disabled={props.isSummarizing}
+                    onClick={() => props.onRegenerateRoundSummary(chunk)}
+                    className="text-amber-800 font-bold hover:underline disabled:opacity-40"
+                  >
+                    🔄 重压缩
                   </button>
                 </div>
               </div>
-            ) : (
-              <p className="text-xs leading-relaxed text-slate-800 whitespace-pre-wrap break-words">
-                {sum.content}
-              </p>
-            )}
-          </div>
-        ))
+
+              {props.editingSummaryId === chunk.id ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={props.summaryDraft}
+                    onChange={e => props.setSummaryDraft(e.target.value)}
+                    rows={4}
+                    placeholder="这一轮的摘要留空也可以，留空就回到显示原文"
+                    className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-xs leading-relaxed focus:outline-none"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => props.setEditingSummaryId(null)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs font-bold"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        props.onEditRoundSummary(chunk.id, props.summaryDraft);
+                        props.setEditingSummaryId(null);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold"
+                    >
+                      保存这一轮
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs leading-relaxed text-slate-800 whitespace-pre-wrap break-words">
+                  {compressed
+                    ? chunk.roundSummary
+                    : chunk.beats
+                        .map((b, bi) => `${bi + 1}. ${b.screen}${b.speechOriginal ? ` ｜「${b.speechOriginal}」` : ''}`)
+                        .join('\n')}
+                </p>
+              )}
+            </div>
+          );
+        })
       )}
     </div>
   );

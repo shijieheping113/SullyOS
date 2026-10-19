@@ -612,7 +612,6 @@ export function VodDetailView(props: {
         isOpen={phone}
         characterId={props.charId}
         charName={props.charName}
-        contextDescription={`【看视频私聊】此刻 ${props.userName} 正在观看你的视频投稿《${props.vod.title}》，并用手机私聊找你聊天。`}
         onClose={() => setPhone(false)}
       />
       <BeatLongPressSheet target={sheet} onClose={() => setSheet(null)} />
@@ -1003,7 +1002,6 @@ export function NpcWatchRoomView(props: {
         isOpen={phone}
         characterId={props.charId}
         charName={props.charName}
-        contextDescription={`【陪看直播手机私聊】此刻你正和 ${props.userName} 一起看第三方主播「${props.npcSession.npcStreamerName}」的直播《${props.npcSession.npcRoomTitle}》，你们正在用手机私聊发信息。`}
         onClose={() => setPhone(false)}
       />
       <BeatLongPressSheet target={sheet} onClose={() => setSheet(null)} />

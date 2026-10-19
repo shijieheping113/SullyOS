@@ -2,15 +2,19 @@
  * 电波 (OnAir) —— 核心直播切片提示词构建、严禁冒充用户/小号弹幕双保险过滤、重 Roll 防雷同引擎
  */
 import { ContextBuilder } from './context';
+import { buildLiveGenerationPayload } from './liveStreamContext';
+import { clampManualContextLimit } from './chatContextRange';
+import { getUserLocationContext } from './userLocation';
 import { voiceLanguagePromptLabel } from './voiceLanguage';
 import {
   StreamerChannelProfile,
   LiveStreamSession,
+  LiveChunk,
   LiveBeat,
   LiveDanmakuItem,
   STREAM_PRESET_TEMPLATES,
 } from './liveStreamTypes';
-import type { CharacterProfile, Message, UserProfile } from '../types';
+import type { CharacterProfile, Message, RealtimeConfig, UserProfile } from '../types';
 
 export * from './liveStreamAiHelpers';
 
@@ -81,38 +85,49 @@ function buildChannelPersonaBlock(
 - 如果下方待回应列表里某条弹幕标着 \`[普通观众/老板：「xxx」]\`，那TA在物理设定上就是一个你不认识的陌生网友/榜一老板，你只能针对TA发的字面内容和名字互动，**严禁猜出或暗示TA是 ${userName}**！`;
 }
 
-// ==================== 4. 检测直播期间主聊天（私聊）实时消息 ====================
+// ==================== 4. 直播/NPC 专用上下文组装 ====================
 
-export function extractRecentPrivateChatInterruptions(
-  allMsgs: Message[],
-  sessionStartedAt: number,
-  charName: string,
-  userName: string,
-): string {
-  const cutoff = Math.max(sessionStartedAt - 60_000, Date.now() - 30 * 60_000);
-  const recentChat = allMsgs
-    .filter(m => {
-      const src = m.metadata?.source;
-      if (src === 'date' || src === 'call' || src === 'live' || src === 'home' || src === 'story_theater_memory') {
-        return false;
-      }
-      if (m.role !== 'user' && m.role !== 'assistant') return false;
-      return m.timestamp >= cutoff;
-    })
-    .slice(-6);
+/** 本场前情：压缩过的轮次用逐轮摘要，最近 3 轮用原文；兼容旧的阶段摘要 */
+export function buildSessionHistoryBlock(session: LiveStreamSession): string {
+  const chunks = [...(session.chunks || [])].sort((a, b) => a.index - b.index);
+  if (chunks.length === 0) return '';
 
-  if (recentChat.length === 0) return '';
+  // 最近 3 轮（按时间顺序的最后三个）永远给原文
+  const keepRawIds = new Set(chunks.slice(-3).map(c => c.id));
 
-  const lines = recentChat.map(m => {
-    const who = m.role === 'user' ? `${userName}（在私聊发来）` : `${charName}（在桌子底下偷偷回私聊）`;
-    return `- ${who}：「${(m.content || '').slice(0, 160)}」`;
+  const compressedLines: string[] = [];
+  const rawLines: string[] = [];
+
+  chunks.forEach(c => {
+    if (c.roundSummary && !keepRawIds.has(c.id)) {
+      compressedLines.push(`【第 ${c.index + 1} 轮 · 逐轮摘要】\n${c.roundSummary.trim()}`);
+      return;
+    }
+    const beatLines = c.beats.map((b, bi) => {
+      const sp = b.speechTranslated ? `${b.speechOriginal}（${b.speechTranslated}）` : b.speechOriginal;
+      return `  [拍 ${bi + 1}] 画面：${b.screen} ｜ 台词：${sp || '（专注未开口）'}`;
+    });
+    rawLines.push(`【第 ${c.index + 1} 轮 · 原文】\n${beatLines.join('\n')}`);
   });
 
-  return `### 【高能联动：你在直播时，桌上的手机刚收到了 ${userName} 的私聊消息！】
-以下是刚刚在直播同时，你手机私聊窗口里与 ${userName} 的对话：
-${lines.join('\n')}
+  // 旧场次只有 rollingSummaries（跨轮阶段摘要），只按兼容读，不再新写
+  const legacySummaries = (session.rollingSummaries || [])
+    .filter(s => !chunks.some(c => c.index >= s.fromChunkIndex && c.index <= s.toChunkIndex && c.roundSummary))
+    .map(s => `【旧阶段摘要 · 第 ${s.fromChunkIndex + 1}~${s.toChunkIndex + 1} 轮】\n${s.content}`);
 
-👉 **演出要求**：如果 ${userName} 刚在私聊里逗你、吐槽你、或者发了表情包/语音，你必须在这一段直播的镜头画面（\`screen\`）和台词里体现出**“台上开着直播 vs 台下看私聊”的微表情反差**！（例如：听见手机震动低头瞥了一眼突然卡壳、耳尖发红、呛水或清嗓子掩饰，引得直播间弹幕纷纷刷问号；但别在公开直播间直接把私聊隐私念出来，除非你是故意隔空回嘴！）`;
+  const parts: string[] = [];
+  if (legacySummaries.length > 0) {
+    parts.push(`### 本场更早的阶段摘要（旧数据，仅作前情）\n${legacySummaries.join('\n\n')}`);
+  }
+  if (compressedLines.length > 0) {
+    parts.push(`### 本场更早各轮（已压缩成逐轮摘要）\n${compressedLines.join('\n\n')}`);
+  }
+  if (rawLines.length > 0) {
+    parts.push(
+      `### 最近几轮的直播原文（请自然接着往下演，严禁重复已经说过的台词）\n${rawLines.join('\n\n')}`,
+    );
+  }
+  return parts.join('\n\n');
 }
 
 // ==================== 5. 构建「生成下一段直播切片（Chunk）」请求 ====================
@@ -122,13 +137,17 @@ export async function buildLiveChunkGenerationMessages(opts: {
   userProfile: UserProfile;
   channel: StreamerChannelProfile;
   session: LiveStreamSession;
-  allMsgs: Message[];
+  /** 正常聊天范围的原文；不再传整库，也不再自己截最近 6 条 */
+  historyMessages?: Message[];
+  realtimeConfig?: RealtimeConfig;
+  /** 是否把当前真实定位交给主角自己（NPC 第三方主播永远 false） */
+  includeUserLocation?: boolean;
   forbiddenViewerNames?: string[];
-  /** 重 Roll 时排除刚写入 DB 的那条旧消息 ID，防止 AI 看到旧答案照抄 */
+  /** 重 Roll 时排除刚刚写进去的那条轮次卡，防止 AI 看到旧答案照抄 */
   excludeDbMsgId?: number;
-  /** 重 Roll 时把刚被否决的旧切片摘要传进来，强制换新切入点 */
+  /** 重 Roll 时把刚被否决的旧切片传进来，强制换新切入点 */
   rejectedDraftText?: string;
-  /** 是否为用户刚刚发了弹幕/SC触发的即时回应模式 */
+  /** 是否为用户刚刚发了弹幕/SC 触发的即时回应模式 */
   isImmediateUserTrigger?: boolean;
 }): Promise<Array<{ role: string; content: string }>> {
   const {
@@ -136,7 +155,9 @@ export async function buildLiveChunkGenerationMessages(opts: {
     userProfile,
     channel,
     session,
-    allMsgs,
+    historyMessages = [],
+    realtimeConfig,
+    includeUserLocation,
     forbiddenViewerNames = [],
     excludeDbMsgId,
     rejectedDraftText,
@@ -148,35 +169,16 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const preset = STREAM_PRESET_TEMPLATES.find(t => t.key === session.categoryKey);
   const categoryHint = preset ? preset.promptHint : '自由直播，展现真实自然的主播状态。';
 
-  // 1. 阶段滚动摘要
-  const rollingBlock =
-    session.rollingSummaries.length > 0
-      ? `### 本场直播前情阶段摘要（已折叠归档）\n${session.rollingSummaries
-          .map((s, idx) => `【阶段 ${idx + 1}（第 ${s.fromChunkIndex + 1}~${s.toChunkIndex + 1} 段）】\n${s.content}`)
-          .join('\n\n')}`
-      : '';
+  // 1. 本场前情（逐轮摘要 + 最近 3 轮原文）
+  const sessionHistoryBlock = buildSessionHistoryBlock(session);
+  const progressBlock =
+    sessionHistoryBlock ||
+    '### 当前进度\n这是本场直播的**第 1 轮**，请展现刚开播调设备、跟陆续进房的观众打招呼或直接进入今日主题的状态。';
 
-  // 2. 未折叠的最近切片原文
-  const unfoldedChunks = session.chunks.filter(c => !c.folded).slice(-2);
-  const recentChunksBlock =
-    unfoldedChunks.length > 0
-      ? `### 最近刚播完的直播画面与台词（请自然接着往下演，严禁重复已经说过的台词）\n${unfoldedChunks
-          .map(c => {
-            const beatLines = c.beats
-              .map((b, bi) => {
-                const sp = b.speechTranslated ? `${b.speechOriginal}（${b.speechTranslated}）` : b.speechOriginal;
-                return `  [拍 ${bi + 1}] 画面：${b.screen} ｜ 台词：${sp || '（专注未开口）'}`;
-              })
-              .join('\n');
-            return `【第 ${c.index + 1} 段】\n${beatLines}`;
-          })
-          .join('\n\n')}`
-      : '### 当前进度\n这是本场直播的**开场第一段（第 1 段）**，请展现刚开播调设备、跟陆续进房的观众打招呼或直接进入今日主题的状态。';
-
-  // 3. 待结算的观众互动队列（物理隔离小号真名！）
+  // 2. 待结算的观众互动队列（物理隔离小号真名！）
   const pendingQueue = session.pendingDanmakuQueue || [];
   let audienceInputBlock =
-    '### 本段期间新收到的观众弹幕与 Super Chat\n（本段期间没有特定指定弹幕，请你按自己的直播节奏往前推进，并自然扫视路人弹幕互动。）';
+    '### 本轮期间新收到的观众弹幕与 Super Chat\n（本轮没有指定弹幕，请你按自己的直播节奏往前推进，并自然扫视路人弹幕互动。）';
   if (pendingQueue.length > 0) {
     const items = pendingQueue.map(d => {
       const scPrefix =
@@ -195,15 +197,11 @@ export async function buildLiveChunkGenerationMessages(opts: {
     }）\n${items.join('\n')}`;
   }
 
-  // 4. 私聊实时互动检测
-  const privateChatBlock = extractRecentPrivateChatInterruptions(
-    allMsgs,
-    session.startedAt,
-    char.name,
-    userName,
-  );
+  // 3. 来源边界：主聊天历史里的私聊不是公屏
+  const boundaryBlock = `### 来源边界
+上面聊天历史里的是你和 ${userName} 之间的私聊，不是公屏弹幕。你只能把它当成私下的记忆来理解，不得擅自公开念出来或复述给对方以外的人（除非你是故意隔空回嘴）。`;
 
-  // 5. 重 Roll 强烈反雷同指令
+  // 4. 重 Roll 强烈反雷同指令
   const rerollBlock = rejectedDraftText
     ? `### 🔄 【重 Roll 强制换新指令（极其重要！）】
 刚才生成的下面这个版本已经被用户否决弃用：
@@ -215,7 +213,7 @@ ${rejectedDraftText.slice(0, 500)}
 
   const beatCountRule = isImmediateUserTrigger ? '3 到 4 个' : '4 到 5 个';
 
-  const systemInstruction = `你现在正在进行一场真实的直播配信。
+  const liveRules = `你现在正在进行一场真实的直播配信。
 ${buildChannelPersonaBlock(char, channel, userName, allForbidden)}
 
 ### 本场直播主题
@@ -234,8 +232,8 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
 [
   {
     "screen": "镜头画面、主播肢体动作、表情、操作细节或突发小状况（40~85字，具象有画面感，禁止套话）",
-    "speechOriginal": "主播这一拍开口说的原声台词（若是外语配信则写地道外语口语；若是留白专注拍可为空字符串 \"\"）",
-    "speechTranslated": "若开启外语配信，这里直接写中文同传译文（不要加'译：'前缀）；若本身是中文配信则填 \"\"",
+    "speechOriginal": "主播这一拍开口说的原声台词（若是外语配信则写地道外语口语；若是留白专注拍可为空字符串）",
+    "speechTranslated": "若开启外语配信，这里直接写中文同传译文（不要加'译：'前缀）；若本身是中文配信则填空字符串",
     "emotion": "calm | happy | sad | angry | surprised | fearful 之一",
     "viewerDelta": 85,
     "danmaku": [
@@ -244,7 +242,7 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
         "roleType": "old_fan | troll | coach | passerby | foreigner",
         "fanLevel": 12,
         "text": "弹幕原文",
-        "translation": "若弹幕是外语，必填中文翻译（不加'译：'前缀）；若是中文弹幕填 \"\"",
+        "translation": "若弹幕是外语，必填中文翻译（不加'译：'前缀）；若是中文弹幕填空字符串",
         "scAmount": 0
       }
     ]
@@ -253,39 +251,28 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
 \`\`\`
 注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等），**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！`;
 
-  const userTask = [
-    rollingBlock,
-    recentChunksBlock,
-    privateChatBlock,
-    audienceInputBlock,
-    rerollBlock,
-    `请紧接上文，生成第 ${session.chunks.length + 1} 段直播切片（共 ${beatCountRule} 拍 JSON 数组）。`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  const taskParts: string[] = [progressBlock, boundaryBlock, audienceInputBlock, rerollBlock];
+  if (includeUserLocation) {
+    const locationText = await getUserLocationContext(userName).catch(() => '');
+    if (locationText && locationText.trim()) taskParts.splice(1, 0, locationText.trim());
+  }
+  taskParts.push(`请紧接上文，生成本场第 ${session.chunks.length + 1} 轮的直播切片（共 ${beatCountRule} 拍 JSON 数组）。`);
 
-  // 关键修复：过滤掉被 superseded 的旧切片，以及正在重 Roll 的那条 excludeDbMsgId 消息！
-  const recentHistoryForContext = allMsgs
-    .filter(
-      m =>
-        !m.metadata?.superseded &&
-        m.metadata?.archiveMode !== 'forget' &&
-        (excludeDbMsgId ? m.id !== excludeDbMsgId : true),
-    )
-    .slice(-16)
-    .map(m => ({
-      role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
-      content: m.content || '',
-    }));
+  const history = historyMessages.filter(m => {
+    if (excludeDbMsgId && m.id === excludeDbMsgId) return false;
+    if (m.metadata?.superseded || m.metadata?.archiveMode === 'forget') return false;
+    return true;
+  });
 
-  return ContextBuilder.buildCharacterRequest(
-    { char, user: userProfile },
-    [
-      { role: 'system', content: systemInstruction },
-      ...recentHistoryForContext,
-      { role: 'user', content: userTask },
-    ],
-  );
+  return buildLiveGenerationPayload({
+    char,
+    userProfile,
+    rules: liveRules,
+    task: taskParts.filter(Boolean).join('\n\n'),
+    historyMessages: history,
+    realtimeConfig,
+    contextLimit: clampManualContextLimit(char.contextLimit),
+  });
 }
 
 export async function buildLiveStreamTurnPrompt(opts: {
@@ -300,7 +287,10 @@ export async function buildLiveStreamTurnPrompt(opts: {
     scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
     gift?: { id: string; name: string; emoji: string; price: number; currencySymbol?: string };
   }>;
-  allMsgs: Message[];
+  /** 正常聊天范围的原文（loadCharacterContextMessages） */
+  historyMessages?: Message[];
+  realtimeConfig?: RealtimeConfig;
+  includeUserLocation?: boolean;
   userName?: string;
   rejectedDraftText?: string;
   excludeDbMsgId?: number;
@@ -334,7 +324,9 @@ export async function buildLiveStreamTurnPrompt(opts: {
     userProfile: opts.userProfile,
     channel: opts.channel,
     session: sessionWithQueue,
-    allMsgs: opts.allMsgs,
+    historyMessages: opts.historyMessages,
+    realtimeConfig: opts.realtimeConfig,
+    includeUserLocation: opts.includeUserLocation,
     excludeDbMsgId: opts.excludeDbMsgId,
     rejectedDraftText: opts.rejectedDraftText,
     isImmediateUserTrigger: queueItems.length > 0,

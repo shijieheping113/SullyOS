@@ -126,6 +126,11 @@ export interface BuildChatPayloadInput {
     timelyByWorker?: boolean;
     /** 喵喵盒：替换线上聊天规范，并跳过语音条教学 */
     miaomiaoBoxPrompt?: string;
+    /**
+     * 电波直播 / NPC 主角色生成：保留人设、世界书、正常聊天历史、记忆召回与实时背景，
+     * 关闭情绪 buff / innerState、当日日程与日程导出的音乐氛围。主聊天不传，行为不变。
+     */
+    liveGenerator?: boolean;
 }
 
 export type ChatPreparationStage='vision'|'memory'|'prompt'|'collaboration'|'tasks';
@@ -386,6 +391,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             returningFromMode: returningFromMode || undefined,
             miaomiaoBoxPrompt: input.miaomiaoBoxPrompt,
             appRules: input.appPrompt?.rules,
+            liveGenerator: input.liveGenerator === true,
         },
     ));
     input.signal?.throwIfAborted();

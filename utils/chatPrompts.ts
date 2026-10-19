@@ -195,6 +195,12 @@ export interface PromptBuildOptions {
     /** 喵喵盒：整段替换「聊天 App 行为规范」，并跳过主聊天语音条教学。 */
     miaomiaoBoxPrompt?: string;
     /**
+     * 电波直播/NPC 主角色生成专用：保留人设、世界书、正常聊天历史、记忆召回与实时背景，
+     * 但不注入情绪 buff / innerState、当日日程，以及由日程导出的音乐氛围。
+     * 只在调用方显式传 true 时生效，主聊天默认行为不变。
+     */
+    liveGenerator?: boolean;
+    /**
      * 电量提醒：要人设、世界书、记忆、实时状态和说话原则。
      * 不要表情包清单、语音条、Spark，也不要短气泡和各种暗号写法。
      * 普通聊天不传这个，主聊天提示词一个字不动。
@@ -345,6 +351,8 @@ export const ChatPrompts = {
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
         const boxPlay = !!promptOptions?.miaomiaoBoxPrompt;
+        // 电波生成：人设/世界书/历史/记忆/实时背景照旧，情绪与日程整块不进来
+        const liveGenerator = promptOptions?.liveGenerator === true;
         // 电量提醒只要角色和近况，不要教它怎么发表情包、语音、Spark 或别的暗号。
         const batterySlice = promptOptions?.forBatteryReminder === true;
         // ── 分段计时（定位瓶颈用）──
@@ -358,7 +366,7 @@ export const ChatPrompts = {
 
         // 2. 日程（被"日程注入"和"音乐氛围"两处共用，合并成一次查询）
         //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
-        const scheduleFeatureOn = !forFirePack && isScheduleFeatureOn(char);
+        const scheduleFeatureOn = !forFirePack && !liveGenerator && isScheduleFeatureOn(char);
         const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
             ? getDailyScheduleForChar(char).catch(e => {
                 console.error('Failed to load daily schedule:', e);
@@ -393,10 +401,12 @@ export const ChatPrompts = {
         let volatileState = `\n[System: 实时状态 (Live Context)]\n（以下是此刻的实时状态——当前时间、你正在做的事、你的情绪底色、周边动态。你的人设与聊天规则见最上方的系统设定，此处不再重复。）\n\n`;
         volatileState += (await ContextBuilder.buildVolatileCoreState(char, {
             includeDetailedMemories: true,
-            skipEmotionBuff: boxPlay,
-            emotion: boxPlay ? undefined : {surface: 'chat'},
+            skipEmotionBuff: boxPlay || liveGenerator,
+            emotion: (boxPlay || liveGenerator) ? undefined : {surface: 'chat'},
             scheduleDelivery: forFirePack ? 'worker' : undefined,
             scheduleSnapshot: schedulePromise,
+            // 电波生成不要日程（含「你此刻在做什么」那一段）
+            skipSchedule: liveGenerator,
             // conversational：私聊是真的有人在这个点跟角色说话，时间块才补那句语境框定
             // （见 ContextBuilder.buildTimeAwarenessBlock）。生成器类调用不给，默认就没有。
             timeOptions: { skipTimeAwareness: forFirePack || timelyByWorker, conversational: true },
@@ -595,7 +605,7 @@ ${groupLogStr}\n`;
         //     fire_pack 不烤：这首歌是按打包时刻的时段抽的，跟日程一起挪到 AMSG_SLOT_SCENE。
         //     那边只渲染「你此刻在听什么」一句——一起听状态要读用户此刻的播放器、歌词要拉网络，
         //     worker 两样都够不着。
-        if (!forFirePack && !boxPlay) try {
+        if (!forFirePack && !boxPlay && !liveGenerator) try {
             let charListening: {
                 songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
             } | null = null;

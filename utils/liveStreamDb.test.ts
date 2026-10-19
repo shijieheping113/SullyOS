@@ -327,12 +327,12 @@ describe('从旧消息重建可续播的场次', () => {
       userProfile: { name: 'Ann' } as any,
       channel: channel as any,
       session: rebuilt,
-      allMsgs: [],
+      historyMessages: [],
       userName: 'Ann',
     });
 
     const joined = messages.map(m => m.content).join('\n');
-    expect(joined).toContain('【第 1 段】');
+    expect(joined).toContain('【第 1 轮 · 原文】');
     expect(joined).not.toContain('开场第一段');
   });
 });

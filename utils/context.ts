@@ -234,6 +234,11 @@ export const ContextBuilder = {
             memoryPalaceContext?: string;
             timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean; conversational?: boolean };
             skipEmotionBuff?: boolean;
+            /**
+             * 电波直播/NPC 生成专用：不读也不注入角色当日日程。
+             * 与 scheduleSnapshot=null 不同——null 只是「这一轮没取到」，这里明确表示「不要这段」。
+             */
+            skipSchedule?: boolean;
         },
     ): Promise<string> => {
         let context = ContextBuilder.buildTimeAwarenessBlock(char, options?.timeOptions);
@@ -247,7 +252,9 @@ export const ContextBuilder = {
 
         if (!options?.skipEmotionBuff) context += ContextBuilder.buildEmotionContext(char, options?.emotion);
 
-        if (options?.scheduleDelivery !== 'worker') context += await ContextBuilder.buildCurrentScheduleContext(char, options?.emotion?.surface === 'chat', options?.scheduleSnapshot);
+        if (!options?.skipSchedule && options?.scheduleDelivery !== 'worker') {
+            context += await ContextBuilder.buildCurrentScheduleContext(char, options?.emotion?.surface === 'chat', options?.scheduleSnapshot);
+        }
         return context;
     },
 

@@ -13,6 +13,7 @@ import {
   NpcWatchSession,
   NpcStreamerChannelCard,
   LivePlatformTheme,
+  OnAirRealtimeSettings,
   STREAM_PRESET_TEMPLATES,
 } from '../../utils/liveStreamTypes';
 import {
@@ -84,6 +85,8 @@ export function LiveLobby({
   isGenerating,
   aiHelperBusy,
   onOpenPhone,
+  onAirRealtime,
+  onChangeOnAirRealtime,
   channelModal,
   personaModal,
 }: {
@@ -135,6 +138,9 @@ export function LiveLobby({
   isGenerating: boolean;
   aiHelperBusy: boolean;
   onOpenPhone: () => void;
+  /** 电波总控 · 实时背景开关（只影响电波生成请求） */
+  onAirRealtime: OnAirRealtimeSettings;
+  onChangeOnAirRealtime: (next: OnAirRealtimeSettings) => void;
   channelModal: React.ReactNode;
   personaModal: React.ReactNode;
 }) {
@@ -623,6 +629,47 @@ export function LiveLobby({
         <MenuRow label="視聴者名" hint={persona?.name} onClick={() => { setSheet('none'); onOpenPersonas(); }} />
         <MenuRow label="私聊" onClick={() => { setSheet('none'); onOpenPhone(); }} />
         <div className="h-2" />
+        <div className="pt-2 pb-1 px-1 text-[11px] font-bold tracking-[0.1em] text-[#a3a3a3]">リアルタイム背景</div>
+        <RealtimeToggleRow
+          label="实时背景（总开关）"
+          detail="关掉后直播和陪看不再读天气、新闻和时间"
+          checked={onAirRealtime.enabled}
+          onChange={next => onChangeOnAirRealtime({ ...onAirRealtime, enabled: next })}
+        />
+        {onAirRealtime.enabled && (
+          <>
+            <RealtimeToggleRow
+              label="天气"
+              checked={onAirRealtime.weather}
+              onChange={next => onChangeOnAirRealtime({ ...onAirRealtime, weather: next })}
+            />
+            <RealtimeToggleRow
+              label="新闻 / 热点"
+              checked={onAirRealtime.news}
+              onChange={next => onChangeOnAirRealtime({ ...onAirRealtime, news: next })}
+            />
+            <RealtimeToggleRow
+              label="日本热点"
+              checked={onAirRealtime.jpHot}
+              onChange={next => onChangeOnAirRealtime({ ...onAirRealtime, jpHot: next })}
+            />
+            <RealtimeToggleRow
+              label="当前时间 / 节日"
+              checked={onAirRealtime.time}
+              onChange={next => onChangeOnAirRealtime({ ...onAirRealtime, time: next })}
+            />
+            <RealtimeToggleRow
+              label="真实定位"
+              detail="只给角色自己看，不进公屏，也不会给第三方主播"
+              checked={onAirRealtime.location}
+              onChange={next => onChangeOnAirRealtime({ ...onAirRealtime, location: next })}
+            />
+          </>
+        )}
+        <p className="px-1 pb-2 text-[11px] leading-relaxed text-[#909090]">
+          这些只作用于电波里的生成，不会改系统「实时感知」设置；系统那边关着的时候，这里打开也不会绕过。
+        </p>
+        <div className="h-2" />
         <FieldLabel>見た目</FieldLabel>
         <ThemeRows theme={platformTheme} onChange={onChangePlatformTheme} />
         <SectionTitle>キャラ</SectionTitle>
@@ -661,6 +708,42 @@ export function LiveLobby({
 
 const ytFont = 'Roboto, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif';
 const nicoFont = '"Yu Gothic UI", "Hiragino Sans", Meiryo, "PingFang SC", "Noto Sans SC", sans-serif';
+
+function RealtimeToggleRow({
+  label,
+  detail,
+  checked,
+  onChange,
+}: {
+  label: string;
+  detail?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="w-full min-h-12 px-1 py-2 flex items-center justify-between gap-3 text-left active:bg-[#fafafa]"
+    >
+      <span className="min-w-0">
+        <span className="block text-[14px] font-semibold text-[#0f0f0f]">{label}</span>
+        {detail ? <span className="block text-[11px] text-[#909090] leading-snug mt-0.5">{detail}</span> : null}
+      </span>
+      <span
+        className="shrink-0 w-11 h-6 rounded-full relative transition-colors"
+        style={{ background: checked ? '#0f0f0f' : '#d4d4d4' }}
+      >
+        <span
+          className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all"
+          style={{ left: checked ? 22 : 2 }}
+        />
+      </span>
+    </button>
+  );
+}
 
 function Avatar({ src, name, size }: { src?: string; name: string; size: number }) {
   if (src) {

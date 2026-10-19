@@ -22,7 +22,6 @@ import {
   LiveBeat,
   LiveDanmakuItem,
   LiveRollingSummary,
-  LiveArchiveDropMode,
   StreamGiftOption,
   VodVideoPost,
   VodChapterBeat,
@@ -31,6 +30,8 @@ import {
   NpcWatchBeat,
   NpcStreamerChannelCard,
   LivestreamChatCardPayload,
+  OnAirRealtimeSettings,
+  DEFAULT_ONAIR_REALTIME_SETTINGS,
   LivePlatformTheme,
   STREAM_PRESET_TEMPLATES,
 } from '../utils/liveStreamTypes';
@@ -56,16 +57,20 @@ import {
   saveNpcCustomRule,
   normalizeBrightGradient,
   syncLiveChunkToDb,
-  supersedeLiveMessagesWithSummary,
-  forgetLiveSessionInDb,
+  syncNpcBeatToDb,
+  updateLiveRoundCardSummary,
   setLiveStorageWriteErrorHandler,
+  loadOnAirRealtimeSettings,
+  saveOnAirRealtimeSettings,
+  liveRoundSignature,
+  pickRoundToFold,
+  applyRoundSummary,
 } from '../utils/liveStreamStorage';
 import {
   buildLiveStreamTurnPrompt,
   parseLiveBeatsResponse,
   callMainStreamerLlm,
-  generateLiveRollingSummary,
-  generateLiveFinalSummary,
+  generateLiveRoundSummary,
   generateVodVideoPost,
   generateStreamerVodReply,
   generateNpcWatchBeatDualEngine,
@@ -78,13 +83,17 @@ import {
 import {
   ChannelEditorModal,
   ViewerPersonaModal,
-  EndStreamSummaryModal,
 } from '../components/live/LiveStreamModals';
 import { LiveRoomView } from '../components/live/LiveRoomView';
 import { LiveLobby } from '../components/live/LiveLobby';
 import { VodDetailView, NpcWatchRoomView } from '../components/live/VodAndNpcViews';
 import { LiveFloatingPhone } from '../components/live/LiveSharedWidgets';
 import { migrateLiveStorageToIdbOnce } from '../utils/liveStreamMigration';
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
+import { RealtimeContextManager, defaultRealtimeConfig } from '../utils/realtimeContext';
+import { resolveCharTimeZone } from '../utils/timezone';
+import type { RealtimeConfig } from '../types';
+import { clampManualContextLimit } from '../utils/chatContextRange';
 
 type MainTab = 'char_live' | 'char_vod' | 'npc_watch';
 
@@ -96,6 +105,7 @@ const LiveStreamApp: React.FC = () => {
     setActiveCharacterId,
     apiConfig,
     userProfile,
+    realtimeConfig,
     addToast,
     registerBackHandler,
   } = useOS();
@@ -134,6 +144,26 @@ const LiveStreamApp: React.FC = () => {
   /** 数据都在 IndexedDB 里，读出来之前不能先摆一个「没有直播」的空大厅 */
   const [storeReady, setStoreReady] = useState(false);
 
+  // 电波总控 · 实时背景开关（存 live_kv，只作用于电波生成请求）
+  const [onAirRealtime, setOnAirRealtime] = useState<OnAirRealtimeSettings>({
+    ...DEFAULT_ONAIR_REALTIME_SETTINGS,
+  });
+  useEffect(() => {
+    void loadOnAirRealtimeSettings()
+      .then(next => setOnAirRealtime(next))
+      .catch(() => {
+        /* 读不到就用默认值，不影响直播 */
+      });
+  }, []);
+  const updateOnAirRealtime = useCallback(async (next: OnAirRealtimeSettings) => {
+    setOnAirRealtime(next);
+    try {
+      await saveOnAirRealtimeSettings(next);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
   // 开播与投稿表单状态
   const [selectedPresetKey, setSelectedPresetKey] = useState<string>('just_chatting');
   const [customStreamTitle, setCustomStreamTitle] = useState<string>('');
@@ -145,8 +175,6 @@ const LiveStreamApp: React.FC = () => {
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [editingChannel, setEditingChannel] = useState<StreamerChannelProfile | null>(null);
   const [showPersonaModal, setShowPersonaModal] = useState(false);
-  const [showEndSummaryModal, setShowEndSummaryModal] = useState(false);
-  const [finalSummaryDraft, setFinalSummaryDraft] = useState<string>('');
   const [showLobbyPhone, setShowLobbyPhone] = useState(false);
 
   // 生成与语音状态
@@ -197,10 +225,6 @@ const LiveStreamApp: React.FC = () => {
 
   useEffect(() => {
     return registerBackHandler(() => {
-      if (showEndSummaryModal) {
-        setShowEndSummaryModal(false);
-        return true;
-      }
       if (showChannelModal) {
         setShowChannelModal(false);
         return true;
@@ -217,7 +241,6 @@ const LiveStreamApp: React.FC = () => {
     });
   }, [
     registerBackHandler,
-    showEndSummaryModal,
     showChannelModal,
     showPersonaModal,
     showLobbyPhone,
@@ -546,6 +569,111 @@ const LiveStreamApp: React.FC = () => {
 
   // ==================== 1. Char 直播间核心流程 ====================
 
+  // ==================== 电波实时背景：总开关 + 分类开关 ====================
+
+  /**
+   * 只过滤这一次请求用的实时配置。
+   * 系统总开关关掉、取不到配置时直接返回 undefined（一个实时块都不要）；
+   * 分类开关只关电波这一侧，不动系统「实时感知」设置。
+   */
+  const resolveOnAirRealtimeConfig = useCallback((): RealtimeConfig => {
+    const base = realtimeConfig || defaultRealtimeConfig;
+    // 系统那边关着的类别，电波开关不能把它打开；总开关关掉时一个类别都不请求
+    const allowed = onAirRealtime.enabled;
+    return {
+      ...base,
+      weatherEnabled: Boolean(base.weatherEnabled) && allowed && onAirRealtime.weather,
+      newsEnabled: Boolean(base.newsEnabled) && allowed && onAirRealtime.news,
+      jpHotEnabled: Boolean(base.jpHotEnabled) && allowed && onAirRealtime.jpHot,
+    };
+  }, [onAirRealtime, realtimeConfig]);
+
+  // ==================== 逐轮压缩：四轮一压，每次只压最早一轮 ====================
+
+  /** 同一时间只跑一趟压缩；这一趟会一直做到「最新 3 轮以外都压完」 */
+  const summarizeRunningRef = useRef(false);
+
+  /** 这一轮的内容指纹：压缩请求发出后如果又被重 Roll / 编辑，晚到的旧结果不许覆盖 */
+  const roundSignature = liveRoundSignature;
+
+  const summarizeOneRound = async (
+    session: LiveStreamSession,
+    target: LiveChunk,
+    channel: StreamerChannelProfile,
+  ): Promise<boolean> => {
+    if (!currentChar) return false;
+    const signature = roundSignature(target);
+    try {
+      const summary = await generateLiveRoundSummary({
+        apiConfig,
+        char: currentChar,
+        channel,
+        session,
+        chunk: target,
+      });
+      // 拿最新的场次再写：请求期间可能有新轮、重 Roll 或编辑
+      const latest = liveSessionsRef.current.find(s => s.id === session.id) || session;
+      const latestChunk = latest.chunks.find(c => c.id === target.id);
+      if (!latestChunk || roundSignature(latestChunk) !== signature) return false;
+
+      const nextSession = applyRoundSummary(latest, latestChunk.id, summary);
+      const saved = await rememberLiveSession(nextSession);
+      if (!saved) {
+        addToast('这一轮摘要没能存进本地数据库，原文还在', 'error');
+        return false;
+      }
+      const summarizedChunk = nextSession.chunks.find(c => c.id === target.id)!;
+      if (summarizedChunk.dbMessageId) {
+        try {
+          const updated = await updateLiveRoundCardSummary({
+            messageId: summarizedChunk.dbMessageId,
+            charId: currentChar.id,
+            charName: currentChar.name,
+            channel,
+            session: nextSession,
+            chunk: summarizedChunk,
+            summary,
+          });
+          if (!updated) {
+            // 用户自己把这张卡删了：不重建，摘要只留在直播记录里
+            addToast('这一轮的聊天卡片已经被删掉，摘要只留在直播记录里', 'info');
+          }
+        } catch (e: any) {
+          addToast(`这一轮的聊天卡片没更新上（${e?.name || '未知错误'}）`, 'error');
+        }
+      }
+      return true;
+    } catch {
+      addToast(`第 ${target.index + 1} 轮压缩失败，原文还在，可以手动重试`, 'error');
+      return false;
+    }
+  };
+
+  /** 每次推进后调一次：未压缩满 4 轮就压最早一轮，直到只剩最新 3 轮原文 */
+  const runCompressionPass = async (sessionId: string) => {
+    if (summarizeRunningRef.current) return; // 正在跑的那一趟会自己接着往下压
+    summarizeRunningRef.current = true;
+    setIsSummarizing(true);
+    try {
+      for (;;) {
+        const session = liveSessionsRef.current.find(s => s.id === sessionId);
+        if (!session) break;
+        // 第 4 轮触发第 1 轮；此后每加一轮只压一轮，最新 3 轮永远保留原文
+        const target = pickRoundToFold(session.chunks, 3);
+        if (!target) break;
+        const channel = channels.find(c => c.id === session.channelId) || activeChannel;
+        if (!channel) break;
+        const ok = await summarizeOneRound(session, target, channel);
+        if (!ok) break; // 失败就停：交给用户手动重试，不在后台空转
+      }
+    } finally {
+      summarizeRunningRef.current = false;
+      setIsSummarizing(false);
+    }
+  };
+
+  // ==================== 1. Char 直播间核心流程 ====================
+
   const runGenerateLiveChunk = async (
     session: LiveStreamSession,
     channel: StreamerChannelProfile,
@@ -559,7 +687,6 @@ const LiveStreamApp: React.FC = () => {
     if (!currentChar || isGenerating) return;
     setIsGenerating(true);
     try {
-      const allMsgs = await DB.getMessagesByCharId(currentChar.id);
       const userName = (userProfile?.name || '你').trim() || '你';
 
       const targetChunkIndex = options?.replaceChunkId
@@ -573,13 +700,26 @@ const LiveStreamApp: React.FC = () => {
           }
         : session;
 
+      // 正常聊天范围：服从角色自己的自适应/手动上下文设置，不另设条数或时间上限。
+      // 本场自己的轮次卡不重复贴——本轮前情由 session.chunks 提供。
+      const contextMsgs = (await loadCharacterContextMessages(currentChar)).filter(
+        m => !(m.metadata?.source === 'live_round' && m.metadata?.liveSessionId === session.id),
+      );
+      // 「时间/节日」分类关掉时，只对这一次请求关掉时间感知，不改角色设置
+      const charForPrompt =
+        onAirRealtime.enabled && !onAirRealtime.time
+          ? { ...currentChar, timeAwarenessEnabled: false }
+          : currentChar;
+
       const messages = await buildLiveStreamTurnPrompt({
-        char: currentChar,
+        char: charForPrompt,
         userProfile,
         channel,
         session: sessionForPrompt,
         pendingUserInputs: queuedInputs,
-        allMsgs,
+        historyMessages: contextMsgs,
+        realtimeConfig: resolveOnAirRealtimeConfig(),
+        includeUserLocation: onAirRealtime.enabled && onAirRealtime.location,
         userName,
         rejectedDraftText: options?.rejectedDraftText,
         excludeDbMsgId: options?.excludeDbMsgId,
@@ -622,14 +762,22 @@ const LiveStreamApp: React.FC = () => {
         ? session.chunks.find(c => c.id === options.replaceChunkId)
         : undefined;
 
-      const dbMsgId = await syncLiveChunkToDb({
-        charId: currentChar.id,
-        channel,
-        session,
-        chunkIndex: targetChunkIndex,
-        beats,
-        existingDbMsgId: existingChunk?.dbMessageId,
-      });
+      // 这一轮在聊天里的那张卡：新建，或原位更新重 Roll 前的那张。
+      // 卡写失败只丢时间线上的这一条，这一轮本身照样存进直播库，不连累整轮。
+      let dbMsgId: number | undefined;
+      try {
+        dbMsgId = await syncLiveChunkToDb({
+          charId: currentChar.id,
+          charName: currentChar.name,
+          channel,
+          session,
+          chunkIndex: targetChunkIndex,
+          beats,
+          existingDbMsgId: existingChunk?.dbMessageId,
+        });
+      } catch (e: any) {
+        addToast(`这一轮没能写进聊天时间线（${e?.name || '未知错误'}），直播记录还在`, 'error');
+      }
 
       const newChunk: LiveChunk = {
         id: existingChunk?.id || `chunk_${session.id}_${targetChunkIndex}_${Date.now()}`,
@@ -645,7 +793,7 @@ const LiveStreamApp: React.FC = () => {
         ? session.chunks.map(c => (c.id === options.replaceChunkId ? newChunk : c))
         : [...session.chunks, newChunk];
 
-      let updatedSession: LiveStreamSession = {
+      const updatedSession: LiveStreamSession = {
         ...session,
         chunks: nextChunks,
         viewerCount: currViewers,
@@ -656,11 +804,9 @@ const LiveStreamApp: React.FC = () => {
       setPendingUserInputs([]);
       await rememberLiveSession(updatedSession);
 
-      // 当未折叠段达到 4 段时自动用辅助模型滚动折叠前 2 段
-      const unfolded = updatedSession.chunks.filter(c => !c.folded);
-      if (unfolded.length >= 4 && !options?.replaceChunkId) {
-        void foldEarlyChunksIntoRollingSummary(updatedSession, channel, unfolded.slice(0, 2));
-      }
+      // 重 Roll 会把这轮的旧摘要清掉（内容变了），统一交给压缩那一趟重新判断；
+      // 不 await：压缩不该拖慢「推进」。
+      void runCompressionPass(updatedSession.id);
     } catch (err: any) {
       addToast(err?.message || '生成直播画面失败', 'error');
     } finally {
@@ -697,7 +843,7 @@ const LiveStreamApp: React.FC = () => {
       rollingSummaries: [],
       pendingDanmakuQueue: [],
       foldEveryNChunks: 4,
-      foldKeepRecentChunks: 2,
+      foldKeepRecentChunks: 3,
       startedAt: Date.now(),
     };
 
@@ -727,57 +873,25 @@ const LiveStreamApp: React.FC = () => {
     await runGenerateLiveChunk(newSession, activeChannel, []);
   };
 
-  const foldEarlyChunksIntoRollingSummary = async (
-    session: LiveStreamSession,
-    channel: StreamerChannelProfile,
-    chunksToFold: LiveChunk[],
-  ) => {
-    if (!currentChar || chunksToFold.length === 0 || isSummarizing) return;
-    setIsSummarizing(true);
-    try {
-      const summaryText = await generateLiveRollingSummary({
-        apiConfig,
-        char: currentChar,
-        channel,
-        session,
-        chunksToFold,
-      });
-
-      const oldDbIds = chunksToFold
-        .map(c => c.dbMessageId)
-        .filter((id): id is number => typeof id === 'number' && id > 0);
-
-      const summaryDbId = await supersedeLiveMessagesWithSummary({
-        charId: currentChar.id,
-        sessionId: session.id,
-        channelId: channel.id,
-        summaryText,
-        supersededMsgIds: oldDbIds,
-        isFinal: false,
-      });
-
-      const foldIds = new Set(chunksToFold.map(c => c.id));
-      const newSummary: LiveRollingSummary = {
-        id: `rsum_${session.id}_${Date.now()}`,
-        fromChunkIndex: chunksToFold[0].index,
-        toChunkIndex: chunksToFold[chunksToFold.length - 1].index,
-        content: summaryText,
-        supersededChunkIds: chunksToFold.map(c => c.id),
-        dbMessageId: summaryDbId,
-        createdAt: Date.now(),
-      };
-
-      const nextSession: LiveStreamSession = {
-        ...session,
-        chunks: session.chunks.map(c => (foldIds.has(c.id) ? { ...c, folded: true } : c)),
-        rollingSummaries: [...session.rollingSummaries, newSummary],
-      };
-      void rememberLiveSession(nextSession);
-    } catch (e: any) {
-      console.warn('[LiveStream] 阶段滚动总结失败:', e);
-    } finally {
-      setIsSummarizing(false);
+  /** 手动重试：只压最早一轮，绝不把几轮合并成一段 */
+  const handleManualFoldChunks = () => {
+    if (!activeLiveSession) return;
+    const channel = activeChannel;
+    if (!channel) return;
+    const target = pickRoundToFold(activeLiveSession.chunks, 3);
+    if (!target) {
+      addToast('现在不足 4 轮未压缩，先保留最近 3 轮原文', 'info');
+      return;
     }
+    if (summarizeRunningRef.current) return;
+    summarizeRunningRef.current = true;
+    setIsSummarizing(true);
+    void summarizeOneRound(activeLiveSession, target, channel).finally(() => {
+      summarizeRunningRef.current = false;
+      setIsSummarizing(false);
+      // 压完一轮如果还超，继续按顺序补压，直到只剩 3 轮原文
+      void runCompressionPass(activeLiveSession.id);
+    });
   };
 
   // 发送弹幕 / Super Chat / 礼物（支持立即插队触发主播回应）
@@ -825,6 +939,21 @@ const LiveStreamApp: React.FC = () => {
       );
       updatedSession = { ...activeLiveSession, chunks: nextChunks };
       void rememberLiveSession(updatedSession);
+      // 这一轮还没压缩时，把刚发的弹幕也补进它那张卡；压过的轮次卡正文是摘要，不重写
+      const target = nextChunks[lastChunkIdx];
+      if (target && !(target.roundSummary && target.roundSummary.trim()) && currentChar) {
+        void syncLiveChunkToDb({
+          charId: currentChar.id,
+          charName: currentChar.name,
+          channel: activeChannel,
+          session: updatedSession,
+          chunkIndex: target.index,
+          beats: target.beats,
+          existingDbMsgId: target.dbMessageId,
+        }).catch(() => {
+          /* 卡没更新上不影响弹幕本身，下一次推进还会重写这一轮 */
+        });
+      }
     }
 
     if (triggerImmediateReply && !isGenerating) {
@@ -899,123 +1028,22 @@ const LiveStreamApp: React.FC = () => {
     else addToast('分镜已更新，但没能存进本地数据库', 'error');
   };
 
-  // 下播结算
-  const handleOpenEndStreamModal = async () => {
-    if (!activeLiveSession || !activeChannel || !currentChar) return;
-    setShowEndSummaryModal(true);
-    if (activeLiveSession.finalSummary) {
-      setFinalSummaryDraft(activeLiveSession.finalSummary);
-      return;
-    }
-    setIsSummarizing(true);
-    try {
-      const allMsgs = await DB.getMessagesByCharId(currentChar.id);
-      const userName = (userProfile?.name || '你').trim() || '你';
-      const summary = await generateLiveFinalSummary({
-        apiConfig,
-        char: currentChar,
-        channel: activeChannel,
-        session: activeLiveSession,
-        allMsgs,
-        userName,
-      });
-      setFinalSummaryDraft(summary);
-    } catch (e: any) {
-      addToast(e?.message || '生成下播纪要失败，可手动填写', 'error');
-    } finally {
-      setIsSummarizing(false);
-    }
-  };
-
-  const handleConfirmEndStream = async (
-    finalSummaryText: string,
-    dropMode: LiveArchiveDropMode,
-  ) => {
-    if (!activeLiveSession || !activeChannel || !currentChar) return;
-
-    if (dropMode === 'forget') {
-      await forgetLiveSessionInDb(activeLiveSession);
-      const ended: LiveStreamSession = {
-        ...activeLiveSession,
-        status: 'ended',
-        finalSummary: finalSummaryText,
-        archiveDropMode: 'forget',
-        endedAt: Date.now(),
-      };
-      await rememberLiveSession(ended);
-      setShowEndSummaryModal(false);
-      setActiveLiveSessionId(null);
-      addToast('已抹除本场配信记忆', 'info');
-      return;
-    }
-
-    const allOldIds: number[] = [];
-    activeLiveSession.chunks.forEach(c => {
-      if (c.dbMessageId) allOldIds.push(c.dbMessageId);
-    });
-    activeLiveSession.rollingSummaries.forEach(r => {
-      if (r.dbMessageId) allOldIds.push(r.dbMessageId);
-    });
-
-    const finalDbId = await supersedeLiveMessagesWithSummary({
-      charId: currentChar.id,
-      sessionId: activeLiveSession.id,
-      channelId: activeChannel.id,
-      summaryText: finalSummaryText,
-      supersededMsgIds: allOldIds,
-      existingSummaryDbId: activeLiveSession.finalDbMessageId,
-      isFinal: true,
-    });
-
-    let cardMsgId = activeLiveSession.finalCardMessageId;
-    if (dropMode === 'card_and_memory' || (dropMode as string) === 'chat_card') {
-      const cardPayload: LivestreamChatCardPayload = {
-        type: 'livestream_card',
-        cardKind: 'live_summary',
-        sessionId: activeLiveSession.id,
-        channelId: activeChannel.id,
-        charId: currentChar.id,
-        charName: currentChar.name,
-        channelName: activeChannel.channelName,
-        identityMode: activeChannel.identityMode,
-        title: activeLiveSession.title,
-        categoryLabel: activeLiveSession.categoryLabel,
-        viewerCount: activeLiveSession.peakViewerCount,
-        summary: finalSummaryText,
-        createdAt: Date.now(),
-      };
-      cardMsgId = await DB.saveMessage({
-        charId: currentChar.id,
-        role: 'system',
-        type: 'score_card',
-        content: JSON.stringify(cardPayload),
-        metadata: {
-          source: 'live_card',
-          scoreCard: cardPayload,
-          liveSessionId: activeLiveSession.id,
-        },
-      });
-    }
-
-    const endedSession: LiveStreamSession = {
+  // 下播：只改状态和结束时间，不生成整场总结、不发下播卡
+  const handleEndStream = async () => {
+    if (!activeLiveSession) return;
+    const ended: LiveStreamSession = {
       ...activeLiveSession,
       status: 'ended',
-      finalSummary: finalSummaryText,
-      archiveDropMode: dropMode,
-      finalDbMessageId: finalDbId,
-      finalCardMessageId: cardMsgId,
       endedAt: Date.now(),
     };
-    await rememberLiveSession(endedSession);
-    setShowEndSummaryModal(false);
+    const saved = await rememberLiveSession(ended);
     setActiveLiveSessionId(null);
     addToast(
-      dropMode === 'card_and_memory' || (dropMode as string) === 'chat_card'
-        ? '下播纪要卡片已发送到私聊'
-        : '下播总结已静默归档至角色记忆',
-      'success',
+      saved ? '已下播，本场记录留着，随时能回看' : '已下播，但结束状态没存进本地数据库，请截图反馈',
+      saved ? 'success' : 'error',
     );
   };
+
 
   // 转发高能切片到主聊天
   const handleShareClipToChat = async (beat: LiveBeat) => {
@@ -1119,7 +1147,25 @@ const LiveStreamApp: React.FC = () => {
     if (!sess || !currentChar || isGenerating) return;
     setIsGenerating(true);
     try {
-      const allMsgs = await DB.getMessagesByCharId(currentChar.id);
+      // 角色这一侧用正常聊天范围 + 记忆召回；第三方主播那一侧只拿公开材料
+      const contextMsgs = await loadCharacterContextMessages(currentChar);
+      const rtConfig = resolveOnAirRealtimeConfig();
+      let publicRealtimeText = '';
+      if (onAirRealtime.enabled) {
+        try {
+          publicRealtimeText = await RealtimeContextManager.buildFullContext(
+            rtConfig,
+            resolveCharTimeZone(currentChar),
+            {
+              includeTime: onAirRealtime.time && currentChar.timeAwarenessEnabled !== false,
+              includeJp: Boolean(rtConfig.jpHotEnabled),
+            },
+          );
+        } catch {
+          publicRealtimeText = '';
+        }
+      }
+
       const beat = await generateNpcWatchBeatDualEngine({
         apiConfig,
         char: currentChar,
@@ -1127,19 +1173,18 @@ const LiveStreamApp: React.FC = () => {
         npcSession: sess,
         userInteractionText: userText,
         interactionType: mode,
-        allMsgs,
+        charHistoryMessages: contextMsgs,
+        realtimeConfig: rtConfig,
+        publicRealtimeText,
       });
 
-      const dbId = await DB.saveMessage({
+      // 每一拍在聊天时间线上有一张可见卡，按发生顺序落位
+      beat.dbMessageId = await syncNpcBeatToDb({
         charId: currentChar.id,
-        role: 'assistant',
-        type: 'text',
-        content: `[与你一起刷 NPC 直播《${sess.npcRoomTitle}》(${sess.npcStreamerName})]\n直播画面：${beat.npcScreen}（「${beat.npcSpeech}」）\n${
-          beat.userActionNote ? `你的互动：${beat.userActionNote}\n` : ''
-        }${currentChar.name}反应：${beat.charReactionAction}「${beat.charReactionSpeech}」`,
-        metadata: { source: 'live_npc_watch', npcSessionId: sess.id },
+        charName: currentChar.name,
+        session: sess,
+        beat,
       });
-      beat.dbMessageId = dbId;
 
       const updated: NpcWatchSession = {
         ...sess,
@@ -1221,67 +1266,44 @@ const LiveStreamApp: React.FC = () => {
               addToast('专属礼物已刷新！', 'success');
             });
           }}
-          onManualFoldChunks={() => {
-            const unfolded = activeLiveSession.chunks.filter(c => !c.folded);
-            if (unfolded.length >= 2) {
-              void foldEarlyChunksIntoRollingSummary(
-                activeLiveSession,
-                activeChannel,
-                unfolded.slice(0, Math.max(1, unfolded.length - 1)),
-              );
-            }
-          }}
-          onEditRollingSummary={(summaryId, nextText) => {
-            const target = activeLiveSession.rollingSummaries.find(r => r.id === summaryId);
+          onManualFoldChunks={() => handleManualFoldChunks()}
+          onEditRoundSummary={(chunkId, nextText) => {
+            const target = activeLiveSession.chunks.find(c => c.id === chunkId);
             if (!target) return;
-            void supersedeLiveMessagesWithSummary({
-              charId: currentChar.id,
-              sessionId: activeLiveSession.id,
-              channelId: activeChannel.id,
-              summaryText: nextText,
-              supersededMsgIds: [],
-              existingSummaryDbId: target.dbMessageId,
-            });
-            const nextList = activeLiveSession.rollingSummaries.map(r =>
-              r.id === summaryId ? { ...r, content: nextText } : r,
-            );
-            void rememberLiveSession({ ...activeLiveSession, rollingSummaries: nextList });
-          }}
-          onRegenerateRollingSummary={summary => {
-            const foldedIds = new Set(summary.supersededChunkIds || []);
-            const targetChunks = activeLiveSession.chunks.filter(c => foldedIds.has(c.id));
-            if (targetChunks.length > 0) {
-              void generateLiveRollingSummary({
-                apiConfig,
-                char: currentChar,
-                channel: activeChannel,
-                session: activeLiveSession,
-                chunksToFold: targetChunks,
-              }).then(newText => {
-                const nextList = activeLiveSession.rollingSummaries.map(r =>
-                  r.id === summary.id ? { ...r, content: newText } : r,
-                );
-                void rememberLiveSession({ ...activeLiveSession, rollingSummaries: nextList });
-                addToast('阶段摘要已重新生成', 'success');
-              });
-            }
-          }}
-          onDissolveRollingSummary={summaryId => {
-            const target = activeLiveSession.rollingSummaries.find(r => r.id === summaryId);
-            if (!target) return;
-            const restoreSet = new Set(target.supersededChunkIds);
+            const trimmed = nextText.trim();
+            const nextChunk: LiveChunk = {
+              ...target,
+              roundSummary: trimmed || undefined,
+              summaryUpdatedAt: Date.now(),
+            };
             const nextSession: LiveStreamSession = {
               ...activeLiveSession,
-              chunks: activeLiveSession.chunks.map(c =>
-                restoreSet.has(c.id) ? { ...c, folded: false } : c,
-              ),
-              rollingSummaries: activeLiveSession.rollingSummaries.filter(
-                r => r.id !== summaryId,
-              ),
+              chunks: activeLiveSession.chunks.map(c => (c.id === chunkId ? nextChunk : c)),
             };
             void rememberLiveSession(nextSession);
+            // 手改摘要也要回到同一张原卡上；卡被删了就不重建
+            if (nextChunk.dbMessageId) {
+              void updateLiveRoundCardSummary({
+                messageId: nextChunk.dbMessageId,
+                charId: currentChar.id,
+                charName: currentChar.name,
+                channel: activeChannel,
+                session: nextSession,
+                chunk: nextChunk,
+                summary: trimmed,
+              }).catch(() => addToast('这一轮的聊天卡片没更新上', 'error'));
+            }
           }}
-          onEndStreamClick={() => void handleOpenEndStreamModal()}
+          onRegenerateRoundSummary={chunk => {
+            if (summarizeRunningRef.current) return;
+            summarizeRunningRef.current = true;
+            setIsSummarizing(true);
+            void summarizeOneRound(activeLiveSession, chunk, activeChannel).finally(() => {
+              summarizeRunningRef.current = false;
+              setIsSummarizing(false);
+            });
+          }}
+          onEndStreamClick={() => void handleEndStream()}
           onShareClipToChat={beat => void handleShareClipToChat(beat)}
         />
 
@@ -1327,19 +1349,6 @@ const LiveStreamApp: React.FC = () => {
           onClose={() => setShowPersonaModal(false)}
         />
 
-        <EndStreamSummaryModal
-          isOpen={showEndSummaryModal}
-          sessionTitle={activeLiveSession.title}
-          channelName={activeChannel.channelName}
-          initialSummary={finalSummaryDraft}
-          isGenerating={isSummarizing}
-          onRegenerate={() => {
-            setFinalSummaryDraft('');
-            void handleOpenEndStreamModal();
-          }}
-          onConfirm={(text, mode) => void handleConfirmEndStream(text, mode)}
-          onClose={() => setShowEndSummaryModal(false)}
-        />
       </>
     );
   }
@@ -1516,29 +1525,36 @@ const LiveStreamApp: React.FC = () => {
         onRerollCharReaction={async beat => {
           setNpcRerollingBeatId(beat.id);
           try {
-            const allMsgs = await DB.getMessagesByCharId(currentChar.id);
+            // 和首拍一样走正常聊天范围，不在陪看这一侧另砍一刀
+            const charHistory = await loadCharacterContextMessages(currentChar);
             const res = await rerollCharNpcReactionOnly({
               apiConfig,
               char: currentChar,
               userProfile,
               npcSession: activeNpcSession,
               beat,
-              allMsgs,
+              charHistoryMessages: charHistory,
+              realtimeConfig: resolveOnAirRealtimeConfig(),
             });
+            const nextBeat = {
+              ...beat,
+              charReactionAction: res.charReactionAction,
+              charReactionSpeech: res.charReactionSpeech,
+              charEmotion: res.charEmotion,
+            };
             const updated: NpcWatchSession = {
               ...activeNpcSession,
-              beats: activeNpcSession.beats.map(b =>
-                b.id === beat.id
-                  ? {
-                      ...b,
-                      charReactionAction: res.charReactionAction,
-                      charReactionSpeech: res.charReactionSpeech,
-                      charEmotion: res.charEmotion,
-                    }
-                  : b,
-              ),
+              beats: activeNpcSession.beats.map(b => (b.id === beat.id ? nextBeat : b)),
             };
             void rememberNpcSession(updated);
+            // 这一拍在聊天里还是原来那张卡：原位更新，不另发一张
+            void syncNpcBeatToDb({
+              charId: currentChar.id,
+              charName: currentChar.name,
+              session: updated,
+              beat: nextBeat,
+              existingDbMsgId: beat.dbMessageId,
+            }).catch(() => addToast('这一拍的聊天卡片没更新上', 'error'));
             addToast(`已重新生成 ${currentChar.name} 的反应`, 'success');
           } catch (e: any) {
             addToast(e?.message || '重Roll失败', 'error');
@@ -1562,31 +1578,9 @@ const LiveStreamApp: React.FC = () => {
           })
         }
         onShareNpcWatchToChat={async () => {
-          const lastBeat = activeNpcSession.beats[activeNpcSession.beats.length - 1];
-          const summary = lastBeat
-            ? `📺 正在看：${activeNpcSession.npcStreamerName}《${activeNpcSession.npcRoomTitle}》\n🎬 直播间：${lastBeat.npcScreen}\n🛋️ ${currentChar.name}吐槽：「${lastBeat.charReactionSpeech}」`
-            : `和 ${currentChar.name} 一起围观了《${activeNpcSession.npcRoomTitle}》`;
-          const payload: LivestreamChatCardPayload = {
-            type: 'livestream_card',
-            cardKind: 'npc_watch',
-            sessionId: activeNpcSession.id,
-            charId: currentChar.id,
-            charName: currentChar.name,
-            channelName: activeNpcSession.npcStreamerName,
-            title: activeNpcSession.npcRoomTitle,
-            categoryLabel: activeNpcSession.npcCategoryLabel,
-            viewerCount: activeNpcSession.viewerCount,
-            summary,
-            createdAt: Date.now(),
-          };
-          await DB.saveMessage({
-            charId: currentChar.id,
-            role: 'user',
-            type: 'score_card',
-            content: JSON.stringify(payload),
-            metadata: { source: 'live_npc_share', scoreCard: payload },
-          });
-          addToast('已将陪看卡片分享到私聊', 'success');
+          // 陪看每一拍从这一版起本来就会自己落一张卡在聊天里，
+          // 再写一次就是同一拍两条记录，所以这里只提醒、不重复写。
+          addToast('这一拍已经自己进私聊了，往上翻就能看到', 'info');
         }}
       />
     );
@@ -1709,6 +1703,8 @@ const LiveStreamApp: React.FC = () => {
         isGenerating={isGenerating}
         aiHelperBusy={aiHelperBusy}
         onOpenPhone={() => setShowLobbyPhone(true)}
+        onAirRealtime={onAirRealtime}
+        onChangeOnAirRealtime={next => void updateOnAirRealtime(next)}
         channelModal={
           currentChar ? (
             <ChannelEditorModal
@@ -1761,7 +1757,6 @@ const LiveStreamApp: React.FC = () => {
           isOpen={showLobbyPhone}
           characterId={currentChar.id}
           charName={currentChar.name}
-          contextDescription={`【电波OnAir平台私聊】此刻 ${userProfile?.name || '对方'} 正在浏览电波直播与视频，并用私聊小窗找你聊天。`}
           onClose={() => setShowLobbyPhone(false)}
         />
       )}
