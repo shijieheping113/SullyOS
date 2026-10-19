@@ -320,6 +320,7 @@ export function Seek({
   onChange,
   variant,
   label,
+  thin = false,
 }: {
   min: number;
   max: number;
@@ -327,12 +328,22 @@ export function Seek({
   onChange: (n: number) => void;
   variant: 'yt' | 'nico' | 'ytLight';
   label: string;
+  thin?: boolean;
 }) {
   const thumb = variant === 'nico' ? '#0080ff' : '#FF0033';
-  const baseTrack = variant === 'ytLight' ? '#e2e8f0' : 'rgba(255,255,255,0.28)';
+  // 已播段的头部略提亮，看起来有光，而不是一段死红
+  const head = variant === 'nico' ? '#5aa9ff' : '#ff5470';
+  const baseTrack = thin
+    ? 'rgba(20,26,36,0.22)'
+    : variant === 'ytLight'
+    ? '#e2e8f0'
+    : 'rgba(255,255,255,0.28)';
   const span = Math.max(1, max - min);
   const pct = Math.max(0, Math.min(100, ((value - min) / span) * 100));
-  const trackBg = `linear-gradient(to right, ${thumb} 0%, ${thumb} ${pct}%, ${baseTrack} ${pct}%, ${baseTrack} 100%)`;
+  // 细线进度：已播段由深到亮，未播段往右淡出，避免一条硬线横穿画面
+  const trackBg = thin
+    ? `linear-gradient(to right, ${thumb} 0%, ${head} ${pct}%, rgba(20,26,36,0.26) ${pct}%, rgba(20,26,36,0.08) 100%)`
+    : `linear-gradient(to right, ${thumb} 0%, ${thumb} ${pct}%, ${baseTrack} ${pct}%, ${baseTrack} 100%)`;
   return (
     <input
       aria-label={label}
@@ -341,7 +352,7 @@ export function Seek({
       max={max}
       value={value}
       onChange={e => onChange(Number(e.target.value))}
-      className="live-seek"
+      className={thin ? 'live-seek live-seek-thin' : 'live-seek'}
       style={{ ['--seek-thumb' as string]: thumb, ['--seek-track' as string]: trackBg }}
     />
   );
@@ -373,6 +384,61 @@ export function LiveUiStyle() {
         background: var(--seek-thumb);
         margin-top: -4px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+      }
+      /* 贴在图上的精细进度：圆头细线 + 常驻一颗小光点，按住才放大成圆钮 */
+      .live-seek-thin { height: 18px; }
+      .live-seek-thin::-webkit-slider-runnable-track {
+        height: 4px;
+        background: var(--seek-track);
+        border-radius: 99px;
+        box-shadow: 0 1px 0 rgba(255,255,255,0.45), 0 -1px 0 rgba(15,23,42,0.10),
+          0 1px 3px rgba(15,23,42,0.14);
+      }
+      .live-seek-thin::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 8px;
+        height: 8px;
+        margin-top: -2px;
+        border-radius: 99px;
+        background: #ffffff;
+        border: 2.5px solid var(--seek-thumb);
+        box-shadow: 0 0 7px var(--seek-thumb), 0 1px 3px rgba(16,24,40,0.22);
+        transition: width 160ms ease, height 160ms ease, margin-top 160ms ease;
+      }
+      .live-seek-thin:active::-webkit-slider-thumb {
+        width: 12px;
+        height: 12px;
+        margin-top: -4px;
+      }
+      .live-seek-thin::-moz-range-track {
+        height: 4px;
+        background: var(--seek-track);
+        border-radius: 99px;
+      }
+      .live-seek-thin::-moz-range-thumb {
+        width: 8px;
+        height: 8px;
+        border: 2.5px solid var(--seek-thumb);
+        border-radius: 99px;
+        background: #ffffff;
+      }
+      /* 圆盘头像外的语音声波：念台词时一圈圈往外散 */
+      .live-voice-ring {
+        opacity: 0;
+        transform: scale(0.9);
+        animation: live-voice-pulse 1.9s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+        pointer-events: none;
+      }
+      @keyframes live-voice-pulse {
+        0% { opacity: 0.55; transform: scale(0.96); }
+        70% { opacity: 0; transform: scale(1.46); }
+        100% { opacity: 0; transform: scale(1.46); }
+      }
+      /* 说话时圆盘轻微起伏，像在呼吸 */
+      .live-voice-disc { animation: live-voice-breathe 2.4s ease-in-out infinite; }
+      @keyframes live-voice-breathe {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.035); }
       }
       @media (prefers-reduced-motion: reduce) {
         .live-ui *:not(.danmaku-fly) { animation: none !important; transition: none !important; }

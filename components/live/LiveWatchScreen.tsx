@@ -130,6 +130,9 @@ export function LiveWatchScreen(props: {
   // 字幕组自动收缩：以 --k 为缩放系数，量出实际高度后逐档降字号，保证任何长度都塞得下、不越界
   const stackRef = React.useRef<HTMLDivElement | null>(null);
   const stackInnerRef = React.useRef<HTMLDivElement | null>(null);
+  // 台词带自己的收缩通道（跟画面里的描写各量各的，互不干扰）
+  const capRef = React.useRef<HTMLDivElement | null>(null);
+  const capInnerRef = React.useRef<HTMLDivElement | null>(null);
 
   // 画面里是否显示主播动态头像（默认关闭，把空间完全留给画面与台词；可在设置或舞台快捷开启）
   const [showStageAvatar, setShowStageAvatar] = useState(() => {
@@ -169,29 +172,48 @@ export function LiveWatchScreen(props: {
     : '';
   const maxIdx = Math.max(0, allTimelineBeats.length - 1);
 
-  // 量高逐档收缩：先按满字号排版，塞不下就 3% 一步往下收，最低收到七成
+  // 量高逐档收缩：先按满字号排版，塞不下就 3% 一步往下收，最低收到 floor
+  const fitRef = (
+    box: HTMLDivElement | null,
+    inner: HTMLDivElement | null,
+    floor = 0.7,
+  ) => {
+    if (!box || !inner) return;
+    const cs = getComputedStyle(box);
+    const avail =
+      box.clientHeight - parseFloat(cs.paddingTop || '0') - parseFloat(cs.paddingBottom || '0');
+    let k = 1;
+    box.style.setProperty('--k', '1');
+    let guard = 0;
+    while (inner.getBoundingClientRect().height > avail - 1 && k > floor && guard < 30) {
+      k -= 0.03;
+      box.style.setProperty('--k', k.toFixed(3));
+      guard += 1;
+    }
+  };
+
   React.useLayoutEffect(() => {
     const box = stackRef.current;
     const inner = stackInnerRef.current;
     if (!box || !inner) return;
-    const fit = () => {
-      const cs = getComputedStyle(box);
-      const avail =
-        box.clientHeight - parseFloat(cs.paddingTop || '0') - parseFloat(cs.paddingBottom || '0');
-      let k = 1;
-      box.style.setProperty('--k', '1');
-      let guard = 0;
-      while (inner.getBoundingClientRect().height > avail - 1 && k > 0.7 && guard < 24) {
-        k -= 0.03;
-        box.style.setProperty('--k', k.toFixed(3));
-        guard += 1;
-      }
-    };
+    const fit = () => fitRef(box, inner);
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(box);
     return () => ro.disconnect();
   }, [beat?.screen, beat?.speechOriginal, trans, props.isFullscreen, props.showTranslation]);
+
+  // 台词带同样要收：中日双语同时灌进来时，先降一档字号，名额固定、绝不挤压聊天区
+  React.useLayoutEffect(() => {
+    const box = capRef.current;
+    const inner = capInnerRef.current;
+    if (!box || !inner) return;
+    const fit = () => fitRef(box, inner, 0.56);
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [beat?.speechOriginal, trans, props.showTranslation, props.isFullscreen]);
 
   const font = isNico
     ? '"Yu Gothic UI", "Hiragino Sans", Meiryo, "PingFang SC", "Noto Sans SC", sans-serif'
@@ -265,38 +287,27 @@ export function LiveWatchScreen(props: {
     if (beat && item) props.openBeatMenu(item.chunkId, beat, `第 ${currentGlobalBeatIdx + 1} 拍`);
   };
 
-  // 自适应字号：舞台高度固定，字幕从底部往上长，长文自动降字号，绝不滚动、绝不截断
+  // 自适应字号：小窗台词放在画面外的白带上，全屏台词放在气泡里，都是长文自动降档、不滚不截
   const screenText = beat?.screen || (props.isGenerating ? '主播正在镜头前反应…' : '');
   const speechText = beat?.speechOriginal || '';
   const pickSize = (len: number, tiers: Array<[number, number]>) => {
     for (const [limit, size] of tiers) if (len <= limit) return size;
     return tiers[tiers.length - 1][1];
   };
-  const screenFontSize = props.isFullscreen
-    ? pickSize(screenText.length, [
-        [60, 13.5],
-        [120, 12.5],
-        [1e9, 11.5],
-      ])
-    : pickSize(screenText.length, [
-        [60, 11],
-        [120, 10.5],
-        [1e9, 10],
-      ]);
   const speechFontSize = props.isFullscreen
     ? pickSize(speechText.length, [
-        [45, 20],
-        [85, 18],
-        [130, 16],
-        [1e9, 14.5],
+        [45, 19],
+        [85, 17],
+        [130, 15.5],
+        [1e9, 14],
       ])
     : pickSize(speechText.length, [
         [45, 15.5],
-        [85, 14],
-        [130, 13],
-        [1e9, 12],
+        [85, 14.5],
+        [130, 13.5],
+        [1e9, 13],
       ]);
-  const transFontSize = props.isFullscreen ? 12 : 10.5;
+  const transFontSize = props.isFullscreen ? 11.5 : 10.5;
 
   // 两套皮肤共用一套骨架，只换颜色与圆角：这样才像同一个产品，而不是两套临时拼的界面
   const accent = isNico ? '#0080ff' : '#FF0033';
@@ -335,163 +346,205 @@ export function LiveWatchScreen(props: {
     );
   };
 
-  // ==================== 2. 视频主舞台（弹幕带 / 镜头 / 台词，三层各占地盘） ====================
-  // 骨架：整块视频 = 顶部一排状态 + 一条弹幕带 + 底部字幕组。
-  // 字幕组贴底、由下往上生长：动作描写小字在上，台词大字在下，长文自动降字号，永不互相压住。
-  const renderVideoStage = (fullscreenMode: boolean) => (
-    <div
-      onClick={() => {
-        if (wasLongPressTriggered()) return;
-        if (speechText) toggleVoice();
-      }}
-      {...bindLongPress(openThisBeat)}
-      className={`relative w-full overflow-hidden select-none flex flex-col ${
-        fullscreenMode ? 'flex-1 min-h-0' : 'shrink-0'
-      }`}
-      style={fullscreenMode ? undefined : { height: 'clamp(224px, 34%, 302px)' }}
-    >
-      {renderStageBackdrop()}
+  // 压在图上的字一律走「白描边」：深浅底都读得清，又不用任何黑色遮罩。
+  const haloStrong: React.CSSProperties = {
+    WebkitTextStroke: '2.9px rgba(255,255,255,0.95)',
+    paintOrder: 'stroke fill',
+  };
+  const haloSoft: React.CSSProperties = {
+    WebkitTextStroke: '2.2px rgba(255,255,255,0.92)',
+    paintOrder: 'stroke fill',
+  };
+  // 压在图上的图标：深色字 + 白色柔光，同样不靠任何底色块
+  const haloIcon: React.CSSProperties = {
+    color: '#2b3440',
+    filter:
+      'drop-shadow(0 0 1.4px rgba(255,255,255,1)) drop-shadow(0 0 3px rgba(255,255,255,0.92)) drop-shadow(0 0 5px rgba(255,255,255,0.6))',
+  };
 
-      {/* 顶部状态：LIVE · 在看人数 · 全屏。别的功能一律收进设置，画面上不堆按钮 */}
-      <div
-        className={`relative z-30 shrink-0 flex items-center gap-2 px-3 ${
-          fullscreenMode ? 'h-12' : 'h-9'
-        }`}
+  /**
+   * LIVE / 生放送 标：实色块 + 纯白字。
+   * 之前这里被外层灰色继承压成了灰字，务必保持 color 独立、不受父级影响。
+   */
+  const renderLiveBadge = (compact = false) => {
+    const label = isNico ? (ended ? 'TS' : '生放送') : ended ? 'REPLAY' : 'LIVE';
+    const bg = ended ? '#a3a3a3' : isNico ? '#00b34a' : '#FF0033';
+    return (
+      <span
+        className={`inline-flex items-center gap-[3px] text-white font-extrabold tracking-wide ${
+          compact ? 'h-[15px] px-[5px] text-[9px]' : 'h-[17px] px-1.5 text-[10px]'
+        } ${isNico ? 'rounded-[2px]' : 'rounded-[3px]'}`}
+        style={{ backgroundColor: bg, color: '#ffffff', opacity: 1 }}
       >
         <span
-          className={`h-[18px] px-1.5 inline-flex items-center gap-1 text-[10px] font-extrabold tracking-wide text-white ${
-            isNico ? 'rounded-[2px]' : 'rounded-[3px]'
-          } ${ended ? 'bg-[#a3a3a3]' : isNico ? 'bg-[#00b34a]' : 'bg-[#FF0033]'}`}
-        >
-          <span
-            className={`w-[5px] h-[5px] rounded-full ${ended ? 'bg-white/70' : 'bg-white animate-pulse'}`}
-          />
-          {isNico ? (ended ? 'TS' : '生放送') : ended ? 'REPLAY' : 'LIVE'}
-        </span>
+          className={`w-[4px] h-[4px] rounded-full bg-white ${ended ? 'opacity-70' : 'animate-pulse'}`}
+        />
+        {label}
+      </span>
+    );
+  };
 
-        <span
-          className="inline-flex items-center gap-1 text-[10.5px] font-bold tabular-nums"
-          style={{ color: ink, opacity: 0.55 }}
-        >
-          <Icon name="people" size={11} />
-          {formatCount(session.viewerCount)}
-        </span>
+  const renderViewerCount = (compact = false) => (
+    <span
+      className={`inline-flex items-center gap-1 font-bold tabular-nums ${
+        compact ? 'text-[9.5px]' : 'text-[10.5px]'
+      }`}
+      style={{ color: '#1f2937', ...haloSoft }}
+    >
+      <span style={{ ...haloIcon, display: 'inline-flex' }}>
+        <Icon name="people" size={compact ? 10 : 11} />
+      </span>
+      {formatCount(session.viewerCount)}
+    </span>
+  );
 
+  const seekProps = {
+    min: 0,
+    max: maxIdx,
+    value: Math.min(currentGlobalBeatIdx, maxIdx),
+    onChange: seek,
+  };
+
+  // ==================== 2. 小窗画面：整块播放器，描写压在里面，台词搬到画面外 ====================
+  const renderSmallStage = () => (
+    <div
+      className="relative w-full shrink-0 overflow-hidden select-none"
+      style={{ height: 'clamp(232px, 36%, 312px)' }}
+    >
+      <div
+        className="absolute inset-0"
+        onClick={() => {
+          if (wasLongPressTriggered()) return;
+          if (speechText) toggleVoice();
+        }}
+        {...bindLongPress(openThisBeat)}
+      >
+        {renderStageBackdrop()}
+      </div>
+
+      {/* 顶行：LIVE · 在看人数 · 全屏。人数是纯文字，不加任何白色底块 */}
+      <div className="absolute inset-x-0 top-0 z-30 h-9 px-3 flex items-center gap-2">
+        {renderLiveBadge()}
+        {renderViewerCount()}
         <button
           type="button"
-          onClick={e => {
-            e.stopPropagation();
-            props.setIsFullscreen(!props.isFullscreen);
-          }}
-          aria-label={props.isFullscreen ? '退出全屏' : '全屏'}
-          className="ml-auto -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-full active:scale-95 transition"
-          style={{ color: ink, opacity: 0.58 }}
+          onClick={() => props.setIsFullscreen(true)}
+          aria-label="全屏"
+          className="ml-auto -mr-1.5 w-8 h-8 inline-flex items-center justify-center active:opacity-60 transition"
+          style={haloIcon}
         >
-          <Icon name={props.isFullscreen ? 'collapse' : 'expand'} size={15} />
+          <Icon name="expand" size={15} />
         </button>
       </div>
 
-      {/* 弹幕带：单独一条，跟字幕各走各的 */}
+      {/* 弹幕带：只跑在画面里，绝不落到台词上；样式沿用原白描边那一套 */}
       {props.showDanmakuOverlay && (
         <div
-          className="relative z-10 shrink-0 overflow-hidden"
-          style={{ height: fullscreenMode ? 62 : 44, marginRight: showStageAvatar ? 44 : 0 }}
+          className="pointer-events-none absolute left-0 right-0 z-10 overflow-hidden"
+          style={{ top: 32, height: 44 }}
         >
           <FloatingDanmakuOverlay
             danmakuList={visibleDanmakuFeed}
             showTranslation={props.showTranslation}
             visible
             platformTheme={platformTheme}
-            tracks={fullscreenMode ? 3 : 2}
+            tracks={2}
           />
         </div>
       )}
 
-      {/* 字幕组：贴底、从下往上长；--k 由脚本按实际高度收放 */}
+      {/* 镜头描写：贴画面底边压在图里，字号由 --k 自动收，长了也不会顶到弹幕 */}
       <div
         ref={stackRef}
-        className={`relative z-20 flex-1 min-h-0 flex flex-col justify-end overflow-hidden ${
-          fullscreenMode ? 'px-5 pb-5' : 'px-4 pb-3'
-        }`}
-        style={{ '--k': 1 } as React.CSSProperties}
+        className="absolute inset-x-0 z-20 px-3.5 overflow-hidden"
+        style={{ bottom: 58, maxHeight: 78, '--k': 1 } as React.CSSProperties}
       >
         <div ref={stackInnerRef}>
-        {(voiceBusy || voiceOn) && (
-          <div className="flex items-center gap-1.5 mb-[5px]">
-            <span
-              className="text-[10px] font-bold leading-none tracking-[0.1em]"
-              style={{ color: accent, opacity: 0.8 }}
+          {screenText && (
+            <p
+              className="break-words"
+              style={{
+                fontSize: 'calc(11px * var(--k))',
+                lineHeight: 1.58,
+                fontWeight: 600,
+                letterSpacing: '0.012em',
+                color: '#33404d',
+                ...haloSoft,
+              }}
             >
-              {voiceBusy ? '•••' : ''}
-            </span>
-            {voiceOn && <VoiceWaveBars active color={accent} />}
-          </div>
-        )}
-
-        {screenText && (
-          <p
-            className="break-words"
-            style={{
-              fontSize: `calc(${screenFontSize}px * var(--k))`,
-              lineHeight: 1.55,
-              fontWeight: 600,
-              letterSpacing: '0.015em',
-              color: isNico ? '#39434f' : '#3f3f46',
-            }}
-          >
-            {screenText}
-          </p>
-        )}
-
-        {speechText && (
-          <p
-            className="break-words"
-            style={{
-              fontSize: `calc(${speechFontSize}px * var(--k))`,
-              lineHeight: 1.48,
-              fontWeight: 900,
-              letterSpacing: '-0.012em',
-              marginTop: `calc(${fullscreenMode ? 12 : 9}px * var(--k))`,
-              color: voiceOn ? accent : ink,
-              transition: 'color 200ms',
-            }}
-          >
-            「{speechText}」
-          </p>
-        )}
-
-        {props.showTranslation && trans && trans !== speechText && (
-          <p
-            className="break-words"
-            style={{
-              fontSize: `calc(${transFontSize}px * var(--k))`,
-              lineHeight: 1.45,
-              fontWeight: 700,
-              marginTop: 2,
-              color: isNico ? '#005eb8' : '#075985',
-            }}
-          >
-            {trans}
-          </p>
-        )}
+              {screenText}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* 可选主播小头像：只占右上角 30px，不压字 */}
+      {/* 播控：上一拍 / 继续演，压在画面下沿；进度就是最底那 3px 细线 */}
+      <div className="absolute inset-x-0 bottom-[24px] z-30 flex items-center px-2.5">
+        <button
+          type="button"
+          disabled={currentGlobalBeatIdx <= 0}
+          onClick={() => seek(currentGlobalBeatIdx - 1)}
+          aria-label="上一拍"
+          className="w-8 h-8 -ml-1 inline-flex items-center justify-center active:scale-95 transition disabled:opacity-30"
+          style={haloIcon}
+        >
+          <Icon name="skipBack" size={14} />
+        </button>
+
+        <button
+          type="button"
+          onClick={advance}
+          disabled={(ended && atEnd) || props.isGenerating}
+          aria-label="继续演播"
+          className="ml-auto w-[30px] h-[30px] inline-flex items-center justify-center rounded-full text-white active:scale-95 transition disabled:opacity-40"
+          style={{
+            background: `linear-gradient(158deg, ${accent} 0%, ${isNico ? '#0068d4' : '#d8002b'} 100%)`,
+            boxShadow: `0 4px 12px ${isNico ? 'rgba(0,128,255,0.28)' : 'rgba(255,0,51,0.28)'}`,
+            outline: '1.5px solid rgba(255,255,255,0.8)',
+            outlineOffset: -1,
+          }}
+        >
+          {props.isGenerating ? (
+            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+          ) : (
+            <Icon name={ended && atEnd ? 'pause' : 'play'} size={12} />
+          )}
+        </button>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-[4px] z-40 px-3.5">
+        <Seek {...seekProps} label="直播进度" variant={isNico ? 'nico' : 'yt'} thin />
+      </div>
+
+      {/* 可选「画面中央圆盘头像」：光盘 + 念台词时往外扩的声波环，默认关 */}
       {showStageAvatar && (
         <div
-          className="pointer-events-none absolute z-20"
-          style={{ right: 10, top: fullscreenMode ? 54 : 40 }}
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
+          style={{ paddingBottom: 62 }}
         >
           <div className="relative flex items-center justify-center">
-            {voiceOn && (
-              <span
-                className="absolute -inset-1 rounded-full border-2 animate-ping"
-                style={{ borderColor: accent }}
-              />
-            )}
-            <div className="rounded-full p-[1.5px] bg-white">
-              <Avatar src={props.displayAvatar} name={channel.channelName} size={30} />
+            {voiceOn &&
+              [0, 1, 2].map(i => (
+                <span
+                  key={i}
+                  className="absolute rounded-full live-voice-ring"
+                  style={{
+                    width: 84,
+                    height: 84,
+                    border: `2px solid ${accent}`,
+                    animationDelay: `${i * 0.62}s`,
+                  }}
+                />
+              ))}
+            <div
+              className={`relative rounded-full ${voiceOn ? 'live-voice-disc' : ''}`}
+              style={{
+                padding: 2.5,
+                backgroundColor: 'rgba(255,255,255,0.94)',
+                boxShadow: '0 6px 20px rgba(15,23,42,0.18), 0 0 0 1px rgba(255,255,255,0.55)',
+              }}
+            >
+              <Avatar src={props.displayAvatar} name={channel.channelName} size={72} />
             </div>
           </div>
         </div>
@@ -499,58 +552,274 @@ export function LiveWatchScreen(props: {
     </div>
   );
 
-  // ==================== 3. 播控条：上一拍 · 进度 · 拍数 · 播放 ====================
-  const renderTransportBar = () => (
+  // ==================== 3. 台词带：画面外面的一条白带，左侧竖线就是发声指示灯 ====================
+  const renderCaptionBand = () => (
     <div
-      className="shrink-0 flex items-center gap-1 px-1.5 h-11 border-b"
-      style={{
-        backgroundColor: isNico ? '#252525' : '#ffffff',
-        borderColor: isNico ? '#1a1a1a' : hairline,
+      ref={capRef}
+      onClick={() => {
+        if (wasLongPressTriggered()) return;
+        if (speechText) toggleVoice();
       }}
+      {...bindLongPress(openThisBeat)}
+      className="relative shrink-0 w-full bg-white px-3.5 border-b select-none overflow-hidden flex items-center"
+      style={{ borderColor: hairline, height: 92, '--k': 1 } as React.CSSProperties}
     >
-      <button
-        type="button"
-        disabled={currentGlobalBeatIdx <= 0}
-        onClick={() => seek(currentGlobalBeatIdx - 1)}
-        aria-label="上一拍"
-        className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
-        style={{ color: isNico ? '#e8e8e8' : ink }}
-      >
-        <Icon name="skipBack" size={15} />
-      </button>
-
-      <div className="flex-1 min-w-0 px-0.5">
-        <Seek
-          label="直播进度"
-          min={0}
-          max={maxIdx}
-          value={Math.min(currentGlobalBeatIdx, maxIdx)}
-          onChange={seek}
-          variant={isNico ? 'nico' : 'ytLight'}
+      <div ref={capInnerRef} className="w-full flex items-stretch gap-2.5 py-2">
+        <span
+          className="w-[2px] shrink-0 rounded-full transition-colors"
+          style={{ backgroundColor: voiceOn ? accent : '#d7dbe1' }}
         />
+        <div className="min-w-0 flex-1">
+          {speechText ? (
+            <p
+              className="break-words"
+              style={{
+                fontSize: `calc(${speechFontSize}px * var(--k))`,
+                lineHeight: 1.46,
+                fontWeight: 800,
+                letterSpacing: '-0.012em',
+                color: voiceOn ? accent : ink,
+                transition: 'color 200ms',
+              }}
+            >
+              {speechText}
+            </p>
+          ) : (
+            <p className="text-[13px] font-semibold" style={{ color: '#a1a1aa' }}>
+              {props.isGenerating ? '正在准备下一句…' : '这一拍还没有台词'}
+            </p>
+          )}
+
+          {props.showTranslation && trans && trans !== speechText && (
+            <p
+              className="break-words mt-[3px]"
+              style={{
+                fontSize: `calc(${transFontSize}px * var(--k))`,
+                lineHeight: 1.45,
+                fontWeight: 600,
+                color: isNico ? '#005eb8' : '#075985',
+              }}
+            >
+              {trans}
+            </p>
+          )}
+        </div>
+
+        {(voiceOn || voiceBusy) && (
+          <span className="shrink-0 self-end pb-1">
+            {voiceOn ? <VoiceWaveBars active color={accent} /> : null}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+
+  // ==================== 4. 全屏：壁纸铺满整屏，主播居中，弹幕沉到左下 ====================
+  const renderFullscreenFeed = () => {
+    const items = visibleDanmakuFeed.slice(-5);
+    if (!items.length) return null;
+    return (
+      <div
+        className="flex flex-col justify-end gap-[3px] overflow-hidden"
+        style={{
+          maxHeight: 84,
+          WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, #000 30%)',
+          maskImage: 'linear-gradient(180deg, transparent 0%, #000 30%)',
+        }}
+      >
+        {items.map((dm, i) => {
+          const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
+          const isGift = Boolean(dm.giftName);
+          const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
+          return (
+            <p
+              key={dm.id || `fs_dm_${i}`}
+              className="text-[11.5px] leading-[1.35] break-words"
+              style={haloSoft}
+            >
+              <span
+                style={{
+                  fontWeight: 800,
+                  color: isSc
+                    ? '#b45309'
+                    : isGift
+                    ? '#be185d'
+                    : isMine
+                    ? isNico
+                      ? '#0066cc'
+                      : '#047857'
+                    : '#3f4a58',
+                }}
+              >
+                {dm.senderName}
+              </span>
+              <span style={{ fontWeight: 600, color: '#1f2937' }}>　{dm.text}</span>
+            </p>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderFullscreen = () => (
+    <div className="relative flex-1 min-h-0 overflow-hidden select-none bg-[#e8ecf1]">
+      {renderStageBackdrop()}
+
+      {/* 顶栏：没有白色胶囊底，靠白描边读字 */}
+      <div className="absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3 pt-3">
+        <div className="w-[28px] h-[28px] shrink-0 rounded-full overflow-hidden ring-2 ring-white">
+          <Avatar src={props.displayAvatar} name={channel.channelName} size={28} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p
+            className="text-[12.5px] font-extrabold leading-tight truncate"
+            style={{ color: '#1d2530', ...haloSoft }}
+          >
+            {session.title}
+          </p>
+          <div className="mt-[3px] flex items-center gap-1.5">
+            {renderLiveBadge(true)}
+            {renderViewerCount(true)}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => props.setShowFloatingPhone(true)}
+          aria-label="私聊"
+          className="relative w-8 h-8 shrink-0 inline-flex items-center justify-center active:opacity-60"
+          style={haloIcon}
+        >
+          <Icon name="chat" size={18} />
+          {props.phoneUnread && (
+            <span className="absolute top-1 right-1 w-[7px] h-[7px] rounded-full bg-[#FF0033] ring-2 ring-white" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="设置"
+          className="w-8 h-8 shrink-0 inline-flex items-center justify-center active:opacity-60"
+          style={haloIcon}
+        >
+          <Icon name="gear" size={18} />
+        </button>
+        <button
+          type="button"
+          onClick={() => props.setIsFullscreen(false)}
+          aria-label="退出全屏"
+          className="w-8 h-8 shrink-0 inline-flex items-center justify-center active:opacity-60"
+          style={haloIcon}
+        >
+          <Icon name="collapse" size={18} />
+        </button>
       </div>
 
-      <span
-        className="text-[10px] font-mono tabular-nums shrink-0 tracking-tight"
-        style={{ color: isNico ? 'rgba(255,255,255,0.5)' : '#9a9a9a' }}
-      >
-        {currentGlobalBeatIdx + 1}/{allTimelineBeats.length || 1}
-      </span>
-
-      <button
-        type="button"
-        onClick={advance}
-        disabled={(ended && atEnd) || props.isGenerating}
-        aria-label="继续演播"
-        className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-full text-white active:scale-95 transition disabled:opacity-30"
-        style={{ backgroundColor: accent }}
-      >
-        {props.isGenerating ? (
-          <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-        ) : (
-          <Icon name="play" size={13} />
+      {/* 底部整摞：图注 → 台词气泡 → 左下弹幕流 → 输入栏 */}
+      <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col">
+        {screenText && (
+          <p
+            className="mx-4 mb-2 text-[11px] font-semibold leading-[1.58] break-words"
+            style={{ color: '#33404d', ...haloSoft }}
+          >
+            {screenText}
+          </p>
         )}
-      </button>
+
+        {speechText && (
+          <div
+            ref={stackRef}
+            className="relative mx-4 mb-2.5 rounded-[16px] px-3.5 py-2.5 overflow-hidden"
+            style={
+              { backgroundColor: 'rgba(255,255,255,0.97)', maxHeight: 214, '--k': 1 } as React.CSSProperties
+            }
+            onClick={() => {
+              if (wasLongPressTriggered()) return;
+              toggleVoice();
+            }}
+            {...bindLongPress(openThisBeat)}
+          >
+            <span
+              className="absolute left-6 -top-[5px] w-[11px] h-[11px] rotate-45 rounded-[2px]"
+              style={{ backgroundColor: 'rgba(255,255,255,0.97)' }}
+            />
+            <div ref={stackInnerRef}>
+              <p
+                className="relative break-words"
+                style={{
+                  fontSize: `calc(${speechFontSize}px * var(--k))`,
+                  lineHeight: 1.46,
+                  fontWeight: 800,
+                  letterSpacing: '-0.012em',
+                  color: voiceOn ? accent : '#0f0f0f',
+                  transition: 'color 200ms',
+                }}
+              >
+                {speechText}
+              </p>
+              {props.showTranslation && trans && trans !== speechText && (
+                <p
+                  className="relative break-words mt-[3px]"
+                  style={{
+                    fontSize: `calc(${transFontSize}px * var(--k))`,
+                    lineHeight: 1.45,
+                    fontWeight: 600,
+                    color: isNico ? '#005eb8' : '#075985',
+                  }}
+                >
+                  {trans}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 左下弹幕流 + 右下播控：同一行贴着输入栏，按钮成组、不再单个悬空 */}
+        <div className="flex items-end gap-2 px-3.5 mb-2">
+          <div className="flex-1 min-w-0">
+            {props.showDanmakuOverlay && renderFullscreenFeed()}
+          </div>
+          <div className="shrink-0 flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={currentGlobalBeatIdx <= 0}
+              onClick={() => seek(currentGlobalBeatIdx - 1)}
+              aria-label="上一拍"
+              className="w-9 h-9 inline-flex items-center justify-center active:scale-95 transition disabled:opacity-30"
+              style={haloIcon}
+            >
+              <Icon name="skipBack" size={17} />
+            </button>
+            <button
+              type="button"
+              onClick={advance}
+              disabled={(ended && atEnd) || props.isGenerating}
+              aria-label="继续演播"
+              className="w-[36px] h-[36px] inline-flex items-center justify-center rounded-full text-white active:scale-95 transition disabled:opacity-40"
+              style={{
+                background: `linear-gradient(158deg, ${accent} 0%, ${isNico ? '#0068d4' : '#d8002b'} 100%)`,
+                boxShadow: `0 5px 14px ${isNico ? 'rgba(0,128,255,0.30)' : 'rgba(255,0,51,0.30)'}, 0 1px 0 rgba(255,255,255,0.45) inset`,
+                outline: '1.5px solid rgba(255,255,255,0.85)',
+                outlineOffset: -1,
+              }}
+            >
+              {props.isGenerating ? (
+                <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+              ) : (
+                <Icon name={ended && atEnd ? 'pause' : 'play'} size={15} />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* 进度：贴在输入栏上方的一条细线，不压任何按钮 */}
+        <div className="px-4 mb-1">
+          <Seek {...seekProps} label="直播进度" variant={isNico ? 'nico' : 'yt'} thin />
+        </div>
+
+        {renderComposer(true)}
+      </div>
     </div>
   );
 
@@ -596,7 +865,7 @@ export function LiveWatchScreen(props: {
   };
 
   // ==================== 5. 发送栏：身份 · 输入 · 醒目留言 · 礼物 · 发送 ====================
-  const renderComposer = () => (
+  const renderComposer = (overlay = false) => (
     <form
       onSubmit={e => {
         e.preventDefault();
@@ -604,9 +873,9 @@ export function LiveWatchScreen(props: {
       }}
       className="shrink-0 flex items-center gap-1.5 px-2 pt-2"
       style={{
-        backgroundColor: isNico ? '#f2f4f7' : '#ffffff',
-        borderTop: `1px solid ${isNico ? '#e0e4ea' : hairline}`,
-        paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
+        backgroundColor: overlay ? 'transparent' : isNico ? '#f2f4f7' : '#ffffff',
+        borderTop: overlay ? 'none' : `1px solid ${isNico ? '#e0e4ea' : hairline}`,
+        paddingBottom: 'max(10px, env(safe-area-inset-bottom))',
       }}
     >
       <button
@@ -617,10 +886,10 @@ export function LiveWatchScreen(props: {
         style={
           activePersona.isMain
             ? {
-                backgroundColor: isNico ? '#e8eef7' : '#f2f2f2',
+                backgroundColor: overlay ? 'rgba(255,255,255,0.9)' : isNico ? '#e8eef7' : '#f2f2f2',
                 color: isNico ? '#334155' : '#0f0f0f',
               }
-            : { backgroundColor: isNico ? '#252525' : '#0f0f0f', color: '#ffffff' }
+            : { backgroundColor: overlay ? '#1d2530' : isNico ? '#252525' : '#0f0f0f', color: '#ffffff' }
         }
       >
         {activePersona.isMain ? '本' : '匿'}
@@ -633,9 +902,9 @@ export function LiveWatchScreen(props: {
         aria-label="发送弹幕"
         className="flex-1 min-w-0 h-9 px-3 text-[12.5px] placeholder:text-[#a3a3a3] focus:outline-none transition"
         style={{
-          backgroundColor: isNico ? '#ffffff' : '#f2f2f2',
-          border: `1px solid ${isNico ? '#d5dae2' : 'transparent'}`,
-          borderRadius: isNico ? 4 : 999,
+          backgroundColor: overlay ? 'rgba(255,255,255,0.92)' : isNico ? '#ffffff' : '#f2f2f2',
+          border: `1px solid ${overlay ? 'rgba(255,255,255,0.95)' : isNico ? '#d5dae2' : 'transparent'}`,
+          borderRadius: isNico && !overlay ? 4 : 999,
           color: ink,
         }}
       />
@@ -650,7 +919,10 @@ export function LiveWatchScreen(props: {
         style={
           props.activeBottomDrawer === 'sc'
             ? { backgroundColor: '#f59e0b', color: '#ffffff' }
-            : { backgroundColor: isNico ? '#e8ecf2' : '#f2f2f2', color: isNico ? '#4b5563' : ink }
+            : {
+                backgroundColor: overlay ? 'rgba(255,255,255,0.9)' : isNico ? '#e8ecf2' : '#f2f2f2',
+                color: isNico ? '#4b5563' : ink,
+              }
         }
       >
         <Icon name="yen" size={15} />
@@ -666,7 +938,10 @@ export function LiveWatchScreen(props: {
         style={
           props.activeBottomDrawer === 'gift'
             ? { backgroundColor: '#ec4899', color: '#ffffff' }
-            : { backgroundColor: isNico ? '#e8ecf2' : '#f2f2f2', color: isNico ? '#4b5563' : ink }
+            : {
+                backgroundColor: overlay ? 'rgba(255,255,255,0.9)' : isNico ? '#e8ecf2' : '#f2f2f2',
+                color: isNico ? '#4b5563' : ink,
+              }
         }
       >
         <Icon name="gift" size={15} />
@@ -765,15 +1040,11 @@ export function LiveWatchScreen(props: {
 
       {/* ==================== 主体视图：全屏 vs 分屏 ==================== */}
       {props.isFullscreen ? (
-        <div className="flex-1 min-h-0 flex flex-col bg-white">
-          {renderVideoStage(true)}
-          {renderTransportBar()}
-          {renderComposer()}
-        </div>
+        renderFullscreen()
       ) : (
         <>
-          {renderVideoStage(false)}
-          {renderTransportBar()}
+          {renderSmallStage()}
+          {renderCaptionBand()}
           {renderLowerTabs()}
 
           {/* 实时公屏聊天 / 分镜回放 / 阶段摘要（整页最大核心区 flex-1） */}
@@ -942,7 +1213,7 @@ export function LiveWatchScreen(props: {
               onToggle={() => props.setAutoPlayStep(v => !v)}
             />
             <SettingToggleRow
-              title="画面右上角显示主播头像"
+              title="画面中央显示主播圆盘头像（随语音起伏）"
               checked={showStageAvatar}
               onToggle={toggleStageAvatar}
             />
