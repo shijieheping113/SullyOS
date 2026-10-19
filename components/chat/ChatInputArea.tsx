@@ -17,6 +17,8 @@ const ACTION_PAGE_SIZE = 8;
 
 interface ChatInputAreaProps {
     compactHome?: boolean;
+    /** 仅可由指定嵌入窗口单独打开 compactHome 下隐藏的表情面板，不改变家园小手机默认行为。 */
+    compactHomeEmojiPicker?: boolean;
 
     /** Initial page for static decoration previews; does not run menu actions. */
     previewActionsPage?: number;
@@ -99,7 +101,7 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
-    input, setInput, isTyping, selectionMode, compactHome=false,
+    input, setInput, isTyping, selectionMode, compactHome=false, compactHomeEmojiPicker=false,
     showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, onFavoriteSelected, favoriteSelectedCount = 0, selectedCount,
     sendButtonGenerates = false, enterToSend = true, onGenerate,
     autoReplyEnabled = false, autoReplySeconds = null, onCancelAutoReply, onInputFocusChange,
@@ -840,7 +842,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             placeholder="Message..."
                             style={{ height: 'auto' }}
                         />
-                        <button hidden={compactHome} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                        <button type="button" aria-label="打开表情包" hidden={compactHome && !compactHomeEmojiPicker} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                         {onToggleVoice && (

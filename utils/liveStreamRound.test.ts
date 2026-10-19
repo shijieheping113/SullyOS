@@ -16,9 +16,13 @@ import {
   loadOnAirRealtimeSettings,
   pickRoundToFold,
   saveOnAirRealtimeSettings,
+  createLiveSessionMarkerInDb,
   syncLiveChunkToDb,
   syncNpcBeatToDb,
+  updateLiveSessionMarkerInDb,
   updateLiveRoundCardSummary,
+  loadActiveViewerPersonaId,
+  saveActiveViewerPersonaId,
 } from './liveStreamStorage';
 import { isVisibleChatMessage } from './chatMessageVisibility';
 import type {
@@ -30,6 +34,7 @@ import type {
   NpcWatchBeat,
   NpcWatchSession,
   StreamerChannelProfile,
+  ViewerPersona,
 } from './liveStreamTypes';
 import { DEFAULT_ONAIR_REALTIME_SETTINGS } from './liveStreamTypes';
 
@@ -451,6 +456,68 @@ describe('聊天时间线上的轮次卡', () => {
   });
 });
 
+describe('开播状态标记', () => {
+  it('开播时在时间线上写一条“尚未下播”标记，下播时原位更新同一条', async () => {
+    const channel = makeChannel();
+    const session = makeSession(0);
+    const messageId = await createLiveSessionMarkerInDb({
+      charId: CHAR_ID,
+      charName: '苏栗',
+      channel,
+      session,
+    });
+    const startedMessage = await DB.getMessageById(messageId);
+    expect(startedMessage).toMatchObject({
+      id: messageId,
+      role: 'system',
+      type: 'score_card',
+      timestamp: session.startedAt,
+      metadata: { source: 'live_session_marker', liveSessionId: session.id },
+    });
+    const startedCard = cardOf(startedMessage!);
+    expect(startedCard?.cardKind).toBe('live_session_marker');
+    expect(startedCard?.sessionStatus).toBe('live');
+    expect(startedCard?.body).toContain('直播还没有结束');
+    expect(isVisibleChatMessage(startedMessage!, true)).toBe(true);
+
+    const endedSession: LiveStreamSession = { ...session, status: 'ended', endedAt: 2000, startMarkerMessageId: messageId };
+    expect(await updateLiveSessionMarkerInDb({ messageId, charId: CHAR_ID, charName: '苏栗', channel, session: endedSession })).toBe(true);
+
+    const endedMessage = await DB.getMessageById(messageId);
+    const endedCard = cardOf(endedMessage!);
+    expect(endedMessage?.id).toBe(startedMessage?.id);
+    expect(endedMessage?.timestamp).toBe(startedMessage?.timestamp);
+    expect(endedCard?.sessionStatus).toBe('ended');
+    expect(endedCard?.body).toContain('这场直播已经下播');
+    expect((await allMessages()).filter(message => message.metadata?.source === 'live_session_marker')).toHaveLength(1);
+  });
+
+  it('开播状态卡是独立可见的系统卡，不伪装成角色的聊天回复', async () => {
+    const messageId = await createLiveSessionMarkerInDb({
+      charId: CHAR_ID,
+      charName: '苏栗',
+      channel: makeChannel(),
+      session: makeSession(0),
+    });
+    const marker = await DB.getMessageById(messageId);
+    expect(marker?.role).toBe('system');
+    expect(marker?.type).toBe('score_card');
+    expect(isVisibleChatMessage(marker!, true)).toBe(true);
+    expect(cardOf(marker!)?.sessionStatus).toBe('live');
+  });
+
+  it('标记被用户删除后，下播更新不会重新创建它', async () => {
+    const channel = makeChannel();
+    const session = makeSession(0);
+    const messageId = await createLiveSessionMarkerInDb({ charId: CHAR_ID, channel, session });
+    await DB.deleteMessage(messageId);
+
+    const endedSession: LiveStreamSession = { ...session, status: 'ended', endedAt: 2000, startMarkerMessageId: messageId };
+    expect(await updateLiveSessionMarkerInDb({ messageId, charId: CHAR_ID, channel, session: endedSession })).toBe(false);
+    expect((await allMessages()).filter(message => message.metadata?.source === 'live_session_marker')).toHaveLength(0);
+  });
+});
+
 // ==================== 3. 陪看一拍一条 ====================
 
 describe('陪看轮次卡', () => {
@@ -561,6 +628,24 @@ describe('电波「实时背景」开关', () => {
     expect(settings.news).toBe(false);
     expect(settings.weather).toBe(true);
     expect(settings.location).toBe(true);
+  });
+});
+
+describe('上次选择的观众身份', () => {
+  const personas: ViewerPersona[] = [
+    { id: 'viewer_main_self', name: '用户本尊', isMain: true, fanLevel: 24, badgeText: 'Member', note: '' },
+    { id: 'viewer_alt_test', name: '匿名观众', isMain: false, fanLevel: 3, badgeText: 'New', note: '' },
+  ];
+
+  it('重新进入电波时恢复上次选择的小号，不回到本尊', async () => {
+    await saveActiveViewerPersonaId('viewer_alt_test', personas);
+    expect(await loadActiveViewerPersonaId(personas)).toBe('viewer_alt_test');
+  });
+
+  it('上次选择的身份已被删除时回退本尊并更新保存值', async () => {
+    await saveActiveViewerPersonaId('viewer_alt_test', personas);
+    expect(await loadActiveViewerPersonaId([personas[0]])).toBe('viewer_main_self');
+    expect(await loadActiveViewerPersonaId(personas)).toBe('viewer_main_self');
   });
 });
 

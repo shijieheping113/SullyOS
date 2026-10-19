@@ -240,6 +240,26 @@ describe('新建直播不再复制频道背景', () => {
   });
 });
 
+describe('礼物生成由频道设置控制', () => {
+  it('开播只继承频道已保存礼物，不在每场启动时再调用 AI', () => {
+    const source = readFileSync(new URL('../apps/LiveStreamApp.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('const handleStartNewStream');
+    const end = source.indexOf('const handleManualFoldChunks', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    expect(block).toContain('sessionGifts: activeChannel.customGifts || []');
+    expect(block).not.toContain('generateStreamCustomGifts');
+  });
+
+  it('直播间礼物抽屉只跳到频道设置，不提供本场重新生成入口', () => {
+    const source = readFileSync(new URL('../components/live/LiveWatchScreen.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('onRequestRefreshGifts');
+    expect(source).not.toContain('AI 根据本场主题换一批礼物');
+    expect(source).toContain('频道礼物设置');
+  });
+});
+
 describe('从旧消息重建可续播的场次', () => {
   const SESSION_ID = 'live_1792376163835';
 

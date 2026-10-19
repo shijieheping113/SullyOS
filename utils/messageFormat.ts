@@ -197,6 +197,7 @@ export function normalizeMessageContent(
                     card.cardKind === 'live_summary' ? '下播全貌纪要'
                     : card.cardKind === 'live_clip' ? '直播高能切片'
                     : card.cardKind === 'vod_share' ? '视频投稿分享'
+                    : card.cardKind === 'live_session_marker' ? (card.sessionStatus === 'ended' ? '直播已下播' : '直播进行中')
                     : card.cardKind === 'live_round' ? `${card.roundLabel || '直播轮次'}切片`
                     : card.cardKind === 'npc_watch_round' ? `陪看${card.roundLabel || ''}`.trim()
                     : '陪看直播记录';

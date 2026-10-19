@@ -183,9 +183,9 @@ export async function buildLiveChunkGenerationMessages(opts: {
     const items = pendingQueue.map(d => {
       const scPrefix =
         d.scAmount && d.scAmount > 0
-          ? `💎【Super Chat 付费醒目留言 ${d.scCurrency || '¥'}${d.scAmount}（高亮置顶卡片，必须在第 1 拍立刻看到并重点回应！）】`
+      ? `💎【Super Chat 付费醒目留言 ${d.scCurrency || '¥'}${d.scAmount}（高亮置顶卡片，必须在第 1 拍立刻看到并重点回应！）】`
           : d.giftName
-          ? `🎁【直播间礼物投喂：送出 ${d.giftEmoji || '🎁'}「${d.giftName}」(${d.scCurrency || '¥'}${d.scAmount || 50})（必须在第 1 拍看到并感谢/反应！）】`
+          ? `🎁【频道礼物打赏：送出数字贴纸 ${d.giftEmoji || '🎁'}「${d.giftName}」（${d.giftCurrency || '¥'}${d.giftAmount || 0}；不是 Super Chat，也不是实物）（必须在第 1 拍看到并感谢/反应！）】`
           : '💬【实时公屏弹幕（刚刚发出）】';
       const identityLabel = d.isUserMain
         ? `[熟人本尊大号：${userName}（Member Lv.${d.fanLevel || 20}）]`
@@ -243,13 +243,16 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
         "fanLevel": 12,
         "text": "弹幕原文",
         "translation": "若弹幕是外语，必填中文翻译（不加'译：'前缀）；若是中文弹幕填空字符串",
-        "scAmount": 0
+        "scAmount": 0,
+        "giftName": "仅当这条是独立频道礼物时填写，否则空字符串",
+        "giftEmoji": "礼物贴纸图标，否则空字符串",
+        "giftAmount": 0
       }
     ]
   }
 ]
 \`\`\`
-注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等），**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！`;
+注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等）。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！`;
 
   const taskParts: string[] = [progressBlock, boundaryBlock, audienceInputBlock, rerollBlock];
   if (includeUserLocation) {
@@ -305,12 +308,14 @@ export async function buildLiveStreamTurnPrompt(opts: {
     fanBadge: inp.persona.badgeText,
     fanLevel: inp.persona.fanLevel,
     text: inp.text,
-    scAmount: inp.scAmount || inp.gift?.price,
+    scAmount: inp.scAmount,
     scCurrency: inp.gift?.currencySymbol || '¥',
     scColor: inp.scColor,
     giftId: inp.gift?.id,
     giftName: inp.gift?.name,
     giftEmoji: inp.gift?.emoji,
+    giftAmount: inp.gift?.price,
+    giftCurrency: inp.gift?.currencySymbol || '¥',
     timestamp: Date.now() + idx,
   }));
 
@@ -347,7 +352,9 @@ export function parseLiveBeatsResponse(
   const rawPendingInputs: any[] = isFiveArgs ? arg4 || [] : arg3 || [];
   const forbiddenViewerNames: string[] = isFiveArgs ? arg5 || [] : arg4 || [];
 
-  const pendingUserInputs: LiveDanmakuItem[] = rawPendingInputs.map((item: any, idx: number) => {
+  const pendingUserInputs: LiveDanmakuItem[] = rawPendingInputs
+    .filter((item: any) => item?.alreadyDisplayedInTimeline !== true)
+    .map((item: any, idx: number) => {
     if (item && typeof item === 'object' && 'senderName' in item) {
       return item as LiveDanmakuItem;
     }
@@ -362,15 +369,17 @@ export function parseLiveBeatsResponse(
       fanBadge: persona.badgeText,
       fanLevel: persona.fanLevel,
       text: item?.text || '',
-      scAmount: item?.scAmount || item?.gift?.price,
-      scCurrency: item?.gift?.currencySymbol || '¥',
+      scAmount: item?.scAmount,
+      scCurrency: item?.scAmount ? (item?.scCurrency || '¥') : undefined,
       scColor: item?.scColor,
       giftId: item?.gift?.id,
       giftName: item?.gift?.name,
       giftEmoji: item?.gift?.emoji,
+      giftAmount: item?.gift?.price,
+      giftCurrency: item?.gift?.currencySymbol || '¥',
       timestamp: Date.now() + idx,
     };
-  });
+    });
   const cleaned = (rawText || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/```json/gi, '')
@@ -439,6 +448,10 @@ export function parseLiveBeatsResponse(
             ? String(d.translation).replace(/^译[:：]\s*/i, '').trim()
             : undefined,
           scAmount: scAmt,
+          giftName: String(d?.giftName || '').trim() || undefined,
+          giftEmoji: String(d?.giftEmoji || '').trim() || undefined,
+          giftAmount: Number(d?.giftAmount) > 0 ? Number(d.giftAmount) : undefined,
+          giftCurrency: d?.giftCurrency ? String(d.giftCurrency) : undefined,
           scColor:
             scAmt && scAmt >= 500
               ? 'red'

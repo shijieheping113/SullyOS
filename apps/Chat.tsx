@@ -253,7 +253,7 @@ const tuckChatInnerPeek = (scroller: HTMLElement, wrap: HTMLElement) => {
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
-export interface HomePhoneChatProps {characterId:string;getContext:()=>string;onBack:()=>void}
+export interface HomePhoneChatProps {characterId:string;getContext:()=>string;onBack:()=>void;emojiPickerEnabled?:boolean}
 const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const { activeApp, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, proactiveComposingChars, openDateWithChar, registerBackHandler } = useOS();
     const miaomiao = useMiaomiaoBox();
@@ -5936,6 +5936,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
                 <ChatInputArea
                     compactHome={!!homePhone}
+                    compactHomeEmojiPicker={homePhone?.emojiPickerEnabled === true}
                     input={input} setInput={handleInputChange}
                     isTyping={isTyping || instantChatPending} selectionMode={selectionMode || sullyPickActive || !!formatEditorMessage}
                     showPanel={showPanel} setShowPanel={setShowPanel}

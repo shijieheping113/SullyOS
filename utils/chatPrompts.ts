@@ -1543,6 +1543,11 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                                 `第${i + 1}题：${q.question}\n${uName}选择了"${q.userAnswer}"（${q.isCorrect ? '✓ 正确' : `✗ 错误，正确答案：${q.correctAnswer}`}）${q.review ? `\n你的评语：${q.review}` : ''}`
                             ).join('\n') || '';
                             content = `${timeStr} [白色情人节默契测验结果] ${uName}完成了你出的白色情人节小测验，答对了 ${card.score}/${card.total} 题，${passedStr}。\n${questionsText}\n你的最终评价：${card.finalDialogue || '无'}`;
+                        } else if (card?.type === 'livestream_card') {
+                            // 逐轮直播卡的 JSON 头字段较长，通用兜底截前 200 字会在 body 之前截断，
+                            // 导致主聊天模型只看到 sessionId / channelName 等字段，看不到直播正文。
+                            // 用与记忆宫殿和普通卡片上下文相同的归一化器，保留完整轮次 body。
+                            content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
                         } else {
                             // 兜底：上面没被任何一种卡片认领的（比如各种活动卡）。这里不能直接塞
                             // 消息原文 —— 卡片 JSON 通常一开头就是 charAvatar 之类的图片字段，

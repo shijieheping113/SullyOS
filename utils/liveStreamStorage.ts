@@ -221,6 +221,7 @@ function normalizeLiveSessionRecord(raw: any): LiveStreamSession {
     peakViewerCount: typeof raw?.peakViewerCount === 'number' ? raw.peakViewerCount : viewerCount,
     likeCount: typeof raw?.likeCount === 'number' ? raw.likeCount : 0,
     totalScRevenue: typeof raw?.totalScRevenue === 'number' ? raw.totalScRevenue : 0,
+    totalGiftRevenue: typeof raw?.totalGiftRevenue === 'number' ? raw.totalGiftRevenue : 0,
     chunks,
     rollingSummaries,
     pendingDanmakuQueue: Array.isArray(raw?.pendingDanmakuQueue) ? raw.pendingDanmakuQueue : [],
@@ -228,6 +229,7 @@ function normalizeLiveSessionRecord(raw: any): LiveStreamSession {
     archiveDropMode: raw?.archiveDropMode || raw?.finalArchiveMode,
     finalDbMessageId: raw?.finalDbMessageId,
     finalCardMessageId: raw?.finalCardMessageId,
+    startMarkerMessageId: typeof raw?.startMarkerMessageId === 'number' ? raw.startMarkerMessageId : undefined,
     foldEveryNChunks: raw?.foldEveryNChunks || 4,
     foldKeepRecentChunks: raw?.foldKeepRecentChunks || 2,
     startedAt: raw?.startedAt || Date.now(),
@@ -376,6 +378,7 @@ export async function deleteChannelById(channelId: string): Promise<void> {
 // ==================== 用户大小号马甲管理（物理隔离防穿帮） ====================
 
 const KV_VIEWER_PERSONAS = 'viewer_personas';
+const KV_ACTIVE_VIEWER_PERSONA = 'active_viewer_persona';
 const KV_NPC_POOL = 'npc_pool';
 const KV_NPC_CUSTOM_RULE = 'npc_custom_rule';
 const KV_ONAIR_REALTIME = 'onair_realtime';
@@ -383,6 +386,7 @@ const KV_ONAIR_REALTIME = 'onair_realtime';
 /** live_kv 里的键名，迁移要按同样的名字写，所以对外公开一份 */
 export const LIVE_KV_IDS = {
   VIEWER_PERSONAS: KV_VIEWER_PERSONAS,
+  ACTIVE_VIEWER_PERSONA: KV_ACTIVE_VIEWER_PERSONA,
   NPC_POOL: KV_NPC_POOL,
   NPC_CUSTOM_RULE: KV_NPC_CUSTOM_RULE,
 };
@@ -445,6 +449,29 @@ export async function loadViewerPersonas(userProfile?: UserProfile): Promise<Vie
 
 export async function saveViewerPersonas(personas: ViewerPersona[]): Promise<void> {
   await liveKvDb.put(KV_VIEWER_PERSONAS, personas);
+}
+
+const defaultViewerPersonaId = (personas: ViewerPersona[]): string =>
+  personas.find(persona => persona.isMain)?.id || personas[0]?.id || 'viewer_main_self';
+
+/** 上次使用的观众身份是电波级偏好，保存在现有 live_kv；不能随组件卸载回到本尊。 */
+export async function loadActiveViewerPersonaId(personas: ViewerPersona[]): Promise<string> {
+  const fallback = defaultViewerPersonaId(personas);
+  try {
+    const saved = await liveKvDb.get<string>(KV_ACTIVE_VIEWER_PERSONA);
+    if (saved && personas.some(persona => persona.id === saved)) return saved;
+    await liveKvDb.put(KV_ACTIVE_VIEWER_PERSONA, fallback);
+  } catch {
+    // 偏好读取失败时仍可正常进入电波，使用身份列表中的本尊。
+  }
+  return fallback;
+}
+
+/** 已删除/不存在的马甲不能继续被选中；安全回退到本尊并保存新选择。 */
+export async function saveActiveViewerPersonaId(id: string, personas: ViewerPersona[]): Promise<string> {
+  const selected = personas.some(persona => persona.id === id) ? id : defaultViewerPersonaId(personas);
+  await liveKvDb.put(KV_ACTIVE_VIEWER_PERSONA, selected);
+  return selected;
 }
 
 // ==================== 直播会话管理 ====================
@@ -638,8 +665,11 @@ export function formatChunkForDbMemory(
       ? ` ｜ 互动：${scList
           .map(d => {
             const who = d.isUserMain ? `${d.senderName}(熟人本尊)` : `观众「${d.senderName}」`;
-            const scTag = d.scAmount ? `[SC ¥${d.scAmount}]` : d.giftName ? `[送出 ${d.giftEmoji || ''}${d.giftName}]` : '';
-            return `${who}${scTag}: ${d.text}`;
+            const scTag = d.scAmount ? `[Super Chat ¥${d.scAmount}]` : '';
+            const giftTag = d.giftName
+              ? `[频道礼物打赏 ${d.giftEmoji || ''}${d.giftName}${d.giftAmount ? ` ¥${d.giftAmount}` : ''}，数字贴纸非实物]`
+              : '';
+            return `${who}${scTag}${giftTag}: ${d.text}`;
           })
           .join('；')}`
       : '';
@@ -728,8 +758,8 @@ export function formatRoundBody(
     lines.push(`${idx + 1}. 画面：${b.screen} ｜ 台词：${speechPart}`);
     (b.danmaku || []).forEach(d => {
       const tags = [
-        d.scAmount && d.scAmount > 0 ? `SC ¥${d.scAmount}` : '',
-        d.giftName ? `送出 ${d.giftEmoji || ''}${d.giftName}` : '',
+        d.scAmount && d.scAmount > 0 ? `Super Chat 付费留言 ¥${d.scAmount}` : '',
+        d.giftName ? `频道礼物打赏 ${d.giftEmoji || ''}${d.giftName}${d.giftAmount ? ` ¥${d.giftAmount}` : ''}（数字贴纸、非实物）` : '',
         d.isUserMain ? '熟人本尊' : d.isUserAlt ? '熟人小号' : '',
         d.translation ? `译：${d.translation}` : '',
       ].filter(Boolean);
@@ -777,6 +807,83 @@ export function buildLiveRoundCard(opts: {
     summary: body,
     createdAt: chunk.createdAt || Date.now(),
   };
+}
+
+/** 开播时写入聊天时间线的单条状态标记，下播时更新同一条。 */
+export function buildLiveSessionMarkerCard(opts: {
+  charId: string;
+  charName?: string;
+  channel: StreamerChannelProfile;
+  session: LiveStreamSession;
+  status?: 'live' | 'ended';
+}): LivestreamChatCardPayload {
+  const { channel, session } = opts;
+  const status = opts.status || session.status;
+  const title = `《${session.title}》`;
+  const body = status === 'live'
+    ? `你开始了直播${title}（频道：${channel.channelName}）。直播还没有结束，仍在进行中。`
+    : `你结束了直播${title}（频道：${channel.channelName}）。这场直播已经下播。`;
+  return {
+    type: 'livestream_card',
+    cardKind: 'live_session_marker',
+    sessionId: session.id,
+    channelId: channel.id,
+    charId: opts.charId,
+    charName: opts.charName || '',
+    channelName: channel.channelName,
+    identityMode: channel.identityMode,
+    title: session.title,
+    categoryLabel: session.categoryLabel,
+    sessionStatus: status,
+    body,
+    preview: body,
+    summary: body,
+    createdAt: session.startedAt,
+    updatedAt: status === 'ended' ? session.endedAt || Date.now() : session.startedAt,
+  };
+}
+
+export async function createLiveSessionMarkerInDb(opts: {
+  charId: string;
+  charName?: string;
+  channel: StreamerChannelProfile;
+  session: LiveStreamSession;
+}): Promise<number> {
+  const card = buildLiveSessionMarkerCard({ ...opts, status: 'live' });
+  return DB.saveMessage({
+    charId: opts.charId,
+    role: 'system',
+    type: 'score_card',
+    content: JSON.stringify(card),
+    timestamp: opts.session.startedAt,
+    metadata: {
+      source: 'live_session_marker',
+      scoreCard: card,
+      liveSessionId: opts.session.id,
+      liveChannelId: opts.channel.id,
+    },
+  });
+}
+
+/** 状态卡已被用户删除时只返回 false，不重建卡。 */
+export async function updateLiveSessionMarkerInDb(opts: {
+  messageId?: number;
+  charId: string;
+  charName?: string;
+  channel: StreamerChannelProfile;
+  session: LiveStreamSession;
+}): Promise<boolean> {
+  let messageId = opts.messageId || opts.session.startMarkerMessageId;
+  if (!messageId) {
+    const messages = await DB.getMessagesByCharId(opts.charId);
+    messageId = messages.find(message =>
+      message.metadata?.source === 'live_session_marker'
+      && message.metadata?.liveSessionId === opts.session.id,
+    )?.id;
+  }
+  if (!messageId) return false;
+  const card = buildLiveSessionMarkerCard({ ...opts, status: opts.session.status });
+  return writeRoundCardInPlace(messageId, card);
 }
 
 /** 原位更新一张已有的轮次卡。返回 false = 这张卡已经被用户删了，不重建 */

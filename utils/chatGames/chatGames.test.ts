@@ -628,15 +628,24 @@ describe('重摇', () => {
             timestamp: 4,
             metadata: { source: 'live_npc_round', npcSessionId: 'n1' },
         });
+        const liveStartMarker = message({
+            id: 5,
+            role: 'assistant',
+            type: 'score_card',
+            content: '{"type":"livestream_card","cardKind":"live_session_marker"}',
+            timestamp: 5,
+            metadata: { source: 'live_session_marker', liveSessionId: 's1' },
+        });
 
-        expect(canRerollGameTurn([user, reply, liveRound, npcRound])).toBe(true);
+        expect(canRerollGameTurn([user, reply, liveRound, npcRound, liveStartMarker])).toBe(true);
         // 越过事件卡之后看到的是用户消息：这一轮没得重 Roll
-        expect(canRerollGameTurn([user, liveRound, npcRound])).toBe(false);
+        expect(canRerollGameTurn([user, liveRound, npcRound, liveStartMarker])).toBe(false);
         // 整段只有事件卡，也没有私聊回复
-        expect(canRerollGameTurn([liveRound, npcRound])).toBe(false);
+        expect(canRerollGameTurn([liveRound, npcRound, liveStartMarker])).toBe(false);
 
-        const outcome = await rerollTrailingAiGames([user, reply, liveRound, npcRound]);
+        const outcome = await rerollTrailingAiGames([user, reply, liveRound, npcRound, liveStartMarker]);
         expect(outcome.deleteIds).toEqual([2]);
+        expect(outcome.deleteIds).not.toContain(liveStartMarker.id);
     });
 
     it('事件卡夹在私聊回复中间时原位留着，只拿掉私聊回复', async () => {

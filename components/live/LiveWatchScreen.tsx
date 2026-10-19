@@ -60,6 +60,8 @@ export function LiveWatchScreen(props: {
   setShowPlayerControls: React.Dispatch<React.SetStateAction<boolean>>;
   autoPlayStep: boolean;
   setAutoPlayStep: React.Dispatch<React.SetStateAction<boolean>>;
+  preGenerateVoice: boolean;
+  onTogglePreGenerateVoice: () => void;
   showDanmakuOverlay: boolean;
   setShowDanmakuOverlay: React.Dispatch<React.SetStateAction<boolean>>;
   showTranslation: boolean;
@@ -91,6 +93,9 @@ export function LiveWatchScreen(props: {
   allTimelineBeats: TimelineItem[];
   unfoldedChunks: LiveChunk[];
   visibleDanmakuFeed: LiveDanmakuItem[];
+  scrollingDanmakuFeed: LiveDanmakuItem[];
+  onEditUserDanmaku: (id: string, text: string) => void;
+  onDeleteUserDanmaku: (id: string) => void;
   displayAvatar?: string;
   displayBackgroundUrl: string;
   activeGifts: StreamGiftOption[];
@@ -106,9 +111,9 @@ export function LiveWatchScreen(props: {
   onBindBack: (fn: () => boolean) => void;
   onGenerateNextChunk: () => void;
   onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean }) => void;
-  onRequestRefreshGifts: () => void;
   onManualFoldChunks: () => void;
   onEditRoundSummary: (chunkId: string, nextText: string) => void;
+  onForwardRoundToPrivate: (chunkId: string) => void;
   onRegenerateRoundSummary: (chunk: LiveChunk) => void;
   onEndStreamClick: () => void;
 }) {
@@ -443,7 +448,7 @@ export function LiveWatchScreen(props: {
           style={{ top: 32, height: 44 }}
         >
           <FloatingDanmakuOverlay
-            danmakuList={visibleDanmakuFeed}
+            danmakuList={props.scrollingDanmakuFeed}
             showTranslation={props.showTranslation}
             visible
             platformTheme={platformTheme}
@@ -663,6 +668,40 @@ export function LiveWatchScreen(props: {
   const renderFullscreen = () => (
     <div className="relative flex-1 min-h-0 overflow-hidden select-none bg-[#e8ecf1]">
       {renderStageBackdrop()}
+
+      {/* 全屏播放器也保留舞台中央主播头像与语音波纹；小窗开关状态在这里共用。 */}
+      {showStageAvatar && (
+        <div
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+          style={{ paddingBottom: 112 }}
+        >
+          <div className="relative flex items-center justify-center">
+            {voiceOn &&
+              [0, 1, 2].map(i => (
+                <span
+                  key={i}
+                  className="absolute rounded-full live-voice-ring"
+                  style={{
+                    width: 96,
+                    height: 96,
+                    border: `2px solid ${accent}`,
+                    animationDelay: `${i * 0.62}s`,
+                  }}
+                />
+              ))}
+            <div
+              className={`relative rounded-full ${voiceOn ? 'live-voice-disc' : ''}`}
+              style={{
+                padding: 3,
+                backgroundColor: 'rgba(255,255,255,0.94)',
+                boxShadow: '0 6px 20px rgba(15,23,42,0.18), 0 0 0 1px rgba(255,255,255,0.55)',
+              }}
+            >
+              <Avatar src={props.displayAvatar} name={channel.channelName} size={84} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 顶栏：没有白色胶囊底，靠白描边读字 */}
       <div className="absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3 pt-3">
@@ -1056,11 +1095,15 @@ export function LiveWatchScreen(props: {
                 <NicoCommentTable
                   items={visibleDanmakuFeed}
                   showTranslation={props.showTranslation}
+                  onEditUserDanmaku={props.onEditUserDanmaku}
+                  onDeleteUserDanmaku={props.onDeleteUserDanmaku}
                 />
               ) : (
                 <YtChatList
                   items={visibleDanmakuFeed}
                   showTranslation={props.showTranslation}
+                  onEditUserDanmaku={props.onEditUserDanmaku}
+                  onDeleteUserDanmaku={props.onDeleteUserDanmaku}
                 />
               )
             ) : activeTab === 'script' ? (
@@ -1085,6 +1128,7 @@ export function LiveWatchScreen(props: {
                 setSummaryDraft={props.setSummaryDraft}
                 onManualFoldChunks={props.onManualFoldChunks}
                 onEditRoundSummary={props.onEditRoundSummary}
+                onForwardRoundToPrivate={props.onForwardRoundToPrivate}
                 onRegenerateRoundSummary={props.onRegenerateRoundSummary}
               />
             )}
@@ -1182,9 +1226,12 @@ export function LiveWatchScreen(props: {
               }}
             />
             <SheetRow
-              label="本场礼物"
+              label="频道专属礼物"
               value={`${props.activeGifts.length} 件`}
-              onClick={props.onRequestRefreshGifts}
+              onClick={() => {
+                setSettingsOpen(false);
+                props.onOpenChannelSettings();
+              }}
             />
           </div>
 
@@ -1209,6 +1256,11 @@ export function LiveWatchScreen(props: {
               title="语音播完自动跳下一拍"
               checked={props.autoPlayStep}
               onToggle={() => props.setAutoPlayStep(v => !v)}
+            />
+            <SettingToggleRow
+              title="台词出现后静默预生成语音"
+              checked={props.preGenerateVoice}
+              onToggle={props.onTogglePreGenerateVoice}
             />
             <SettingToggleRow
               title="画面中央显示主播圆盘头像（随语音起伏）"
@@ -1285,12 +1337,8 @@ export function LiveWatchScreen(props: {
             <span className="text-xs text-slate-500">
               当前身份：<strong className="text-slate-800">{activePersona.name}</strong>
             </span>
-            <button
-              type="button"
-              onClick={props.onRequestRefreshGifts}
-              className="text-xs font-bold text-blue-600 hover:underline"
-            >
-              🔄 AI 根据本场主题换一批礼物
+            <button type="button" onClick={props.onOpenChannelSettings} className="text-xs font-bold text-blue-600 hover:underline">
+              频道礼物设置
             </button>
           </div>
 
@@ -1299,10 +1347,10 @@ export function LiveWatchScreen(props: {
               <p className="text-sm text-slate-500">暂无专属礼物</p>
               <button
                 type="button"
-                onClick={props.onRequestRefreshGifts}
+                onClick={props.onOpenChannelSettings}
                 className="mt-3 h-10 px-4 rounded-xl bg-slate-900 text-white text-xs font-bold"
               >
-                立即生成专属礼物
+                去频道设置选择或生成礼物
               </button>
             </div>
           ) : (
@@ -1370,9 +1418,13 @@ function VoiceWaveBars({ active, color }: { active: boolean; color: string }) {
 function YtChatList({
   items,
   showTranslation,
+  onEditUserDanmaku,
+  onDeleteUserDanmaku,
 }: {
   items: LiveDanmakuItem[];
   showTranslation: boolean;
+  onEditUserDanmaku: (id: string, text: string) => void;
+  onDeleteUserDanmaku: (id: string) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -1393,6 +1445,7 @@ function YtChatList({
           return (
             <li key={dm.id || idx} className="my-1.5">
               <SuperChatHighlightCard item={dm} showTranslation={showTranslation} />
+              {isMine && <UserDanmakuActions item={dm} onEdit={onEditUserDanmaku} onDelete={onDeleteUserDanmaku} />}
             </li>
           );
         }
@@ -1409,8 +1462,9 @@ function YtChatList({
                 <span className="text-[#c2255c] truncate">{dm.text}</span>
               </div>
               <span className="text-sm font-bold text-[#d6336c] shrink-0 ml-2">
-                {dm.giftEmoji || '🎁'} {dm.giftName}
+                {dm.giftEmoji || '🎁'} {dm.giftName}{dm.giftAmount ? ` · ${dm.giftCurrency || '¥'}${dm.giftAmount} 打赏` : ''}
               </span>
+              {isMine && <UserDanmakuActions item={dm} onEdit={onEditUserDanmaku} onDelete={onDeleteUserDanmaku} />}
             </li>
           );
         }
@@ -1456,6 +1510,7 @@ function YtChatList({
               {showTranslation && trans && trans !== dm.text && (
                 <span className="ml-1.5 text-[11.5px] text-[#0369a1]">（{trans}）</span>
               )}
+              {isMine && <UserDanmakuActions item={dm} onEdit={onEditUserDanmaku} onDelete={onDeleteUserDanmaku} />}
             </div>
           </li>
         );
@@ -1464,14 +1519,69 @@ function YtChatList({
   );
 }
 
-// ==================== ニコニコ生放送 经典三列式コメントビュアー ====================
+function UserDanmakuActions({
+  item,
+  onEdit,
+  onDelete,
+}: {
+  item: LiveDanmakuItem;
+  onEdit: (id: string, text: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text);
+  if (!item.id) return null;
 
+  return editing ? (
+    <div className="mt-1.5 space-y-1.5" onClick={event => event.stopPropagation()}>
+      <textarea
+        value={draft}
+        onChange={event => setDraft(event.target.value)}
+        rows={2}
+        aria-label="编辑我的弹幕"
+        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-400"
+      />
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={() => setEditing(false)} className="px-2 py-1 text-[10px] text-slate-500">取消</button>
+        <button
+          type="button"
+          disabled={!draft.trim()}
+          onClick={() => {
+            onEdit(item.id!, draft.trim());
+            setEditing(false);
+          }}
+          className="px-2.5 py-1 rounded-md bg-blue-600 text-[10px] font-bold text-white disabled:opacity-40"
+        >
+          保存
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="mt-1 flex items-center gap-2" onClick={event => event.stopPropagation()}>
+      <button type="button" onClick={() => { setDraft(item.text); setEditing(true); }} className="text-[10px] font-semibold text-blue-600">编辑</button>
+      <button
+        type="button"
+        onClick={() => {
+          if (window.confirm('删除这条弹幕？')) onDelete(item.id!);
+        }}
+        className="text-[10px] font-semibold text-rose-600"
+      >
+        删除
+      </button>
+    </div>
+  );
+}
+// ==================== ニコニコ生放送 经典三列式コメントビュアー ====================
 function NicoCommentTable({
   items,
   showTranslation,
+  onEditUserDanmaku,
+  onDeleteUserDanmaku,
 }: {
   items: LiveDanmakuItem[];
   showTranslation: boolean;
+  onEditUserDanmaku: (id: string, text: string) => void;
+  onDeleteUserDanmaku: (id: string) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -1491,15 +1601,18 @@ function NicoCommentTable({
       </thead>
       <tbody>
         {items.map((dm, i) => {
-          const paid = Boolean((dm.scAmount && dm.scAmount > 0) || dm.giftName);
+          const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
+          const isGift = Boolean(dm.giftName);
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
           const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
           return (
             <tr
               key={dm.id || i}
               className={`border-b border-[#eceff3] align-top ${
-                paid
+                isSc
                   ? 'bg-[#fffbeb]'
+                  : isGift
+                  ? 'bg-[#fff0f6]'
                   : isMine
                   ? 'bg-[#eff6ff]'
                   : i % 2 === 1
@@ -1518,14 +1631,14 @@ function NicoCommentTable({
                 ) : null}
                 {dm.giftName ? (
                   <span className="mr-1.5 px-1.5 py-[1px] rounded-[2px] bg-[#ec4899] text-white text-[10px] font-bold">
-                    {dm.giftEmoji}
-                    {dm.giftName}
+                    {dm.giftEmoji} {dm.giftName}{dm.giftAmount ? ` · ${dm.giftCurrency || '¥'}${dm.giftAmount} 打赏` : ''}
                   </span>
                 ) : null}
                 <span>{dm.text}</span>
                 {showTranslation && trans && trans !== dm.text ? (
                   <span className="ml-1.5 text-[11px] text-[#0066cc]">（{trans}）</span>
                 ) : null}
+                {isMine && <UserDanmakuActions item={dm} onEdit={onEditUserDanmaku} onDelete={onDeleteUserDanmaku} />}
               </td>
               <td className="px-2 py-1.5 text-[10.5px] text-[#64748b] truncate max-w-[92px] text-right">
                 {dm.isUserAlt ? `184:${dm.senderName}` : dm.senderName}
@@ -1639,6 +1752,7 @@ function RollingSummaryPanel(props: {
   setSummaryDraft: (v: string) => void;
   onManualFoldChunks: () => void;
   onEditRoundSummary: (chunkId: string, nextText: string) => void;
+  onForwardRoundToPrivate: (chunkId: string) => void;
   onRegenerateRoundSummary: (chunk: LiveChunk) => void;
 }) {
   const rounds = [...(props.session.chunks || [])].sort((a, b) => a.index - b.index);
@@ -1688,6 +1802,13 @@ function RollingSummaryPanel(props: {
                     className="text-amber-800 font-bold hover:underline"
                   >
                     ✏️ 编辑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => props.onForwardRoundToPrivate(chunk.id)}
+                    className="text-rose-700 font-bold hover:underline"
+                  >
+                    发这轮卡片到私聊
                   </button>
                   <button
                     type="button"

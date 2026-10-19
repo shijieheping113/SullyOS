@@ -20,10 +20,15 @@ let root: Root;
 const onPanelAction = vi.fn();
 const categories = [{ id: 'a', name: '分组 A' }, { id: 'b', name: '分组 B' }];
 
-function Panel({ emojis, showPanel = 'emojis' }: { emojis: Emoji[]; showPanel?: 'emojis'|'none'|'actions' }) {
+function Panel({ emojis, showPanel = 'emojis', compactHome = false, compactHomeEmojiPicker = false }: {
+    emojis: Emoji[];
+    showPanel?: 'emojis'|'none'|'actions';
+    compactHome?: boolean;
+    compactHomeEmojiPicker?: boolean;
+}) {
     const [activeCategory, setActiveCategory] = useState('a');
     return createElement(ChatInputArea, {
-        input: '', setInput: () => {}, isTyping: false, selectionMode: false,
+        input: '', setInput: () => {}, isTyping: false, selectionMode: false, compactHome, compactHomeEmojiPicker,
         showPanel, setShowPanel: () => {}, onSend: () => {},
         onDeleteSelected: () => {}, selectedCount: 0,
         emojis: emojis.filter(e => e.categoryId === activeCategory), suggestionEmojis: emojis, categories, activeCategory,
@@ -32,6 +37,16 @@ function Panel({ emojis, showPanel = 'emojis' }: { emojis: Emoji[]; showPanel?: 
             onPanelAction(action, payload);
         },
         onImageSelect: () => {}, isSummarizing: false, onReroll: () => {}, canReroll: false,
+    });
+}
+function CompactPhoneEmojiPanel({ allowEmojiPicker }: { allowEmojiPicker: boolean }) {
+    const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
+    return createElement(ChatInputArea, {
+        input: '', setInput: () => {}, isTyping: false, selectionMode: false,
+        compactHome: true, compactHomeEmojiPicker: allowEmojiPicker,
+        showPanel, setShowPanel, onSend: () => {}, onDeleteSelected: () => {}, selectedCount: 0,
+        emojis: [], categories, onPanelAction, onImageSelect: () => {},
+        isSummarizing: false, onReroll: () => {}, canReroll: false,
     });
 }
 function thumbnails() {
@@ -64,6 +79,17 @@ afterEach(() => {
 });
 
 describe('表情面板的记录身份与图片复用', () => {
+    it('家园小手机仍隐藏表情按钮，直播小手机可单独打开表情面板', async () => {
+        await act(async () => { root.render(createElement(CompactPhoneEmojiPanel, { allowEmojiPicker: false })); });
+        const button = () => container.querySelector<HTMLButtonElement>('button[aria-label="打开表情包"]')!;
+        expect(button().hidden).toBe(true);
+
+        await act(async () => { root.render(createElement(CompactPhoneEmojiPanel, { allowEmojiPicker: true })); });
+        expect(button().hidden).toBe(false);
+        await act(async () => { button().click(); });
+        expect(container.querySelector<HTMLElement>('[data-testid="emoji-panel"]')?.style.display).toBe('flex');
+    });
+
     it('首次打开才加载，关闭再打开或切加号不重建图片，退出聊天仍释放引用', async () => {
         const ref = await putImageBlob(dataUrlToBlob(PNG));
         const emojis = [{name: '缓存', url: ref, categoryId: 'a'}];

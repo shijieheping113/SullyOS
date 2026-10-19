@@ -110,6 +110,9 @@ export interface LiveDanmakuItem {
   giftName?: string;
   giftEmoji?: string;
   giftCount?: number;
+  /** 礼物对应的打赏金额，和 Super Chat 金额完全分开 */
+  giftAmount?: number;
+  giftCurrency?: string;
   timestamp: number;
 }
 
@@ -187,8 +190,10 @@ export interface LiveStreamSession {
   viewerCount: number;
   peakViewerCount?: number;
   likeCount: number;
-  /** 累计 SC + 礼物收入（旧数据可能没有） */
+  /** 累计 Super Chat 收入（旧数据可能包含旧版合计值） */
   totalScRevenue?: number;
+  /** 累计频道礼物打赏（与 Super Chat 分开统计） */
+  totalGiftRevenue?: number;
   /** 开播时填的附加设定（旧数据可能没有） */
   topicNote?: string;
   chunks: LiveChunk[];
@@ -202,6 +207,8 @@ export interface LiveStreamSession {
   archiveDropMode?: LiveArchiveDropMode;
   finalDbMessageId?: number;
   finalCardMessageId?: number;
+  /** 主聊天中的开播状态标记；下播时原位更新，不另发结束卡 */
+  startMarkerMessageId?: number;
   startedAt: number;
   endedAt?: number;
   /** 从旧聊天消息重建成场次的时间（只用于大厅角标提示，不影响任何操作） */
@@ -320,7 +327,7 @@ export interface NpcWatchSession {
 
 export interface LivestreamChatCardPayload {
   type: 'livestream_card';
-  cardKind: 'live_summary' | 'live_clip' | 'vod_share' | 'npc_watch' | 'live_round' | 'npc_watch_round';
+  cardKind: 'live_summary' | 'live_clip' | 'vod_share' | 'npc_watch' | 'live_round' | 'npc_watch_round' | 'live_session_marker';
   sessionId: string;
   channelId?: string;
   charId: string;
@@ -347,6 +354,8 @@ export interface LivestreamChatCardPayload {
   /** 陪看逐拍卡：第三方主播名与房间名 */
   npcStreamerName?: string;
   npcRoomTitle?: string;
+  /** 开播状态标记；下播时原位更新 */
+  sessionStatus?: 'live' | 'ended';
   viewerCount?: number;
   summary: string;
   clipBeat?: {

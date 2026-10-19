@@ -16,6 +16,7 @@ import {
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
 import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
+import { getLatestChunkFirstBeatIndex, getLiveRoundDanmakuFeed } from '../../utils/liveStreamTimeline';
 import { processImageToBlob } from '../../utils/file';
 import { putImageBlobDeduped } from '../../utils/blobRef';
 import { BeatActionSheetTarget } from './LiveSharedWidgets';
@@ -52,17 +53,21 @@ interface LiveRoomViewProps {
     nextSpeechTranslated?: string,
   ) => void;
   onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean }) => void;
+  onPreGenerateBeatVoice: (beat: LiveBeat, sessionId: string) => Promise<void>;
   onSendUserDanmaku: (
     text: string,
     scAmount?: number,
     scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red',
     triggerImmediateReply?: boolean,
     giftOption?: StreamGiftOption,
+    targetBeat?: { chunkId: string; beatId: string },
   ) => void;
+  onEditUserDanmaku: (id: string, text: string) => void;
+  onDeleteUserDanmaku: (id: string) => void;
   onUpdateCustomBackground: (url: string) => void;
-  onRequestRefreshGifts: () => void;
   onManualFoldChunks: () => void;
   onEditRoundSummary: (chunkId: string, nextText: string) => void;
+  onForwardRoundToPrivate: (chunkId: string) => void;
   onRegenerateRoundSummary: (chunk: LiveChunk) => void;
   onEndStreamClick: () => void;
   onShareClipToChat: (beat: LiveBeat) => void;
@@ -93,11 +98,14 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onRerollChunk,
   onEditBeat,
   onPlayBeatVoice,
+  onPreGenerateBeatVoice,
   onSendUserDanmaku,
+  onEditUserDanmaku,
+  onDeleteUserDanmaku,
   onUpdateCustomBackground,
-  onRequestRefreshGifts,
   onManualFoldChunks,
   onEditRoundSummary,
+  onForwardRoundToPrivate,
   onRegenerateRoundSummary,
   onEndStreamClick,
   onShareClipToChat,
@@ -106,6 +114,13 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showPlayerControls, setShowPlayerControls] = useState(false);
   const [autoPlayStep, setAutoPlayStep] = useState(false);
+  const [preGenerateVoice, setPreGenerateVoice] = useState(() => {
+    try {
+      return localStorage.getItem('live_silent_tts_pregeneration') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [showDanmakuOverlay, setShowDanmakuOverlay] = useState(true);
   const [showTranslation, setShowTranslation] = useState(
     Boolean(channel.voiceConfig?.enableTranslation || (channel.voiceConfig?.language && channel.voiceConfig.language !== 'zh')),
@@ -155,36 +170,69 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     return list;
   }, [session.chunks]);
 
-  // 当前播放到的全局拍索引（支持进度条自由拖动回看或快进）
+  const latestChunkFirstBeatIdx = getLatestChunkFirstBeatIndex(session.chunks, allTimelineBeats);
+
+  const preGenerationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const requestedPreGenerationRef = useRef(new Set<string>());
+  const knownBeatIdsRef = useRef(new Set(session.chunks.flatMap(chunk => chunk.beats.map(beat => beat.id))));
+  useEffect(() => {
+    for (const chunk of session.chunks) {
+      for (const beat of chunk.beats) {
+        if (knownBeatIdsRef.current.has(beat.id)) continue;
+        knownBeatIdsRef.current.add(beat.id);
+        if (!preGenerateVoice || !beat.speechOriginal?.trim() || beat.audioUrl || requestedPreGenerationRef.current.has(beat.id)) continue;
+        requestedPreGenerationRef.current.add(beat.id);
+        preGenerationQueueRef.current = preGenerationQueueRef.current
+          .then(() => onPreGenerateBeatVoice(beat, session.id))
+          .catch(() => {});
+      }
+    }
+  }, [preGenerateVoice, session.id, session.chunks, onPreGenerateBeatVoice]);
+
+  const togglePreGenerateVoice = () => {
+    setPreGenerateVoice(current => {
+      const next = !current;
+      try {
+        localStorage.setItem('live_silent_tts_pregeneration', next ? '1' : '0');
+      } catch {
+        /* 忽略浏览器存储限制 */
+      }
+      return next;
+    });
+  };
+
+  // 当前播放到的全局拍索引（支持进度条自由拖动回看或快进）；新场次从最新一轮第一拍进入。
   const [currentGlobalBeatIdx, setCurrentGlobalBeatIdx] = useState<number>(() => {
     if (session.status === 'ended') return 0;
-    const count = session.chunks.reduce((n, chunk) => n + chunk.beats.length, 0);
-    return Math.max(0, count - 1);
+    return latestChunkFirstBeatIdx;
   });
 
-  // 第一次进来停在最新一句，推进按钮才在眼前。新切片写出来后，从这一段的第一句看起。
+  // 第一次进来和新切片落库后，都从最新一轮的第一拍看起；切换场次也重新定位。
   const prevChunksLenRef = useRef(session.chunks.length);
   const landedRef = useRef(false);
+  const previousSessionIdRef = useRef(session.id);
   useEffect(() => {
+    if (previousSessionIdRef.current !== session.id) {
+      previousSessionIdRef.current = session.id;
+      prevChunksLenRef.current = session.chunks.length;
+      landedRef.current = true;
+      setCurrentGlobalBeatIdx(session.status === 'ended' ? 0 : latestChunkFirstBeatIdx);
+      return;
+    }
     if (!landedRef.current) {
       if (allTimelineBeats.length === 0) return;
       landedRef.current = true;
       prevChunksLenRef.current = session.chunks.length;
-      if (session.status !== 'ended') {
-        setCurrentGlobalBeatIdx(allTimelineBeats.length - 1);
-      }
+      setCurrentGlobalBeatIdx(session.status === 'ended' ? 0 : latestChunkFirstBeatIdx);
       return;
     }
     if (session.chunks.length > prevChunksLenRef.current && latestChunk) {
-      const firstNewBeatId = latestChunk.beats[0]?.id;
-      const foundIdx = allTimelineBeats.findIndex(item => item.beat.id === firstNewBeatId);
-      if (foundIdx >= 0) setCurrentGlobalBeatIdx(foundIdx);
-      else setCurrentGlobalBeatIdx(Math.max(0, allTimelineBeats.length - 1));
+      setCurrentGlobalBeatIdx(latestChunkFirstBeatIdx);
     } else if (currentGlobalBeatIdx >= allTimelineBeats.length && allTimelineBeats.length > 0) {
       setCurrentGlobalBeatIdx(allTimelineBeats.length - 1);
     }
     prevChunksLenRef.current = session.chunks.length;
-  }, [session.chunks.length, allTimelineBeats.length, session.status]);
+  }, [session.id, session.chunks.length, allTimelineBeats.length, session.status, latestChunkFirstBeatIdx]);
 
   // 「播完自动下一句」只在声音真正播完时跳到已经写好的下一句，不向模型要新内容。
   const seenVoiceEnd = useRef(0);
@@ -215,12 +263,16 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     onPlayBeatVoice(currentBeat);
   }, [currentBeat?.id, channel.voiceConfig?.autoPlayTts]);
 
-  // 截止到当前播放进度的可见弹幕流 & Super Chat 列表
+  const activeChunkId = currentTimelineItem?.chunkId || latestChunk?.id || '';
+  const scrollingDanmakuFeed = useMemo(() => {
+    return getLiveRoundDanmakuFeed(session.chunks, activeChunkId);
+  }, [session.chunks, activeChunkId]);
+
+  // 实时弹幕区仍按播放位置逐拍展开；舞台滚动弹幕另用整轮队列，避免两种显示混在一起。
   const visibleDanmakuFeed = useMemo(() => {
     const list: LiveDanmakuItem[] = [];
     for (let i = 0; i <= currentGlobalBeatIdx && i < allTimelineBeats.length; i++) {
-      const dm = allTimelineBeats[i].beat.danmaku || [];
-      list.push(...dm);
+      list.push(...(allTimelineBeats[i].beat.danmaku || []));
     }
     return list;
   }, [allTimelineBeats, currentGlobalBeatIdx]);
@@ -286,21 +338,26 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const handleSendSubmit = () => {
     const trimmed = danmakuInput.trim();
     if (!trimmed) return;
+    const targetBeat = currentTimelineItem
+      ? { chunkId: currentTimelineItem.chunkId, beatId: currentTimelineItem.beat.id }
+      : undefined;
     if (activeBottomDrawer === 'sc') {
       const tier = SC_TIER_OPTIONS[selectedScTierIdx] || SC_TIER_OPTIONS[0];
-      onSendUserDanmaku(trimmed, tier.amount, tier.color, immediateReplyOnSend);
+      onSendUserDanmaku(trimmed, tier.amount, tier.color, immediateReplyOnSend, undefined, targetBeat);
       setActiveBottomDrawer('none');
     } else {
-      onSendUserDanmaku(trimmed, undefined, undefined, immediateReplyOnSend);
+      onSendUserDanmaku(trimmed, undefined, undefined, immediateReplyOnSend, undefined, targetBeat);
     }
     setDanmakuInput('');
-    setCurrentGlobalBeatIdx(Math.max(0, allTimelineBeats.length - 1));
   };
 
   // 送出专属礼物
   const handleSendGift = (gift: StreamGiftOption) => {
     const msg = danmakuInput.trim() || `送出了 ${gift.emoji} ${gift.name}！`;
-    onSendUserDanmaku(msg, undefined, undefined, immediateReplyOnSend, gift);
+    const targetBeat = currentTimelineItem
+      ? { chunkId: currentTimelineItem.chunkId, beatId: currentTimelineItem.beat.id }
+      : undefined;
+    onSendUserDanmaku(msg, undefined, undefined, immediateReplyOnSend, gift, targetBeat);
     setDanmakuInput('');
     setActiveBottomDrawer('none');
   };
@@ -343,6 +400,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       setShowPlayerControls={setShowPlayerControls}
       autoPlayStep={autoPlayStep}
       setAutoPlayStep={setAutoPlayStep}
+      preGenerateVoice={preGenerateVoice}
+      onTogglePreGenerateVoice={togglePreGenerateVoice}
       showDanmakuOverlay={showDanmakuOverlay}
       setShowDanmakuOverlay={setShowDanmakuOverlay}
       showTranslation={showTranslation}
@@ -374,6 +433,9 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       allTimelineBeats={allTimelineBeats}
       unfoldedChunks={unfoldedChunks}
       visibleDanmakuFeed={visibleDanmakuFeed}
+      scrollingDanmakuFeed={scrollingDanmakuFeed}
+      onEditUserDanmaku={onEditUserDanmaku}
+      onDeleteUserDanmaku={onDeleteUserDanmaku}
       displayAvatar={displayAvatar}
       displayBackgroundUrl={displayBackgroundUrl}
       activeGifts={activeGifts}
@@ -389,9 +451,9 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       onBindBack={onBindBack}
       onGenerateNextChunk={onGenerateNextChunk}
       onPlayBeatVoice={onPlayBeatVoice}
-      onRequestRefreshGifts={onRequestRefreshGifts}
       onManualFoldChunks={onManualFoldChunks}
       onEditRoundSummary={onEditRoundSummary}
+      onForwardRoundToPrivate={onForwardRoundToPrivate}
       onRegenerateRoundSummary={onRegenerateRoundSummary}
       onEndStreamClick={onEndStreamClick}
     />

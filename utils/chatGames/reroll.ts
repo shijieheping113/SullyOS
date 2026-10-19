@@ -5,9 +5,9 @@ import type { GameRollResult } from './commit';
 /**
  * 直播/陪看逐轮事件卡。它们是 assistant 卡，但不是私聊回复——
  * 主聊天重 Roll 既不能把它们当成「最新一条回复」，也不能删掉重发。
- * 只认这两个来源，别的 score_card（骰子/猜拳/剧情卡）照旧参与重 Roll。
+ * 只认这些来源，别的 score_card（骰子/猜拳/剧情卡）照旧参与重 Roll。
  */
-const LIVE_EVENT_SOURCES = new Set(['live_round', 'live_npc_round']);
+const LIVE_EVENT_SOURCES = new Set(['live_session_marker', 'live_round', 'live_npc_round']);
 
 export const isLiveEventCardMessage = (message: Message): boolean =>
     LIVE_EVENT_SOURCES.has(String(message.metadata?.source || ''));

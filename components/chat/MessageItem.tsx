@@ -1001,7 +1001,11 @@ const Like520ChatCard: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
-const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: any }> = ({ card, msgId, metadata }) => {
+const LivestreamChatCardView: React.FC<{
+    card: any;
+    msgId?: number;
+    metadata?: any;
+}> = ({ card, msgId, metadata }) => {
     const isRound = card?.cardKind === 'live_round' || card?.cardKind === 'npc_watch_round';
     const [expanded, setExpanded] = useState(false);
     const [editing, setEditing] = useState(false);
@@ -1013,6 +1017,22 @@ const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: a
 
     if (!card || card.type !== 'livestream_card') return null;
 
+    if (card.cardKind === 'live_session_marker') {
+        const isLive = card.sessionStatus !== 'ended';
+        return (
+            <div className="w-full flex justify-center py-2">
+                <div className={`w-full max-w-[340px] px-3 py-2 rounded-xl border text-center ${isLive ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                    <div className="text-[11px] font-bold">
+                        {isLive ? '🔴 直播进行中 · 尚未下播' : '直播已下播'}
+                    </div>
+                    <div className="mt-0.5 text-[11px] break-words">
+                        {card.title || '电波直播'}{card.channelName ? ` · ${card.channelName}` : ''}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     // ── 逐轮卡：默认收起、尺寸紧凑；点开才看这一轮全文或逐轮摘要 ──
     // 编辑入口不在这里：卡片只是这一轮的展示，真改内容要回电波 App 改源记录，
     // 否则卡片 JSON 和 session 里的 beats 会分成两份。
@@ -1021,46 +1041,48 @@ const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: a
         const label = card.roundLabel || (isNpc ? '这一拍' : '这一轮');
         const body = String(card.body || card.summary || '');
         return (
-            <button
-                type="button"
-                onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
-                className="block w-72 text-left rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-white text-slate-800"
-            >
-                <div className="px-3 py-2 bg-gradient-to-r from-rose-50 to-slate-50 border-b border-slate-100">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNpc ? 'bg-violet-500' : 'bg-red-500'}`} />
-                        <span className="text-[10px] font-bold text-red-600 tracking-wide shrink-0">
-                            {isNpc ? '🛋️ 陪看' : '🔴 直播'} · {label}
-                        </span>
-                        <span className="text-[10px] text-slate-500 truncate min-w-0">
-                            {card.channelName || card.charName}
-                        </span>
-                        {card.isCompressed ? (
-                            <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">
-                                已压缩
+            <div className="w-full min-w-0 space-y-1.5">
+                <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+                    className="block w-full max-w-full min-w-0 text-left rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-white text-slate-800"
+                >
+                    <div className="px-3 py-2 bg-gradient-to-r from-rose-50 to-slate-50 border-b border-slate-100">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNpc ? 'bg-violet-500' : 'bg-red-500'}`} />
+                            <span className="text-[10px] font-bold text-red-600 tracking-wide shrink-0">
+                                {isNpc ? '🛋️ 陪看' : '🔴 直播'} · {label}
                             </span>
-                        ) : null}
-                    </div>
-                    <div className="text-[11px] font-semibold text-slate-800 leading-snug truncate mt-0.5">
-                        {card.title || '电波配信'}
-                    </div>
-                </div>
-                <div className="px-3 py-2">
-                    {expanded ? (
-                        <div className="max-h-72 overflow-y-auto text-[11px] text-slate-700 whitespace-pre-wrap leading-relaxed">
-                            {body}
+                            <span className="text-[10px] text-slate-500 truncate min-w-0">
+                                {card.channelName || card.charName}
+                            </span>
+                            {card.isCompressed ? (
+                                <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">
+                                    已压缩
+                                </span>
+                            ) : null}
                         </div>
-                    ) : (
-                        <div className="text-[11px] text-slate-600 leading-relaxed line-clamp-2">
-                            {card.preview || body}
+                        <div className="text-[11px] font-semibold text-slate-800 leading-snug truncate mt-0.5">
+                            {card.title || '电波配信'}
                         </div>
-                    )}
-                    <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400">
-                        <span>{card.isCompressed ? '这一轮摘要' : '这一轮原文'}</span>
-                        <span className="text-red-600 font-semibold">{expanded ? '收起 ↑' : '展开 ↓'}</span>
                     </div>
-                </div>
-            </button>
+                    <div className="px-3 py-2">
+                        {expanded ? (
+                            <div className="max-h-72 overflow-y-auto text-[11px] text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                {body}
+                            </div>
+                        ) : (
+                            <div className="text-[11px] text-slate-600 leading-relaxed line-clamp-2">
+                                {card.preview || body}
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400">
+                            <span>{card.isCompressed ? '这一轮摘要' : '这一轮原文'}</span>
+                            <span className="text-red-600 font-semibold">{expanded ? '收起 ↑' : '展开 ↓'}</span>
+                        </div>
+                    </div>
+                </button>
+            </div>
         );
     }
 
@@ -1083,7 +1105,7 @@ const LivestreamChatCardView: React.FC<{ card: any; msgId?: number; metadata?: a
     };
 
     return (
-        <div className="w-72 rounded-2xl overflow-hidden shadow-md border border-slate-200 bg-white text-slate-800">
+        <div className="w-full max-w-full min-w-0 rounded-2xl overflow-hidden shadow-md border border-slate-200 bg-white text-slate-800">
             <div className="px-3.5 py-2.5 bg-gradient-to-r from-red-50 via-rose-50/70 to-slate-50 border-b border-slate-200 flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                     <div className="text-[10px] font-bold text-red-600 tracking-wide">
@@ -1615,7 +1637,7 @@ const MessageItem = React.memo(({
             }
             if (scoreData?.type === 'livestream_card') {
                 return (
-                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    <div className={`relative flex w-full justify-center ${selectionMode ? 'pl-8' : ''} animate-fade-in transition-[padding] duration-300`}>
                         {selectionMode && (
                             <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -1623,9 +1645,9 @@ const MessageItem = React.memo(({
                                 </div>
                             </div>
                         )}
-                        <div className="w-full px-4 my-3" {...interactionProps}>
-                            <div className="mx-auto w-72">
-                                <LivestreamChatCardView card={scoreData} msgId={m.id} metadata={m.metadata} />
+                        <div className={`w-full min-w-0 px-3 my-3 ${selectionMode ? 'pointer-events-none' : ''}`} {...interactionProps}>
+                            <div className="mx-auto w-full min-w-0 max-w-[340px]">
+                            <LivestreamChatCardView card={scoreData} msgId={m.id} metadata={m.metadata} />
                             </div>
                         </div>
                     </div>
@@ -3327,7 +3349,22 @@ const MessageItem = React.memo(({
         }
 
         if (scoreData?.type === 'livestream_card') {
-            return commonLayout(<LivestreamChatCardView card={scoreData} msgId={m.id} metadata={m.metadata} />);
+            return (
+                <div className={`relative flex w-full justify-center ${selectionMode ? 'pl-8' : ''} animate-fade-in transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className={`w-full min-w-0 px-3 my-3 ${selectionMode ? 'pointer-events-none' : ''}`} {...interactionProps}>
+                        <div className="mx-auto w-full min-w-0 max-w-[340px]">
+                            <LivestreamChatCardView card={scoreData} msgId={m.id} metadata={m.metadata} />
+                        </div>
+                    </div>
+                </div>
+            );
         }
 
         if (scoreData?.type === 'qixi_event_card') {

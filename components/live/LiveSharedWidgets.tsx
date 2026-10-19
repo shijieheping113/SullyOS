@@ -159,6 +159,7 @@ export const LiveFloatingPhone: React.FC<LiveFloatingPhoneProps> = ({
                 characterId,
                 onBack: onClose,
                 getContext: () => contextRef.current,
+                emojiPickerEnabled: true,
               }}
             />
           </Suspense>
@@ -501,17 +502,25 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   if (!visible || !danmakuList || danmakuList.length === 0) return null;
 
   const isNico = platformTheme === 'niconico';
-  // 多轨防追尾飘屏弹幕：同轨只跑一条，错峰出发，自适应字长速度，绝不重叠、绝不压底。
+  // 多轨队列：同轨等上一条完整滚出后再发下一条；整轮每条弹幕都会依次出现一次。
   const trackCount = Math.max(1, Math.min(3, tracks));
-  const items = danmakuList.slice(-trackCount);
   const trackTops = Array.from({ length: trackCount }, (_, i) => `${i * 21}px`);
-
 
   const estimateWidth = (text: string) => {
     let w = 0;
     for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 13 : 7.5;
     return w;
   };
+  const laneNextDelay = Array.from({ length: trackCount }, () => 0);
+  const items = danmakuList.map((dm, idx) => {
+    const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
+    const full = `${dm.text}${showTranslation && cleanTrans && cleanTrans !== dm.text ? `（${cleanTrans}）` : ''}`;
+    const duration = Math.max(7.5, (390 + estimateWidth(full)) / 50);
+    const lane = idx % trackCount;
+    const delay = laneNextDelay[lane];
+    laneNextDelay[lane] += duration + 0.45;
+    return { dm, idx, lane, delay, duration, cleanTrans };
+  });
 
   return (
     <div
@@ -524,14 +533,11 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
           100% { transform: translate3d(-105%, 0, 0); }
         }
       `}</style>
-      {items.map((dm, idx) => {
-        const top = trackTops[idx % trackTops.length];
+      {items.map(({ dm, idx, lane, delay, duration, cleanTrans }) => {
+        const top = trackTops[lane];
         const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
         const isGift = Boolean(dm.giftName);
         const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
-        const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
-        const full = `${dm.text}${showTranslation && cleanTrans && cleanTrans !== dm.text ? `（${cleanTrans}）` : ''}`;
-        const duration = Math.max(7.5, (390 + estimateWidth(full)) / 50);
 
         return (
           <div
@@ -544,8 +550,7 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
               width: 'max-content',
               whiteSpace: 'nowrap',
               lineHeight: '20px',
-              animation: `onAirDanmakuFlow ${duration}s linear infinite`,
-              animationDelay: `${idx * 0.6}s`,
+              animation: `onAirDanmakuFlow ${duration}s linear ${delay}s 1 both`,
               willChange: 'transform',
             }}
           >

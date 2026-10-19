@@ -177,7 +177,8 @@ export async function generateStreamCustomGifts(opts: {
   streamTitle?: string;
 }): Promise<StreamGiftOption[]> {
   const { apiConfig, char, channel, streamTitle } = opts;
-  const prompt = `请根据主播「${char.name}」（频道：${channel.channelName}，简介：${channel.bio}，人设：${(char.systemPrompt || '').slice(0, 400)}）${streamTitle ? `以及本场直播主题《${streamTitle}》` : ''}，专门为这个直播间设计 4 个极具人设梗和场景感的「直播间专属礼物（Super Stickers / 投喂礼物）」！
+  const prompt = `请根据主播「${char.name}」（频道：${channel.channelName}，简介：${channel.bio}，人设：${(char.systemPrompt || '').slice(0, 400)}）${streamTitle ? `以及本场直播主题《${streamTitle}》` : ''}，专门为这个直播间设计 4 个极具人设梗和场景感的「频道专属数字礼物贴纸」！
+这些是观众打赏用的数字贴纸/小动画，不是现实中的实物。它们与 Super Chat 完全分开：Super Chat 是付费留言，频道礼物是纯打赏，不附带留言高亮。
 不要用俗套的“火箭/跑车/舰长”，要结合TA的国籍、喜好、职业或本场直播内容（例如：手冲冰美式、猫罐头、生锈的琴弦、深夜拉面、特定梗物品等）。
 只输出 JSON 数组：
 \`\`\`json

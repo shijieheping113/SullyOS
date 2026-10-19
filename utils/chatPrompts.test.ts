@@ -147,3 +147,92 @@ describe('score_card 兜底：没被认领的卡片', () => {
         expect(payload).not.toContain('AAAA');
     });
 });
+
+describe('直播逐轮卡进入私聊上下文', () => {
+    const roundBody = [
+        '第 1 拍：主播打开游戏，读到普通观众的弹幕并笑了一声。',
+        '第 2 拍：角色继续讲刚才的话题，公屏有人送礼。',
+        '第 3 拍：主播发现设置出错，停下来调整麦克风。',
+        '正文末尾标记：这一整轮的画面和弹幕已经完整进入上下文。',
+    ].join('\n');
+    const roundCard = {
+        type: 'livestream_card',
+        cardKind: 'live_round',
+        sessionId: 'live_1792416431880',
+        channelId: 'ch_main_preset-sully-v2',
+        charId: 'preset-sully-v2',
+        charName: '猫儿',
+        channelName: 'Sully Official',
+        title: '夜间直播',
+        categoryLabel: '闲聊',
+        roundIndex: 1,
+        roundLabel: '第 1 轮',
+        isCompressed: false,
+        preview: '主播开始直播……',
+        body: roundBody,
+        summary: '',
+        createdAt: t0,
+    };
+
+    const roundMessage = (overrides: Record<string, any> = {}): Message[] => ([
+        {
+            id: 4,
+            charId: 'c1',
+            role: 'assistant',
+            type: 'score_card',
+            content: JSON.stringify(roundCard),
+            timestamp: t0,
+            metadata: { source: 'live_round', liveSessionId: roundCard.sessionId, liveChunkIndex: 0, scoreCard: roundCard },
+            ...overrides,
+        },
+    ] as any[]);
+
+    it('使用 metadata.scoreCard 时注入完整轮次正文，不截成 JSON 字段头', () => {
+        const { apiMessages } = ChatPrompts.buildMessageHistory(roundMessage(), 10, char, userProfile, []);
+        const payload = JSON.stringify(apiMessages);
+        expect(payload).toContain('第 1 拍：主播打开游戏');
+        expect(payload).toContain('普通观众的弹幕');
+        expect(payload).toContain('正文末尾标记：这一整轮的画面和弹幕已经完整进入上下文。');
+        expect(payload).not.toContain('"sessionId"');
+        expect(payload).not.toContain('"channelId"');
+    });
+
+    it('只有卡片 JSON、没有 metadata.scoreCard 时也注入完整正文', () => {
+        const { apiMessages } = ChatPrompts.buildMessageHistory(
+            roundMessage({ metadata: { source: 'live_round', liveSessionId: roundCard.sessionId, liveChunkIndex: 0 } }),
+            10,
+            char,
+            userProfile,
+            [],
+        );
+        const payload = JSON.stringify(apiMessages);
+        expect(payload).toContain('正文末尾标记：这一整轮的画面和弹幕已经完整进入上下文。');
+        expect(payload).not.toContain('"sessionId"');
+    });
+
+    it('开播标记把“直播尚未下播”作为可读事件送进主聊天上下文', () => {
+        const body = '你开始了直播《夜间直播》（频道：Sully Official），直播还没有结束。';
+        const marker = {
+            ...roundCard,
+            cardKind: 'live_session_marker',
+            sessionStatus: 'live',
+            body,
+            summary: body,
+        };
+        const { apiMessages } = ChatPrompts.buildMessageHistory(
+            roundMessage({
+                role: 'system',
+                content: JSON.stringify(marker),
+                metadata: { source: 'live_session_marker', liveSessionId: roundCard.sessionId, scoreCard: marker },
+            }),
+            10,
+            char,
+            userProfile,
+            [],
+        );
+        const payload = JSON.stringify(apiMessages);
+        expect(payload).toContain('直播进行中');
+        expect(payload).toContain('直播还没有结束');
+        expect(payload).not.toContain('"sessionId"');
+    });
+});
