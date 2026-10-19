@@ -23,7 +23,8 @@ export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): 
     && message.metadata?.source !== 'date'
     && message.metadata?.source !== 'call'
     && message.metadata?.source !== 'home'
-    && message.metadata?.source !== 'live'
+    // 直播切片（source:'live'）和陪看记录（source:'live_npc_watch'）以前被藏起来，
+    // 私聊里看不见也删不掉。现在一律当普通消息显示，要不要留由用户自己删。
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
     && !message.metadata?.batteryHint

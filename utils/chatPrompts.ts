@@ -1187,9 +1187,8 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         return {
             apiMessages: historySlice.filter(m => {
                 const bMeta: any = m.metadata || {};
-                if (bMeta.source === 'live' && (bMeta.archiveMode === 'forget' || bMeta.superseded)) {
-                    return false;
-                }
+                // 直播旧消息不再按 superseded / archiveMode:'forget' 跳过：
+                // 那些标记只是以前用来藏话的，现在全部当普通记忆进上下文，要删由用户自己删。
                 if ((m.type as string) !== 'box_record') return true;
                 return bMeta.archiveMode !== 'forget' && !bMeta.superseded;
             }).map((m, index) => {

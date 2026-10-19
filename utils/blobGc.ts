@@ -40,6 +40,11 @@
 // | bank_data 表 | 店员 avatar / 留言板 avatar | 分页逐行 |
 // | guidebook、life_sim 表 | 卡片里留存的 charAvatar / actorAvatar 副本 | 分页逐行 |
 // | pixel_home_assets 表 | 目前未见令牌写入，纳入白名单防未来回归 | 分页逐行 |
+// | live_channels 表 | avatar（频道头像）/ roomBackgroundUrl（直播间背景） | 分页逐行 |
+// | live_sessions 表 | customBackgroundUrl（这一场单独换的背景） | 分页逐行 |
+// | live_vods 表 | coverImageUrl（录播封面） | 分页逐行 |
+// | live_npc_watches 表 | 目前没有图片字段，纳入白名单防止以后加了就丢图 | 分页逐行 |
+// | live_kv 表 | 直播的杂项单例（马甲 / NPC 频道池 / 迁移标记） | 分页逐行 |
 //
 // 上面从 user_profile 到 life_sim 这几张，装的都是**从角色/用户头像复制过去的副本**。
 // 头像本身在 characters 表，但它会被抄进帖子、卡片、面具、群资料里长期留着。GC 扫不到
@@ -58,11 +63,12 @@ import { DB } from './db';
 import { blobStore } from './blobStore';
 import { tryAcquireMaintenanceLock, releaseMaintenanceLock, currentMaintenanceHolder } from './maintenanceLock';
 
-// 引用面里的 17 张表。名字与 db.ts 的 STORE_* 常量值一一对应
+// 引用面里的表。名字与 db.ts / 各功能模块的 STORE_* 常量值一一对应
 // （STORE_CHARACTERS / STORE_MESSAGES / STORE_CC_PARTS / STORE_SONGS / STORE_GALLERY /
 //   STORE_ASSETS / STORE_THEMES / STORE_EMOJIS / STORE_USER / STORE_SOCIAL_POSTS /
 //   STORE_GROUPS / STORE_CHAR_GROUPS / STORE_STORY_THEATER_MASKS / STORE_BANK_DATA /
-//   STORE_GUIDEBOOK / STORE_LIFE_SIM / pixel_home_assets）。
+//   STORE_GUIDEBOOK / STORE_LIFE_SIM / pixel_home_assets / live_channels /
+//   live_sessions / live_vods / live_npc_watches / live_kv）。
 // 全部是 inline keyPath（都用 'id'），所以 blobDedupe 的 putStoreRows 能原样写回。
 // 导出仅供测试核对拼写：名字写错时 getStoreRowsPage 的 contains 兜底会静默返回空页，
 // 等于那个面没扫、无任何报错——blobGc.test.ts 有一条守卫断言每个名字真实存在。
@@ -85,6 +91,13 @@ export const REF_SOURCE_STORES = [
     'guidebook',
     'life_sim',
     'pixel_home_assets',
+    // 直播（电波 OnAir）：频道背景、这一场的背景、录播封面都存的是 blobref 令牌。
+    // 漏掉这几张表，跑一次「孤儿图片清理」就会把还在用的背景图删掉。
+    'live_channels',
+    'live_sessions',
+    'live_vods',
+    'live_npc_watches',
+    'live_kv',
 ] as const;
 
 // 每批读多少行。批间事务各自独立（见 DB.getStoreRowsPage 注释），内存峰值只有一批。

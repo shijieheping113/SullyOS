@@ -157,6 +157,8 @@ export interface LiveRollingSummary {
   content: string;
   createdAt: number;
   dbMessageId?: number;
+  /** 这条摘要折叠掉了哪几段（旧数据从消息重建时也用它） */
+  supersededChunkIds?: string[];
 }
 
 /** 下播后落入主聊天的方式 */
@@ -177,7 +179,12 @@ export interface LiveStreamSession {
   sessionGifts?: StreamGiftOption[];
   status: 'live' | 'ended';
   viewerCount: number;
+  peakViewerCount?: number;
   likeCount: number;
+  /** 累计 SC + 礼物收入（旧数据可能没有） */
+  totalScRevenue?: number;
+  /** 开播时填的附加设定（旧数据可能没有） */
+  topicNote?: string;
   chunks: LiveChunk[];
   rollingSummaries: LiveRollingSummary[];
   /** 用户在当前拍已发出、等待下一段响应的弹幕/SC队列 */
@@ -186,10 +193,13 @@ export interface LiveStreamSession {
   foldKeepRecentChunks: number;
   finalSummary?: string;
   finalArchiveMode?: LiveArchiveDropMode;
+  archiveDropMode?: LiveArchiveDropMode;
   finalDbMessageId?: number;
   finalCardMessageId?: number;
   startedAt: number;
   endedAt?: number;
+  /** 从旧聊天消息重建成场次的时间（只用于大厅角标提示，不影响任何操作） */
+  rebuiltFromMessagesAt?: number;
 }
 
 // ==================== 视频博主投稿 (VOD) ====================
@@ -284,6 +294,9 @@ export interface NpcWatchBeat {
 
 export interface NpcWatchSession {
   id: string;
+  /** 还在看 / 已结束。旧数据没有这个字段时按「还在看」处理 */
+  status?: 'watching' | 'ended';
+  endedAt?: number;
   charId: string;
   npcStreamerName: string;
   npcHandle?: string;

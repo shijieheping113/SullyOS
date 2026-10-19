@@ -203,6 +203,8 @@ describe('与孤儿 GC 的配合', () => {
                 'daily_schedule', 'characters', 'messages', 'cc_custom_parts', 'songs', 'gallery', 'assets', 'themes', 'emojis',
                 'user_profile', 'social_posts', 'groups', 'character_groups', 'story_theater_masks',
                 'bank_data', 'guidebook', 'life_sim', 'pixel_home_assets',
+                // 直播（电波 OnAir）：频道背景 / 本场背景 / 录播封面都存 blobref 令牌
+                'live_channels', 'live_sessions', 'live_vods', 'live_npc_watches', 'live_kv',
             ],
         );
     });

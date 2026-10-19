@@ -15,6 +15,13 @@ import {
   DEFAULT_NPC_CHANNELS,
 } from './liveStreamTypes';
 import type { CharacterProfile, UserProfile } from '../types';
+import {
+  liveChannelDb,
+  liveSessionDb,
+  liveVodDb,
+  liveNpcWatchDb,
+  liveKvDb,
+} from './liveStreamDb';
 
 const STORAGE_KEYS = {
   CHANNELS: 'sully_livestream_channels_v1',
@@ -63,13 +70,11 @@ function safeReadJson<T>(key: string, fallback: T): T {
   }
 }
 
-function safeWriteJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (e) {
-    console.warn('[LiveStreamStorage] Failed to write localStorage:', key, e);
-  }
-}
+/**
+ * 写失败的通知器现在住在 IDB 读写层（utils/liveStreamDb.ts），这里只做转出口，
+ * 免得调用方（LiveStreamApp）改 import 路径。
+ */
+export { setLiveStorageWriteErrorHandler } from './liveStreamDb';
 
 // ==================== 平台 UI 皮肤切换 (YouTube vs NicoNico) ====================
 
@@ -81,11 +86,14 @@ export function loadPlatformTheme(): LivePlatformTheme {
 export function savePlatformTheme(theme: LivePlatformTheme): void {
   try {
     localStorage.setItem(STORAGE_KEYS.PLATFORM_THEME, theme);
-  } catch {}
+  } catch (e) {
+    // 皮肤偏好很小，写不上只影响下次打开时的默认样子，本次切换照常生效
+    console.warn('[LiveStream] 保存平台皮肤失败', e);
+  }
 }
 
-/** 合并新旧两个 localStorage 键中的数组记录（按 id 去重，新记录优先，旧记录无损保留） */
-function readAndMergeDualKeys<T extends { id: string }>(
+/** 合并新旧两个 localStorage 键中的数组记录（按 id 去重，新记录优先，旧记录无损保留）。只读。 */
+export function readAndMergeDualKeys<T extends { id: string }>(
   primaryKey: string,
   legacyKey: string,
   normalizer: (item: any, index: number) => T,
@@ -106,12 +114,7 @@ function readAndMergeDualKeys<T extends { id: string }>(
     }
   });
 
-  const merged = Array.from(map.values());
-  // 如果从旧键迁移出了主键没有的记录，自动同步写回主键，确保后续读写一致
-  if (legacyList.length > 0 && merged.length !== primaryList.length) {
-    safeWriteJson(primaryKey, merged);
-  }
-  return merged;
+  return Array.from(map.values());
 }
 
 function normalizeChannelRecord(raw: any, idx = 0): StreamerChannelProfile {
@@ -310,22 +313,14 @@ function normalizeNpcWatchSessionRecord(raw: any, idx = 0): NpcWatchSession {
 
 // ==================== 频道档案管理（支持一个 Char 多个频道） ====================
 
-export function loadAllChannels(): StreamerChannelProfile[] {
-  return readAndMergeDualKeys(
-    STORAGE_KEYS.CHANNELS,
-    LEGACY_STORAGE_KEYS.CHANNELS,
-    normalizeChannelRecord,
-  );
-}
-
-export function saveAllChannels(channels: StreamerChannelProfile[]): void {
-  safeWriteJson(STORAGE_KEYS.CHANNELS, channels);
-  safeWriteJson(LEGACY_STORAGE_KEYS.CHANNELS, channels);
+export async function loadAllChannels(): Promise<StreamerChannelProfile[]> {
+  const rows = await liveChannelDb.getAll();
+  return rows.map((row, idx) => normalizeChannelRecord(row, idx));
 }
 
 /** 获取指定角色的所有频道；若还没有，则自动为其初始化一个默认公开主频道 */
-export function ensureDefaultChannelForChar(char: CharacterProfile): StreamerChannelProfile[] {
-  const all = loadAllChannels();
+export async function ensureDefaultChannelForChar(char: CharacterProfile): Promise<StreamerChannelProfile[]> {
+  const all = await loadAllChannels();
   const charChannels = all.filter(c => c.charId === char.id);
   if (charChannels.length > 0) return charChannels;
 
@@ -360,45 +355,47 @@ export function ensureDefaultChannelForChar(char: CharacterProfile): StreamerCha
     updatedAt: Date.now(),
   };
 
-  const next = [...all, defaultChannel];
-  saveAllChannels(next);
+  await liveChannelDb.put(defaultChannel);
   return [defaultChannel];
 }
 
-export function upsertChannel(channel: StreamerChannelProfile): StreamerChannelProfile[] {
-  const all = loadAllChannels();
-  const idx = all.findIndex(c => c.id === channel.id);
-  const next = idx >= 0
-    ? all.map((c, i) => (i === idx ? { ...channel, updatedAt: Date.now() } : c))
-    : [...all, { ...channel, updatedAt: Date.now() }];
-  saveAllChannels(next);
-  return next;
+/** 只写这一条频道，不再「读出全部 → 改 → 整份写回」 */
+export async function upsertChannel(channel: StreamerChannelProfile): Promise<void> {
+  await liveChannelDb.put({ ...channel, updatedAt: Date.now() });
 }
 
-export function deleteChannelById(channelId: string): StreamerChannelProfile[] {
-  const all = loadAllChannels();
-  const next = all.filter(c => c.id !== channelId);
-  saveAllChannels(next);
-  return next;
+export async function deleteChannelById(channelId: string): Promise<void> {
+  await liveChannelDb.delete(channelId);
 }
 
 // ==================== 用户大小号马甲管理（物理隔离防穿帮） ====================
 
-export function loadViewerPersonas(userProfile?: UserProfile): ViewerPersona[] {
+const KV_VIEWER_PERSONAS = 'viewer_personas';
+const KV_NPC_POOL = 'npc_pool';
+const KV_NPC_CUSTOM_RULE = 'npc_custom_rule';
+
+/** live_kv 里的键名，迁移要按同样的名字写，所以对外公开一份 */
+export const LIVE_KV_IDS = {
+  VIEWER_PERSONAS: KV_VIEWER_PERSONAS,
+  NPC_POOL: KV_NPC_POOL,
+  NPC_CUSTOM_RULE: KV_NPC_CUSTOM_RULE,
+};
+
+const normalizePersonaRecord = (raw: any): ViewerPersona => ({
+  id: String(raw?.id || ''),
+  name: raw?.name || '观众',
+  isMain: Boolean(raw?.isMain),
+  fanLevel: typeof raw?.fanLevel === 'number' ? raw.fanLevel : 5,
+  badgeText: raw?.badgeText || 'Member',
+  note: raw?.note || '',
+});
+
+export async function loadViewerPersonas(userProfile?: UserProfile): Promise<ViewerPersona[]> {
   const mainName = (userProfile?.name || '我').trim() || '我';
-  const stored = readAndMergeDualKeys<ViewerPersona>(
-    STORAGE_KEYS.VIEWER_PERSONAS,
-    LEGACY_STORAGE_KEYS.VIEWER_PERSONAS,
-    raw => ({
-      id: String(raw.id),
-      name: raw.name || '观众',
-      isMain: Boolean(raw.isMain),
-      avatar: raw.avatar,
-      fanLevel: typeof raw.fanLevel === 'number' ? raw.fanLevel : 5,
-      badgeText: raw.badgeText || 'Member',
-      note: raw.note || '',
-    }),
-  );
+  const rawList = (await liveKvDb.get<any[]>(KV_VIEWER_PERSONAS)) || [];
+  const stored = rawList
+    .filter(raw => raw && typeof raw === 'object' && raw.id)
+    .map(normalizePersonaRecord);
 
   const hasMain = stored.some(p => p.isMain);
   if (stored.length > 0 && hasMain) {
@@ -436,122 +433,126 @@ export function loadViewerPersonas(userProfile?: UserProfile): ViewerPersona[] {
     p => !p.isMain && p.id !== 'viewer_alt_passerby' && p.id !== 'viewer_alt_rich',
   );
   const mergedDefaults = [...defaults, ...customAlts];
-  saveViewerPersonas(mergedDefaults);
+  await saveViewerPersonas(mergedDefaults);
   return mergedDefaults;
 }
 
-export function saveViewerPersonas(personas: ViewerPersona[]): void {
-  safeWriteJson(STORAGE_KEYS.VIEWER_PERSONAS, personas);
-  safeWriteJson(LEGACY_STORAGE_KEYS.VIEWER_PERSONAS, personas);
+export async function saveViewerPersonas(personas: ViewerPersona[]): Promise<void> {
+  await liveKvDb.put(KV_VIEWER_PERSONAS, personas);
 }
 
 // ==================== 直播会话管理 ====================
 
-export function loadLiveSessions(): LiveStreamSession[] {
-  const merged = readAndMergeDualKeys(
-    STORAGE_KEYS.SESSIONS,
-    LEGACY_STORAGE_KEYS.SESSIONS,
-    normalizeLiveSessionRecord,
-  );
-  return merged.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+export async function loadLiveSessions(): Promise<LiveStreamSession[]> {
+  const rows = await liveSessionDb.getAll();
+  return rows
+    .map(row => normalizeLiveSessionRecord(row))
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
 }
 
-export function saveLiveSessions(sessions: LiveStreamSession[]): void {
-  safeWriteJson(STORAGE_KEYS.SESSIONS, sessions);
-  safeWriteJson(LEGACY_STORAGE_KEYS.SESSIONS, sessions);
+/** 只写这一场，别的场次不受影响（以前是整份数组重写，既慢又会被并发覆盖） */
+export async function upsertLiveSession(session: LiveStreamSession): Promise<void> {
+  await liveSessionDb.put(session);
 }
 
-export function upsertLiveSession(session: LiveStreamSession): LiveStreamSession[] {
-  const all = loadLiveSessions();
-  const idx = all.findIndex(s => s.id === session.id);
-  const next = idx >= 0
-    ? all.map((s, i) => (i === idx ? session : s))
-    : [session, ...all];
-  saveLiveSessions(next);
-  return next;
-}
-
-export function deleteLiveSession(sessionId: string): LiveStreamSession[] {
-  const next = loadLiveSessions().filter(s => s.id !== sessionId);
-  saveLiveSessions(next);
-  return next;
+export async function deleteLiveSession(sessionId: string): Promise<void> {
+  await liveSessionDb.delete(sessionId);
 }
 
 // ==================== VOD 视频投稿管理 ====================
 
-export function loadVodPosts(): VodVideoPost[] {
-  const merged = readAndMergeDualKeys(
-    STORAGE_KEYS.VODS,
-    LEGACY_STORAGE_KEYS.VODS,
-    normalizeVodPostRecord,
-  );
-  return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+export async function loadVodPosts(): Promise<VodVideoPost[]> {
+  const rows = await liveVodDb.getAll();
+  return rows
+    .map((row, idx) => normalizeVodPostRecord(row, idx))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
-export function saveVodPosts(posts: VodVideoPost[]): void {
-  safeWriteJson(STORAGE_KEYS.VODS, posts);
-  safeWriteJson(LEGACY_STORAGE_KEYS.VODS, posts);
+export async function upsertVodPost(post: VodVideoPost): Promise<void> {
+  await liveVodDb.put(post);
 }
 
-export function upsertVodPost(post: VodVideoPost): VodVideoPost[] {
-  const all = loadVodPosts();
-  const idx = all.findIndex(p => p.id === post.id);
-  const next = idx >= 0
-    ? all.map((p, i) => (i === idx ? post : p))
-    : [post, ...all];
-  saveVodPosts(next);
-  return next;
-}
-
-export function deleteVodPost(postId: string): VodVideoPost[] {
-  const next = loadVodPosts().filter(p => p.id !== postId);
-  saveVodPosts(next);
-  return next;
+export async function deleteVodPost(postId: string): Promise<void> {
+  await liveVodDb.delete(postId);
 }
 
 // ==================== NPC 陪看会话与可自定义 NPC 频道池 ====================
 
-export function loadNpcChannelPool(): NpcStreamerChannelCard[] {
-  const saved = safeReadJson<NpcStreamerChannelCard[]>(STORAGE_KEYS.NPC_POOL, []);
-  return saved.length > 0 ? saved : DEFAULT_NPC_CHANNELS;
+export async function loadNpcChannelPool(): Promise<NpcStreamerChannelCard[]> {
+  const saved = (await liveKvDb.get<NpcStreamerChannelCard[]>(KV_NPC_POOL)) || [];
+  return Array.isArray(saved) && saved.length > 0 ? saved : DEFAULT_NPC_CHANNELS;
 }
 
-export function saveNpcChannelPool(pool: NpcStreamerChannelCard[]): void {
-  safeWriteJson(STORAGE_KEYS.NPC_POOL, pool);
+export async function saveNpcChannelPool(pool: NpcStreamerChannelCard[]): Promise<void> {
+  await liveKvDb.put(KV_NPC_POOL, pool);
 }
 
-export function loadNpcCustomRule(): string {
-  return localStorage.getItem(STORAGE_KEYS.NPC_CUSTOM_RULE) || '';
+export async function loadNpcCustomRule(): Promise<string> {
+  const saved = await liveKvDb.get<string>(KV_NPC_CUSTOM_RULE);
+  return typeof saved === 'string' ? saved : '';
 }
 
-export function saveNpcCustomRule(rule: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.NPC_CUSTOM_RULE, rule);
-  } catch {}
+export async function saveNpcCustomRule(rule: string): Promise<void> {
+  await liveKvDb.put(KV_NPC_CUSTOM_RULE, rule);
 }
 
-export function loadNpcWatchSessions(): NpcWatchSession[] {
-  const merged = readAndMergeDualKeys(
-    STORAGE_KEYS.NPC_WATCHES,
-    LEGACY_STORAGE_KEYS.NPC_WATCHES,
-    normalizeNpcWatchSessionRecord,
+export async function loadNpcWatchSessions(): Promise<NpcWatchSession[]> {
+  const rows = await liveNpcWatchDb.getAll();
+  return rows
+    .map((row, idx) => normalizeNpcWatchSessionRecord(row, idx))
+    .map(row => ({ ...row, status: (row.status === 'ended' ? 'ended' : 'watching') as 'watching' | 'ended' }))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+export async function upsertNpcWatchSession(session: NpcWatchSession): Promise<void> {
+  await liveNpcWatchDb.put(session);
+}
+
+export async function deleteNpcWatchSession(sessionId: string): Promise<void> {
+  await liveNpcWatchDb.delete(sessionId);
+}
+
+// ==================== 旧 localStorage 层（只给一次性迁移读）====================
+
+export const LIVE_LOCAL_KEYS = STORAGE_KEYS;
+export const LIVE_LEGACY_LOCAL_KEYS = LEGACY_STORAGE_KEYS;
+export {
+  normalizeChannelRecord,
+  normalizeLiveSessionRecord,
+  normalizeVodPostRecord,
+  normalizeNpcWatchSessionRecord,
+};
+
+export interface LegacyLiveLayer {
+  channels: StreamerChannelProfile[];
+  sessions: LiveStreamSession[];
+  vods: VodVideoPost[];
+  npcWatches: NpcWatchSession[];
+  personas: ViewerPersona[];
+  npcPool: NpcStreamerChannelCard[] | null;
+  npcCustomRule: string | null;
+}
+
+/** 把 localStorage 里新旧两套键按 id 合并读出来；只读，不改动任何东西 */
+export function readLegacyLiveLayer(): LegacyLiveLayer {
+  const rawPersonas = readAndMergeDualKeys<ViewerPersona>(
+    STORAGE_KEYS.VIEWER_PERSONAS,
+    LEGACY_STORAGE_KEYS.VIEWER_PERSONAS,
+    normalizePersonaRecord,
   );
-  return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-}
-
-export function saveNpcWatchSessions(sessions: NpcWatchSession[]): void {
-  safeWriteJson(STORAGE_KEYS.NPC_WATCHES, sessions);
-  safeWriteJson(LEGACY_STORAGE_KEYS.NPC_WATCHES, sessions);
-}
-
-export function upsertNpcWatchSession(session: NpcWatchSession): NpcWatchSession[] {
-  const all = loadNpcWatchSessions();
-  const idx = all.findIndex(s => s.id === session.id);
-  const next = idx >= 0
-    ? all.map((s, i) => (i === idx ? session : s))
-    : [session, ...all];
-  saveNpcWatchSessions(next);
-  return next;
+  return {
+    channels: readAndMergeDualKeys(STORAGE_KEYS.CHANNELS, LEGACY_STORAGE_KEYS.CHANNELS, normalizeChannelRecord),
+    sessions: readAndMergeDualKeys(STORAGE_KEYS.SESSIONS, LEGACY_STORAGE_KEYS.SESSIONS, normalizeLiveSessionRecord),
+    vods: readAndMergeDualKeys(STORAGE_KEYS.VODS, LEGACY_STORAGE_KEYS.VODS, normalizeVodPostRecord),
+    npcWatches: readAndMergeDualKeys(
+      STORAGE_KEYS.NPC_WATCHES,
+      LEGACY_STORAGE_KEYS.NPC_WATCHES,
+      normalizeNpcWatchSessionRecord,
+    ),
+    personas: rawPersonas,
+    npcPool: safeReadJson<NpcStreamerChannelCard[] | null>(STORAGE_KEYS.NPC_POOL, null),
+    npcCustomRule: localStorage.getItem(STORAGE_KEYS.NPC_CUSTOM_RULE),
+  };
 }
 
 // ==================== 语音音频下载辅助 ====================
@@ -667,7 +668,10 @@ export async function supersedeLiveMessagesWithSummary(opts: {
           superseded: true,
           supersededBySession: opts.sessionId,
         }));
-      } catch {}
+      } catch (e) {
+        // 只是给旧消息补一个「被摘要顶替」的记号，现在既不隐藏也不影响记忆，失败不必惊动用户
+        console.warn('[LiveStream] 旧消息标记 superseded 失败', oldId, e);
+      }
     }
   }
 
@@ -712,6 +716,9 @@ export async function forgetLiveSessionInDb(session: LiveStreamSession): Promise
         archiveMode: 'forget',
         superseded: true,
       }));
-    } catch {}
+    } catch (e) {
+      // 同上：兼容用的旧标记，写不上不影响本场数据和显示，只记一条日志
+      console.warn('[LiveStream] 旧消息标记 forget 失败', id, e);
+    }
   }
 }

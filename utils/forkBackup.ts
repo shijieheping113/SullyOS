@@ -42,6 +42,11 @@ export type ForkBackupLayer = Pick<
     | 'forkSparkLocal'
     | 'forkMiaomiaoLocal'
     | 'forkSparkAssets'
+    | 'liveChannels'
+    | 'liveSessions'
+    | 'liveVods'
+    | 'liveNpcWatches'
+    | 'liveKv'
 >;
 
 export function isForkBackupData(data: unknown): boolean {
@@ -74,10 +79,24 @@ function writeLocalStorageMap(map: Record<string, string> | undefined): void {
 
 /** 收集二改层字段（在完整 backupData 上 Object.assign，再走 writeV2Backup） */
 export async function collectForkBackupLayer(): Promise<ForkBackupLayer> {
-    const [miaomiaoSessions, miaomiaoMessages, miaomiaoSettings] = await Promise.all([
+    const [
+        miaomiaoSessions,
+        miaomiaoMessages,
+        miaomiaoSettings,
+        liveChannels,
+        liveSessions,
+        liveVods,
+        liveNpcWatches,
+        liveKv,
+    ] = await Promise.all([
         DB.getRawStoreData(STORE_MIAOMIAO_SESSIONS),
         DB.getRawStoreData(STORE_MIAOMIAO_MESSAGES),
         DB.getRawStoreData(STORE_MIAOMIAO_SETTINGS),
+        DB.getRawStoreData(STORE_LIVE_CHANNELS),
+        DB.getRawStoreData(STORE_LIVE_SESSIONS),
+        DB.getRawStoreData(STORE_LIVE_VODS),
+        DB.getRawStoreData(STORE_LIVE_NPC_WATCHES),
+        DB.getRawStoreData(STORE_LIVE_KV),
     ]);
 
     const forkSparkAssets: { id: string; data: string }[] = [];
@@ -100,6 +119,11 @@ export async function collectForkBackupLayer(): Promise<ForkBackupLayer> {
         forkSparkLocal: readLocalStorageMap(FORK_SPARK_LOCAL_KEYS),
         forkMiaomiaoLocal: readLocalStorageMap(FORK_MIAOMIAO_LOCAL_KEYS),
         forkSparkAssets,
+        liveChannels,
+        liveSessions,
+        liveVods,
+        liveNpcWatches,
+        liveKv,
     };
 }
 
@@ -124,7 +148,12 @@ export async function restoreForkBackupLayer(
         || data.miaomiaoSettings !== undefined
         || data.forkSparkLocal !== undefined
         || data.forkMiaomiaoLocal !== undefined
-        || (data.forkSparkAssets?.length ?? 0) > 0;
+        || (data.forkSparkAssets?.length ?? 0) > 0
+        || data.liveChannels !== undefined
+        || data.liveSessions !== undefined
+        || data.liveVods !== undefined
+        || data.liveNpcWatches !== undefined
+        || data.liveKv !== undefined;
 
     if (!hasForkPayload) {
         return { restoredForkLayer: false, skippedForkLayer: false };
@@ -137,7 +166,38 @@ export async function restoreForkBackupLayer(
     if (data.forkSparkLocal) writeLocalStorageMap(data.forkSparkLocal);
     if (data.forkMiaomiaoLocal) writeLocalStorageMap(data.forkMiaomiaoLocal);
 
+    // 电波：整表替换（包里有这一层才动，没有就不碰本机现有直播数据）
+    await replaceStoreIfPresent(STORE_LIVE_CHANNELS, data.liveChannels);
+    await replaceStoreIfPresent(STORE_LIVE_SESSIONS, data.liveSessions);
+    await replaceStoreIfPresent(STORE_LIVE_VODS, data.liveVods);
+    await replaceStoreIfPresent(STORE_LIVE_NPC_WATCHES, data.liveNpcWatches);
+    await replaceStoreIfPresent(STORE_LIVE_KV, data.liveKv);
+
     return { restoredForkLayer: true, skippedForkLayer: false };
+}
+
+const STORE_LIVE_CHANNELS = 'live_channels';
+const STORE_LIVE_SESSIONS = 'live_sessions';
+const STORE_LIVE_VODS = 'live_vods';
+const STORE_LIVE_NPC_WATCHES = 'live_npc_watches';
+const STORE_LIVE_KV = 'live_kv';
+
+/** 包里带了这个 store 才整表替换，没带就不动本机现有数据 */
+async function replaceStoreIfPresent(storeName: string, rows: unknown[] | undefined): Promise<void> {
+    if (rows === undefined) return;
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(storeName)) return;
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        store.clear();
+        for (const row of rows) {
+            if (row && typeof row === 'object') store.put(row);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('replace fork store aborted'));
+    });
 }
 
 export const FORK_BACKUP_AUTHOR_IMPORT_HINT =
@@ -156,7 +216,16 @@ async function clearIndexedDbStore(storeName: string): Promise<void> {
 }
 
 export async function clearForkBackupStores(): Promise<void> {
-    for (const storeName of [STORE_MIAOMIAO_SESSIONS, STORE_MIAOMIAO_MESSAGES, STORE_MIAOMIAO_SETTINGS]) {
+    for (const storeName of [
+        STORE_MIAOMIAO_SESSIONS,
+        STORE_MIAOMIAO_MESSAGES,
+        STORE_MIAOMIAO_SETTINGS,
+        STORE_LIVE_CHANNELS,
+        STORE_LIVE_SESSIONS,
+        STORE_LIVE_VODS,
+        STORE_LIVE_NPC_WATCHES,
+        STORE_LIVE_KV,
+    ]) {
         await clearIndexedDbStore(storeName);
     }
     if (typeof localStorage !== 'undefined') {

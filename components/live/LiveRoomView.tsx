@@ -16,6 +16,8 @@ import {
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
 import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
+import { processImageToBlob } from '../../utils/file';
+import { putImageBlobDeduped } from '../../utils/blobRef';
 import { BeatActionSheetTarget } from './LiveSharedWidgets';
 import { LiveWatchScreen } from './LiveWatchScreen';
 
@@ -301,17 +303,22 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     setActiveBottomDrawer('none');
   };
 
-  const handleUploadBgFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /** 换本场背景：先压到 1600 宽，再存成 blobref 令牌；失败才退回原图 base64 */
+  const handleUploadBgFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onUpdateCustomBackground(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
     e.target.value = '';
+    if (!file) return;
+    try {
+      const blob = await processImageToBlob(file, { maxWidth: 1600, quality: 0.82, forceJpeg: true });
+      const { token } = await putImageBlobDeduped(blob);
+      onUpdateCustomBackground(token);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') onUpdateCustomBackground(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (

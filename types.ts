@@ -4288,6 +4288,12 @@ export interface FullBackupData {
     forkMiaomiaoLocal?: Record<string, string>;
     /** Spark 发帖图片（assets 里 spark_img_*，作者备份故意排除） */
     forkSparkAssets?: { id: string; data: string }[];
+    /** 电波 OnAir（直播 / 录播 / 陪看）IndexedDB，字段见 utils/liveStreamTypes.ts */
+    liveChannels?: import('./utils/liveStreamTypes').StreamerChannelProfile[];
+    liveSessions?: import('./utils/liveStreamTypes').LiveStreamSession[];
+    liveVods?: import('./utils/liveStreamTypes').VodVideoPost[];
+    liveNpcWatches?: import('./utils/liveStreamTypes').NpcWatchSession[];
+    liveKv?: { id: string; value: unknown }[];
 }
 
 // --- CLOUD BACKUP TYPES ---

@@ -58,6 +58,7 @@ import {
   syncLiveChunkToDb,
   supersedeLiveMessagesWithSummary,
   forgetLiveSessionInDb,
+  setLiveStorageWriteErrorHandler,
 } from '../utils/liveStreamStorage';
 import {
   buildLiveStreamTurnPrompt,
@@ -83,6 +84,7 @@ import { LiveRoomView } from '../components/live/LiveRoomView';
 import { LiveLobby } from '../components/live/LiveLobby';
 import { VodDetailView, NpcWatchRoomView } from '../components/live/VodAndNpcViews';
 import { LiveFloatingPhone } from '../components/live/LiveSharedWidgets';
+import { migrateLiveStorageToIdbOnce } from '../utils/liveStreamMigration';
 
 type MainTab = 'char_live' | 'char_vod' | 'npc_watch';
 
@@ -113,23 +115,24 @@ const LiveStreamApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MainTab>('char_live');
   const [channels, setChannels] = useState<StreamerChannelProfile[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
-  const [viewerPersonas, setViewerPersonas] = useState<ViewerPersona[]>(() =>
-    loadViewerPersonas(userProfile),
-  );
+  const [viewerPersonas, setViewerPersonas] = useState<ViewerPersona[]>([]);
   const [activePersonaId, setActivePersonaId] = useState<string>('viewer_main_self');
 
   // 会话与内容数据
-  const [liveSessions, setLiveSessions] = useState<LiveStreamSession[]>(() => loadLiveSessions());
+  const [liveSessions, setLiveSessions] = useState<LiveStreamSession[]>([]);
   const [activeLiveSessionId, setActiveLiveSessionId] = useState<string | null>(null);
-  const [vodPosts, setVodPosts] = useState<VodVideoPost[]>(() => loadVodPosts());
+  const [vodPosts, setVodPosts] = useState<VodVideoPost[]>([]);
   const [activeVodId, setActiveVodId] = useState<string | null>(null);
-  const [npcSessions, setNpcSessions] = useState<NpcWatchSession[]>(() => loadNpcWatchSessions());
+  const [npcSessions, setNpcSessions] = useState<NpcWatchSession[]>([]);
   const [activeNpcSessionId, setActiveNpcSessionId] = useState<string | null>(null);
 
   // NPC 频道池与自定义规则
-  const [npcPool, setNpcPool] = useState<NpcStreamerChannelCard[]>(() => loadNpcChannelPool());
-  const [npcCustomRule, setNpcCustomRule] = useState<string>(() => loadNpcCustomRule());
+  const [npcPool, setNpcPool] = useState<NpcStreamerChannelCard[]>([]);
+  const [npcCustomRule, setNpcCustomRule] = useState<string>('');
   const [showNpcRuleBox, setShowNpcRuleBox] = useState(false);
+
+  /** 数据都在 IndexedDB 里，读出来之前不能先摆一个「没有直播」的空大厅 */
+  const [storeReady, setStoreReady] = useState(false);
 
   // 开播与投稿表单状态
   const [selectedPresetKey, setSelectedPresetKey] = useState<string>('just_chatting');
@@ -230,15 +233,197 @@ const LiveStreamApp: React.FC = () => {
     }>
   >([]);
 
-  // 初始化当前角色的默认频道
+  // ==================== 落库：先改界面，再等真正写进 IndexedDB ====================
+  // 以前是把「写 localStorage 的结果」直接塞回 state，写失败静默丢，刷新才发现整场没了。
+  // 现在写失败由存储层的 toast 说明，界面不回滚——内容还看得见，用户可以再操作一次。
+
+  const rememberLiveSession = useCallback(async (session: LiveStreamSession): Promise<boolean> => {
+    setLiveSessions(prev =>
+      prev.some(s => s.id === session.id)
+        ? prev.map(s => (s.id === session.id ? session : s))
+        : [session, ...prev],
+    );
+    try {
+      await upsertLiveSession(session);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const forgetLiveSession = useCallback(async (sessionId: string): Promise<void> => {
+    setLiveSessions(prev => prev.filter(s => s.id !== sessionId));
+    try {
+      await deleteLiveSession(sessionId);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
+  const rememberVodPost = useCallback(async (post: VodVideoPost): Promise<boolean> => {
+    setVodPosts(prev =>
+      prev.some(v => v.id === post.id)
+        ? prev.map(v => (v.id === post.id ? post : v))
+        : [post, ...prev],
+    );
+    try {
+      await upsertVodPost(post);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const forgetVodPost = useCallback(async (postId: string): Promise<void> => {
+    setVodPosts(prev => prev.filter(v => v.id !== postId));
+    try {
+      await deleteVodPost(postId);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
+  const rememberNpcSession = useCallback(async (session: NpcWatchSession): Promise<boolean> => {
+    setNpcSessions(prev =>
+      prev.some(s => s.id === session.id)
+        ? prev.map(s => (s.id === session.id ? session : s))
+        : [session, ...prev],
+    );
+    try {
+      await upsertNpcWatchSession(session);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const rememberChannel = useCallback(
+    async (channel: StreamerChannelProfile): Promise<boolean> => {
+      setChannels(prev =>
+        prev.some(c => c.id === channel.id)
+          ? prev.map(c => (c.id === channel.id ? channel : c))
+          : [...prev, channel],
+      );
+      try {
+        await upsertChannel(channel);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
+  const forgetChannel = useCallback(async (channelId: string): Promise<void> => {
+    setChannels(prev => prev.filter(c => c.id !== channelId));
+    try {
+      await deleteChannelById(channelId);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
+  const rememberPersonas = useCallback(async (next: ViewerPersona[]): Promise<void> => {
+    setViewerPersonas(next);
+    try {
+      await saveViewerPersonas(next);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
+  const rememberNpcPool = useCallback(async (next: NpcStreamerChannelCard[]): Promise<void> => {
+    setNpcPool(next);
+    try {
+      await saveNpcChannelPool(next);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
+  const rememberNpcRule = useCallback(async (next: string): Promise<void> => {
+    setNpcCustomRule(next);
+    try {
+      await saveNpcCustomRule(next);
+    } catch {
+      /* toast 已由存储层弹出 */
+    }
+  }, []);
+
+  // 异步回调（AI 生成完才回来）要拿「此刻最新的一场」，不能用闭包里的旧对象
+  const liveSessionsRef = useRef<LiveStreamSession[]>([]);
+  useEffect(() => {
+    liveSessionsRef.current = liveSessions;
+  }, [liveSessions]);
+
+  // 启动：先把 localStorage 里的旧数据搬进 IndexedDB（只跑一次），再真正加载。
+  // 没加载完不能先用空数组渲染，那样会闪一下「还没有直播」。
   useEffect(() => {
     if (!currentChar) return;
-    const charChs = ensureDefaultChannelForChar(currentChar);
-    setChannels(charChs);
-    if (!charChs.some(c => c.id === selectedChannelId)) {
-      setSelectedChannelId(charChs[0]?.id || '');
-    }
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const report = await migrateLiveStorageToIdbOnce();
+        if (report.status === 'failed') {
+          addToast('直播数据迁移没完成，旧数据还保留着，下次打开再试', 'error');
+        }
+        if (report.warnings.length > 0) {
+          console.warn('[LiveStream 迁移]', report.warnings.join('；'));
+        }
+      } catch (e) {
+        console.warn('[LiveStream 迁移] 未预期错误', e);
+      }
+      if (cancelled) return;
+
+      try {
+        const [charChs, personas, sessions, vods, npcList, pool, rule] = await Promise.all([
+          ensureDefaultChannelForChar(currentChar),
+          loadViewerPersonas(userProfile),
+          loadLiveSessions(),
+          loadVodPosts(),
+          loadNpcWatchSessions(),
+          loadNpcChannelPool(),
+          loadNpcCustomRule(),
+        ]);
+        if (cancelled) return;
+        setChannels(charChs);
+        setSelectedChannelId(prev => (charChs.some(c => c.id === prev) ? prev : charChs[0]?.id || ''));
+        setViewerPersonas(personas);
+        setLiveSessions(sessions);
+        setVodPosts(vods);
+        setNpcSessions(npcList);
+        setNpcPool(pool);
+        setNpcCustomRule(rule);
+      } catch (e: any) {
+        addToast(e?.message || '直播数据读取失败，请刷新重试', 'error');
+      } finally {
+        if (!cancelled) setStoreReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentChar?.id]);
+
+  // 本地存储写不进去时立刻说一声：以前是静默丢弃，刷新后才发现整场没了
+  useEffect(() => {
+    setLiveStorageWriteErrorHandler((key, err) => {
+      const label = key.includes('npc_watches')
+        ? '陪看记录'
+        : key.includes('sessions')
+        ? '直播记录'
+        : key.includes('vods')
+        ? '视频投稿'
+        : key.includes('channels')
+        ? '频道设置'
+        : '直播数据';
+      const reason = (err as any)?.name || (err as any)?.message || '未知错误';
+      addToast(`${label}没存进本地数据库（原因：${reason}），刚才的内容刷新后会丢，请截图反馈`, 'error');
+    });
+    return () => setLiveStorageWriteErrorHandler(null);
+  }, [addToast]);
 
   useEffect(() => {
     return () => {
@@ -422,9 +607,10 @@ const LiveStreamApp: React.FC = () => {
         forbiddenViewerNames,
       );
 
-      let peak = session.peakViewerCount;
+      // 旧场次可能没有这两个字段（重建的场次、老数据），给个保底值再累加
+      let peak = session.peakViewerCount ?? session.viewerCount;
       let currViewers = session.viewerCount;
-      let scTotal = session.totalScRevenue;
+      let scTotal = session.totalScRevenue ?? 0;
       queuedInputs.forEach(inp => {
         if (inp.scAmount && inp.scAmount > 0) scTotal += inp.scAmount;
         if (inp.gift && inp.gift.price > 0) scTotal += inp.gift.price;
@@ -449,6 +635,8 @@ const LiveStreamApp: React.FC = () => {
         id: existingChunk?.id || `chunk_${session.id}_${targetChunkIndex}_${Date.now()}`,
         index: targetChunkIndex,
         beats,
+        // 用户投递的弹幕已经作为 danmaku 落在拍里，这里按类型要求留空数组（以前是 undefined）
+        userInputs: [],
         dbMessageId: dbMsgId,
         createdAt: Date.now(),
       };
@@ -466,8 +654,7 @@ const LiveStreamApp: React.FC = () => {
       };
 
       setPendingUserInputs([]);
-      const allSaved = upsertLiveSession(updatedSession);
-      setLiveSessions(allSaved);
+      await rememberLiveSession(updatedSession);
 
       // 当未折叠段达到 4 段时自动用辅助模型滚动折叠前 2 段
       const unfolded = updatedSession.chunks.filter(c => !c.folded);
@@ -500,16 +687,27 @@ const LiveStreamApp: React.FC = () => {
       status: 'live',
       viewerCount: Math.floor(activeChannel.followerCount * 0.08) + 120,
       peakViewerCount: Math.floor(activeChannel.followerCount * 0.08) + 120,
+      likeCount: 0,
       totalScRevenue: 0,
-      customBackgroundUrl: activeChannel.roomBackgroundUrl || '',
+      // 不再把频道背景整张复制进这场（以前就是这样把 localStorage 写满的）；
+      // 直播间显示时会自动退回用频道背景，只有这场单独换过才填
+      customBackgroundUrl: '',
       sessionGifts: activeChannel.customGifts || [],
       chunks: [],
       rollingSummaries: [],
+      pendingDanmakuQueue: [],
+      foldEveryNChunks: 4,
+      foldKeepRecentChunks: 2,
       startedAt: Date.now(),
     };
 
-    const nextList = upsertLiveSession(newSession);
-    setLiveSessions(nextList);
+    // 必须确认这场真的写进本地了才进直播间，否则刷新一下就没了
+    const saved = await rememberLiveSession(newSession);
+    if (!saved) {
+      // 没写进去就别在列表里留一张点开就消失的卡片
+      setLiveSessions(prev => prev.filter(s => s.id !== newSession.id));
+      return;
+    }
     setActiveLiveSessionId(newSession.id);
     setPendingUserInputs([]);
 
@@ -520,13 +718,10 @@ const LiveStreamApp: React.FC = () => {
       channel: activeChannel,
       streamTitle: title,
     }).then(gifts => {
-      if (gifts && gifts.length > 0) {
-        setLiveSessions(prev => {
-          const target = prev.find(s => s.id === newSession.id);
-          if (!target) return prev;
-          return upsertLiveSession({ ...target, sessionGifts: gifts });
-        });
-      }
+      if (!gifts || gifts.length === 0) return;
+      const latest =
+        liveSessionsRef.current.find(s => s.id === newSession.id) || newSession;
+      void rememberLiveSession({ ...latest, sessionGifts: gifts });
     });
 
     await runGenerateLiveChunk(newSession, activeChannel, []);
@@ -577,7 +772,7 @@ const LiveStreamApp: React.FC = () => {
         chunks: session.chunks.map(c => (foldIds.has(c.id) ? { ...c, folded: true } : c)),
         rollingSummaries: [...session.rollingSummaries, newSummary],
       };
-      setLiveSessions(upsertLiveSession(nextSession));
+      void rememberLiveSession(nextSession);
     } catch (e: any) {
       console.warn('[LiveStream] 阶段滚动总结失败:', e);
     } finally {
@@ -629,7 +824,7 @@ const LiveStreamApp: React.FC = () => {
         ci === lastChunkIdx ? { ...c, beats: nextBeats } : c,
       );
       updatedSession = { ...activeLiveSession, chunks: nextChunks };
-      setLiveSessions(upsertLiveSession(updatedSession));
+      void rememberLiveSession(updatedSession);
     }
 
     if (triggerImmediateReply && !isGenerating) {
@@ -678,14 +873,20 @@ const LiveStreamApp: React.FC = () => {
         : b,
     );
 
-    const dbId = await syncLiveChunkToDb({
-      charId: currentChar.id,
-      channel: activeChannel,
-      session: activeLiveSession,
-      chunkIndex: targetChunk.index,
-      beats: nextBeats,
-      existingDbMsgId: targetChunk.dbMessageId,
-    });
+    let dbId = targetChunk.dbMessageId;
+    try {
+      dbId = await syncLiveChunkToDb({
+        charId: currentChar.id,
+        channel: activeChannel,
+        session: activeLiveSession,
+        chunkIndex: targetChunk.index,
+        beats: nextBeats,
+        existingDbMsgId: targetChunk.dbMessageId,
+      });
+    } catch (e: any) {
+      // 记忆那一步失败了不能连累场次保存：下面照样把分镜存进直播库，再单独说一声
+      addToast(`台词已改，但同步进记忆失败（${e?.name || '未知错误'}）`, 'error');
+    }
 
     const nextSession: LiveStreamSession = {
       ...activeLiveSession,
@@ -693,8 +894,9 @@ const LiveStreamApp: React.FC = () => {
         c.id === chunkId ? { ...c, beats: nextBeats, dbMessageId: dbId } : c,
       ),
     };
-    setLiveSessions(upsertLiveSession(nextSession));
-    addToast('分镜与台词已保存并同步到记忆', 'success');
+    const beatSaved = await rememberLiveSession(nextSession);
+    if (beatSaved) addToast('分镜与台词已保存并同步到记忆', 'success');
+    else addToast('分镜已更新，但没能存进本地数据库', 'error');
   };
 
   // 下播结算
@@ -740,7 +942,7 @@ const LiveStreamApp: React.FC = () => {
         archiveDropMode: 'forget',
         endedAt: Date.now(),
       };
-      setLiveSessions(upsertLiveSession(ended));
+      await rememberLiveSession(ended);
       setShowEndSummaryModal(false);
       setActiveLiveSessionId(null);
       addToast('已抹除本场配信记忆', 'info');
@@ -804,7 +1006,7 @@ const LiveStreamApp: React.FC = () => {
       finalCardMessageId: cardMsgId,
       endedAt: Date.now(),
     };
-    setLiveSessions(upsertLiveSession(endedSession));
+    await rememberLiveSession(endedSession);
     setShowEndSummaryModal(false);
     setActiveLiveSessionId(null);
     addToast(
@@ -876,7 +1078,7 @@ const LiveStreamApp: React.FC = () => {
       });
       vod.dbMessageId = dbId;
 
-      setVodPosts(upsertVodPost(vod));
+      await rememberVodPost(vod);
       setActiveVodId(vod.id);
       setCustomVodTitle('');
       addToast(`《${vod.title}》视频已发布！`, 'success');
@@ -903,7 +1105,7 @@ const LiveStreamApp: React.FC = () => {
       beats: [],
       createdAt: Date.now(),
     };
-    setNpcSessions(upsertNpcWatchSession(newSession));
+    await rememberNpcSession(newSession);
     setActiveNpcSessionId(newSession.id);
     await handleAdvanceNpcBeat(newSession);
   };
@@ -943,7 +1145,7 @@ const LiveStreamApp: React.FC = () => {
         ...sess,
         beats: [...sess.beats, beat],
       };
-      setNpcSessions(upsertNpcWatchSession(updated));
+      await rememberNpcSession(updated);
     } catch (e: any) {
       addToast(e?.message || '生成陪看剧情失败', 'error');
     } finally {
@@ -998,17 +1200,13 @@ const LiveStreamApp: React.FC = () => {
                   ...c,
                   beats: c.beats.map(b => (b.id === beat.id ? { ...b, audioUrl: url } : b)),
                 }));
-                setLiveSessions(
-                  upsertLiveSession({ ...activeLiveSession, chunks: nextChunks }),
-                );
+                void rememberLiveSession({ ...activeLiveSession, chunks: nextChunks });
               },
             })
           }
           onSendUserDanmaku={handleSendUserDanmaku}
           onUpdateCustomBackground={url => {
-            setLiveSessions(
-              upsertLiveSession({ ...activeLiveSession, customBackgroundUrl: url }),
-            );
+            void rememberLiveSession({ ...activeLiveSession, customBackgroundUrl: url });
             addToast('直播间背景已更新', 'success');
           }}
           onRequestRefreshGifts={() => {
@@ -1019,9 +1217,7 @@ const LiveStreamApp: React.FC = () => {
               channel: activeChannel,
               streamTitle: activeLiveSession.title,
             }).then(gifts => {
-              setLiveSessions(
-                upsertLiveSession({ ...activeLiveSession, sessionGifts: gifts }),
-              );
+              void rememberLiveSession({ ...activeLiveSession, sessionGifts: gifts });
               addToast('专属礼物已刷新！', 'success');
             });
           }}
@@ -1049,14 +1245,11 @@ const LiveStreamApp: React.FC = () => {
             const nextList = activeLiveSession.rollingSummaries.map(r =>
               r.id === summaryId ? { ...r, content: nextText } : r,
             );
-            setLiveSessions(
-              upsertLiveSession({ ...activeLiveSession, rollingSummaries: nextList }),
-            );
+            void rememberLiveSession({ ...activeLiveSession, rollingSummaries: nextList });
           }}
           onRegenerateRollingSummary={summary => {
-            const targetChunks = activeLiveSession.chunks.filter(c =>
-              summary.supersededChunkIds.includes(c.id),
-            );
+            const foldedIds = new Set(summary.supersededChunkIds || []);
+            const targetChunks = activeLiveSession.chunks.filter(c => foldedIds.has(c.id));
             if (targetChunks.length > 0) {
               void generateLiveRollingSummary({
                 apiConfig,
@@ -1068,9 +1261,7 @@ const LiveStreamApp: React.FC = () => {
                 const nextList = activeLiveSession.rollingSummaries.map(r =>
                   r.id === summary.id ? { ...r, content: newText } : r,
                 );
-                setLiveSessions(
-                  upsertLiveSession({ ...activeLiveSession, rollingSummaries: nextList }),
-                );
+                void rememberLiveSession({ ...activeLiveSession, rollingSummaries: nextList });
                 addToast('阶段摘要已重新生成', 'success');
               });
             }
@@ -1088,7 +1279,7 @@ const LiveStreamApp: React.FC = () => {
                 r => r.id !== summaryId,
               ),
             };
-            setLiveSessions(upsertLiveSession(nextSession));
+            void rememberLiveSession(nextSession);
           }}
           onEndStreamClick={() => void handleOpenEndStreamModal()}
           onShareClipToChat={beat => void handleShareClipToChat(beat)}
@@ -1113,15 +1304,13 @@ const LiveStreamApp: React.FC = () => {
           }
           onClose={() => setShowChannelModal(false)}
           onSave={ch => {
-            const all = upsertChannel(ch);
-            setChannels(all.filter(c => c.charId === currentChar.id));
+            void rememberChannel(ch);
             setSelectedChannelId(ch.id);
           }}
           onDelete={id => {
-            const all = deleteChannelById(id);
-            const charChs = all.filter(c => c.charId === currentChar.id);
-            setChannels(charChs);
-            setSelectedChannelId(charChs[0]?.id || '');
+            void forgetChannel(id);
+            const rest = channels.filter(c => c.charId === currentChar.id && c.id !== id);
+            setSelectedChannelId(rest[0]?.id || '');
           }}
         />
 
@@ -1133,8 +1322,7 @@ const LiveStreamApp: React.FC = () => {
           onRequestAiPersona={() => handleRequestAiField('viewer_alt_persona')}
           onSelect={setActivePersonaId}
           onSaveAll={next => {
-            setViewerPersonas(next);
-            saveViewerPersonas(next);
+            void rememberPersonas(next);
           }}
           onClose={() => setShowPersonaModal(false)}
         />
@@ -1186,7 +1374,7 @@ const LiveStreamApp: React.FC = () => {
                 const nextChapters = activeVod.chapters.map(c =>
                   c.id === ch.id ? { ...c, audioUrl: url } : c,
                 );
-                setVodPosts(upsertVodPost({ ...activeVod, chapters: nextChapters }));
+                void rememberVodPost({ ...activeVod, chapters: nextChapters });
               },
             })
           }
@@ -1201,7 +1389,7 @@ const LiveStreamApp: React.FC = () => {
                   }
                 : c,
             );
-            setVodPosts(upsertVodPost({ ...activeVod, chapters: nextChapters }));
+            void rememberVodPost({ ...activeVod, chapters: nextChapters });
             addToast('章节内容已保存', 'success');
           }}
           onAddComment={text => {
@@ -1224,7 +1412,7 @@ const LiveStreamApp: React.FC = () => {
               ...activeVod,
               comments: [newCm, ...activeVod.comments],
             };
-            setVodPosts(upsertVodPost(updated));
+            void rememberVodPost(updated);
           }}
           onTriggerStreamerReply={async comment => {
             setVodReplyGeneratingId(comment.id);
@@ -1253,7 +1441,7 @@ const LiveStreamApp: React.FC = () => {
                     : c,
                 ),
               };
-              setVodPosts(upsertVodPost(updated));
+              void rememberVodPost(updated);
             } catch (e: any) {
               addToast(e?.message || '创作者回复生成失败', 'error');
             } finally {
@@ -1297,8 +1485,7 @@ const LiveStreamApp: React.FC = () => {
           onRequestAiPersona={() => handleRequestAiField('viewer_alt_persona')}
           onSelect={setActivePersonaId}
           onSaveAll={next => {
-            setViewerPersonas(next);
-            saveViewerPersonas(next);
+            void rememberPersonas(next);
           }}
           onClose={() => setShowPersonaModal(false)}
         />
@@ -1351,7 +1538,7 @@ const LiveStreamApp: React.FC = () => {
                   : b,
               ),
             };
-            setNpcSessions(upsertNpcWatchSession(updated));
+            void rememberNpcSession(updated);
             addToast(`已重新生成 ${currentChar.name} 的反应`, 'success');
           } catch (e: any) {
             addToast(e?.message || '重Roll失败', 'error');
@@ -1370,7 +1557,7 @@ const LiveStreamApp: React.FC = () => {
                   b.id === beat.id ? { ...b, charAudioUrl: url } : b,
                 ),
               };
-              setNpcSessions(upsertNpcWatchSession(updated));
+              void rememberNpcSession(updated);
             },
           })
         }
@@ -1402,6 +1589,27 @@ const LiveStreamApp: React.FC = () => {
           addToast('已将陪看卡片分享到私聊', 'success');
         }}
       />
+    );
+  }
+
+  // 数据还在 IndexedDB 里往外取的时候，先别摆一个「还没有直播」的空大厅
+  if (!storeReady) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: platformTheme === 'niconico' ? '#1b1b1b' : '#f8f9fb',
+          color: platformTheme === 'niconico' ? 'rgba(255,255,255,0.72)' : '#6b7280',
+          fontSize: 14,
+          letterSpacing: '0.06em',
+        }}
+      >
+        正在读取直播数据…
+      </div>
     );
   }
 
@@ -1438,24 +1646,22 @@ const LiveStreamApp: React.FC = () => {
         onOpenPersonas={() => setShowPersonaModal(true)}
         liveSessions={charSessions}
         onOpenLive={setActiveLiveSessionId}
-        onDeleteLive={id => setLiveSessions(deleteLiveSession(id))}
+        onDeleteLive={id => void forgetLiveSession(id)}
         vodPosts={charVods}
         onOpenVod={setActiveVodId}
-        onDeleteVod={id => setVodPosts(deleteVodPost(id))}
+        onDeleteVod={id => void forgetVodPost(id)}
         npcPool={npcPool}
         npcSessions={charNpcSessions}
         onStartNpc={card => void handleStartNpcWatch(card)}
         onOpenNpcSession={setActiveNpcSessionId}
         npcCustomRule={npcCustomRule}
         onChangeNpcRule={value => {
-          setNpcCustomRule(value);
-          saveNpcCustomRule(value);
+          void rememberNpcRule(value);
         }}
         onAiNpcRule={() => {
           void handleRequestAiField('npc_custom_rule').then(res => {
             if (res.rule) {
-              setNpcCustomRule(res.rule);
-              saveNpcCustomRule(res.rule);
+              void rememberNpcRule(res.rule);
             }
           });
         }}
@@ -1468,8 +1674,7 @@ const LiveStreamApp: React.FC = () => {
             customRule: npcCustomRule,
           })
             .then(nextPool => {
-              setNpcPool(nextPool);
-              saveNpcChannelPool(nextPool);
+              void rememberNpcPool(nextPool);
               addToast('已换了一批直播', 'success');
             })
             .finally(() => setAiHelperBusy(false));
@@ -1525,15 +1730,13 @@ const LiveStreamApp: React.FC = () => {
               }
               onClose={() => setShowChannelModal(false)}
               onSave={ch => {
-                const all = upsertChannel(ch);
-                setChannels(all.filter(c => c.charId === currentChar.id));
+                void rememberChannel(ch);
                 setSelectedChannelId(ch.id);
               }}
               onDelete={id => {
-                const all = deleteChannelById(id);
-                const charChs = all.filter(c => c.charId === currentChar.id);
-                setChannels(charChs);
-                setSelectedChannelId(charChs[0]?.id || '');
+                void forgetChannel(id);
+                const rest = channels.filter(c => c.charId === currentChar.id && c.id !== id);
+                setSelectedChannelId(rest[0]?.id || '');
               }}
             />
           ) : null
@@ -1547,8 +1750,7 @@ const LiveStreamApp: React.FC = () => {
             onRequestAiPersona={() => handleRequestAiField('viewer_alt_persona')}
             onSelect={setActivePersonaId}
             onSaveAll={next => {
-              setViewerPersonas(next);
-              saveViewerPersonas(next);
+              void rememberPersonas(next);
             }}
             onClose={() => setShowPersonaModal(false)}
           />

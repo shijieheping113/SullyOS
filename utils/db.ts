@@ -49,7 +49,8 @@ const DB_NAME = 'AetherOS_Data';
 // v74: merge master delivery lookup with both home indexes, including existing v73 databases.
 // v75：喵喵盒表和家园索引一起补齐。旧库无论停在哪一版，缺的表和索引都会在升级时建上。
 // v76：私聊最近一页按 [charId, timestamp] 取。补记的挂断卡片编号最新、时间却在最后一句后面，按编号取页会被切掉。
-const DB_VERSION = 76;
+// v77：直播（电波 OnAir）数据从 localStorage 迁入 IDB：live_channels / live_sessions / live_vods / live_npc_watches / live_kv
+const DB_VERSION = 77;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -584,6 +585,29 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains('miaomiao_settings')) {
           db.createObjectStore('miaomiao_settings', { keyPath: 'charId' });
+      }
+
+      // ─── 电波 OnAir（直播 / 录播 / 陪看）────────────────
+      // 从 localStorage 搬来的：那边只有 5MB，还要双写，一场带大图的直播就撑爆了。
+      if (!db.objectStoreNames.contains('live_channels')) {
+          const lcStore = db.createObjectStore('live_channels', { keyPath: 'id' });
+          lcStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('live_sessions')) {
+          const lsStore = db.createObjectStore('live_sessions', { keyPath: 'id' });
+          lsStore.createIndex('charId', 'charId', { unique: false });
+          lsStore.createIndex('channelId', 'channelId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('live_vods')) {
+          const lvStore = db.createObjectStore('live_vods', { keyPath: 'id' });
+          lvStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('live_npc_watches')) {
+          const lnStore = db.createObjectStore('live_npc_watches', { keyPath: 'id' });
+          lnStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('live_kv')) {
+          db.createObjectStore('live_kv', { keyPath: 'id' });
       }
     };
   });

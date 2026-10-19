@@ -7,6 +7,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
 import TokenImg from '../os/TokenImg';
+import { processImageToBlob } from '../../utils/file';
+import { putImageBlobDeduped } from '../../utils/blobRef';
 import {
   StreamerChannelProfile,
   ChannelIdentityMode,
@@ -113,13 +115,28 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleFileUpload = (file: File | undefined, onLoaded: (dataUri: string) => void) => {
+  /**
+   * 上传图片：先按用途压缩，再存进图片库换成一个 blobref 令牌。
+   * 以前是 readAsDataURL 直接塞进记录里，一张手机大图就能把整个存储写满。
+   * 压缩失败时退回原图直读，至少不让用户选完图没反应（代价是这一张会占空间）。
+   */
+  const handleFileUpload = async (
+    file: File | undefined,
+    onLoaded: (value: string) => void,
+    options: { maxWidth: number; quality: number; forceJpeg?: boolean },
+  ) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') onLoaded(reader.result);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const blob = await processImageToBlob(file, options);
+      const { token } = await putImageBlobDeduped(blob);
+      onLoaded(token);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') onLoaded(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const buildCurrentChannelObject = (): StreamerChannelProfile => ({
@@ -192,7 +209,7 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
           <div className="flex items-center gap-3">
             <div className="relative w-14 h-14 rounded-full overflow-hidden border-2 border-rose-500 shadow shrink-0 bg-slate-200">
               {avatarUrl || charAvatar ? (
-                <TokenImg src={avatarUrl || charAvatar || ''} className="w-full h-full object-cover" />
+                <TokenImg value={avatarUrl || charAvatar || ''} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center font-bold text-slate-600">
                   {charName[0]}
@@ -206,7 +223,13 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={e => handleFileUpload(e.target.files?.[0], setAvatarUrl)}
+                  onChange={e => {
+                    void handleFileUpload(e.target.files?.[0], setAvatarUrl, {
+                      maxWidth: 512,
+                      quality: 0.9,
+                    });
+                    e.target.value = '';
+                  }}
                 />
                 <button
                   onClick={() => avatarInputRef.current?.click()}
@@ -243,7 +266,14 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={e => handleFileUpload(e.target.files?.[0], setRoomBackgroundUrl)}
+                  onChange={e => {
+                    void handleFileUpload(e.target.files?.[0], setRoomBackgroundUrl, {
+                      maxWidth: 1600,
+                      quality: 0.82,
+                      forceJpeg: true,
+                    });
+                    e.target.value = '';
+                  }}
                 />
                 <button
                   onClick={() => bgInputRef.current?.click()}

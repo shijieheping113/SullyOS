@@ -163,6 +163,15 @@ export function LiveLobby({
   const npcs = npcPool.filter(c => match(`${c.roomTitle} ${c.npcName}`));
   const history = npcSessions.filter(s => match(s.npcRoomTitle));
 
+  /**
+   * 大厅卡片的背景：这场自己换过就用它的，没换过退回所属频道的背景。
+   * 新建直播不再复制频道背景（那会让存储翻倍），所以这里必须补同样的退回逻辑。
+   */
+  const backgroundFor = (sess: LiveStreamSession): string | undefined =>
+    sess.customBackgroundUrl ||
+    channels.find(c => c.id === sess.channelId)?.roomBackgroundUrl ||
+    undefined;
+
   const openGoLive = () => setSheet('goLive');
   const openUpload = () => setSheet('upload');
 
@@ -306,7 +315,8 @@ export function LiveLobby({
                 }`}
                 badge={sess.status === 'live' ? '直播' : undefined}
                 time={sess.status === 'live' ? undefined : `${sess.chunks.length} 段`}
-                image={sess.customBackgroundUrl}
+                image={backgroundFor(sess)}
+                rebuilt={Boolean(sess.rebuiltFromMessagesAt)}
                 avatar={activeChannel?.avatar || currentChar?.avatar}
                 avatarName={activeChannel?.channelName || ''}
                 onOpen={() => onOpenLive(sess.id)}
@@ -369,7 +379,8 @@ export function LiveLobby({
                 key={sess.id}
                 title={sess.title}
                 sub={`${sess.status === 'live' ? 'LIVE' : 'TS'} · ${formatCount(sess.viewerCount)}来場`}
-                image={sess.customBackgroundUrl}
+                image={backgroundFor(sess)}
+                rebuilt={Boolean(sess.rebuiltFromMessagesAt)}
                 live={sess.status === 'live'}
                 onOpen={() => onOpenLive(sess.id)}
                 onMore={() => setMenu({ kind: 'live', id: sess.id, title: sess.title })}
@@ -696,6 +707,7 @@ function YtRow({
   image,
   avatar,
   avatarName,
+  rebuilt,
   onOpen,
   onAvatar,
   onMore,
@@ -707,6 +719,7 @@ function YtRow({
   image?: string;
   avatar?: string;
   avatarName: string;
+  rebuilt?: boolean;
   onOpen: () => void;
   onAvatar: () => void;
   onMore?: () => void;
@@ -730,6 +743,11 @@ function YtRow({
           {time ? (
             <span className="absolute right-2 bottom-2 h-5 px-1.5 inline-flex items-center bg-black/80 text-white text-[12px] rounded-sm">
               {time}
+            </span>
+          ) : null}
+          {rebuilt ? (
+            <span className="absolute right-2 top-2 h-5 px-1.5 inline-flex items-center bg-white/90 text-[#606060] text-[11px] rounded-sm">
+              已重建
             </span>
           ) : null}
         </span>
@@ -759,6 +777,7 @@ function NicoCell({
   sub,
   image,
   live,
+  rebuilt,
   onOpen,
   onMore,
 }: {
@@ -766,6 +785,7 @@ function NicoCell({
   sub: string;
   image?: string;
   live?: boolean;
+  rebuilt?: boolean;
   onOpen: () => void;
   onMore?: () => void;
 }) {
@@ -784,6 +804,11 @@ function NicoCell({
             {live ? (
               <span className="absolute left-1 top-1 h-4 px-1 inline-flex items-center bg-[#c62828] text-white text-[10px] font-bold">
                 LIVE
+              </span>
+            ) : null}
+            {rebuilt ? (
+              <span className="absolute left-1 bottom-1 h-4 px-1 inline-flex items-center bg-black/70 text-white text-[10px]">
+                已重建
               </span>
             ) : null}
           </span>
