@@ -1073,9 +1073,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                         <div className="flex-1 min-w-0">
                                             <div className="font-bold text-slate-600 mb-0.5">{m.type === 'secret_note' ? `${activeCharacter.name} · ${m.metadata?.source === 'home' ? '3D 小屋' : '聊天'}` : m.role === 'user' ? '我' : activeCharacter.name}</div>
                                             {m.type === 'secret_note' ? <SecretNote text={m.content}/> : <div className="truncate">{renderHighlighted(
-                                                m.type === 'video' || m.type === 'image' || m.type === 'voice' || m.type === 'emoji'
-                                                    ? normalizeMessageContent(m, activeCharacter.name, '我')
-                                                    : (m.content || ''),
+                                                normalizeMessageContent(m, activeCharacter.name, '我'),
                                                 query,
                                                 contentClass,
                                             )}</div>}

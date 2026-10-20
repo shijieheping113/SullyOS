@@ -44,9 +44,20 @@ describe('直播轮次卡布局', () => {
   it('舞台滚动弹幕排队显示整轮，实时弹幕列表仍按当前拍显示', () => {
     expect(liveWidgetsSource).not.toContain('danmakuList.slice(-trackCount)');
     expect(liveWidgetsSource).toContain('danmakuList.map((dm, idx) =>');
-    expect(liveWidgetsSource).toContain('laneNextDelay[lane] += duration + 0.45');
+    expect(liveWidgetsSource).toContain('rowFreeAt[row] = start + duration * 0.62');
     expect(liveWidgetsSource).toContain('1 both');
     expect(liveRoomSource).toContain('const scrollingDanmakuFeed = useMemo');
     expect(liveRoomSource).toContain('i <= currentGlobalBeatIdx');
+  });
+
+  it('即时接话动态截断到选中拍，后续内容作废并作为新轮新卡生成', () => {
+    const start = liveAppSource.indexOf('const handleSendUserDanmaku');
+    const end = liveAppSource.indexOf('const mutateUserDanmaku', start);
+    const handler = liveAppSource.slice(start, end);
+    expect(handler).toContain('truncateLiveChunkAfterBeat(targetChunk, targetBeat.beatId)');
+    expect(handler).toContain('DB.deleteMessages(dropIds)');
+    expect(handler).toContain('runGenerateLiveChunk(baseSession, activeChannel, nextQueue)');
+    expect(handler).not.toContain('continueChunkId');
+    expect(liveAppSource).toContain(': [...session.chunks, newChunk]');
   });
 });

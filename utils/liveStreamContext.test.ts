@@ -207,14 +207,22 @@ describe('本轮摘要的输入', () => {
     const prompt = llmCalls[0].messages[0].content;
     expect(prompt).toContain('只是路过');
     expect(prompt).toContain('会员发话');
-    expect(prompt).toContain('SC ¥30');
+    expect(prompt).toContain('Super Chat 付费留言 ¥30');
     expect(prompt).toContain('我来了');
     expect(prompt).toContain('小鱼干');
     expect(prompt).toContain('熟人本尊');
     // 只压这一轮
     expect(prompt).toContain('第 1 轮');
     // 明确不许提私聊
-    expect(prompt).toContain('不要编造或提及任何私聊');
+    expect(prompt).toContain('不编造、不提及私聊');
+    expect(prompt).toContain('约 150~260 字');
+    expect(prompt).toContain('每次严格按下面四项、顺序和标题输出');
+    expect(prompt).toContain('【直播内容】');
+    expect(prompt).toContain('【关键细节】');
+    expect(prompt).toContain('【公屏互动】');
+    expect(prompt).toContain('【本轮收尾】');
+    expect(prompt).not.toContain('不设字数上限');
+    expect(prompt).not.toContain('每个原始拍都单独列出');
     expect(summary).toBe('第 1 轮摘要');
   });
 
@@ -256,6 +264,15 @@ describe('直播切片请求的上下文范围', () => {
     // 来源边界还在：私聊不是公屏
     expect(task).toContain('来源边界');
     expect(task).toContain('不得擅自公开念出来');
+    const rules = buildPayloadCalls[0].rules as string;
+    expect(rules).toContain('老会员（Member）');
+    expect(rules).toContain('起哄损友（抓主播口误');
+    expect(rules).toContain('复读、吐槽、问号海');
+    expect(rules).toContain('随直播类型与当拍节奏变调');
+    expect(rules).toContain('多视角分流（拒绝纯夸夸群）');
+    expect(rules).toContain('拒绝机械排班与同质复刻');
+    expect(rules).toContain('观众是来作客的');
+    expect(rules).toContain('不要写成固定夸或固定骂');
   });
 
   it('聊天历史原样交给共用管线，交给它自己按上下文范围裁', async () => {

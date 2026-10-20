@@ -13,6 +13,7 @@ import {
   LiveRollingSummary,
   StreamGiftOption,
   LivePlatformTheme,
+  LiveGuidance,
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
 import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
@@ -21,6 +22,30 @@ import { processImageToBlob } from '../../utils/file';
 import { putImageBlobDeduped } from '../../utils/blobRef';
 import { BeatActionSheetTarget } from './LiveSharedWidgets';
 import { LiveWatchScreen } from './LiveWatchScreen';
+
+/** 直播间播放设置：记住用户上次拨过的开关，回到直播间不再重置。 */
+type LiveRoomSettings = {
+  showDanmakuOverlay: boolean;
+  showTranslation: boolean;
+  autoPlayStep: boolean;
+  immediateReplyOnSend: boolean;
+};
+const LIVE_ROOM_SETTINGS_KEY = 'live_room_settings_v1';
+const loadLiveRoomSettings = (): Partial<LiveRoomSettings> => {
+  try {
+    const raw = localStorage.getItem(LIVE_ROOM_SETTINGS_KEY);
+    return raw ? (JSON.parse(raw) as Partial<LiveRoomSettings>) : {};
+  } catch {
+    return {};
+  }
+};
+const saveLiveRoomSettings = (patch: Partial<LiveRoomSettings>) => {
+  try {
+    localStorage.setItem(LIVE_ROOM_SETTINGS_KEY, JSON.stringify({ ...loadLiveRoomSettings(), ...patch }));
+  } catch {
+    /* 忽略浏览器存储限制 */
+  }
+};
 
 interface LiveRoomViewProps {
   charId: string;
@@ -64,6 +89,9 @@ interface LiveRoomViewProps {
   ) => void;
   onEditUserDanmaku: (id: string, text: string) => void;
   onDeleteUserDanmaku: (id: string) => void;
+  pendingGuidance: LiveGuidance[];
+  onAddGuidance: (text: string) => void;
+  onRemoveGuidance: (id: string) => void;
   onUpdateCustomBackground: (url: string) => void;
   onManualFoldChunks: () => void;
   onEditRoundSummary: (chunkId: string, nextText: string) => void;
@@ -102,6 +130,9 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onSendUserDanmaku,
   onEditUserDanmaku,
   onDeleteUserDanmaku,
+  pendingGuidance,
+  onAddGuidance,
+  onRemoveGuidance,
   onUpdateCustomBackground,
   onManualFoldChunks,
   onEditRoundSummary,
@@ -110,10 +141,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onEndStreamClick,
   onShareClipToChat,
 }) => {
-  // 视图与播放器控制状态
+  // 视图与播放器控制状态（开关读上次保存的偏好，不再每次重置）
+  const savedRoomSettings = useRef(loadLiveRoomSettings()).current;
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showPlayerControls, setShowPlayerControls] = useState(false);
-  const [autoPlayStep, setAutoPlayStep] = useState(false);
+  const [autoPlayStep, setAutoPlayStep] = useState(savedRoomSettings.autoPlayStep ?? false);
   const [preGenerateVoice, setPreGenerateVoice] = useState(() => {
     try {
       return localStorage.getItem('live_silent_tts_pregeneration') === '1';
@@ -121,9 +153,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       return false;
     }
   });
-  const [showDanmakuOverlay, setShowDanmakuOverlay] = useState(true);
+  const [showDanmakuOverlay, setShowDanmakuOverlay] = useState(savedRoomSettings.showDanmakuOverlay ?? true);
   const [showTranslation, setShowTranslation] = useState(
-    Boolean(channel.voiceConfig?.enableTranslation || (channel.voiceConfig?.language && channel.voiceConfig.language !== 'zh')),
+    savedRoomSettings.showTranslation
+      ?? Boolean(channel.voiceConfig?.enableTranslation || (channel.voiceConfig?.language && channel.voiceConfig.language !== 'zh')),
   );
   // 下方主内容 Tab：实时弹幕 (chat) vs 完整分镜回放 (script)
   const [lowerTab, setLowerTab] = useState<'chat' | 'script'>('chat');
@@ -131,7 +164,17 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [danmakuInput, setDanmakuInput] = useState('');
   const [activeBottomDrawer, setActiveBottomDrawer] = useState<'none' | 'sc' | 'gift'>('none');
   const [selectedScTierIdx, setSelectedScTierIdx] = useState<number>(0);
-  const [immediateReplyOnSend, setImmediateReplyOnSend] = useState(true);
+  const [immediateReplyOnSend, setImmediateReplyOnSend] = useState(savedRoomSettings.immediateReplyOnSend ?? true);
+
+  // 首次挂载不算用户操作，之后每次改动才写回偏好
+  const roomSettingsReadyRef = useRef(false);
+  useEffect(() => {
+    if (!roomSettingsReadyRef.current) {
+      roomSettingsReadyRef.current = true;
+      return;
+    }
+    saveLiveRoomSettings({ showDanmakuOverlay, showTranslation, autoPlayStep, immediateReplyOnSend });
+  }, [showDanmakuOverlay, showTranslation, autoPlayStep, immediateReplyOnSend]);
 
   // 私聊小手机浮窗状态
   const [showFloatingPhone, setShowFloatingPhone] = useState(false);
@@ -436,6 +479,9 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       scrollingDanmakuFeed={scrollingDanmakuFeed}
       onEditUserDanmaku={onEditUserDanmaku}
       onDeleteUserDanmaku={onDeleteUserDanmaku}
+      pendingGuidance={pendingGuidance}
+      onAddGuidance={onAddGuidance}
+      onRemoveGuidance={onRemoveGuidance}
       displayAvatar={displayAvatar}
       displayBackgroundUrl={displayBackgroundUrl}
       activeGifts={activeGifts}

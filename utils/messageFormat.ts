@@ -193,21 +193,34 @@ export function normalizeMessageContent(
             }
             if (card?.type === 'livestream_card') {
                 const isRound = card.cardKind === 'live_round' || card.cardKind === 'npc_watch_round';
-                const kindLabel =
-                    card.cardKind === 'live_summary' ? '下播全貌纪要'
-                    : card.cardKind === 'live_clip' ? '直播高能切片'
-                    : card.cardKind === 'vod_share' ? '视频投稿分享'
-                    : card.cardKind === 'live_session_marker' ? (card.sessionStatus === 'ended' ? '直播已下播' : '直播进行中')
-                    : card.cardKind === 'live_round' ? `${card.roundLabel || '直播轮次'}切片`
-                    : card.cardKind === 'npc_watch_round' ? `陪看${card.roundLabel || ''}`.trim()
-                    : '陪看直播记录';
-                const chPart = card.channelName ? `（频道：${card.channelName}）` : '';
-                const titlePart = card.title ? `《${card.title}》` : '';
+                const chPart = card.channelName ? `频道《${card.channelName}》` : '';
+                const titlePart = card.title ? `本场《${card.title}》` : '';
                 const bodyText = isRound
                     ? (typeof card.body === 'string' ? card.body.trim() : '')
                     : (typeof card.summary === 'string' ? card.summary.trim() : '');
-                const compressedNote = isRound && card.isCompressed ? '［这一轮已压缩成摘要］\n' : '';
-                return `[电波·${kindLabel}] ${charName}${chPart}${titlePart}：\n${compressedNote}${bodyText}`;
+
+                // 开播/下播状态标记：单独一条，说明直播是否仍在进行
+                if (card.cardKind === 'live_session_marker') {
+                    const statusLabel = card.sessionStatus === 'ended' ? '直播已下播' : '直播进行中';
+                    return `[电波直播·${statusLabel}] ${bodyText}`;
+                }
+
+                // 逐轮记录：直接称为“你的直播记录”，并标明轮次与原文/摘要，
+                // 让私聊模型按顺序读，不会误当成外部视频或格式不一的总结。
+                if (isRound) {
+                    const sourceLabel = card.cardKind === 'npc_watch_round' ? '你陪看的直播记录' : '你的直播记录';
+                    const roundPart = card.roundLabel || '本场';
+                    const formPart = card.isCompressed ? '摘要' : '原文';
+                    const details = [chPart, titlePart].filter(Boolean).join(' · ');
+                    return `[${sourceLabel}·${roundPart}·${formPart}]${details ? ` ${details}` : ''}\n${bodyText}`;
+                }
+
+                const kindLabel =
+                    card.cardKind === 'live_summary' ? '下播全貌纪要'
+                    : card.cardKind === 'live_clip' ? '直播高能片段'
+                    : card.cardKind === 'vod_share' ? '视频投稿分享'
+                    : '陪看直播记录';
+                return `[电波·${kindLabel}] ${charName}${chPart ? `（${chPart}）` : ''}${titlePart ? `《${card.title}》` : ''}：\n${bodyText}`;
             }
             // 其它结算卡类型（songwriting/study/lifesim 日常 等）：如果有 summary/content 字段优先用
             if (typeof card?.summary === 'string' && card.summary.trim()) return `[系统卡片] ${card.summary.trim()}`;

@@ -6,6 +6,7 @@
  * 4. SuperChatTickerBar & SuperChatHighlightCard：YouTube Live 标准付费醒目留言组件
  */
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useOS } from '../../context/OSContext';
 import type { HomePhoneChatProps } from '../../apps/Chat';
 import { CHAT_GEN_EVENTS, registerEmbeddedChatView } from '../../utils/chatGenEvents';
@@ -97,9 +98,12 @@ export const LiveFloatingPhone: React.FC<LiveFloatingPhoneProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  // 用 portal 挂到 body：直播间的祖先节点若带 transform/filter，会让 position:fixed 的浮窗
+  // 被当成相对祖先定位，背景跟着错位、看起来像镜像。挂到 body 后彻底不受影响。
+  return createPortal(
     <div
-      className="fixed inset-0 z-[120] bg-black/30 backdrop-blur-[1px] flex items-end justify-end p-2.5 sm:p-4"
+      className="fixed inset-0 z-[120] flex items-end justify-end p-2.5 sm:p-4"
+      style={{ background: 'rgba(15, 23, 42, 0.42)' }}
       onClick={onClose}
     >
       <section
@@ -108,8 +112,8 @@ export const LiveFloatingPhone: React.FC<LiveFloatingPhoneProps> = ({
           position: 'relative',
           right: 'auto',
           bottom: 'auto',
-          width: 'min(368px, calc(100vw - 20px))',
-          height: 'min(620px, 82vh)',
+          width: 'min(430px, calc(100vw - 16px))',
+          height: 'min(780px, 92vh)',
           zIndex: 125,
           padding: 0,
           background: '#ffffff',
@@ -165,7 +169,8 @@ export const LiveFloatingPhone: React.FC<LiveFloatingPhoneProps> = ({
           </Suspense>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
@@ -488,7 +493,7 @@ interface FloatingDanmakuOverlayProps {
   showTranslation?: boolean;
   visible?: boolean;
   platformTheme?: LivePlatformTheme;
-  /** 轨道数：小窗 2 条，全屏 3 条 */
+  /** 可用行数（小窗建议 3，全屏 4~5）；行数越多越像真实弹幕墙 */
   tracks?: number;
 }
 
@@ -502,30 +507,50 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   if (!visible || !danmakuList || danmakuList.length === 0) return null;
 
   const isNico = platformTheme === 'niconico';
-  // 多轨队列：同轨等上一条完整滚出后再发下一条；整轮每条弹幕都会依次出现一次。
-  const trackCount = Math.max(1, Math.min(3, tracks));
-  const trackTops = Array.from({ length: trackCount }, (_, i) => `${i * 21}px`);
+  // 连续流：每条按字长算时长，落在「最早空出来的那一行」，相邻两条只隔一小段
+  // 带随机抖动的间隔。不再按行分组一波一波地出，读起来像真实视频里的弹幕墙。
+  const rowCount = Math.max(1, Math.min(5, tracks));
+  const rowTops = Array.from({ length: rowCount }, (_, i) => `${i * 21}px`);
 
   const estimateWidth = (text: string) => {
     let w = 0;
     for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 13 : 7.5;
     return w;
   };
-  const laneNextDelay = Array.from({ length: trackCount }, () => 0);
+  // 用弹幕 id 做稳定伪随机，刷新/重渲染时同一条弹幕的节奏不变
+  const seedOf = (key: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) {
+      h ^= key.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return ((h >>> 0) % 1000) / 1000;
+  };
+
+  const rowFreeAt = Array.from({ length: rowCount }, () => 0);
+  let lastStart = -0.5;
   const items = danmakuList.map((dm, idx) => {
     const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
     const full = `${dm.text}${showTranslation && cleanTrans && cleanTrans !== dm.text ? `（${cleanTrans}）` : ''}`;
-    const duration = Math.max(7.5, (390 + estimateWidth(full)) / 50);
-    const lane = idx % trackCount;
-    const delay = laneNextDelay[lane];
-    laneNextDelay[lane] += duration + 0.45;
-    return { dm, idx, lane, delay, duration, cleanTrans };
+    const duration = Math.max(6.5, (360 + estimateWidth(full)) / 52);
+    const seed = seedOf(dm.id || `${idx}_${dm.text}`);
+    // 选最早空出来的那一行
+    let row = 0;
+    for (let i = 1; i < rowCount; i++) {
+      if (rowFreeAt[i] < rowFreeAt[row] - 0.001) row = i;
+    }
+    const gap = 0.24 + seed * 0.55;
+    const start = Math.max(rowFreeAt[row], lastStart + gap);
+    // 上一条滚过约六成后，同一行就能跟上下一条，尾巴不会互相追尾
+    rowFreeAt[row] = start + duration * 0.62;
+    lastStart = start;
+    return { dm, idx, row, delay: start, duration, cleanTrans };
   });
 
   return (
     <div
       className="pointer-events-none absolute inset-x-0 select-none overflow-hidden"
-      style={{ zIndex: 15, height: trackCount * 21, containerType: 'inline-size' }}
+      style={{ zIndex: 15, height: rowCount * 21, containerType: 'inline-size' }}
     >
       <style>{`
         @keyframes onAirDanmakuFlow {
@@ -533,8 +558,8 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
           100% { transform: translate3d(-105%, 0, 0); }
         }
       `}</style>
-      {items.map(({ dm, idx, lane, delay, duration, cleanTrans }) => {
-        const top = trackTops[lane];
+      {items.map(({ dm, idx, row, delay, duration, cleanTrans }) => {
+        const top = rowTops[row];
         const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
         const isGift = Boolean(dm.giftName);
         const isMine = Boolean(dm.isUserMain || dm.isUserAlt);

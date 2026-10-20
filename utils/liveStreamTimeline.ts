@@ -45,11 +45,14 @@ export function appendLiveDanmakuToBeat(
   };
 }
 
-export function getLiveChunksThroughTarget(
-  chunks: readonly LiveChunk[],
-  targetChunkId?: string,
-): LiveChunk[] {
-  if (!targetChunkId) return [...chunks];
-  const index = chunks.findIndex(chunk => chunk.id === targetChunkId);
-  return index < 0 ? [...chunks] : chunks.slice(0, index + 1);
+/** Keep only the already-viewed part of a round before generating an immediate continuation. */
+export function truncateLiveChunkAfterBeat(chunk: LiveChunk, beatId: string): LiveChunk | null {
+  const beatIndex = chunk.beats.findIndex(beat => beat.id === beatId);
+  if (beatIndex < 0) return null;
+  return {
+    ...chunk,
+    beats: chunk.beats.slice(0, beatIndex + 1),
+    roundSummary: undefined,
+    summaryUpdatedAt: undefined,
+  };
 }

@@ -173,6 +173,16 @@ export interface LiveRollingSummary {
 /** 下播后落入主聊天的方式 */
 export type LiveArchiveDropMode = 'card_and_memory' | 'silent_memory' | 'forget';
 
+/**
+ * 导演引导：用户写给接下来直播走向的提示，不进公屏、不冒充观众发言，
+ * 只在下一轮生成时交给模型，生效后从列表里移除。
+ */
+export interface LiveGuidance {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
 /** 单场直播完整会话 */
 export interface LiveStreamSession {
   id: string;
@@ -200,6 +210,8 @@ export interface LiveStreamSession {
   rollingSummaries: LiveRollingSummary[];
   /** 用户在当前拍已发出、等待下一段响应的弹幕/SC队列 */
   pendingDanmakuQueue: LiveDanmakuItem[];
+  /** 导演引导：下一轮生成要体现的方向，生成后清空 */
+  pendingGuidance?: LiveGuidance[];
   foldEveryNChunks: number;
   foldKeepRecentChunks: number;
   finalSummary?: string;

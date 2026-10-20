@@ -225,6 +225,15 @@ function normalizeLiveSessionRecord(raw: any): LiveStreamSession {
     chunks,
     rollingSummaries,
     pendingDanmakuQueue: Array.isArray(raw?.pendingDanmakuQueue) ? raw.pendingDanmakuQueue : [],
+    pendingGuidance: Array.isArray(raw?.pendingGuidance)
+      ? raw.pendingGuidance
+          .filter((item: any) => typeof item?.text === 'string' && item.text.trim())
+          .map((item: any, idx: number) => ({
+            id: String(item.id || `guidance_${raw?.id || 'live'}_${idx}`),
+            text: String(item.text).trim(),
+            createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
+          }))
+      : [],
     finalSummary: raw?.finalSummary || '',
     archiveDropMode: raw?.archiveDropMode || raw?.finalArchiveMode,
     finalDbMessageId: raw?.finalDbMessageId,

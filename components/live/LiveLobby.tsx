@@ -54,6 +54,7 @@ export function LiveLobby({
   onOpenPersonas,
   liveSessions,
   onOpenLive,
+  onEditLive,
   onDeleteLive,
   vodPosts,
   onOpenVod,
@@ -107,6 +108,7 @@ export function LiveLobby({
   onOpenPersonas: () => void;
   liveSessions: LiveStreamSession[];
   onOpenLive: (id: string) => void;
+  onEditLive: (id: string) => void;
   onDeleteLive: (id: string) => void;
   vodPosts: VodVideoPost[];
   onOpenVod: (id: string) => void;
@@ -687,6 +689,17 @@ export function LiveLobby({
             setMenu(null);
           }}
         />
+        {menu?.kind === 'live' && (
+          <MenuRow
+            label="编辑这场直播的信息"
+            detail="改标题、分区和今日走向；后面推进的直播按新信息继续。"
+            onClick={() => {
+              if (!menu) return;
+              onEditLive(menu.id);
+              setMenu(null);
+            }}
+          />
+        )}
         <MenuRow
           label="删除这条记录"
           detail="从手机里删掉。删了就没有了。"

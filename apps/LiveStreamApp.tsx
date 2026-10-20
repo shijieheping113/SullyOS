@@ -88,6 +88,7 @@ import {
 import {
   ChannelEditorModal,
   ViewerPersonaModal,
+  LiveSessionInfoModal,
 } from '../components/live/LiveStreamModals';
 import { LiveRoomView } from '../components/live/LiveRoomView';
 import { LiveLobby } from '../components/live/LiveLobby';
@@ -99,7 +100,10 @@ import { RealtimeContextManager, defaultRealtimeConfig } from '../utils/realtime
 import { resolveCharTimeZone } from '../utils/timezone';
 import type { RealtimeConfig } from '../types';
 import { clampManualContextLimit } from '../utils/chatContextRange';
-import { appendLiveDanmakuToBeat, getLiveChunksThroughTarget } from '../utils/liveStreamTimeline';
+import {
+  appendLiveDanmakuToBeat,
+  truncateLiveChunkAfterBeat,
+} from '../utils/liveStreamTimeline';
 
 type MainTab = 'char_live' | 'char_vod' | 'npc_watch';
 
@@ -182,6 +186,7 @@ const LiveStreamApp: React.FC = () => {
   const [editingChannel, setEditingChannel] = useState<StreamerChannelProfile | null>(null);
   const [showPersonaModal, setShowPersonaModal] = useState(false);
   const [showLobbyPhone, setShowLobbyPhone] = useState(false);
+  const [editingLiveSessionId, setEditingLiveSessionId] = useState<string | null>(null);
 
   // 生成与语音状态
   const [isGenerating, setIsGenerating] = useState(false);
@@ -376,6 +381,15 @@ const LiveStreamApp: React.FC = () => {
     const selected = viewerPersonas.some(persona => persona.id === personaId)
       ? personaId
       : viewerPersonas.find(persona => persona.isMain)?.id || viewerPersonas[0]?.id || 'viewer_main_self';
+    // 记住最近一次用过的匿名马甲，下次点头像切匿名时回到它，而不是默认小号
+    const picked = viewerPersonas.find(persona => persona.id === selected);
+    if (picked && !picked.isMain) {
+      try {
+        localStorage.setItem('live_last_alt_persona_v1', selected);
+      } catch {
+        /* 忽略浏览器存储限制 */
+      }
+    }
     setActivePersonaId(selected);
     void saveActiveViewerPersonaId(selected, viewerPersonas).catch(() => {
       addToast('观众身份已切换，但没能保存这个选择', 'error');
@@ -465,6 +479,14 @@ const LiveStreamApp: React.FC = () => {
         const savedPersonaId = await loadActiveViewerPersonaId(personas);
         if (cancelled) return;
         setActivePersonaId(savedPersonaId);
+        const savedPersona = personas.find(persona => persona.id === savedPersonaId);
+        if (savedPersona && !savedPersona.isMain) {
+          try {
+            localStorage.setItem('live_last_alt_persona_v1', savedPersona.id);
+          } catch {
+            /* 忽略浏览器存储限制 */
+          }
+        }
         setLiveSessions(sessions);
         setVodPosts(vods);
         setNpcSessions(npcList);
@@ -760,7 +782,6 @@ const LiveStreamApp: React.FC = () => {
       replaceChunkId?: string;
       rejectedDraftText?: string;
       excludeDbMsgId?: number;
-      immediateAfterChunkId?: string;
     },
   ) => {
     if (!currentChar || isGenerating) return;
@@ -772,8 +793,7 @@ const LiveStreamApp: React.FC = () => {
         ? session.chunks.find(c => c.id === options.replaceChunkId)?.index ?? session.chunks.length
         : session.chunks.length;
 
-      const promptChunks = getLiveChunksThroughTarget(session.chunks, options?.immediateAfterChunkId)
-        .filter(c => c.id !== options?.replaceChunkId);
+      const promptChunks = session.chunks.filter(c => c.id !== options?.replaceChunkId);
       const sessionForPrompt: LiveStreamSession = { ...session, chunks: promptChunks };
 
       // 正常聊天范围：服从角色自己的自适应/手动上下文设置，不另设条数或时间上限。
@@ -860,7 +880,7 @@ const LiveStreamApp: React.FC = () => {
         id: existingChunk?.id || `chunk_${session.id}_${targetChunkIndex}_${Date.now()}`,
         index: targetChunkIndex,
         beats,
-        // 用户投递的弹幕已经作为 danmaku 落在拍里，这里按类型要求留空数组（以前是 undefined）
+        // 用户投递的弹幕已经作为 danmaku 落在拍里，不在 chunk.userInputs 中另存一份。
         userInputs: [],
         dbMessageId: dbMsgId,
         createdAt: Date.now(),
@@ -877,6 +897,8 @@ const LiveStreamApp: React.FC = () => {
         peakViewerCount: peak,
         totalScRevenue: scTotal,
         totalGiftRevenue: giftTotal,
+        // 引导已经在这一轮体现过了，清空，避免一直重复生效
+        pendingGuidance: [],
       };
 
       setPendingUserInputs([]);
@@ -907,6 +929,8 @@ const LiveStreamApp: React.FC = () => {
       title,
       categoryKey: preset.key,
       categoryLabel: preset.label,
+      // 生成提示词读的是 customTopic，这里和 topicNote 一起写，开播时填的走向才会生效
+      customTopic: topicNote,
       topicNote,
       status: 'live',
       viewerCount: Math.floor(activeChannel.followerCount * 0.08) + 120,
@@ -1042,9 +1066,49 @@ const LiveStreamApp: React.FC = () => {
     setPendingUserInputs(nextQueue);
 
     if (triggerImmediateReply && !isGenerating) {
-      void runGenerateLiveChunk(updatedSession, activeChannel, nextQueue, {
-        immediateAfterChunkId: targetBeat?.chunkId,
-      });
+      // 即时接话发生在指定拍：保留该拍及之前，丢弃后续预制拍/轮；回应作为新一轮生成，
+      // 新建一张轮次卡，不拼进目标轮次。
+      const targetIdx = targetBeat
+        ? updatedSession.chunks.findIndex(c => c.id === targetBeat.chunkId)
+        : -1;
+      const targetChunk = targetIdx >= 0 ? updatedSession.chunks[targetIdx] : undefined;
+      const truncatedTarget = targetChunk && targetBeat
+        ? truncateLiveChunkAfterBeat(targetChunk, targetBeat.beatId)
+        : null;
+      if (targetChunk && truncatedTarget) {
+        const dropped = updatedSession.chunks.slice(targetIdx + 1);
+        const baseSession: LiveStreamSession = {
+          ...updatedSession,
+          chunks: [...updatedSession.chunks.slice(0, targetIdx), truncatedTarget],
+          // 旧阶段摘要若跨过目标轮，里面也可能含有刚作废的后续内容。
+          rollingSummaries: (updatedSession.rollingSummaries || []).filter(
+            summary => summary.toChunkIndex <= truncatedTarget.index,
+          ),
+        };
+        const dropIds = dropped
+          .map(chunk => chunk.dbMessageId)
+          .filter((id): id is number => typeof id === 'number' && id > 0);
+        if (dropIds.length) {
+          void DB.deleteMessages(dropIds).catch(() => {
+            /* 本地轮次已截断；删聊天卡失败不阻断即时接话 */
+          });
+        }
+        void rememberLiveSession(baseSession);
+        if (currentChar) {
+          void syncLiveChunkToDb({
+            charId: currentChar.id,
+            charName: currentChar.name,
+            channel: activeChannel,
+            session: baseSession,
+            chunkIndex: truncatedTarget.index,
+            beats: truncatedTarget.beats,
+            existingDbMsgId: truncatedTarget.dbMessageId,
+          }).catch(() => {});
+        }
+        void runGenerateLiveChunk(baseSession, activeChannel, nextQueue);
+      } else {
+        void runGenerateLiveChunk(updatedSession, activeChannel, nextQueue);
+      }
     }
   };
 
@@ -1104,6 +1168,28 @@ const LiveStreamApp: React.FC = () => {
 
   const handleDeleteUserDanmaku = (id: string) => {
     void mutateUserDanmaku(id, null);
+  };
+
+  // 导演引导：只写给模型看，不进公屏；生成一轮后由 runGenerateLiveChunk 清空
+  const handleAddGuidance = (text: string) => {
+    if (!activeLiveSession || !text.trim()) return;
+    const next: LiveStreamSession = {
+      ...activeLiveSession,
+      pendingGuidance: [
+        ...(activeLiveSession.pendingGuidance || []),
+        { id: `lg_${Date.now()}`, text: text.trim(), createdAt: Date.now() },
+      ],
+    };
+    void rememberLiveSession(next);
+  };
+
+  const handleRemoveGuidance = (id: string) => {
+    if (!activeLiveSession) return;
+    const next: LiveStreamSession = {
+      ...activeLiveSession,
+      pendingGuidance: (activeLiveSession.pendingGuidance || []).filter(g => g.id !== id),
+    };
+    void rememberLiveSession(next);
   };
 
   // 重 Roll 某一段切片（传入旧台词防雷同 + 排除旧 DB 消息）
@@ -1266,6 +1352,42 @@ const LiveStreamApp: React.FC = () => {
       },
     });
     addToast(`第 ${chunk.index + 1} 轮直播卡已发到私聊`, 'success');
+  };
+
+  // 编辑本场直播信息：保存后写回 session，之后推进生成的提示词就用新标题/分区/走向。
+  const handleSaveLiveSessionInfo = async (next: {
+    title: string;
+    categoryKey: string;
+    categoryLabel: string;
+    topicNote: string;
+  }) => {
+    const target = liveSessions.find(s => s.id === editingLiveSessionId);
+    if (!target) {
+      setEditingLiveSessionId(null);
+      return;
+    }
+    const nextSession: LiveStreamSession = {
+      ...target,
+      title: next.title,
+      categoryKey: next.categoryKey,
+      categoryLabel: next.categoryLabel,
+      customTopic: next.topicNote || undefined,
+      topicNote: next.topicNote || undefined,
+    };
+    await rememberLiveSession(nextSession);
+    const markerChannel = channels.find(channel => channel.id === nextSession.channelId);
+    const markerChar = characters.find(character => character.id === nextSession.charId);
+    if (markerChannel && nextSession.startMarkerMessageId) {
+      void updateLiveSessionMarkerInDb({
+        messageId: nextSession.startMarkerMessageId,
+        charId: nextSession.charId,
+        charName: markerChar?.name,
+        channel: markerChannel,
+        session: nextSession,
+      }).catch(() => {});
+    }
+    setEditingLiveSessionId(null);
+    addToast('这场直播的信息已更新，后面的推进按新信息走', 'success');
   };
 
   // ==================== 2. 视频投稿 (VOD) & 3. NPC 陪看 ====================
@@ -1436,6 +1558,9 @@ const LiveStreamApp: React.FC = () => {
           onSendUserDanmaku={handleSendUserDanmaku}
           onEditUserDanmaku={handleEditUserDanmaku}
           onDeleteUserDanmaku={handleDeleteUserDanmaku}
+          pendingGuidance={activeLiveSession.pendingGuidance || []}
+          onAddGuidance={handleAddGuidance}
+          onRemoveGuidance={handleRemoveGuidance}
           onUpdateCustomBackground={url => {
             void rememberLiveSession({ ...activeLiveSession, customBackgroundUrl: url });
             addToast('直播间背景已更新', 'success');
@@ -1815,6 +1940,7 @@ const LiveStreamApp: React.FC = () => {
         onOpenPersonas={() => setShowPersonaModal(true)}
         liveSessions={charSessions}
         onOpenLive={setActiveLiveSessionId}
+        onEditLive={id => setEditingLiveSessionId(id)}
         onDeleteLive={id => void forgetLiveSession(id)}
         vodPosts={charVods}
         onOpenVod={setActiveVodId}
@@ -1935,6 +2061,18 @@ const LiveStreamApp: React.FC = () => {
           onClose={() => setShowLobbyPhone(false)}
         />
       )}
+      <LiveSessionInfoModal
+        isOpen={Boolean(editingLiveSessionId)}
+        initialTitle={liveSessions.find(s => s.id === editingLiveSessionId)?.title || ''}
+        initialCategoryKey={liveSessions.find(s => s.id === editingLiveSessionId)?.categoryKey || ''}
+        initialTopicNote={
+          liveSessions.find(s => s.id === editingLiveSessionId)?.customTopic
+          || liveSessions.find(s => s.id === editingLiveSessionId)?.topicNote
+          || ''
+        }
+        onClose={() => setEditingLiveSessionId(null)}
+        onSave={next => void handleSaveLiveSessionInfo(next)}
+      />
     </>
   );
 };

@@ -302,8 +302,8 @@ export async function generateLiveRoundSummary(opts: {
       const dm = (b.danmaku || [])
         .map(d => {
           const tag = [
-            d.scAmount && d.scAmount > 0 ? `SC ¥${d.scAmount}` : '',
-            d.giftName ? `送出 ${d.giftEmoji || ''}${d.giftName}` : '',
+            d.scAmount && d.scAmount > 0 ? `Super Chat 付费留言 ${d.scCurrency || '¥'}${d.scAmount}` : '',
+            d.giftName ? `频道礼物打赏 ${d.giftEmoji || ''}${d.giftName}${d.giftAmount ? ` ${d.giftCurrency || '¥'}${d.giftAmount}` : ''}（数字贴纸，非实物）` : '',
             d.isUserMain ? '熟人本尊' : d.isUserAlt ? '熟人小号' : '',
           ]
             .filter(Boolean)
@@ -311,17 +311,23 @@ export async function generateLiveRoundSummary(opts: {
           return `      ${d.senderName}${tag ? `（${tag}）` : ''}：${d.text}${d.translation ? `（译：${d.translation}）` : ''}`;
         })
         .join('\n');
-      return `  (${bi + 1}) 画面：${b.screen} ｜ 台词：${sp}${dm ? `\n    公屏：\n${dm}` : ''}`;
+      return `【第 ${bi + 1} 拍】\n画面与动作：${b.screen}\n主播台词：${sp}${dm ? `\n公屏互动：\n${dm}` : ''}`;
     })
     .join('\n');
 
-  const prompt = `请把「${char.name}」的直播《${session.title}》（频道：${channel.channelName}）的**第 ${chunk.index + 1} 轮**压成一段逐轮摘要（约 150~260 字，纯文字，可分两三段，不要小标题清单）。
+  const prompt = `请把「${char.name}」在频道「${channel.channelName}」直播《${session.title}》的**第 ${chunk.index + 1} 轮**压缩成供私聊续接时阅读的「你的直播记录」摘要，约 150~260 字。
+
+每次严格按下面四项、顺序和标题输出；标题不可改名、不可增删，不要写额外开头或结尾：
+【直播内容】按发生顺序写本轮主要画面、动作和台词。
+【关键细节】保留能区分本轮的场景变化和重要原话关键词。
+【公屏互动】记录值得记的观众名与弹幕；用户/马甲留言、Super Chat 内容与金额、礼物名与金额不能漏。
+【本轮收尾】写明停在何处、留下什么话头；没有则写“无”。
 
 要求：
-1. 只写这一轮：按发生顺序保留关键画面、台词要点、公屏里值得记的互动（含礼物、SC、普通路人弹幕），以及结尾停在哪、留了什么钩子。
-2. 具体一点：留着人名、金额、原话里的关键词；不要「气氛热烈」「互动良好」这类空话，也不要升华抒情。
-3. 不写整场总结，不提前写后面还没发生的事。
-4. **只写直播里真实发生的内容**：不要编造或提及任何私聊、手机消息、场外对话。
+1. 用短句压缩，目标约 150~260 字；合并重复过程，不逐拍逐条复述。保留关键细节，删去重复表达和无信息铺陈；不要写“气氛热烈”“互动良好”等空话或升华抒情。
+2. 公屏互动按重要性取舍：保留值得记的互动与观众名称，普通弹幕可选最有代表性的；重复弹幕可合并计数。外语弹幕有翻译时保留原文与翻译。
+3. 只写这一轮真实发生的内容，不写整场总结，不提前写后面还没发生的事。
+4. 不编造、不提及私聊、手机消息或场外对话。Super Chat 是付费醒目留言；频道礼物是独立的数字贴纸打赏，二者不能混为一类，礼物不是现实实物。
 
 这一轮的直播记录：
 ${rawTranscript}`;

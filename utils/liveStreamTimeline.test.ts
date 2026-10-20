@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   appendLiveDanmakuToBeat,
-  getLiveChunksThroughTarget,
   getLatestChunkFirstBeatIndex,
   getLiveRoundDanmakuFeed,
+  truncateLiveChunkAfterBeat,
 } from './liveStreamTimeline';
 
 describe('直播间进入与推进时的时间线落点', () => {
@@ -60,11 +60,26 @@ describe('直播间进入与推进时的时间线落点', () => {
     expect(result.chunks[1].beats[0].danmaku).toEqual([]);
   });
 
-  it('即时接话只把目标轮次之前的直播内容交给生成器', () => {
-    const chunks = [{ id: 'round-1' }, { id: 'round-2' }, { id: 'round-3' }] as any;
-    expect(getLiveChunksThroughTarget(chunks, 'round-2').map(chunk => chunk.id)).toEqual([
-      'round-1',
-      'round-2',
-    ]);
+  it('即时接话按实际选中的拍截断后续预制拍，不写死轮次数量', () => {
+    const chunk = {
+      id: 'selected-round',
+      index: 8,
+      createdAt: 12,
+      dbMessageId: 99,
+      roundSummary: '旧摘要',
+      summaryUpdatedAt: 20,
+      userInputs: [],
+      beats: [
+        { id: 'opening', chunkId: 'selected-round', index: 0, screen: '开场', speechOriginal: '开场', danmaku: [] },
+        { id: 'selected-moment', chunkId: 'selected-round', index: 1, screen: '当前画面', speechOriginal: '当前台词', danmaku: [] },
+        { id: 'future-action', chunkId: 'selected-round', index: 2, screen: '未来动作', speechOriginal: '未来台词', danmaku: [] },
+      ],
+    } as any;
+    const kept = truncateLiveChunkAfterBeat(chunk, 'selected-moment')!;
+    expect(kept.id).toBe('selected-round');
+    expect(kept.dbMessageId).toBe(99);
+    expect(kept.beats.map(beat => beat.id)).toEqual(['opening', 'selected-moment']);
+    expect(kept.roundSummary).toBeUndefined();
   });
+
 });

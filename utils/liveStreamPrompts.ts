@@ -27,10 +27,14 @@ const REAL_STREAMER_VIBE_RULES = `
    - 严禁使用任何中国B站特有词汇（如“舰长/提督/总督/UP主/一键三连/投币”），一律使用国际化 YouTube Live / NicoNico 生放送语境（Subscribers 订阅者 / Channel Members 会员 / Super Chat / Viewers / Chat）。
 2. **去“端着”的真实口语细节（必须高频自然出现）**：
    - **半截话、口癖与思维跳跃**：真人在镜头前说话会有停顿、语气词、说到一半被手头操作打断（如“Wait—刚才说到哪了？”“草，等一下这波——”）。
-   - **留白专注拍（允许不开口）**：每段切片里至少有 1 拍专注于手头动作、喝水、调麦克风、盯屏幕操作或憋笑，此时 \`speechOriginal\` 填空字符串 \`""\`，只在 \`screen\` 里写动作、神态与环境声。
+   - **留白专注拍（允许不开口）**：你这一轮直播里至少有 1 拍专注于手头动作、喝水、调麦克风、盯屏幕操作或憋笑，此时 \`speechOriginal\` 填空字符串 \`""\`，只在 \`screen\` 里写动作、神态与环境声。
    - **扫视聊天栏的半拍延迟**：主播是忙完手头这一小段动作后，才偏头扫一眼副屏/手机屏幕上的聊天栏，挑有意思的梗、Super Chat（SC）或送礼物的观众念一下回嘴。
 3. **真实聊天栏生态（去“夸夸群”，做嘴碎损友与复读机）**：
    - 聊天栏观众有老会员（Member）、起哄损友（抓主播口误、刷问号 \`???\`、\`LMAO\`、\`草\`、\`www\`）、指令党、纯路人和外国观众。
+   - **随直播类型与当拍节奏变调**：弹幕重心紧贴本场题材与当拍画面——竞技/游戏局盯战况、操作与下饭失误；下厨/手作/日常盯具体步骤、物件与小插曲；电台/陪伴/歌回随节奏放缓，聊心事、听歌共鸣或安静打卡；杂谈顺着话头延伸或歪楼，不刷与当前场景脱节的万金油套话。
+   - **多视角分流（拒绝纯夸夸群）**：不同观众关注点各异——有人聊主播手头的事，有人抓画面角落细节、环境音或口误，有人借题聊自己的经历，有人在公屏互相接话抬杠，也有刚进房状况外发问的路人；非高光时刻严禁排队刷无脑吹捧。
+   - **拒绝机械排班与同质复刻**：五类 \`roleType\` 按当拍情境自然分布，严禁每拍各凑一条点名排班；同一拍可多人围着同一处细节复读或起哄，长短句与简短反应交错，前后拍不重复同类句式。
+   - **观众是来作客的**：观众是客人，不是来当打分员的无条件粉丝，这一趟值不值由主播当下的表现决定——状态在线、营业到位，他们会合拍、会热场、会跟着玩；敷衍、卡壳、发呆或冷场时，他们会半开玩笑地施压、阴阳两句、催进度、点单点播。期待值随主播当拍状态起伏，不要写成固定夸或固定骂，也不要因为主播没营业就集体声讨。
 `;
 
 // ==================== 2. 多语种配信与同传双轨规则 ====================
@@ -116,16 +120,18 @@ export function buildSessionHistoryBlock(session: LiveStreamSession): string {
     .map(s => `【旧阶段摘要 · 第 ${s.fromChunkIndex + 1}~${s.toChunkIndex + 1} 轮】\n${s.content}`);
 
   const parts: string[] = [];
+  // 单条时间线按轮次从早到晚排开，并明说哪一条是刚发生的，避免模型分不清先后顺序。
+  parts.push(
+    `### 本场直播已经发生过的轮次（按时间从早到晚排列，共 ${chunks.length} 轮；最后一条就是刚刚发生的，请从这里自然接着往下演，严禁重复已经说过的台词）`,
+  );
   if (legacySummaries.length > 0) {
-    parts.push(`### 本场更早的阶段摘要（旧数据，仅作前情）\n${legacySummaries.join('\n\n')}`);
+    parts.push(`【更早的旧阶段摘要 · 仅作前情】\n${legacySummaries.join('\n\n')}`);
   }
   if (compressedLines.length > 0) {
-    parts.push(`### 本场更早各轮（已压缩成逐轮摘要）\n${compressedLines.join('\n\n')}`);
+    parts.push(compressedLines.join('\n\n'));
   }
   if (rawLines.length > 0) {
-    parts.push(
-      `### 最近几轮的直播原文（请自然接着往下演，严禁重复已经说过的台词）\n${rawLines.join('\n\n')}`,
-    );
+    parts.push(rawLines.join('\n\n'));
   }
   return parts.join('\n\n');
 }
@@ -201,6 +207,12 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const boundaryBlock = `### 来源边界
 上面聊天历史里的是你和 ${userName} 之间的私聊，不是公屏弹幕。你只能把它当成私下的记忆来理解，不得擅自公开念出来或复述给对方以外的人（除非你是故意隔空回嘴）。`;
 
+  // 3.5 导演引导：不是弹幕，是接下来走向的要求
+  const guidance = session.pendingGuidance || [];
+  const guidanceBlock = guidance.length > 0
+    ? `### 导演引导（重要：这不是观众弹幕，不要把它写成公屏发言，也不要让任何观众念出它）\n用户希望接下来的直播往这些方向走，请让画面、话题和主播反应自然体现出来：\n${guidance.map(g => `- ${g.text}`).join('\n')}`
+    : '';
+
   // 4. 重 Roll 强烈反雷同指令
   const rerollBlock = rejectedDraftText
     ? `### 🔄 【重 Roll 强制换新指令（极其重要！）】
@@ -252,14 +264,14 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
   }
 ]
 \`\`\`
-注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等）。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！`;
+注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等；具体生态随本场直播类型与当拍画面切换，体现不同观众视角，拒绝纯夸夸与五类身份机械排班，观众按客人心态随主播当拍表现给出或热场或施压的反馈）。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！`;
 
-  const taskParts: string[] = [progressBlock, boundaryBlock, audienceInputBlock, rerollBlock];
+  const taskParts: string[] = [progressBlock, boundaryBlock, audienceInputBlock, guidanceBlock, rerollBlock];
   if (includeUserLocation) {
     const locationText = await getUserLocationContext(userName).catch(() => '');
     if (locationText && locationText.trim()) taskParts.splice(1, 0, locationText.trim());
   }
-  taskParts.push(`请紧接上文，生成本场第 ${session.chunks.length + 1} 轮的直播切片（共 ${beatCountRule} 拍 JSON 数组）。`);
+  taskParts.push(`请紧接上文，生成本场你自己的直播里第 ${session.chunks.length + 1} 轮的新内容（共 ${beatCountRule} 拍 JSON 数组）。`);
 
   const history = historyMessages.filter(m => {
     if (excludeDbMsgId && m.id === excludeDbMsgId) return false;

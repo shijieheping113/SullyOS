@@ -283,7 +283,8 @@ describe('聊天时间线上的轮次卡', () => {
 
     expect(body).toContain('路人甲');
     expect(body).toContain('常連さん');
-    expect(body).toContain('SC ¥30');
+    // 正文里把付费留言写成清楚的“Super Chat 付费留言”，不再用缩写，避免模型误当成礼物
+    expect(body).toContain('Super Chat 付费留言 ¥30');
   });
 
   it('重 Roll 同一条：ID 与时间戳不变，消息不增加', async () => {

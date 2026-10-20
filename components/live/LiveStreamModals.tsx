@@ -413,11 +413,11 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
               {giftAiBusy ? '✨ 设计中…' : '✨ AI 根据人设生成礼物'}
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5">
             {customGifts.map((g, idx) => (
               <div
                 key={g.id || idx}
-                className="flex items-center gap-1.5 bg-white border border-amber-200 rounded-xl px-2 py-1.5 text-xs"
+                className="flex items-center gap-2 bg-white border border-amber-200 rounded-xl px-2 py-2 text-xs"
               >
                 <input
                   value={g.emoji}
@@ -426,7 +426,7 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
                     next[idx] = { ...g, emoji: e.target.value };
                     setCustomGifts(next);
                   }}
-                  className="w-6 text-center bg-slate-50 rounded"
+                  className="w-7 shrink-0 text-center bg-slate-50 rounded py-0.5"
                 />
                 <input
                   value={g.name}
@@ -435,18 +435,22 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
                     next[idx] = { ...g, name: e.target.value };
                     setCustomGifts(next);
                   }}
-                  className="flex-1 min-w-0 bg-transparent font-semibold text-slate-800 text-[11px]"
+                  placeholder="礼物名称"
+                  className="flex-1 min-w-0 bg-transparent font-semibold text-slate-800 text-[12px] leading-tight py-0.5"
                 />
-                <input
-                  type="number"
-                  value={g.price}
-                  onChange={e => {
-                    const next = [...customGifts];
-                    next[idx] = { ...g, price: Number(e.target.value) || 10 };
-                    setCustomGifts(next);
-                  }}
-                  className="w-12 text-right bg-slate-50 rounded px-1 text-[11px] font-bold text-amber-700"
-                />
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <span className="text-[11px] font-bold text-amber-700">{g.currencySymbol || '¥'}</span>
+                  <input
+                    type="number"
+                    value={g.price}
+                    onChange={e => {
+                      const next = [...customGifts];
+                      next[idx] = { ...g, price: Number(e.target.value) || 10 };
+                      setCustomGifts(next);
+                    }}
+                    className="w-14 text-right bg-slate-50 rounded px-1 py-0.5 text-[11px] font-bold text-amber-700"
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -579,12 +583,37 @@ export const ViewerPersonaModal: React.FC<ViewerPersonaModalProps> = ({
   const [newBadge, setNewBadge] = useState('Member');
   const [newNote, setNewNote] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  // 已有账户（含本尊大号）也能改昵称/徽章/备注
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editBadge, setEditBadge] = useState('');
+  const [editNote, setEditNote] = useState('');
 
   if (!isOpen) return null;
 
   const commitPersonas = (next: ViewerPersona[]) => {
     if (onSavePersonas) onSavePersonas(next);
     if (onSaveAll) onSaveAll(next);
+  };
+
+  const startEditPersona = (p: ViewerPersona) => {
+    setEditingId(p.id);
+    setEditName(p.name);
+    setEditBadge(p.badgeText || '');
+    setEditNote(p.note || '');
+  };
+
+  const saveEditPersona = () => {
+    const trimmed = editName.trim();
+    if (!trimmed) return;
+    commitPersonas(
+      personas.map(p =>
+        p.id === editingId
+          ? { ...p, name: trimmed, badgeText: editBadge.trim() || undefined, note: editNote.trim() || undefined }
+          : p,
+      ),
+    );
+    setEditingId(null);
   };
 
   const handleAddAlt = () => {
@@ -629,6 +658,49 @@ export const ViewerPersonaModal: React.FC<ViewerPersonaModalProps> = ({
         <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
           {personas.map(p => {
             const active = p.id === activePersonaId;
+            if (editingId === p.id) {
+              return (
+                <div key={p.id} className="p-3 rounded-2xl border border-rose-300 bg-white space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      placeholder="昵称"
+                      className="col-span-2 rounded-xl bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
+                    />
+                    <input
+                      value={editBadge}
+                      onChange={e => setEditBadge(e.target.value)}
+                      placeholder="徽章"
+                      className="rounded-xl bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                  <input
+                    value={editNote}
+                    onChange={e => setEditNote(e.target.value)}
+                    placeholder="人设备注（可选）"
+                    className="w-full rounded-xl bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(null)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!editName.trim()}
+                      onClick={saveEditPersona}
+                      className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold disabled:opacity-40"
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div
                 key={p.id}
@@ -660,20 +732,32 @@ export const ViewerPersonaModal: React.FC<ViewerPersonaModalProps> = ({
                   </div>
                   {p.note && <div className="text-[11px] text-slate-500 mt-1">{p.note}</div>}
                 </div>
-                {!p.isMain && (
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={e => {
                       e.stopPropagation();
-                      const next = personas.filter(x => x.id !== p.id);
-                      commitPersonas(next);
-                      if (activePersonaId === p.id && next[0]) onSelect(next[0].id);
+                      startEditPersona(p);
                     }}
-                    className="text-xs text-slate-400 hover:text-red-500 px-2 shrink-0 whitespace-nowrap"
+                    className="text-xs text-slate-400 hover:text-slate-800 px-1.5 whitespace-nowrap"
                   >
-                    删除
+                    编辑
                   </button>
-                )}
+                  {!p.isMain && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        const next = personas.filter(x => x.id !== p.id);
+                        commitPersonas(next);
+                        if (activePersonaId === p.id && next[0]) onSelect(next[0].id);
+                      }}
+                      className="text-xs text-slate-400 hover:text-red-500 px-1.5 whitespace-nowrap"
+                    >
+                      删除
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -877,6 +961,128 @@ export const EndStreamSummaryModal: React.FC<EndStreamSummaryModalProps> = ({
               🗑️ 本场忘掉
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== 4. 本场直播信息编辑弹窗（标题 / 分区 / 今日走向） ====================
+
+interface LiveSessionInfoModalProps {
+  isOpen: boolean;
+  initialTitle: string;
+  initialCategoryKey: string;
+  initialTopicNote: string;
+  onClose: () => void;
+  onSave: (next: { title: string; categoryKey: string; categoryLabel: string; topicNote: string }) => void;
+}
+
+export const LiveSessionInfoModal: React.FC<LiveSessionInfoModalProps> = ({
+  isOpen,
+  initialTitle,
+  initialCategoryKey,
+  initialTopicNote,
+  onClose,
+  onSave,
+}) => {
+  const [title, setTitle] = useState(initialTitle);
+  const [categoryKey, setCategoryKey] = useState(initialCategoryKey);
+  const [topicNote, setTopicNote] = useState(initialTopicNote);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setTitle(initialTitle);
+    setCategoryKey(initialCategoryKey);
+    setTopicNote(initialTopicNote);
+  }, [isOpen, initialTitle, initialCategoryKey, initialTopicNote]);
+
+  if (!isOpen) return null;
+
+  const preset =
+    STREAM_PRESET_TEMPLATES.find(t => t.key === categoryKey) || STREAM_PRESET_TEMPLATES[0];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md max-h-[88vh] overflow-y-auto rounded-3xl bg-white text-slate-800 border border-slate-200 p-4 shadow-2xl space-y-4"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900">编辑这场直播的信息</h3>
+          <p className="text-[11px] text-slate-500">改完保存后，后面推进的直播会按新信息继续。</p>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-700">直播标题</label>
+          <input
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="这一场的标题"
+            className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-700">分区类型</label>
+          <div className="grid grid-cols-2 gap-2">
+            {STREAM_PRESET_TEMPLATES.map(t => {
+              const on = t.key === categoryKey;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setCategoryKey(t.key)}
+                  className={`px-2.5 py-2 rounded-xl text-xs font-bold text-left transition ${
+                    on
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-700">今日走向 / 附加设定</label>
+          <textarea
+            value={topicNote}
+            onChange={e => setTopicNote(e.target.value)}
+            rows={3}
+            placeholder={preset?.promptHint || '这一场想怎么进行'}
+            className="w-full rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-rose-400"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3.5 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!title.trim()}
+            onClick={() =>
+              onSave({
+                title: title.trim(),
+                categoryKey: preset.key,
+                categoryLabel: preset.label,
+                topicNote: topicNote.trim(),
+              })
+            }
+            className="px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-sm disabled:opacity-40"
+          >
+            保存并用于后续直播
+          </button>
         </div>
       </div>
     </div>
