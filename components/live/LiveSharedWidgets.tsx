@@ -20,6 +20,7 @@ import {
   LivePlatformTheme,
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
+import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
 import '../../apps/room3d/homePhone.css';
 
 const Chat = lazy(() => import('../../apps/Chat'));
@@ -531,7 +532,8 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   let lastStart = -0.5;
   const items = danmakuList.map((dm, idx) => {
     const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
-    const full = `${dm.text}${showTranslation && cleanTrans && cleanTrans !== dm.text ? `（${cleanTrans}）` : ''}`;
+    const comment = getLiveDanmakuComment(dm);
+    const full = `${comment}${showTranslation && cleanTrans && cleanTrans !== comment ? `（${cleanTrans}）` : ''}`;
     const duration = Math.max(6.5, (360 + estimateWidth(full)) / 52);
     const seed = seedOf(dm.id || `${idx}_${dm.text}`);
     // 选最早空出来的那一行
@@ -544,7 +546,7 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
     // 上一条滚过约六成后，同一行就能跟上下一条，尾巴不会互相追尾
     rowFreeAt[row] = start + duration * 0.62;
     lastStart = start;
-    return { dm, idx, row, delay: start, duration, cleanTrans };
+    return { dm, idx, row, delay: start, duration, cleanTrans, comment };
   });
 
   return (
@@ -558,7 +560,7 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
           100% { transform: translate3d(-105%, 0, 0); }
         }
       `}</style>
-      {items.map(({ dm, idx, row, delay, duration, cleanTrans }) => {
+      {items.map(({ dm, idx, row, delay, duration, cleanTrans, comment }) => {
         const top = rowTops[row];
         const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
         const isGift = Boolean(dm.giftName);
@@ -614,8 +616,8 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
                   {dm.giftEmoji || '🎁'} {dm.giftName}
                 </span>
               )}
-              <span>{dm.text}</span>
-              {showTranslation && cleanTrans && cleanTrans !== dm.text && (
+              {comment && <span>{comment}</span>}
+              {showTranslation && cleanTrans && cleanTrans !== comment && (
                 <span className="text-[11px] font-semibold text-[#475569]">（{cleanTrans}）</span>
               )}
             </span>

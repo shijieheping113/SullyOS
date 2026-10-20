@@ -1086,7 +1086,7 @@ export const DB = {
     });
   },
 
-  updateMessage: async (id: number, content: string): Promise<void> => {
+  updateMessage: async (id: number, content: string, timestamp?: number): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
     const store = transaction.objectStore(STORE_MESSAGES);
@@ -1099,6 +1099,7 @@ export const DB = {
             const data = req.result as Message;
             if (data) {
                 data.content = content;
+                if (typeof timestamp === 'number') data.timestamp = timestamp;
                 store.put(data);
             } else {
                 reject(new Error('Message not found'));

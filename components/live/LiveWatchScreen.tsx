@@ -39,6 +39,7 @@ import {
   formatCount,
   clockFromIndex,
 } from './platformChrome';
+import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
 
 type TimelineItem = { chunkId: string; chunkIndex: number; beat: LiveBeat; globalIdx: number };
 
@@ -149,17 +150,36 @@ export function LiveWatchScreen(props: {
   const giftEffectTimerRef = useRef<number | null>(null);
   const giftEffectQueueRef = useRef<LiveDanmakuItem[]>([]);
   const giftEffectRunningRef = useRef(false);
+  const initialPlayedGiftIds = props.allTimelineBeats
+    .slice(0, Math.max(0, props.currentGlobalBeatIdx))
+    .flatMap(item => item.beat.danmaku || [])
+    .filter(item => (item.scAmount && item.scAmount > 0) || item.giftName)
+    .map(item => item.id)
+    .filter((id): id is string => Boolean(id));
   const seenGiftEffectIdsRef = useRef(
-    new Set(
-      (props.scrollingDanmakuFeed || [])
-        .filter(item => (item.scAmount && item.scAmount > 0) || item.giftName)
-        .map(item => item.id)
-        .filter((id): id is string => Boolean(id)),
-    ),
+    new Set(initialPlayedGiftIds),
   );
+  const previousGiftEffectBeatIdxRef = useRef(props.currentGlobalBeatIdx);
 
   useEffect(() => {
-    const fresh = (props.scrollingDanmakuFeed || []).filter(item => {
+    if (props.currentGlobalBeatIdx < previousGiftEffectBeatIdxRef.current) {
+      // 回放进度倒退后，后续拍里的礼物重新变成未播放，供再次回放时触发。
+      for (const item of props.allTimelineBeats.slice(props.currentGlobalBeatIdx)) {
+        for (const dm of item.beat.danmaku || []) {
+          if ((dm.scAmount && dm.scAmount > 0) || dm.giftName) {
+            if (dm.id) seenGiftEffectIdsRef.current.delete(dm.id);
+          }
+        }
+      }
+      giftEffectQueueRef.current = [];
+      giftEffectRunningRef.current = false;
+      if (giftEffectTimerRef.current !== null) window.clearTimeout(giftEffectTimerRef.current);
+      giftEffectTimerRef.current = null;
+      setGiftEffect(null);
+    }
+    previousGiftEffectBeatIdxRef.current = props.currentGlobalBeatIdx;
+
+    const fresh = (props.visibleDanmakuFeed || []).filter(item => {
       const isPaidEffect = Boolean((item.scAmount && item.scAmount > 0) || item.giftName);
       if (!isPaidEffect || !item.id || seenGiftEffectIdsRef.current.has(item.id)) return false;
       seenGiftEffectIdsRef.current.add(item.id);
@@ -193,10 +213,10 @@ export function LiveWatchScreen(props: {
           : undefined,
         color: isSc ? tier.headerBg : '#ec4899',
       });
-      giftEffectTimerRef.current = window.setTimeout(showNext, 2400);
+      giftEffectTimerRef.current = window.setTimeout(showNext, 2800);
     };
     showNext();
-  }, [props.scrollingDanmakuFeed]);
+  }, [props.allTimelineBeats, props.currentGlobalBeatIdx, props.visibleDanmakuFeed]);
 
   useEffect(() => () => {
     if (giftEffectTimerRef.current !== null) window.clearTimeout(giftEffectTimerRef.current);
@@ -723,6 +743,7 @@ export function LiveWatchScreen(props: {
           const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
           const isGift = Boolean(dm.giftName);
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
+          const comment = getLiveDanmakuComment(dm);
           return (
             <p
               key={dm.id || `fs_dm_${i}`}
@@ -745,7 +766,9 @@ export function LiveWatchScreen(props: {
               >
                 {dm.senderName}
               </span>
-              <span style={{ fontWeight: 600, color: '#1f2937' }}>　{dm.text}</span>
+              {isSc && <span style={{ fontWeight: 700, color: '#b45309' }}>　¥{dm.scAmount}</span>}
+              {isGift && <span style={{ fontWeight: 700, color: '#be185d' }}>　{dm.giftEmoji || '🎁'} {dm.giftName}</span>}
+              {comment && <span style={{ fontWeight: 600, color: '#1f2937' }}>　{comment}</span>}
             </p>
           );
         })}
@@ -1612,15 +1635,15 @@ function GiftEffectOverlay({
         }
       `}</style>
       <div
-        className="flex items-center gap-2.5 rounded-2xl px-3.5 py-2 shadow-lg"
+        className="flex w-full max-w-[min(92vw,420px)] items-center gap-2.5 rounded-2xl px-3.5 py-2 shadow-lg"
         style={{ background: effect.color, animation: 'onAirGiftPop 2.8s ease-out both' }}
       >
         {effect.emoji && <span className="text-2xl shrink-0">{effect.emoji}</span>}
-        <div className="text-white min-w-0">
+        <div className="text-white min-w-0 flex-1">
           <div className="text-[10px] font-bold opacity-90">
             {effect.kind === 'sc' ? 'Super Chat 付费留言' : '频道礼物打赏'}
           </div>
-          <div className="text-sm font-extrabold leading-tight break-words">
+          <div className="text-sm font-extrabold leading-tight whitespace-normal break-words">
             {effect.name}{effect.amount ? ` · ${effect.amount}` : ''}
           </div>
         </div>
@@ -1790,6 +1813,7 @@ function YtChatList({
           const paid = Boolean(dm.scAmount && dm.scAmount > 0);
           const isGift = Boolean(dm.giftName);
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
+          const giftComment = getLiveDanmakuComment(dm);
           const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
           const mineHint = isMine ? '长按可编辑或删除' : '';
 
@@ -1807,16 +1831,30 @@ function YtChatList({
                 key={dm.id || idx}
                 title={mineHint}
                 {...pressHandlers(dm)}
-                className="my-1 px-3 py-1.5 rounded-xl bg-[#fff0f6] border border-[#ffdeeb] flex items-center justify-between text-xs"
+                className="my-2 overflow-hidden rounded-2xl border border-[#f4bfd5] bg-white shadow-sm text-xs"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <Avatar src={undefined} name={dm.senderName} size={20} />
-                  <span className="font-bold text-[#a61e4d] truncate">{dm.senderName}</span>
-                  <span className="text-[#c2255c] truncate">{dm.text}</span>
+                <div className="flex items-center gap-2 border-b border-[#f8dce8] bg-[#fff2f7] px-3 py-2">
+                  <Avatar src={undefined} name={dm.senderName} size={22} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-bold text-[#861b48]">{dm.senderName}</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[#b83269]">送出了频道礼物</div>
+                  </div>
+                  {dm.giftAmount ? (
+                    <span className="shrink-0 rounded-full bg-[#c2185b] px-2.5 py-1 font-extrabold text-white">
+                      {dm.giftCurrency || '¥'}{dm.giftAmount}
+                    </span>
+                  ) : null}
                 </div>
-                <span className="text-sm font-bold text-[#d6336c] shrink-0 ml-2">
-                  {dm.giftEmoji || '🎁'} {dm.giftName}{dm.giftAmount ? ` · ${dm.giftCurrency || '¥'}${dm.giftAmount} 打赏` : ''}
-                </span>
+                <div className="flex items-center gap-3 px-3 py-3">
+                  <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[#fff2f7] text-[30px] leading-none">
+                    {dm.giftEmoji || '🎁'}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="break-words text-sm font-extrabold leading-snug text-[#70163d]">{dm.giftName}</div>
+                    {(dm.giftCount || 0) > 1 ? <div className="mt-0.5 text-[10px] font-bold text-[#b83269]">×{dm.giftCount}</div> : null}
+                    {giftComment && <div className="mt-1 break-words leading-relaxed text-[#8a526b]">{giftComment}</div>}
+                  </div>
+                </div>
               </li>
             );
           }
@@ -1916,6 +1954,7 @@ function NicoCommentTable({
           const isGift = Boolean(dm.giftName);
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
           const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
+          const comment = isGift ? getLiveDanmakuComment(dm) : dm.text;
           return (
             <tr
               key={dm.id || i}
@@ -1925,7 +1964,7 @@ function NicoCommentTable({
                 isSc
                   ? 'bg-[#fffbeb]'
                   : isGift
-                  ? 'bg-[#fff0f6]'
+                  ? 'bg-[#fff8fb]'
                   : isMine
                   ? 'bg-[#eff6ff]'
                   : i % 2 === 1
@@ -1938,17 +1977,20 @@ function NicoCommentTable({
               </td>
               <td className="px-2 py-1.5 leading-[17px] text-[#0f172a] break-words">
                 {dm.scAmount ? (
-                  <span className="mr-1.5 px-1.5 py-[1px] rounded-[2px] bg-[#f59e0b] text-white text-[10px] font-extrabold">
-                    広告 ¥{dm.scAmount}
+                  <span className="mr-1.5 inline-flex items-center rounded-sm border border-[#d6a500] bg-[#fff4c2] px-1.5 py-[2px] text-[10px] font-extrabold text-[#5a4300]">
+                    SC&nbsp;¥{dm.scAmount}
                   </span>
                 ) : null}
                 {dm.giftName ? (
-                  <span className="mr-1.5 px-1.5 py-[1px] rounded-[2px] bg-[#ec4899] text-white text-[10px] font-bold">
-                    {dm.giftEmoji} {dm.giftName}{dm.giftAmount ? ` · ${dm.giftCurrency || '¥'}${dm.giftAmount} 打赏` : ''}
+                  <span className="mr-1.5 inline-flex max-w-full flex-wrap items-center gap-x-1 rounded-sm border border-[#f0a7cc] bg-white px-1.5 py-[2px] text-[10px] font-bold text-[#9d174d]">
+                    <span>{dm.giftEmoji || '🎁'}</span>
+                    <span className="break-words">ギフト · {dm.giftName}</span>
+                    {dm.giftCount && dm.giftCount > 1 ? <span>×{dm.giftCount}</span> : null}
+                    {dm.giftAmount ? <span className="font-mono">{dm.giftCurrency || '¥'}{dm.giftAmount}</span> : null}
                   </span>
                 ) : null}
-                <span>{dm.text}</span>
-                {showTranslation && trans && trans !== dm.text ? (
+                {comment && <span>{comment}</span>}
+                {showTranslation && trans && trans !== dm.text && (!isGift || comment) ? (
                   <span className="ml-1.5 text-[11px] text-[#0066cc]">（{trans}）</span>
                 ) : null}
               </td>

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   appendLiveDanmakuToBeat,
+  getLiveDanmakuComment,
   getLatestChunkFirstBeatIndex,
   getLiveRoundDanmakuFeed,
+  getVisibleLiveDanmakuFeed,
   truncateLiveChunkAfterBeat,
 } from './liveStreamTimeline';
 
@@ -42,6 +44,21 @@ describe('直播间进入与推进时的时间线落点', () => {
       'new-2',
       'new-3',
     ]);
+  });
+
+  it('动画只接收已播放到的拍子弹幕，不提前播出后续礼物', () => {
+    const timeline = [
+      { beat: { danmaku: [{ id: 'gift-1', text: '送出了 🐟 小鱼干！', giftName: '小鱼干' }] } },
+      { beat: { danmaku: [{ id: 'gift-2', text: '送出了 🌟 星星！', giftName: '星星' }] } },
+    ] as any;
+    expect(getVisibleLiveDanmakuFeed(timeline, 0).map(item => item.id)).toEqual(['gift-1']);
+    expect(getVisibleLiveDanmakuFeed(timeline, 1).map(item => item.id)).toEqual(['gift-1', 'gift-2']);
+  });
+
+  it('礼物卡片和飘屏不重复显示结构化礼物播报，但保留附带留言', () => {
+    expect(getLiveDanmakuComment({ text: '送出了 🐟 小鱼干！', giftEmoji: '🐟', giftName: '小鱼干' })).toBe('');
+    expect(getLiveDanmakuComment({ text: '送出了 🐟 小鱼干！猫猫加油', giftEmoji: '🐟', giftName: '小鱼干' })).toBe('猫猫加油');
+    expect(getLiveDanmakuComment({ text: '主播加油', giftName: '小鱼干' })).toBe('主播加油');
   });
 
   it('用户弹幕留在用户当前选中的旧轮次和拍子上', () => {

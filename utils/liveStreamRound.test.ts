@@ -458,7 +458,7 @@ describe('聊天时间线上的轮次卡', () => {
 });
 
 describe('开播状态标记', () => {
-  it('开播时在时间线上写一条“尚未下播”标记，下播时原位更新同一条', async () => {
+  it('开播时写“尚未下播”标记，下播复用同一张卡并移到本场末尾', async () => {
     const channel = makeChannel();
     const session = makeSession(0);
     const messageId = await createLiveSessionMarkerInDb({
@@ -481,13 +481,68 @@ describe('开播状态标记', () => {
     expect(startedCard?.body).toContain('直播还没有结束');
     expect(isVisibleChatMessage(startedMessage!, true)).toBe(true);
 
-    const endedSession: LiveStreamSession = { ...session, status: 'ended', endedAt: 2000, startMarkerMessageId: messageId };
+    const roundMessageIds: number[] = [];
+    for (const [chunkIndex, timestamp] of [[6, 7000], [7, 8000], [8, 9000]]) {
+      roundMessageIds.push(await DB.saveMessage({
+        charId: CHAR_ID,
+        role: 'assistant',
+        type: 'score_card',
+        content: JSON.stringify({
+          type: 'livestream_card',
+          cardKind: 'live_round',
+          sessionId: session.id,
+          roundIndex: chunkIndex + 1,
+        }),
+        metadata: {
+          source: 'live_round',
+          liveSessionId: session.id,
+          liveChunkIndex: chunkIndex,
+          scoreCard: { sessionId: session.id, roundIndex: chunkIndex + 1 },
+        },
+        timestamp,
+      }));
+    }
+    await DB.saveMessage({
+      charId: CHAR_ID,
+      role: 'assistant',
+      type: 'score_card',
+      content: JSON.stringify({ type: 'livestream_card', cardKind: 'live_round', sessionId: 'another-session', roundIndex: 100 }),
+      metadata: {
+        source: 'live_round',
+        liveSessionId: 'another-session',
+        liveChunkIndex: 99,
+        scoreCard: { sessionId: 'another-session', roundIndex: 100 },
+      },
+      timestamp: 150000,
+    });
+    const laterPrivateMessageId = await DB.saveMessage({
+      charId: CHAR_ID,
+      role: 'user',
+      type: 'text',
+      content: '隔很久之后的私聊消息',
+      timestamp: 190000,
+    });
+
+    const endedSession: LiveStreamSession = {
+      ...session,
+      status: 'ended',
+      endedAt: 200000,
+      startMarkerMessageId: messageId,
+      // 故意乱序：必须按数据库里本场最高轮号找最后一轮，不能拿 chunks 数组最后一项猜。
+      chunks: [
+        makeChunk(8, { dbMessageId: roundMessageIds[2] }),
+        makeChunk(7, { dbMessageId: roundMessageIds[1] }),
+        makeChunk(6, { dbMessageId: roundMessageIds[0] }),
+      ],
+    };
     expect(await updateLiveSessionMarkerInDb({ messageId, charId: CHAR_ID, charName: '苏栗', channel, session: endedSession })).toBe(true);
 
     const endedMessage = await DB.getMessageById(messageId);
     const endedCard = cardOf(endedMessage!);
     expect(endedMessage?.id).toBe(startedMessage?.id);
-    expect(endedMessage?.timestamp).toBe(startedMessage?.timestamp);
+    expect(endedMessage?.timestamp).toBe(9001);
+    expect(endedMessage?.timestamp).toBeGreaterThan((await DB.getMessageById(roundMessageIds[2]))!.timestamp);
+    expect(endedMessage?.timestamp).toBeLessThan((await DB.getMessageById(laterPrivateMessageId))!.timestamp);
     expect(endedCard?.sessionStatus).toBe('ended');
     expect(endedCard?.body).toContain('这场直播已经下播');
     expect((await allMessages()).filter(message => message.metadata?.source === 'live_session_marker')).toHaveLength(1);

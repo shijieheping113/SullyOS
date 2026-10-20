@@ -21,6 +21,35 @@ export function getLiveRoundDanmakuFeed(
   return chunk.beats.flatMap(beat => beat.danmaku || []);
 }
 
+/** Only include danmaku from beats that have actually reached the playback position. */
+export function getVisibleLiveDanmakuFeed(
+  timeline: readonly { beat: Pick<LiveChunk['beats'][number], 'danmaku'> }[],
+  currentBeatIndex: number,
+): LiveDanmakuItem[] {
+  const visible: LiveDanmakuItem[] = [];
+  const end = Math.min(currentBeatIndex, timeline.length - 1);
+  for (let index = 0; index <= end; index += 1) {
+    visible.push(...(timeline[index].beat.danmaku || []));
+  }
+  return visible;
+}
+
+/** Gift announcements already have structured gift fields; keep only an optional accompanying comment. */
+export function getLiveDanmakuComment(item: Pick<LiveDanmakuItem, 'text' | 'giftName' | 'giftEmoji'>): string {
+  const text = (item.text || '').trim();
+  if (!item.giftName || !text) return text;
+  if (!/^(?:送出|送了|赠送|打赏|投喂)(?:了)?\s*/.test(text)) return text;
+
+  let comment = text.replace(/^(?:送出|送了|赠送|打赏|投喂)(?:了)?\s*/, '');
+  [item.giftEmoji, item.giftName].filter(Boolean).forEach(token => {
+    comment = comment.split(token as string).join('');
+  });
+  return comment
+    .replace(/^\s*(?:(?:频道)?礼物|礼品)?\s*[:：,，-]?\s*/, '')
+    .replace(/^[\s!！。.,，、:：-]+|[\s!！。.,，、:：-]+$/g, '')
+    .trim();
+}
+
 export function appendLiveDanmakuToBeat(
   chunks: readonly LiveChunk[],
   target: { chunkId: string; beatId: string } | undefined,

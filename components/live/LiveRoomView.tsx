@@ -17,7 +17,11 @@ import {
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
 import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
-import { getLatestChunkFirstBeatIndex, getLiveRoundDanmakuFeed } from '../../utils/liveStreamTimeline';
+import {
+  getLatestChunkFirstBeatIndex,
+  getLiveRoundDanmakuFeed,
+  getVisibleLiveDanmakuFeed,
+} from '../../utils/liveStreamTimeline';
 import { processImageToBlob } from '../../utils/file';
 import { putImageBlobDeduped } from '../../utils/blobRef';
 import { BeatActionSheetTarget } from './LiveSharedWidgets';
@@ -313,11 +317,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
 
   // 实时弹幕区仍按播放位置逐拍展开；舞台滚动弹幕另用整轮队列，避免两种显示混在一起。
   const visibleDanmakuFeed = useMemo(() => {
-    const list: LiveDanmakuItem[] = [];
-    for (let i = 0; i <= currentGlobalBeatIdx && i < allTimelineBeats.length; i++) {
-      list.push(...(allTimelineBeats[i].beat.danmaku || []));
-    }
-    return list;
+    return getVisibleLiveDanmakuFeed(allTimelineBeats, currentGlobalBeatIdx);
   }, [allTimelineBeats, currentGlobalBeatIdx]);
 
   const allSuperChats = useMemo(

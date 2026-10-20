@@ -891,14 +891,63 @@ export async function updateLiveSessionMarkerInDb(opts: {
     )?.id;
   }
   if (!messageId) return false;
+  const existingMarker = await DB.getMessageById(messageId);
+  if (!existingMarker) return false;
   const card = buildLiveSessionMarkerCard({ ...opts, status: opts.session.status });
-  return writeRoundCardInPlace(messageId, card);
+  let markerTimestamp: number | undefined;
+  if (opts.session.status === 'ended') {
+    markerTimestamp = opts.session.endedAt || Date.now();
+    // 结束按钮可能很久以后才点；标记应贴着本场最后一张轮次卡，而不是跳到当时最新的私聊消息。
+    const roundMessages = await DB.getMessagesByCharIdAndSources(opts.charId, ['live_round']);
+    let lastRoundMessage: (typeof roundMessages)[number] | null = null;
+    let lastRoundIndex = Number.NEGATIVE_INFINITY;
+    for (const message of roundMessages) {
+      const scoreCard = message.metadata?.scoreCard;
+      if (message.metadata?.liveSessionId !== opts.session.id && scoreCard?.sessionId !== opts.session.id) continue;
+      const metadataIndex = message.metadata?.liveChunkIndex;
+      const cardIndex = scoreCard?.roundIndex;
+      const chunkIndex = typeof metadataIndex === 'number'
+        ? metadataIndex
+        : typeof cardIndex === 'number'
+        ? cardIndex - 1
+        : -1;
+      const isLaterSameRound = lastRoundMessage
+        && chunkIndex === lastRoundIndex
+        && (message.timestamp > lastRoundMessage.timestamp
+          || (message.timestamp === lastRoundMessage.timestamp && message.id > lastRoundMessage.id));
+      if (!lastRoundMessage || chunkIndex > lastRoundIndex || isLaterSameRound) {
+        lastRoundMessage = message;
+        lastRoundIndex = chunkIndex;
+      }
+    }
+    if (lastRoundMessage) markerTimestamp = lastRoundMessage.timestamp + 1;
+    else {
+      // 旧记录没有可检索的私聊轮次卡时，按场次里最大的 chunk.index 找回对应卡。
+      for (const chunk of [...(opts.session.chunks || [])].sort((a, b) => b.index - a.index)) {
+        if (!chunk.dbMessageId) continue;
+        const roundMessage = await DB.getMessageById(chunk.dbMessageId);
+        if (roundMessage?.metadata?.liveSessionId === opts.session.id) {
+          markerTimestamp = roundMessage.timestamp + 1;
+          break;
+        }
+      }
+    }
+  }
+  if (
+    existingMarker.timestamp === markerTimestamp
+    && existingMarker.metadata?.scoreCard?.sessionStatus === opts.session.status
+  ) return true;
+  return writeRoundCardInPlace(messageId, card, markerTimestamp);
 }
 
 /** 原位更新一张已有的轮次卡。返回 false = 这张卡已经被用户删了，不重建 */
-async function writeRoundCardInPlace(messageId: number, card: LivestreamChatCardPayload): Promise<boolean> {
+async function writeRoundCardInPlace(
+  messageId: number,
+  card: LivestreamChatCardPayload,
+  timestamp?: number,
+): Promise<boolean> {
   try {
-    await DB.updateMessage(messageId, JSON.stringify(card));
+    await DB.updateMessage(messageId, JSON.stringify(card), timestamp);
   } catch (e: any) {
     if (String(e?.message || '').includes('not found')) return false;
     throw e;

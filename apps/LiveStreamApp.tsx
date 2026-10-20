@@ -488,6 +488,21 @@ const LiveStreamApp: React.FC = () => {
           }
         }
         setLiveSessions(sessions);
+        // 旧版下播标记可能停在开播处或某一轮中间；修正到本场真实最后一轮之后，不动其他场次。
+        void Promise.all(sessions
+          .filter(session => session.status === 'ended' && session.endedAt && session.startMarkerMessageId)
+          .map(async session => {
+            const channel = charChs.find(item => item.id === session.channelId);
+            if (!channel) return;
+            await updateLiveSessionMarkerInDb({
+              messageId: session.startMarkerMessageId,
+              charId: session.charId,
+              charName: currentChar.name,
+              channel,
+              session,
+            });
+          })
+        ).catch(error => console.warn('[LiveStream] 下播标记位置修复失败', error));
         setVodPosts(vods);
         setNpcSessions(npcList);
         setNpcPool(pool);
