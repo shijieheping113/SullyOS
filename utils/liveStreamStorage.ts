@@ -182,6 +182,13 @@ function normalizeLiveSessionRecord(raw: any): LiveStreamSession {
           : [],
         userInputs: Array.isArray(c?.userInputs) ? c.userInputs : [],
         dbMessageId: c?.dbMessageId,
+        // 逐轮摘要必须保留：丢掉后聊天卡已是摘要、直播间摘要页却仍显示「仍是原文」
+        roundSummary:
+          typeof c?.roundSummary === 'string' && c.roundSummary.trim()
+            ? c.roundSummary
+            : undefined,
+        summaryUpdatedAt:
+          typeof c?.summaryUpdatedAt === 'number' ? c.summaryUpdatedAt : undefined,
         folded: Boolean(c?.folded),
         foldedBySummaryId: c?.foldedBySummaryId,
       }))
@@ -714,6 +721,89 @@ export function pickRoundToFold(chunks: LiveChunk[], keepRecent = 3): LiveChunk 
     .filter(c => !(c.roundSummary && c.roundSummary.trim()));
   if (uncompressed.length <= keepRecent) return null;
   return uncompressed[0];
+}
+
+function readLiveRoundCard(message: { content?: string; metadata?: any } | null | undefined): LivestreamChatCardPayload | null {
+  if (!message) return null;
+  const fromMeta = message.metadata?.scoreCard;
+  if (fromMeta?.type === 'livestream_card' && fromMeta?.cardKind === 'live_round') {
+    return fromMeta as LivestreamChatCardPayload;
+  }
+  if (typeof message.content === 'string' && message.content.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(message.content);
+      if (parsed?.type === 'livestream_card' && parsed?.cardKind === 'live_round') {
+        return parsed as LivestreamChatCardPayload;
+      }
+    } catch {
+      /* 正文不是卡片 */
+    }
+  }
+  return null;
+}
+
+function compressedRoundText(card: LivestreamChatCardPayload | null): string {
+  if (!card?.isCompressed) return '';
+  return String(card.body || '').trim();
+}
+
+/**
+ * 私聊轮次卡已经是摘要、直播场次却丢了 roundSummary 时，按消息把摘要补回这一轮。
+ * 只认 isCompressed 的卡，原文卡不会被当成摘要。
+ */
+export async function restoreMissingRoundSummaries(
+  session: LiveStreamSession,
+  charId: string,
+): Promise<LiveStreamSession> {
+  const missing = session.chunks.filter(c => !(c.roundSummary && c.roundSummary.trim()));
+  if (missing.length === 0 || !charId) return session;
+
+  const found = new Map<string, string>();
+  await Promise.all(
+    missing.map(async chunk => {
+      if (!chunk.dbMessageId) return;
+      const msg = await DB.getMessageById(chunk.dbMessageId);
+      const card = readLiveRoundCard(msg);
+      if (card?.sessionId && card.sessionId !== session.id) return;
+      const text = compressedRoundText(card);
+      if (text) found.set(chunk.id, text);
+    }),
+  );
+
+  const still = missing.filter(c => !found.has(c.id));
+  if (still.length > 0) {
+    const msgs = await DB.getMessagesByCharId(charId);
+    const byIndex = new Map<number, string>();
+    for (const msg of msgs) {
+      const meta = msg.metadata;
+      if (meta?.liveSessionId !== session.id) continue;
+      const card = readLiveRoundCard(msg);
+      const text = compressedRoundText(card);
+      if (!text) continue;
+      const idx =
+        typeof meta?.liveChunkIndex === 'number'
+          ? meta.liveChunkIndex
+          : typeof card?.roundIndex === 'number'
+            ? card.roundIndex - 1
+            : -1;
+      if (idx >= 0) byIndex.set(idx, text);
+    }
+    for (const chunk of still) {
+      const text = byIndex.get(chunk.index);
+      if (text) found.set(chunk.id, text);
+    }
+  }
+
+  if (found.size === 0) return session;
+  const now = Date.now();
+  return {
+    ...session,
+    chunks: session.chunks.map(c => {
+      const text = found.get(c.id);
+      if (!text) return c;
+      return { ...c, roundSummary: text, summaryUpdatedAt: c.summaryUpdatedAt || now };
+    }),
+  };
 }
 
 /** 把一轮的摘要写回它自己那条 chunk，其余轮次原样不动 */

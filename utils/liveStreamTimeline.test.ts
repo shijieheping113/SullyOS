@@ -3,8 +3,10 @@ import {
   appendLiveDanmakuToBeat,
   getLiveDanmakuComment,
   getLatestChunkFirstBeatIndex,
+  getCurrentBeatDanmakuFeed,
   getLiveRoundDanmakuFeed,
   getVisibleLiveDanmakuFeed,
+  getVisibleLiveRoundDanmakuFeed,
   truncateLiveChunkAfterBeat,
 } from './liveStreamTimeline';
 
@@ -53,6 +55,39 @@ describe('直播间进入与推进时的时间线落点', () => {
     ] as any;
     expect(getVisibleLiveDanmakuFeed(timeline, 0).map(item => item.id)).toEqual(['gift-1']);
     expect(getVisibleLiveDanmakuFeed(timeline, 1).map(item => item.id)).toEqual(['gift-1', 'gift-2']);
+  });
+
+  it('舞台滚动弹幕只滚本轮已播到的拍，不提前刷出后续拍也不混入旧轮', () => {
+    const timeline = [
+      {
+        chunkId: 'round-1',
+        beat: { danmaku: [{ id: 'old', text: '旧轮', timestamp: 1, senderName: '观众' }] },
+      },
+      {
+        chunkId: 'round-2',
+        beat: { danmaku: [{ id: 'new-1', text: '本轮第一拍', timestamp: 2, senderName: '观众' }] },
+      },
+      {
+        chunkId: 'round-2',
+        beat: { danmaku: [{ id: 'new-2', text: '本轮第二拍', timestamp: 3, senderName: '观众' }] },
+      },
+    ] as any;
+    expect(getVisibleLiveRoundDanmakuFeed(timeline, 1, 'round-2').map(item => item.id)).toEqual([
+      'new-1',
+    ]);
+    expect(getVisibleLiveRoundDanmakuFeed(timeline, 2, 'round-2').map(item => item.id)).toEqual([
+      'new-1',
+      'new-2',
+    ]);
+  });
+
+  it('舞台滚动只取当前这一拍，切拍不带走上一拍的 SC', () => {
+    const timeline = [
+      { beat: { danmaku: [{ id: 'sc-1', text: '上一拍 SC', scAmount: 20, senderName: '我' }] } },
+      { beat: { danmaku: [{ id: 'n-2', text: '这一拍普通', senderName: '观众' }] } },
+    ] as any;
+    expect(getCurrentBeatDanmakuFeed(timeline, 0).map(item => item.id)).toEqual(['sc-1']);
+    expect(getCurrentBeatDanmakuFeed(timeline, 1).map(item => item.id)).toEqual(['n-2']);
   });
 
   it('礼物卡片和飘屏不重复显示结构化礼物播报，但保留附带留言', () => {

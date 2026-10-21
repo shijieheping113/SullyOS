@@ -13,6 +13,7 @@ import {
   LiveBeat,
   LiveDanmakuItem,
   STREAM_PRESET_TEMPLATES,
+  resolveScTier,
 } from './liveStreamTypes';
 import type { CharacterProfile, Message, RealtimeConfig, UserProfile } from '../types';
 
@@ -192,7 +193,11 @@ export async function buildLiveChunkGenerationMessages(opts: {
     const items = pendingQueue.map(d => {
       const scPrefix =
         d.scAmount && d.scAmount > 0
-      ? `💎【Super Chat 付费醒目留言 ${d.scCurrency || '¥'}${d.scAmount}（高亮置顶卡片，必须在第 1 拍立刻看到并重点回应！）】`
+          ? (() => {
+              // 颜色必须和画面档位一致：绿¥5 / 黄¥20 / 橙¥50 / 紫¥200 / 红¥500，禁止自己编成别的颜色
+              const tier = resolveScTier(d.scAmount, d.scColor);
+              return `💎【Super Chat 付费醒目留言 ${d.scCurrency || '¥'}${d.scAmount} · ${tier.colorLabel}卡片（档位：绿¥5／黄¥20／橙¥50／紫¥200／红¥500；念颜色时必须说「${tier.colorLabel}」，禁止说成别的颜色！必须在第 1 拍立刻看到并重点回应！）】`;
+            })()
           : d.giftName
           ? `🎁【频道礼物打赏：送出数字贴纸 ${d.giftEmoji || '🎁'}「${d.giftName}」（${d.giftCurrency || '¥'}${d.giftAmount || 0}；不是 Super Chat，也不是实物）（必须在第 1 拍看到并感谢/反应！）】`
           : '💬【实时公屏弹幕（刚刚发出）】';
@@ -302,7 +307,7 @@ export async function buildLiveStreamTurnPrompt(opts: {
     text: string;
     persona: { id: string; name: string; isMain: boolean; fanLevel?: number; badgeText?: string };
     scAmount?: number;
-    scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
+    scColor?: import('./liveStreamTypes').LiveScColor | 'blue' | 'cyan' | 'amber' | 'magenta';
     gift?: { id: string; name: string; emoji: string; price: number; currencySymbol?: string };
   }>;
   /** 正常聊天范围的原文（loadCharacterContextMessages） */
@@ -467,14 +472,7 @@ export function parseLiveBeatsResponse(
           giftEmoji: String(d?.giftEmoji || '').trim() || undefined,
           giftAmount: Number(d?.giftAmount) > 0 ? Number(d.giftAmount) : undefined,
           giftCurrency: d?.giftCurrency ? String(d.giftCurrency) : undefined,
-          scColor:
-            scAmt && scAmt >= 500
-              ? 'red'
-              : scAmt && scAmt >= 100
-              ? 'amber'
-              : scAmt && scAmt > 0
-              ? 'blue'
-              : undefined,
+          scColor: scAmt && scAmt > 0 ? resolveScTier(scAmt).color : undefined,
           timestamp: Date.now() + di * 200,
         };
       });

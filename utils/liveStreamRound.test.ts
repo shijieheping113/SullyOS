@@ -21,6 +21,7 @@ import {
   syncNpcBeatToDb,
   updateLiveSessionMarkerInDb,
   updateLiveRoundCardSummary,
+  restoreMissingRoundSummaries,
   loadActiveViewerPersonaId,
   saveActiveViewerPersonaId,
 } from './liveStreamStorage';
@@ -356,6 +357,17 @@ describe('聊天时间线上的轮次卡', () => {
     expect(card?.body).toBe('这一轮聊了很冷的笑话');
     expect(card?.preview).toContain('很冷的笑话');
     expect(card?.cardKind).toBe('live_round');
+
+    const stripped: LiveStreamSession = {
+      ...session,
+      chunks: [{ ...chunk, dbMessageId: id, roundSummary: undefined }],
+    };
+    const restored = await restoreMissingRoundSummaries(stripped, CHAR_ID);
+    expect(restored.chunks[0].roundSummary).toBe('这一轮聊了很冷的笑话');
+    const already = applyRoundSummary(restored, restored.chunks[0].id, restored.chunks[0].roundSummary || '');
+    const untouched = await restoreMissingRoundSummaries(already, CHAR_ID);
+    expect(untouched).toBe(already);
+
     // 没有留下旧式整场总结卡
     expect(msgs.filter(m => cardOf(m)?.cardKind === 'live_summary')).toHaveLength(0);
   });

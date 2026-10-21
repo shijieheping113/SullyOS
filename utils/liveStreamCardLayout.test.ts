@@ -41,13 +41,15 @@ describe('直播轮次卡布局', () => {
     expect(handler).not.toContain('triggerAI(');
   });
 
-  it('舞台滚动弹幕排队显示整轮，实时弹幕列表仍按当前拍显示', () => {
+  it('舞台滚动弹幕只滚当前拍并循环，实时聊天仍按播放进度展开', () => {
     expect(liveWidgetsSource).not.toContain('danmakuList.slice(-trackCount)');
-    expect(liveWidgetsSource).toContain('danmakuList.map((dm, idx) =>');
-    expect(liveWidgetsSource).toContain('rowFreeAt[row] = start + duration * 0.62');
-    expect(liveWidgetsSource).toContain('1 both');
+    expect(liveWidgetsSource).toContain('danmakuList');
+    expect(liveWidgetsSource).toContain('rowFreeAt[row] = start + duration');
+    expect(liveWidgetsSource).toContain('infinite');
+    expect(liveWidgetsSource).toContain('onair-dm--sc');
     expect(liveRoomSource).toContain('const scrollingDanmakuFeed = useMemo');
-    expect(liveRoomSource).toContain('i <= currentGlobalBeatIdx');
+    expect(liveRoomSource).toContain('getCurrentBeatDanmakuFeed');
+    expect(liveRoomSource).toContain('getVisibleLiveDanmakuFeed');
   });
 
   it('即时接话动态截断到选中拍，后续内容作废并作为新轮新卡生成', () => {

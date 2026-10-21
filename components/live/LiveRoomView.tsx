@@ -20,7 +20,7 @@ import {
 import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
 import {
   getLatestChunkFirstBeatIndex,
-  getLiveRoundDanmakuFeed,
+  getCurrentBeatDanmakuFeed,
   getVisibleLiveDanmakuFeed,
 } from '../../utils/liveStreamTimeline';
 import { processImageToBlob } from '../../utils/file';
@@ -94,7 +94,7 @@ interface LiveRoomViewProps {
   onSendUserDanmaku: (
     text: string,
     scAmount?: number,
-    scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red',
+    scColor?: import('../../utils/liveStreamTypes').LiveScColor | 'blue' | 'cyan' | 'amber' | 'magenta',
     triggerImmediateReply?: boolean,
     giftOption?: StreamGiftOption,
     targetBeat?: { chunkId: string; beatId: string },
@@ -374,12 +374,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     onPlayBeatVoice(currentBeat, { fromAuto: true });
   }, [currentBeat?.id, channel.voiceConfig?.autoPlayTts]);
 
-  const activeChunkId = currentTimelineItem?.chunkId || latestChunk?.id || '';
+  // 实时聊天：已播到的全部轮次；舞台滚动：只飘当前这一拍，切拍就换，本拍内循环
   const scrollingDanmakuFeed = useMemo(() => {
-    return getLiveRoundDanmakuFeed(session.chunks, activeChunkId);
-  }, [session.chunks, activeChunkId]);
+    return getCurrentBeatDanmakuFeed(allTimelineBeats, currentGlobalBeatIdx);
+  }, [allTimelineBeats, currentGlobalBeatIdx]);
 
-  // 实时弹幕区仍按播放位置逐拍展开；舞台滚动弹幕另用整轮队列，避免两种显示混在一起。
   const visibleDanmakuFeed = useMemo(() => {
     return getVisibleLiveDanmakuFeed(allTimelineBeats, currentGlobalBeatIdx);
   }, [allTimelineBeats, currentGlobalBeatIdx]);

@@ -83,6 +83,9 @@ export interface ViewerPersona {
   note?: string;
 }
 
+/** Super Chat 颜色：便宜→贵 = 绿→黄→橙→紫→红 */
+export type LiveScColor = 'green' | 'yellow' | 'orange' | 'purple' | 'red';
+
 /** 单条弹幕 / Super Chat (SC) / 专属礼物投喂 */
 export interface LiveDanmakuItem {
   id: string;
@@ -106,8 +109,8 @@ export interface LiveDanmakuItem {
   scAmount?: number;
   /** Super Chat 货币符号（默认 ¥ 或 $） */
   scCurrency?: string;
-  /** Super Chat 颜色档位 */
-  scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
+  /** Super Chat 颜色档位（绿→黄→橙→紫→红；旧数据可能仍是 blue/cyan/amber/magenta） */
+  scColor?: LiveScColor | 'blue' | 'cyan' | 'amber' | 'magenta';
   /** 投喂的专属礼物名称與图标（独立于纯文字 SC，也可附带） */
   giftName?: string;
   giftEmoji?: string;
@@ -528,59 +531,105 @@ export const DEFAULT_NPC_CHANNELS: NpcStreamerChannelCard[] = [
   },
 ];
 
-/** YouTube / 国际化风格的 Super Chat (付费醒目留言) 档位配置（纯金额+高亮卡片阶梯，不绑定死板礼物名） */
+/** YouTube 风格 Super Chat 档位（金额 + 高亮色；不绑定礼物名） */
 export const SC_TIER_OPTIONS: Array<{
   amount: number;
   label: string;
-  color: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
+  color: LiveScColor;
+  /** 给主播念的颜色名，必须和画面一致 */
+  colorLabel: string;
   pinDurationLabel: string;
   headerBg: string;
   bodyBg: string;
   textColor: string;
+  pillBg: string;
 }> = [
+  {
+    amount: 5,
+    label: '¥5',
+    color: 'green',
+    colorLabel: '绿色',
+    pinDurationLabel: '置顶 30 秒',
+    headerBg: '#2e7d32',
+    bodyBg: '#43a047',
+    textColor: '#ffffff',
+    pillBg: '#43a047',
+  },
   {
     amount: 20,
     label: '¥20',
-    color: 'blue',
+    color: 'yellow',
+    colorLabel: '黄色',
     pinDurationLabel: '置顶 2 分钟',
-    headerBg: '#1565c0',
-    bodyBg: '#1e88e5',
-    textColor: '#ffffff',
+    headerBg: '#ebb424',
+    bodyBg: '#ffc928',
+    textColor: '#3e2723',
+    pillBg: '#ffc928',
   },
   {
     amount: 50,
     label: '¥50',
-    color: 'cyan',
+    color: 'orange',
+    colorLabel: '橙色',
     pinDurationLabel: '置顶 5 分钟',
-    headerBg: '#00b8d4',
-    bodyBg: '#00e5ff',
-    textColor: '#00363a',
+    headerBg: '#ef6c00',
+    bodyBg: '#ff9800',
+    textColor: '#ffffff',
+    pillBg: '#ff9800',
   },
   {
-    amount: 100,
-    label: '¥100',
-    color: 'amber',
+    amount: 200,
+    label: '¥200',
+    color: 'purple',
+    colorLabel: '紫色',
     pinDurationLabel: '置顶 15 分钟',
-    headerBg: '#ffb300',
-    bodyBg: '#ffca28',
-    textColor: '#3e2723',
+    headerBg: '#6a1b9a',
+    bodyBg: '#8e24aa',
+    textColor: '#ffffff',
+    pillBg: '#8e24aa',
   },
   {
     amount: 500,
     label: '¥500',
-    color: 'magenta',
-    pinDurationLabel: '置顶 1 小时',
-    headerBg: '#c2185b',
-    bodyBg: '#e91e63',
-    textColor: '#ffffff',
-  },
-  {
-    amount: 1000,
-    label: '¥1000',
     color: 'red',
-    pinDurationLabel: '置顶 5 小时',
-    headerBg: '#d00000',
-    bodyBg: '#e62117',
+    colorLabel: '红色',
+    pinDurationLabel: '置顶 1 小时',
+    headerBg: '#c62828',
+    bodyBg: '#e53935',
     textColor: '#ffffff',
+    pillBg: '#e53935',
   },
 ];
+
+const LEGACY_SC_COLOR: Record<string, LiveScColor> = {
+  blue: 'green',
+  cyan: 'yellow',
+  amber: 'orange',
+  magenta: 'purple',
+  green: 'green',
+  yellow: 'yellow',
+  orange: 'orange',
+  purple: 'purple',
+  red: 'red',
+};
+
+/** 按金额对齐档位；有金额时以金额为准（旧 blue 色名不再把 ¥20 错判成绿） */
+export function resolveScTier(
+  amount?: number,
+  color?: string | null,
+): (typeof SC_TIER_OPTIONS)[number] {
+  const amt = Number(amount) || 0;
+  if (amt > 0) {
+    let best = SC_TIER_OPTIONS[0];
+    for (const tier of SC_TIER_OPTIONS) {
+      if (amt >= tier.amount) best = tier;
+    }
+    return best;
+  }
+  const mapped = color ? LEGACY_SC_COLOR[color] : undefined;
+  if (mapped) {
+    const byColor = SC_TIER_OPTIONS.find(t => t.color === mapped);
+    if (byColor) return byColor;
+  }
+  return SC_TIER_OPTIONS[0];
+}

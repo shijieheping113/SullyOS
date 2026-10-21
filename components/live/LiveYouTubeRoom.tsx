@@ -8,7 +8,12 @@
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import TokenImg from '../os/TokenImg';
-import { LiveDanmakuItem, SC_TIER_OPTIONS, StreamGiftOption } from '../../utils/liveStreamTypes';
+import {
+  LiveDanmakuItem,
+  SC_TIER_OPTIONS,
+  StreamGiftOption,
+  resolveScTier,
+} from '../../utils/liveStreamTypes';
 import { FloatingDanmakuOverlay, BeatLongPressSheet, LiveFloatingPhone } from './LiveSharedWidgets';
 import { LiveUiStyle, formatCount } from './platformChrome';
 import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
@@ -73,22 +78,13 @@ function initial(name: string) {
 }
 
 function scTierFor(dm: LiveDanmakuItem) {
-  return (
-    SC_TIER_OPTIONS.find(t => t.color === dm.scColor) ||
-    SC_TIER_OPTIONS.find(t => t.amount === dm.scAmount) ||
-    SC_TIER_OPTIONS[0]
-  );
+  return resolveScTier(dm.scAmount, dm.scColor);
 }
 
+/** 顶部 pill：绿黄橙紫红 + 礼物紫 */
 function pillToneFor(dm: LiveDanmakuItem) {
-  if (dm.giftName) return 'purple';
-  const tier = scTierFor(dm);
-  if (tier.color === 'blue') return 'blue';
-  if (tier.color === 'cyan') return 'cyan';
-  if (tier.color === 'amber') return 'amber';
-  if (tier.color === 'magenta') return 'magenta';
-  if (tier.color === 'red') return 'red';
-  return (dm.scAmount || 0) >= 500 ? 'orange' : 'gold';
+  if (dm.giftName) return 'gift';
+  return scTierFor(dm).color;
 }
 
 /** 长按自己的弹幕：编辑 / 删除（既有能力，位置随新列表重排）。 */
@@ -219,11 +215,11 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   // 原型那套浮层：更多 / 三视图菜单 / 打赏分段
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [titleOpen, setTitleOpen] = useState(false);
-  const [overflowOpen, setOverflowOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [supportTab, setSupportTab] = useState<'sc' | 'gift'>('sc');
   const [guidanceOpen, setGuidanceOpen] = useState(false);
   const [guidanceDraft, setGuidanceDraft] = useState('');
+  const [pinDetail, setPinDetail] = useState<LiveDanmakuItem | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [composeFocus, setComposeFocus] = useState(false);
   const [fsBarH, setFsBarH] = useState(48);
@@ -234,6 +230,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     name: string;
     amount?: string;
     color: string;
+    ink: string;
     key: number;
   } | null>(null);
 
@@ -304,10 +301,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         return;
       }
       const isSc = Boolean(item.scAmount && item.scAmount > 0);
-      const tier =
-        SC_TIER_OPTIONS.find(option => option.color === item.scColor) ||
-        SC_TIER_OPTIONS.find(option => option.amount === item.scAmount) ||
-        SC_TIER_OPTIONS[0];
+      const tier = isSc ? resolveScTier(item.scAmount, item.scColor) : null;
       setGiftEffect({
         key: Date.now() + giftEffectQueueRef.current.length,
         kind: isSc ? 'sc' : 'gift',
@@ -320,7 +314,8 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           : item.giftAmount
           ? `${item.giftCurrency || '¥'}${item.giftAmount}`
           : undefined,
-        color: isSc ? tier.headerBg : '#7b3fa0',
+        color: isSc ? tier!.bodyBg : '#8e24aa',
+        ink: isSc ? tier!.textColor : '#ffffff',
       });
       giftEffectTimerRef.current = window.setTimeout(showNext, 2800);
     };
@@ -463,12 +458,12 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       setTitleOpen(false);
       return true;
     }
-    if (overflowOpen) {
-      setOverflowOpen(false);
-      return true;
-    }
     if (viewMenuOpen) {
       setViewMenuOpen(false);
+      return true;
+    }
+    if (pinDetail) {
+      setPinDetail(null);
       return true;
     }
     if (props.activeBottomDrawer !== 'none') {
@@ -555,6 +550,31 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     .reverse();
 
   const railItems = visibleDanmakuFeed.slice(-6);
+
+  // 待生效导演引导：贴在输入框上方的窄条；本轮生成后 pendingGuidance 会被清空，自然消失
+  const pendingCue = props.pendingGuidance[0];
+  const renderGuidanceCue = () => {
+    if (!pendingCue) return null;
+    const more =
+      props.pendingGuidance.length > 1 ? `（另有 ${props.pendingGuidance.length - 1} 条）` : '';
+    return (
+      <div className="dyt-guidance-cue" role="status" aria-label="待生效的导演引导">
+        <span className="dyt-guidance-cue__label">导演引导</span>
+        <span className="dyt-guidance-cue__text">
+          {pendingCue.text}
+          {more}
+        </span>
+        <button
+          type="button"
+          className="dyt-guidance-cue__x"
+          aria-label="移除这条导演引导"
+          onClick={() => props.onRemoveGuidance(pendingCue.id)}
+        >
+          ×
+        </button>
+      </div>
+    );
+  };
 
   const displayName = channel.channelName || props.charName;
 
@@ -654,7 +674,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               <article
                 key={dm.id || idx}
                 className={`dyt-sc dyt-sc--${tier.color}`}
-                style={{ background: tier.bodyBg, color: tier.textColor }}
+                style={{ color: tier.textColor }}
                 {...list.handlers(dm)}
               >
                 <div className="dyt-sc__head" style={{ background: tier.headerBg }}>
@@ -672,6 +692,10 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                       <span className="dyt-sc__trans">{dmTrans}</span>
                     ) : null}
                   </p>
+                  <div className="dyt-sc__foot">
+                    <span className="dyt-sc__chip">赞</span>
+                    <span className="dyt-sc__chip">回复</span>
+                  </div>
                 </div>
               </article>
             );
@@ -680,33 +704,40 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           if (isGift) {
             return (
               <article key={dm.id || idx} className="dyt-gift" {...list.handlers(dm)}>
-                <span className="dyt-gift__mark">
+                <span className="dyt-gift__mark" aria-hidden="true">
                   <SVG d={Ico.gift} size={18} />
                 </span>
                 <div>
                   <div className="dyt-gift__title">
-                    {dm.senderName} 送出 {dm.giftEmoji || '🎁'} {dm.giftName}
+                    {dm.senderName} 送出 {dm.giftName}
                   </div>
                   {giftComment ? <div className="dyt-gift__note">{giftComment}</div> : null}
                   <div className="dyt-gift__meta">
                     {dm.giftCurrency || '¥'}
-                    {dm.giftAmount ?? ''}
-                    {dm.giftCount && dm.giftCount > 1 ? ` · ×${dm.giftCount}` : ''}
+                    {dm.giftAmount ?? 0}
+                    {` · ×${dm.giftCount && dm.giftCount > 1 ? dm.giftCount : 1}`}
                   </div>
                 </div>
               </article>
             );
           }
 
-          const avClass = isMine
-            ? 'dyt-msg__av--mine'
+          // 对照原型：本尊=host 蓝名黑头像；会员/粉=绿名；路人/匿名=灰名
+          const avClass = dm.isUserMain
+            ? 'dyt-msg__av--host'
+            : dm.isUserAlt
+            ? 'dyt-msg__av--anon'
             : dm.fanBadge
+            ? 'dyt-msg__av--member'
+            : dm.roleType === 'old_fan'
             ? 'dyt-msg__av--fan'
             : 'dyt-msg__av--anon';
-          const userClass = isMine
-            ? 'dyt-msg__user--self'
-            : dm.fanBadge
-            ? 'dyt-msg__user--fan'
+          const userClass = dm.isUserMain
+            ? 'dyt-msg__user--host'
+            : dm.isUserAlt
+            ? 'dyt-msg__user--anon'
+            : dm.fanBadge || dm.roleType === 'old_fan'
+            ? 'dyt-msg__user--member'
             : 'dyt-msg__user--anon';
           return (
             <article
@@ -922,6 +953,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         {props.showDanmakuOverlay && (
           <div className="dyt-lane">
             <FloatingDanmakuOverlay
+              key={`dm-beat-${props.allTimelineBeats[currentGlobalBeatIdx]?.beat.id || currentGlobalBeatIdx}`}
               danmakuList={props.scrollingDanmakuFeed}
               showTranslation={props.showTranslation}
               visible
@@ -1001,7 +1033,12 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         {renderStageAvatar()}
 
         {giftEffect && (
-          <div key={giftEffect.key} className="dyt-fx" style={{ background: giftEffect.color }} role="status">
+          <div
+            key={giftEffect.key}
+            className="dyt-fx"
+            style={{ background: giftEffect.color, color: giftEffect.ink }}
+            role="status"
+          >
             {giftEffect.emoji ? <span className="dyt-fx__emoji">{giftEffect.emoji}</span> : null}
             <div>
               <div className="dyt-fx__label">
@@ -1057,7 +1094,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             type="button"
             className="dyt-ico"
             aria-label="更多"
-            onClick={() => setOverflowOpen(true)}
+            onClick={() => setSettingsOpen(true)}
           >
             <SVG d={Ico.more} size={22} />
           </button>
@@ -1135,9 +1172,33 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               <section className="dyt-scene" aria-label="画面描写">
                 <p className="dyt-scene__text">{screenText}</p>
               </section>
-              <div className="dyt-toprow" aria-label="置顶留言">
+              <div
+                className="dyt-toprow"
+                aria-label="置顶留言"
+                onPointerDown={e => {
+                  const el = e.currentTarget;
+                  if (e.pointerType === 'mouse' && e.button !== 0) return;
+                  const startX = e.clientX;
+                  const startScroll = el.scrollLeft;
+                  let dragged = false;
+                  const onMove = (ev: PointerEvent) => {
+                    const dx = ev.clientX - startX;
+                    if (Math.abs(dx) > 4) dragged = true;
+                    el.scrollLeft = startScroll - dx;
+                  };
+                  const onUp = () => {
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onUp);
+                    if (dragged) el.dataset.dragged = '1';
+                    else delete el.dataset.dragged;
+                  };
+                  window.addEventListener('pointermove', onMove);
+                  window.addEventListener('pointerup', onUp);
+                }}
+              >
                 {topChatters.map(dm => {
                   const tone = pillToneFor(dm);
+                  const tier = dm.giftName ? null : scTierFor(dm);
                   const shortName =
                     dm.senderName.length > 8 ? `${dm.senderName.slice(0, 8)}…` : dm.senderName;
                   return (
@@ -1145,10 +1206,18 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                       key={dm.id}
                       type="button"
                       className={`dyt-pill dyt-pill--${tone}`}
-                      onClick={() => {
-                        const next = dm.giftName ? 'gift' : 'sc';
-                        setSupportTab(next);
-                        props.setActiveBottomDrawer(next);
+                      style={
+                        tier
+                          ? { background: tier.bodyBg, color: tier.textColor }
+                          : { background: '#8e24aa', color: '#ffffff' }
+                      }
+                      onClick={e => {
+                        const row = e.currentTarget.parentElement as HTMLElement | null;
+                        if (row?.dataset.dragged === '1') {
+                          delete row.dataset.dragged;
+                          return;
+                        }
+                        setPinDetail(dm);
                       }}
                     >
                       <span className="dyt-pill__av">{initial(dm.senderName)}</span>
@@ -1193,6 +1262,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       </section>
 
       <footer className="dyt-composer">
+        {renderGuidanceCue()}
         <form
           className="dyt-composer__row"
           onSubmit={e => {
@@ -1202,7 +1272,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         >
           <button
             type="button"
-            className="dyt-ident"
+            className={`dyt-ident${activePersona.isMain ? ' is-main' : ' is-anon'}`}
             aria-label="切换发言身份"
             onClick={cyclePersona}
           >
@@ -1359,7 +1429,12 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           {renderStageAvatar('dyt-fs__avatar')}
 
           {giftEffect && (
-            <div key={`fs-${giftEffect.key}`} className="dyt-fx" style={{ background: giftEffect.color, top: fsBarH + 12 }} role="status">
+            <div
+              key={`fs-${giftEffect.key}`}
+              className="dyt-fx"
+              style={{ background: giftEffect.color, color: giftEffect.ink, top: fsBarH + 12 }}
+              role="status"
+            >
               {giftEffect.emoji ? <span className="dyt-fx__emoji">{giftEffect.emoji}</span> : null}
               <div>
                 <div className="dyt-fx__label">
@@ -1384,6 +1459,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                 tone="dock"
               />
             </div>
+            {renderGuidanceCue()}
             <div className="dyt-dock__row">
               <div className="dyt-skips" role="group" aria-label="切拍">
                 <button
@@ -1408,7 +1484,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               <div className={`dyt-compose${composeFocus ? ' is-focus' : ''}`}>
                 <button
                   type="button"
-                  className="dyt-compose__ident"
+                  className={`dyt-compose__ident${activePersona.isMain ? ' is-main' : ' is-anon'}`}
                   aria-label="切换发言身份"
                   onClick={cyclePersona}
                 >
@@ -1466,89 +1542,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       )}
 
       {/* ==================== 浮层 ==================== */}
-      {overflowOpen && (
-        <YtSheet title="更多" onClose={() => setOverflowOpen(false)}>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setOverflowOpen(false);
-              props.setIsFullscreen(true);
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>全屏观看</strong>
-              <span>弹幕在左下</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setOverflowOpen(false);
-              switchTab('script');
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>分镜</strong>
-              <span>本场拍列表</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setOverflowOpen(false);
-              switchTab('summary');
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>摘要</strong>
-              <span>本场要点</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setOverflowOpen(false);
-              setSettingsOpen(true);
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>直播间设置</strong>
-              <span>播放偏好与本场</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setOverflowOpen(false);
-              setGuidanceOpen(true);
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>导演引导</strong>
-              <span>写下一段走向</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setOverflowOpen(false);
-              props.setShowFloatingPhone(true);
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>私聊</strong>
-              <span>叠层打开，改完仍留在本页</span>
-            </span>
-          </button>
-        </YtSheet>
-      )}
-
       {titleOpen && (
         <YtSheet title={session.title} onClose={() => setTitleOpen(false)}>
           <div className="dyt-stats">
@@ -1582,145 +1575,212 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
 
       {settingsOpen && (
         <YtSheet title="直播间设置" onClose={() => setSettingsOpen(false)}>
-          <p className="dyt-sheet__hint dyt-group">本场</p>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setSettingsOpen(false);
-              props.setShowFloatingPhone(true);
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>私聊小窗</strong>
-            </span>
-            {props.phoneUnread && (
-              <span className="dyt-menu__value" style={{ color: '#d93025', fontWeight: 700 }}>
-                有新消息
+          <section className="dyt-sheet__section" aria-label="本场">
+            <p className="dyt-sheet__section-label">本场</p>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => {
+                setSettingsOpen(false);
+                props.setShowFloatingPhone(true);
+              }}
+            >
+              <span className="dyt-menu__main">
+                <strong>私聊小窗</strong>
               </span>
-            )}
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setSettingsOpen(false);
-              props.onEndStreamClick();
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong style={{ color: ended ? '#0f0f0f' : '#d93025' }}>
-                {ended ? '查看下播纪要' : '下播并结算'}
-              </strong>
-              <span>标记本场结束并离开本页</span>
-            </span>
-          </button>
+              {props.phoneUnread && (
+                <span className="dyt-menu__value" style={{ color: '#d93025', fontWeight: 700 }}>
+                  有新消息
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => {
+                setSettingsOpen(false);
+                props.onEndStreamClick();
+              }}
+            >
+              <span className="dyt-menu__main">
+                <strong style={{ color: ended ? '#0f0f0f' : '#d93025' }}>
+                  {ended ? '查看下播纪要' : '下播并结算'}
+                </strong>
+                <span>标记本场结束并离开本页</span>
+              </span>
+            </button>
+          </section>
 
-          <p className="dyt-sheet__hint dyt-group">频道</p>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => props.onChangePlatformTheme('niconico')}
-          >
-            <span className="dyt-menu__main">
-              <strong>平台外观</strong>
-              <span>切到ニコニコ生放送</span>
-            </span>
-            <span className="dyt-menu__value">YouTube Live</span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setSettingsOpen(false);
-              props.onOpenPersonaModal();
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>发言身份</strong>
-              <span>本尊 / 匿名马甲</span>
-            </span>
-            <span className="dyt-menu__value">
-              {activePersona.isMain ? '本尊' : '匿名'} · {activePersona.name}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setSettingsOpen(false);
-              props.onOpenChannelSettings();
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>频道人设与语音</strong>
-              <span>改完仍留在本页</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setSettingsOpen(false);
-              props.bgFileInputRef.current?.click();
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>直播间背景</strong>
-              <span>选图后替换画面</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="dyt-menu"
-            onClick={() => {
-              setSettingsOpen(false);
-              setSupportTab('gift');
-              props.setActiveBottomDrawer('gift');
-            }}
-          >
-            <span className="dyt-menu__main">
-              <strong>频道专属礼物</strong>
-            </span>
-            <span className="dyt-menu__value">{props.activeGifts.length} 件</span>
-          </button>
+          <section className="dyt-sheet__section" aria-label="频道">
+            <p className="dyt-sheet__section-label">频道</p>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => props.onChangePlatformTheme('niconico')}
+            >
+              <span className="dyt-menu__main">
+                <strong>平台外观</strong>
+                <span>切到ニコニコ生放送</span>
+              </span>
+              <span className="dyt-menu__value">YouTube Live</span>
+            </button>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => {
+                setSettingsOpen(false);
+                props.onOpenPersonaModal();
+              }}
+            >
+              <span className="dyt-menu__main">
+                <strong>发言身份</strong>
+                <span>本尊 / 匿名马甲</span>
+              </span>
+              <span className="dyt-menu__value">
+                {activePersona.isMain ? '本尊' : '匿名'} · {activePersona.name}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => {
+                setSettingsOpen(false);
+                props.onOpenChannelSettings();
+              }}
+            >
+              <span className="dyt-menu__main">
+                <strong>频道人设与语音</strong>
+                <span>改完仍留在本页</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => {
+                setSettingsOpen(false);
+                props.bgFileInputRef.current?.click();
+              }}
+            >
+              <span className="dyt-menu__main">
+                <strong>直播间背景</strong>
+                <span>选图后替换画面</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="dyt-menu"
+              onClick={() => {
+                setSettingsOpen(false);
+                setSupportTab('gift');
+                props.setActiveBottomDrawer('gift');
+              }}
+            >
+              <span className="dyt-menu__main">
+                <strong>频道专属礼物</strong>
+              </span>
+              <span className="dyt-menu__value">{props.activeGifts.length} 件</span>
+            </button>
+          </section>
 
-          <p className="dyt-sheet__hint dyt-group">播放</p>
-          <ToggleRow
-            title="顶部飘屏弹幕"
-            checked={props.showDanmakuOverlay}
-            onToggle={() => props.setShowDanmakuOverlay(v => !v)}
-          />
-          <ToggleRow
-            title="外语同传与弹幕翻译"
-            checked={props.showTranslation}
-            onToggle={() => props.setShowTranslation(v => !v)}
-          />
-          <ToggleRow
-            title="发弹幕后主播立即接话"
-            checked={props.immediateReplyOnSend}
-            onToggle={() => props.setImmediateReplyOnSend(v => !v)}
-          />
-          <ToggleRow
-            title="语音播完自动跳下一拍"
-            checked={props.autoPlayStep}
-            onToggle={() => props.setAutoPlayStep(v => !v)}
-          />
-          <ToggleRow
-            title="字跟着录音换"
-            checked={props.followVoiceSentences}
-            onToggle={() => props.setFollowVoiceSentences(v => !v)}
-          />
-          <ToggleRow
-            title="台词出现后静默预生成语音"
-            checked={props.preGenerateVoice}
-            onToggle={props.onTogglePreGenerateVoice}
-          />
-          <ToggleRow
-            title="画面中央显示主播圆盘头像（随语音起伏）"
-            checked={showStageAvatar}
-            onToggle={toggleStageAvatar}
-          />
+          <section className="dyt-sheet__section" aria-label="播放">
+            <p className="dyt-sheet__section-label">播放</p>
+            <ToggleRow
+              title="顶部飘屏弹幕"
+              checked={props.showDanmakuOverlay}
+              onToggle={() => props.setShowDanmakuOverlay(v => !v)}
+            />
+            <ToggleRow
+              title="外语同传与弹幕翻译"
+              checked={props.showTranslation}
+              onToggle={() => props.setShowTranslation(v => !v)}
+            />
+            <ToggleRow
+              title="发弹幕后主播立即接话"
+              checked={props.immediateReplyOnSend}
+              onToggle={() => props.setImmediateReplyOnSend(v => !v)}
+            />
+            <ToggleRow
+              title="语音播完自动跳下一拍"
+              checked={props.autoPlayStep}
+              onToggle={() => props.setAutoPlayStep(v => !v)}
+            />
+            <ToggleRow
+              title="字跟着录音换"
+              checked={props.followVoiceSentences}
+              onToggle={() => props.setFollowVoiceSentences(v => !v)}
+            />
+            <ToggleRow
+              title="台词出现后静默预生成语音"
+              checked={props.preGenerateVoice}
+              onToggle={props.onTogglePreGenerateVoice}
+            />
+            <ToggleRow
+              title="画面中央显示主播圆盘头像（随语音起伏）"
+              checked={showStageAvatar}
+              onToggle={toggleStageAvatar}
+            />
+          </section>
+        </YtSheet>
+      )}
+
+      {pinDetail && (
+        <YtSheet
+          title={pinDetail.giftName ? '频道礼物' : 'Super Chat'}
+          onClose={() => setPinDetail(null)}
+        >
+          {pinDetail.scAmount && pinDetail.scAmount > 0 ? (
+            (() => {
+              const tier = scTierFor(pinDetail);
+              const dmTrans = pinDetail.translation
+                ? pinDetail.translation.replace(/^译[：:]\s*/, '').trim()
+                : '';
+              return (
+                <article
+                  className={`dyt-sc dyt-sc--${tier.color}`}
+                  style={{ color: tier.textColor, margin: 0 }}
+                >
+                  <div className="dyt-sc__head" style={{ background: tier.headerBg }}>
+                    <span className="dyt-sc__av">{initial(pinDetail.senderName)}</span>
+                    <span className="dyt-sc__name">@{pinDetail.senderName}</span>
+                    <span className="dyt-sc__amount">
+                      {pinDetail.scCurrency || '¥'}
+                      {pinDetail.scAmount}
+                    </span>
+                  </div>
+                  <div className="dyt-sc__body" style={{ background: tier.bodyBg }}>
+                    <p className="dyt-sc__text">
+                      {pinDetail.text}
+                      {props.showTranslation && dmTrans && dmTrans !== pinDetail.text ? (
+                        <span className="dyt-sc__trans">{dmTrans}</span>
+                      ) : null}
+                    </p>
+                    <p className="dyt-hint" style={{ marginTop: 10 }}>
+                      {tier.colorLabel}卡片 · {tier.pinDurationLabel}
+                    </p>
+                  </div>
+                </article>
+              );
+            })()
+          ) : (
+            <article className="dyt-gift" style={{ margin: 0 }}>
+              <span className="dyt-gift__mark" aria-hidden="true">
+                <SVG d={Ico.gift} size={18} />
+              </span>
+              <div>
+                <div className="dyt-gift__title">
+                  {pinDetail.senderName} 送出 {pinDetail.giftName}
+                </div>
+                {getLiveDanmakuComment(pinDetail) ? (
+                  <div className="dyt-gift__note">{getLiveDanmakuComment(pinDetail)}</div>
+                ) : null}
+                <div className="dyt-gift__meta">
+                  {pinDetail.giftCurrency || '¥'}
+                  {pinDetail.giftAmount ?? 0}
+                  {` · ×${pinDetail.giftCount && pinDetail.giftCount > 1 ? pinDetail.giftCount : 1}`}
+                </div>
+              </div>
+            </article>
+          )}
         </YtSheet>
       )}
 

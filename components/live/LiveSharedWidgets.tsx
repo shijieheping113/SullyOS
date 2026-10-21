@@ -19,6 +19,7 @@ import {
   LiveDanmakuItem,
   LivePlatformTheme,
   SC_TIER_OPTIONS,
+  resolveScTier,
 } from '../../utils/liveStreamTypes';
 import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
 import '../../apps/room3d/homePhone.css';
@@ -544,6 +545,9 @@ interface FloatingDanmakuOverlayProps {
   tracks?: number;
 }
 
+const GIFT_DANMAKU_ICON =
+  'M22 12v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8h20zM2 7h3.2l-.9-1.7A1.5 1.5 0 1 1 7 3.7L9.1 7h5.8L17 3.7a1.5 1.5 0 1 1 2.7 1.6L18.8 7H22v3H2V7zm9 13V12H4v8h7zm2 0h7v-8h-7v8z';
+
 export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   danmakuList,
   showTranslation = true,
@@ -554,17 +558,18 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   if (!visible || !danmakuList || danmakuList.length === 0) return null;
 
   const isNico = platformTheme === 'niconico';
-  // 连续流：每条按字长算时长，落在「最早空出来的那一行」，相邻两条只隔一小段
-  // 带随机抖动的间隔。不再按行分组一波一波地出，读起来像真实视频里的弹幕墙。
-  const rowCount = Math.max(1, Math.min(5, tracks));
-  const rowTops = Array.from({ length: rowCount }, (_, i) => `${i * 21}px`);
+  // YouTube：两行道、间距拉开；本拍弹幕循环飘，不挤在一起
+  const rowCount = isNico ? Math.max(1, Math.min(5, tracks)) : Math.max(1, Math.min(2, tracks));
+  const rowTops = isNico
+    ? Array.from({ length: rowCount }, (_, i) => `${i * 21}px`)
+    : Array.from({ length: rowCount }, (_, i) => `${4 + i * 30}px`);
+  const laneHeight = isNico ? rowCount * 21 : 64;
 
   const estimateWidth = (text: string) => {
     let w = 0;
     for (const ch of text) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 13 : 7.5;
     return w;
   };
-  // 用弹幕 id 做稳定伪随机，刷新/重渲染时同一条弹幕的节奏不变
   const seedOf = (key: string) => {
     let h = 2166136261;
     for (let i = 0; i < key.length; i++) {
@@ -574,99 +579,259 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
     return ((h >>> 0) % 1000) / 1000;
   };
 
+  const ordered = danmakuList.map((dm, idx) => ({ dm, idx }));
+
+  // 按「这一行什么时候空出来」排班，避免一堆叠在左边；YouTube 循环时也要先藏在屏外
   const rowFreeAt = Array.from({ length: rowCount }, () => 0);
-  let lastStart = -0.5;
-  const items = danmakuList.map((dm, idx) => {
+  let lastStart = -0.55;
+  const items = ordered.map(({ dm, idx }) => {
     const cleanTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
     const comment = getLiveDanmakuComment(dm);
-    const full = `${comment}${showTranslation && cleanTrans && cleanTrans !== comment ? `（${cleanTrans}）` : ''}`;
-    const duration = Math.max(6.5, (360 + estimateWidth(full)) / 52);
+    const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
+    const isGift = Boolean(dm.giftName);
+    const giftLabel = dm.giftName
+      ? `${dm.giftName}${dm.giftCount && dm.giftCount > 1 ? ` ×${dm.giftCount}` : ' ×1'}`
+      : '';
+    const bodyText = isGift ? giftLabel || comment : comment || dm.text || '';
+    const full = `${isSc ? `¥${dm.scAmount} ` : ''}${bodyText}${
+      showTranslation && cleanTrans && cleanTrans !== bodyText ? ` / ${cleanTrans}` : ''
+    }`;
+    const duration = Math.max(isNico ? 6.5 : 12, (460 + estimateWidth(full)) / (isNico ? 52 : 40));
     const seed = seedOf(dm.id || `${idx}_${dm.text}`);
-    // 选最早空出来的那一行
     let row = 0;
     for (let i = 1; i < rowCount; i++) {
       if (rowFreeAt[i] < rowFreeAt[row] - 0.001) row = i;
     }
-    const gap = 0.24 + seed * 0.55;
+    const gap = isNico ? 0.28 + seed * 0.5 : 1.35 + seed * 0.7;
     const start = Math.max(rowFreeAt[row], lastStart + gap);
-    // 上一条滚过约六成后，同一行就能跟上下一条，尾巴不会互相追尾
-    rowFreeAt[row] = start + duration * 0.62;
+    // 上一趟滚完约一半再发下一趟，循环时也不会挤成一团
+    rowFreeAt[row] = start + duration * (isNico ? 0.62 : 0.48);
     lastStart = start;
-    return { dm, idx, row, delay: start, duration, cleanTrans, comment };
+    const scTier = isSc ? resolveScTier(dm.scAmount, dm.scColor) : null;
+    return {
+      dm,
+      idx,
+      row,
+      delay: start,
+      duration,
+      cleanTrans,
+      comment,
+      bodyText,
+      isSc,
+      isGift,
+      scTier,
+    };
   });
+
+  const bilingual = (main: string, trans: string) => {
+    if (!showTranslation || !trans || trans === main) {
+      return <span className="onair-dm__jp">{main}</span>;
+    }
+    return (
+      <>
+        <span className="onair-dm__jp">{main}</span>
+        <span className="onair-dm__sep">/</span>
+        <span className="onair-dm__zh">{trans}</span>
+      </>
+    );
+  };
 
   return (
     <div
       className="pointer-events-none absolute inset-x-0 select-none overflow-hidden"
-      style={{ zIndex: 15, height: rowCount * 21, containerType: 'inline-size' }}
+      style={{ zIndex: 15, height: laneHeight, containerType: 'inline-size' }}
     >
       <style>{`
         @keyframes onAirDanmakuFlow {
           0% { transform: translate3d(100cqw, 0, 0); }
           100% { transform: translate3d(-105%, 0, 0); }
         }
+        .onair-dm {
+          position: absolute;
+          left: 0;
+          /* 动画开始前也停在屏外，避免 delay 期间卡在左边 */
+          transform: translate3d(100cqw, 0, 0);
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          max-width: none;
+          white-space: nowrap;
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.15;
+          will-change: transform;
+          backface-visibility: hidden;
+        }
+        /* 普通文字：保持旧版描边字，不改成白字黑影 */
+        .onair-dm--plain {
+          color: #1e293b;
+          -webkit-text-stroke: 2px rgba(255, 255, 255, 0.72);
+          paint-order: stroke fill;
+        }
+        .onair-dm--plain.is-mine { color: #047857; }
+        .onair-dm__sep { margin: 0 5px; opacity: 0.75; font-weight: 500; }
+        .onair-dm__zh { font-weight: 600; }
+        .onair-dm--sc {
+          height: 28px;
+          padding: 0 10px 0 3px;
+          border-radius: 14px;
+          text-shadow: none;
+          -webkit-text-stroke: 0;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+        }
+        /* 色值与 SC_TIER_OPTIONS.bodyBg 对齐；实际渲染用 inline 再盖一层防漂移 */
+        .onair-dm--sc.is-green { background: #43a047; color: #fff; }
+        .onair-dm--sc.is-yellow { background: #ffc928; color: #3e2723; }
+        .onair-dm--sc.is-orange { background: #ff9800; color: #fff; }
+        .onair-dm--sc.is-purple { background: #8e24aa; color: #fff; }
+        .onair-dm--sc.is-red { background: #e53935; color: #fff; }
+        .onair-dm__amt {
+          display: inline-flex;
+          align-items: center;
+          height: 22px;
+          padding: 0 7px;
+          border-radius: 11px;
+          background: rgba(0, 0, 0, 0.14);
+          font-variant-numeric: tabular-nums;
+        }
+        .onair-dm--sc.is-green .onair-dm__amt,
+        .onair-dm--sc.is-orange .onair-dm__amt,
+        .onair-dm--sc.is-purple .onair-dm__amt,
+        .onair-dm--sc.is-red .onair-dm__amt {
+          background: rgba(0, 0, 0, 0.22);
+        }
+        .onair-dm--sc.is-yellow .onair-dm__amt {
+          background: rgba(0, 0, 0, 0.12);
+        }
+        .onair-dm__body {
+          max-width: none;
+          overflow: visible;
+          white-space: nowrap;
+        }
+        .onair-dm--gift {
+          height: 28px;
+          padding: 0 10px 0 6px;
+          border-radius: 14px;
+          background: #8e24aa;
+          color: #fff;
+          text-shadow: none;
+          -webkit-text-stroke: 0;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+        }
+        .onair-dm__ico {
+          width: 16px;
+          height: 16px;
+          flex: 0 0 auto;
+          fill: currentColor;
+        }
+        .onair-dm--nico {
+          font-size: 12.5px;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+          color: #1e293b;
+          text-shadow: none;
+          -webkit-text-stroke: 2px rgba(255, 255, 255, 0.72);
+          paint-order: stroke fill;
+        }
+        .onair-dm--nico.is-mine {
+          color: #0066cc;
+          text-decoration: underline;
+          text-underline-offset: 2px;
+          text-decoration-color: #0080ff;
+        }
+        .onair-dm--nico.is-sc { color: #b45309; }
+        .onair-dm--nico.is-gift { color: #be185d; }
+        .onair-dm--nico .onair-dm__badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 1px 6px;
+          border-radius: 4px;
+          color: #fff;
+          font-size: 10px;
+          font-weight: 800;
+          -webkit-text-stroke: 0;
+        }
+        .onair-dm--nico .onair-dm__badge--sc { background: #f59e0b; }
+        .onair-dm--nico .onair-dm__badge--gift { background: #ec4899; }
       `}</style>
-      {items.map(({ dm, idx, row, delay, duration, cleanTrans, comment }) => {
+      {items.map(({ dm, idx, row, delay, duration, cleanTrans, comment, bodyText, isSc, isGift, scTier }) => {
         const top = rowTops[row];
-        const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
-        const isGift = Boolean(dm.giftName);
         const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
+        // both：delay 期间保持 0%（屏外）；infinite 循环时也不会闪回 left:0
+        const anim = {
+          top,
+          animation: `onAirDanmakuFlow ${duration}s linear ${delay}s ${
+            isNico ? '1 both' : 'infinite both'
+          }`,
+        } as React.CSSProperties;
+
+        if (!isNico && isSc && scTier) {
+          return (
+            <div
+              key={dm.id || `${idx}_${dm.text}`}
+              className={`onair-dm onair-dm--sc is-${scTier.color}`}
+              style={{
+                ...anim,
+                background: scTier.bodyBg,
+                color: scTier.textColor,
+              }}
+            >
+              <span className="onair-dm__amt">
+                {dm.scCurrency || '¥'}
+                {dm.scAmount}
+              </span>
+              <span className="onair-dm__body">{bilingual(bodyText, cleanTrans)}</span>
+            </div>
+          );
+        }
+
+        if (!isNico && isGift) {
+          return (
+            <div
+              key={dm.id || `${idx}_${dm.text}`}
+              className="onair-dm onair-dm--gift"
+              style={anim}
+            >
+              <svg className="onair-dm__ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d={GIFT_DANMAKU_ICON} />
+              </svg>
+              <span className="onair-dm__body">{bilingual(bodyText, cleanTrans)}</span>
+            </div>
+          );
+        }
+
+        if (!isNico) {
+          return (
+            <div
+              key={dm.id || `${idx}_${dm.text}`}
+              className={`onair-dm onair-dm--plain${isMine ? ' is-mine' : ''}`}
+              style={anim}
+            >
+              {bilingual(bodyText || comment, cleanTrans)}
+            </div>
+          );
+        }
 
         return (
           <div
             key={dm.id || `${idx}_${dm.text}`}
-            className="danmaku-fly"
-            style={{
-              position: 'absolute',
-              top,
-              left: 0,
-              width: 'max-content',
-              whiteSpace: 'nowrap',
-              lineHeight: '20px',
-              animation: `onAirDanmakuFlow ${duration}s linear ${delay}s 1 both`,
-              willChange: 'transform',
-            }}
+            className={`onair-dm onair-dm--nico${isMine ? ' is-mine' : ''}${
+              isSc ? ' is-sc' : ''
+            }${isGift ? ' is-gift' : ''}`}
+            style={{ ...anim, lineHeight: '20px' }}
           >
-            <span
-              className={`inline-flex items-center gap-1 ${
-                isNico ? 'text-[12.5px] font-extrabold tracking-tight' : 'text-[12px] font-bold'
-              } ${
-                isSc
-                  ? 'text-[#b45309]'
-                  : isGift
-                  ? 'text-[#be185d]'
-                  : isMine
-                  ? isNico
-                    ? 'text-[#0066cc] underline decoration-[#0080ff] underline-offset-2'
-                    : 'text-[#047857]'
-                  : 'text-[#1e293b]'
-              }`}
-              style={{
-                WebkitTextStroke: '2px rgba(255, 255, 255, 0.72)',
-                paintOrder: 'stroke fill',
-              }}
-            >
-              {isSc && (
-                <span
-                  className="px-1.5 py-[1px] rounded bg-[#f59e0b] text-white text-[10px] font-extrabold"
-                  style={{ WebkitTextStroke: '0px' }}
-                >
-                  ¥{dm.scAmount}
-                </span>
-              )}
-              {isGift && (
-                <span
-                  className="px-1.5 py-[1px] rounded bg-[#ec4899] text-white text-[10px] font-bold"
-                  style={{ WebkitTextStroke: '0px' }}
-                >
-                  {dm.giftEmoji || '🎁'} {dm.giftName}
-                </span>
-              )}
-              {comment && <span>{comment}</span>}
-              {showTranslation && cleanTrans && cleanTrans !== comment && (
-                <span className="text-[11px] font-semibold text-[#475569]">（{cleanTrans}）</span>
-              )}
-            </span>
+            {isSc && (
+              <span className="onair-dm__badge onair-dm__badge--sc">¥{dm.scAmount}</span>
+            )}
+            {isGift && (
+              <span className="onair-dm__badge onair-dm__badge--gift">
+                {dm.giftEmoji || '🎁'} {dm.giftName}
+              </span>
+            )}
+            {comment ? <span>{comment}</span> : null}
+            {showTranslation && cleanTrans && cleanTrans !== comment ? (
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#475569' }}>（{cleanTrans}）</span>
+            ) : null}
           </div>
         );
       })}
@@ -688,9 +853,7 @@ export const SuperChatTickerBar: React.FC<{
     <div className="bg-white border-b border-slate-200 px-3 py-1.5 shrink-0">
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {scList.slice(-10).reverse().map(sc => {
-          const tier =
-            SC_TIER_OPTIONS.slice().reverse().find(t => (sc.scAmount || 0) >= t.amount) ||
-            SC_TIER_OPTIONS[0];
+          const tier = resolveScTier(sc.scAmount, sc.scColor);
           const isSelected = selectedSc?.id === sc.id;
           return (
             <button
@@ -724,15 +887,13 @@ export const SuperChatHighlightCard: React.FC<{
   item: LiveDanmakuItem;
   showTranslation?: boolean;
 }> = ({ item, showTranslation = true }) => {
-  const tier =
-    SC_TIER_OPTIONS.slice().reverse().find(t => (item.scAmount || 0) >= t.amount) ||
-    SC_TIER_OPTIONS[0];
+  const tier = resolveScTier(item.scAmount, item.scColor);
   const cleanTrans = item.translation ? item.translation.replace(/^译[：:]\s*/, '').trim() : '';
 
   return (
     <div className="rounded-xl overflow-hidden shadow-sm border border-black/10 my-1.5">
       <div
-        style={{ backgroundColor: tier.headerBg, color: '#ffffff' }}
+        style={{ backgroundColor: tier.headerBg, color: tier.textColor === '#3e2723' ? '#3e2723' : '#ffffff' }}
         className="px-3 py-1.5 flex items-center justify-between text-xs font-bold"
       >
         <div className="flex items-center gap-1.5 min-w-0">

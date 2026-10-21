@@ -81,6 +81,7 @@ import {
   liveRoundSignature,
   pickRoundToFold,
   applyRoundSummary,
+  restoreMissingRoundSummaries,
 } from '../utils/liveStreamStorage';
 import {
   buildLiveStreamTurnPrompt,
@@ -117,6 +118,32 @@ import {
 } from '../utils/liveStreamTimeline';
 
 type MainTab = 'char_live' | 'char_vod' | 'npc_watch';
+
+/** 旧场次回写时如果没带摘要，保留这边已经有的逐轮摘要 */
+function mergeLiveSessionSummaries(
+  prev: LiveStreamSession | undefined,
+  next: LiveStreamSession,
+): LiveStreamSession {
+  if (!prev || prev.id !== next.id) return next;
+  const prevById = new Map(prev.chunks.map(c => [c.id, c]));
+  return {
+    ...next,
+    chunks: next.chunks.map(c => {
+      const old = prevById.get(c.id);
+      if (!old) return c;
+      const nextHas = Boolean(c.roundSummary && c.roundSummary.trim());
+      const oldHas = Boolean(old.roundSummary && old.roundSummary.trim());
+      if (!nextHas && oldHas) {
+        return {
+          ...c,
+          roundSummary: old.roundSummary,
+          summaryUpdatedAt: old.summaryUpdatedAt,
+        };
+      }
+      return c;
+    }),
+  };
+}
 
 const SILENT_UNLOCK_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
@@ -368,7 +395,7 @@ const LiveStreamApp: React.FC = () => {
       text: string;
       persona: ViewerPersona;
       scAmount?: number;
-      scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red';
+      scColor?: import('../utils/liveStreamTypes').LiveScColor | 'blue' | 'cyan' | 'amber' | 'magenta';
       gift?: StreamGiftOption;
       alreadyDisplayedInTimeline?: boolean;
     }>
@@ -378,14 +405,21 @@ const LiveStreamApp: React.FC = () => {
   // 以前是把「写 localStorage 的结果」直接塞回 state，写失败静默丢，刷新才发现整场没了。
   // 现在写失败由存储层的 toast 说明，界面不回滚——内容还看得见，用户可以再操作一次。
 
+  // 异步回调要拿「此刻最新的一场」。这个 ref 必须在 rememberLiveSession 之前建好。
+  const liveSessionsRef = useRef<LiveStreamSession[]>([]);
+
   const rememberLiveSession = useCallback(async (session: LiveStreamSession): Promise<boolean> => {
-    setLiveSessions(prev =>
-      prev.some(s => s.id === session.id)
-        ? prev.map(s => (s.id === session.id ? session : s))
-        : [session, ...prev],
-    );
+    // 先按 ref 里的最新场次合并，再写界面和数据库。
+    // 不能等 setState 回调：回调还没跑就把旧场次写进库，摘要会被盖成空的。
+    const existing = liveSessionsRef.current.find(s => s.id === session.id);
+    const toSave = mergeLiveSessionSummaries(existing, session);
+    const next = existing
+      ? liveSessionsRef.current.map(s => (s.id === session.id ? toSave : s))
+      : [toSave, ...liveSessionsRef.current];
+    liveSessionsRef.current = next;
+    setLiveSessions(next);
     try {
-      await upsertLiveSession(session);
+      await upsertLiveSession(toSave);
       return true;
     } catch {
       return false;
@@ -519,10 +553,16 @@ const LiveStreamApp: React.FC = () => {
     }
   }, []);
 
-  // 异步回调（AI 生成完才回来）要拿「此刻最新的一场」，不能用闭包里的旧对象
-  const liveSessionsRef = useRef<LiveStreamSession[]>([]);
+  // 渲染落定后把 state 抄进 ref。ref 里若已经有更新的摘要或更多轮次，不要用旧 state 盖掉。
   useEffect(() => {
-    liveSessionsRef.current = liveSessions;
+    const refById = new Map(liveSessionsRef.current.map(s => [s.id, s]));
+    liveSessionsRef.current = liveSessions.map(st => {
+      const refS = refById.get(st.id);
+      if (!refS) return st;
+      const base = refS.chunks.length > st.chunks.length ? refS : st;
+      const other = base === refS ? st : refS;
+      return mergeLiveSessionSummaries(other, base);
+    });
   }, [liveSessions]);
 
   const persistBeatAudioUrl = useCallback(
@@ -599,7 +639,24 @@ const LiveStreamApp: React.FC = () => {
             /* 忽略浏览器存储限制 */
           }
         }
-        setLiveSessions(sessions);
+        const healedSessions = await Promise.all(
+          sessions.map(session =>
+            session.charId === currentChar.id
+              ? restoreMissingRoundSummaries(session, currentChar.id)
+              : session,
+          ),
+        );
+        if (cancelled) return;
+        setLiveSessions(healedSessions);
+        liveSessionsRef.current = healedSessions;
+        for (const session of healedSessions) {
+          const before = sessions.find(item => item.id === session.id);
+          if (!before) continue;
+          const gained = session.chunks.some(
+            (chunk, index) => chunk.roundSummary && !before.chunks[index]?.roundSummary,
+          );
+          if (gained) void upsertLiveSession(session);
+        }
         // 旧版下播标记可能停在开播处或某一轮中间；修正到本场真实最后一轮之后，不动其他场次。
         void Promise.all(sessions
           .filter(session => session.status === 'ended' && session.endedAt && session.startMarkerMessageId)
@@ -683,6 +740,27 @@ const LiveStreamApp: React.FC = () => {
     () => liveSessions.find(s => s.id === activeLiveSessionId) || null,
     [liveSessions, activeLiveSessionId],
   );
+
+  // 私聊卡已是摘要、这场记录却空着时，从聊天卡把摘要补回摘要页
+  const summaryHealKeyRef = useRef('');
+  useEffect(() => {
+    if (!activeLiveSession || !currentChar) return;
+    if (!activeLiveSession.chunks.some(c => !(c.roundSummary && c.roundSummary.trim()))) return;
+    const key = `${activeLiveSession.id}:${activeLiveSession.chunks
+      .map(c => `${c.id}:${c.roundSummary ? 1 : 0}`)
+      .join(',')}`;
+    if (summaryHealKeyRef.current === key) return;
+    summaryHealKeyRef.current = key;
+    const sessionId = activeLiveSession.id;
+    const charId = currentChar.id;
+    void (async () => {
+      const latest = liveSessionsRef.current.find(s => s.id === sessionId);
+      if (!latest) return;
+      const healed = await restoreMissingRoundSummaries(latest, charId);
+      if (healed === latest) return;
+      await rememberLiveSession(healed);
+    })();
+  }, [activeLiveSession, currentChar, rememberLiveSession]);
 
   const activeVod = useMemo(
     () => vodPosts.find(v => v.id === activeVodId) || null,
@@ -1132,16 +1210,49 @@ const LiveStreamApp: React.FC = () => {
       let currViewers = session.viewerCount;
       let scTotal = session.totalScRevenue ?? 0;
       let giftTotal = session.totalGiftRevenue ?? 0;
-      queuedInputs.forEach(inp => {
-        if (inp.scAmount && inp.scAmount > 0) scTotal += inp.scAmount;
-        if (inp.gift && inp.gift.price > 0) giftTotal += inp.gift.price;
-      });
+      // 重 Roll 只换内容，SC/礼物营收已经在第一次生成时加过，不能再加一遍
+      if (!options?.replaceChunkId) {
+        queuedInputs.forEach(inp => {
+          if (inp.scAmount && inp.scAmount > 0) scTotal += inp.scAmount;
+          if (inp.gift && inp.gift.price > 0) giftTotal += inp.gift.price;
+        });
+      }
       currViewers = Math.max(50, currViewers + Math.floor(Math.random() * 140) - 35);
       if (currViewers > peak) peak = currViewers;
 
       const existingChunk = options?.replaceChunkId
         ? session.chunks.find(c => c.id === options.replaceChunkId)
         : undefined;
+
+      // 这一轮触发的用户弹幕/SC/礼物写进 chunk，重 Roll 时才能原样交回模型（队列生成后会被清空）
+      const storedUserInputs: LiveDanmakuItem[] = (existingChunk?.userInputs?.length
+        ? existingChunk.userInputs
+        : queuedInputs.map((inp, idx) => {
+            if (inp && typeof inp === 'object' && 'senderName' in (inp as object)) {
+              return inp as unknown as LiveDanmakuItem;
+            }
+            const persona = inp.persona;
+            return {
+              id: inp.id || `dm_usr_${Date.now()}_${idx}`,
+              senderName: persona.name,
+              roleType: persona.isMain ? 'user_main' : 'user_alt',
+              isUserMain: persona.isMain,
+              isUserAlt: !persona.isMain,
+              viewerPersonaId: persona.id,
+              fanBadge: persona.badgeText,
+              fanLevel: persona.fanLevel,
+              text: inp.text,
+              scAmount: inp.scAmount,
+              scCurrency: inp.scAmount ? (inp.gift?.currencySymbol || '¥') : undefined,
+              scColor: inp.scColor,
+              giftId: inp.gift?.id,
+              giftName: inp.gift?.name,
+              giftEmoji: inp.gift?.emoji,
+              giftAmount: inp.gift?.price,
+              giftCurrency: inp.gift?.currencySymbol || '¥',
+              timestamp: Date.now() + idx,
+            } as LiveDanmakuItem;
+          }));
 
       // 这一轮在聊天里的那张卡：新建，或原位更新重 Roll 前的那张。
       // 卡写失败只丢时间线上的这一条，这一轮本身照样存进直播库，不连累整轮。
@@ -1164,25 +1275,27 @@ const LiveStreamApp: React.FC = () => {
         id: existingChunk?.id || `chunk_${session.id}_${targetChunkIndex}_${Date.now()}`,
         index: targetChunkIndex,
         beats,
-        // 用户投递的弹幕已经作为 danmaku 落在拍里，不在 chunk.userInputs 中另存一份。
-        userInputs: [],
+        // 触发本轮的用户弹幕/SC/礼物：公屏可能已落在上一轮拍里，这里另存一份给重 Roll 回填提示词
+        userInputs: storedUserInputs,
         dbMessageId: dbMsgId,
-        createdAt: Date.now(),
+        createdAt: existingChunk?.createdAt ?? Date.now(),
       };
 
+      // 生成要等模型，期间压缩可能已经写上摘要。落库必须叠在最新场次上，不能用开跑时的旧 chunks。
+      const latestSession = liveSessionsRef.current.find(s => s.id === session.id) || session;
       const nextChunks = options?.replaceChunkId
-        ? session.chunks.map(c => (c.id === options.replaceChunkId ? newChunk : c))
-        : [...session.chunks, newChunk];
+        ? latestSession.chunks.map(c => (c.id === options.replaceChunkId ? newChunk : c))
+        : [...latestSession.chunks, newChunk];
 
       const updatedSession: LiveStreamSession = {
-        ...session,
+        ...latestSession,
         chunks: nextChunks,
         viewerCount: currViewers,
         peakViewerCount: peak,
         totalScRevenue: scTotal,
         totalGiftRevenue: giftTotal,
-        // 引导已经在这一轮体现过了，清空，避免一直重复生效
-        pendingGuidance: [],
+        // 新建一轮才清空引导；重 Roll 只换同一轮内容，别把还没轮到的导演引导吃掉
+        pendingGuidance: options?.replaceChunkId ? latestSession.pendingGuidance || [] : [],
       };
 
       setPendingUserInputs([]);
@@ -1290,7 +1403,7 @@ const LiveStreamApp: React.FC = () => {
   const handleSendUserDanmaku = (
     text: string,
     scAmount?: number,
-    scColor?: 'blue' | 'cyan' | 'amber' | 'magenta' | 'red',
+    scColor?: import('../utils/liveStreamTypes').LiveScColor | 'blue' | 'cyan' | 'amber' | 'magenta',
     triggerImmediateReply = true,
     gift?: StreamGiftOption,
     targetBeat?: { chunkId: string; beatId: string },
@@ -1477,6 +1590,7 @@ const LiveStreamApp: React.FC = () => {
   };
 
   // 重 Roll 某一段切片（传入旧台词防雷同 + 排除旧 DB 消息）
+  // SC/礼物触发的那一轮：队列早已清空，要从 chunk.userInputs（或上一轮末拍用户弹幕）回填，否则模型会当没收到。
   const handleRerollChunk = async (chunkId: string) => {
     if (!activeLiveSession || !activeChannel || isGenerating) return;
     const oldChunk = activeLiveSession.chunks.find(c => c.id === chunkId);
@@ -1486,7 +1600,48 @@ const LiveStreamApp: React.FC = () => {
           .join('\n')
       : undefined;
 
-    await runGenerateLiveChunk(activeLiveSession, activeChannel, pendingUserInputs, {
+    const triggerItems: LiveDanmakuItem[] = (() => {
+      if (!oldChunk) return [];
+      if (oldChunk.userInputs && oldChunk.userInputs.length > 0) return oldChunk.userInputs;
+      // 旧数据没写 userInputs：即时接话时 SC 落在上一轮末拍，从那里捞
+      const prev = [...activeLiveSession.chunks]
+        .filter(c => c.index < oldChunk.index)
+        .sort((a, b) => b.index - a.index)[0];
+      const lastBeat = prev?.beats[prev.beats.length - 1];
+      return (lastBeat?.danmaku || []).filter(d => d.isUserMain || d.isUserAlt);
+    })();
+
+    const recoveredQueue = triggerItems.map(dm => ({
+      id: dm.id,
+      text: dm.text,
+      persona: {
+        id: dm.viewerPersonaId || (dm.isUserMain ? 'viewer_main_self' : 'viewer_alt'),
+        name: dm.senderName,
+        isMain: Boolean(dm.isUserMain),
+        fanLevel: dm.fanLevel,
+        badgeText: dm.fanBadge,
+      } as ViewerPersona,
+      scAmount: dm.scAmount,
+      scColor: dm.scColor,
+      gift: dm.giftName
+        ? {
+            id: dm.giftId || `gift_${dm.giftName}`,
+            name: dm.giftName,
+            emoji: dm.giftEmoji || '🎁',
+            price: dm.giftAmount || 0,
+            currencySymbol: dm.giftCurrency || '¥',
+          }
+        : undefined,
+      alreadyDisplayedInTimeline: true,
+    }));
+
+    const recoveredIds = new Set(recoveredQueue.map(item => item.id).filter(Boolean));
+    const queueForReroll = [
+      ...recoveredQueue,
+      ...pendingUserInputs.filter(item => !item.id || !recoveredIds.has(item.id)),
+    ];
+
+    await runGenerateLiveChunk(activeLiveSession, activeChannel, queueForReroll, {
       replaceChunkId: chunkId,
       rejectedDraftText,
       excludeDbMsgId: oldChunk?.dbMessageId,

@@ -34,6 +34,39 @@ export function getVisibleLiveDanmakuFeed(
   return visible;
 }
 
+/**
+ * 舞台滚动弹幕：只取「当前这一轮」里、已经播到的拍。
+ * 不提前刷出本轮后续拍，也不混入更早轮次。
+ */
+export function getVisibleLiveRoundDanmakuFeed(
+  timeline: readonly {
+    chunkId: string;
+    beat: Pick<LiveChunk['beats'][number], 'danmaku'>;
+  }[],
+  currentBeatIndex: number,
+  chunkId: string,
+): LiveDanmakuItem[] {
+  if (!chunkId) return [];
+  const visible: LiveDanmakuItem[] = [];
+  const end = Math.min(currentBeatIndex, timeline.length - 1);
+  for (let index = 0; index <= end; index += 1) {
+    const row = timeline[index];
+    if (row.chunkId !== chunkId) continue;
+    visible.push(...(row.beat.danmaku || []));
+  }
+  return visible;
+}
+
+/** 舞台滚动：只取当前这一拍的弹幕（切拍即换，本拍内循环飘） */
+export function getCurrentBeatDanmakuFeed(
+  timeline: readonly { beat: Pick<LiveChunk['beats'][number], 'danmaku'> }[],
+  currentBeatIndex: number,
+): LiveDanmakuItem[] {
+  const row = timeline[currentBeatIndex];
+  if (!row) return [];
+  return [...(row.beat.danmaku || [])];
+}
+
 /** Gift announcements already have structured gift fields; keep only an optional accompanying comment. */
 export function getLiveDanmakuComment(item: Pick<LiveDanmakuItem, 'text' | 'giftName' | 'giftEmoji'>): string {
   const text = (item.text || '').trim();
