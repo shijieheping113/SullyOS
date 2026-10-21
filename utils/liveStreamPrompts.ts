@@ -39,7 +39,7 @@ const REAL_STREAMER_VIBE_RULES = `
 
 // ==================== 2. 多语种配信与同传双轨规则 ====================
 
-function buildVoiceLanguageAndTranslationRule(channel: StreamerChannelProfile): string {
+export function buildVoiceLanguageAndTranslationRule(channel: StreamerChannelProfile): string {
   const lang = (channel.voiceConfig?.language || '').trim();
   const isForeign = Boolean(lang && lang !== 'zh');
   const langLabel = voiceLanguagePromptLabel(lang);
@@ -55,6 +55,9 @@ function buildVoiceLanguageAndTranslationRule(channel: StreamerChannelProfile): 
    - 若该拍有开口说话，必须使用地道、口语化的 **${langLabel}** 撰写（直接供 TTS 语音合成朗读，严禁在 \`speechOriginal\` 里混入中文解释）。
 2. **中文同传字幕（\`speechTranslated\`）**：
    - 必须在 \`speechTranslated\` 字段同步写出贴合角色语气的**中文野生同传译文**（不要加“译：”前缀，直接写译文内容）。
+   - \`speechOriginal\` 和 \`speechTranslated\` 是同一段话的两个版本，句数必须一样，顺序必须一样，每一句的结尾符号种类必须一样：问号对问号、句号对句号、感叹号对感叹号、省略号对省略号。英文句点按句号算。不许把两句并成一句，不许把一句拆成两句，不许把问号写成逗号。
+   - 正确：\`Wait, really? That's insane.\` 对 \`你说真的？那也太离谱了吧。\`
+   - 错误：\`Wait, really, that's insane.\` 对 \`你说真的？那也太离谱了吧。\`（英文用了逗号，中文用了问号，句数不一样）
 3. **多国聊天栏与翻译**：
    - 聊天栏 70% 为 **${langLabel}** 母语观众弹幕（如日语房间的 \`草\`、\`www\`、\`初見です\`、\`ナイス！\`；英语房间的 \`LMAO\`、\`W stream\`、\`Pog\`），其余可混入海外观众弹幕。
    - 所有非中文弹幕必须在 \`translation\` 字段提供简洁传神的中文翻译（不要加“译：”前缀）。`;

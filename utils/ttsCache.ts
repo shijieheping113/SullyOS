@@ -63,6 +63,14 @@ export async function getCachedTts(key: string): Promise<Blob | null> {
   }
 }
 
+/** 只查缓存时没有这份录音。调用方不得因此去打网络。 */
+export class TtsCacheMiss extends Error {
+  constructor() {
+    super('tts-cache-miss');
+    this.name = 'TtsCacheMiss';
+  }
+}
+
 export async function saveCachedTts(key: string, blob: Blob): Promise<void> {
   try {
     const now = Date.now();

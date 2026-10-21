@@ -179,6 +179,7 @@ export const LiveFloatingPhone: React.FC<LiveFloatingPhoneProps> = ({
 
 export interface BeatActionSheetTarget {
   title: string;
+  beatId?: string;
   screen: string;
   speechOriginal: string;
   speechTranslated?: string;
@@ -248,17 +249,23 @@ interface BeatLongPressSheetProps {
   target: BeatActionSheetTarget | null;
   ttsLoading?: boolean;
   onClose: () => void;
+  /** 只移动正在播的这一条录音。没传时菜单不出现这一行，点播和陪看保持原样。 */
+  onNudgeVoice?: (deltaSec: number) => void;
+  voiceSeekEnabled?: boolean;
 }
 
 export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
   target,
   ttsLoading,
   onClose,
+  onNudgeVoice,
+  voiceSeekEnabled = false,
 }) => {
   const [editing, setEditing] = useState(false);
   const [screenDraft, setScreenDraft] = useState('');
   const [speechDraft, setSpeechDraft] = useState('');
   const [transDraft, setTransDraft] = useState('');
+  const [seekStep, setSeekStep] = useState(0.5);
 
   useEffect(() => {
     if (target) {
@@ -364,6 +371,45 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
           </div>
         ) : (
           <div className="p-3 space-y-1.5 pb-6">
+            {onNudgeVoice && (
+              <div className="px-4 py-3 rounded-2xl bg-slate-50">
+                <div className="text-sm font-bold text-slate-900">微调这一次播放</div>
+                <div className="text-xs text-slate-500 mt-0.5">只移动正在播的这一条，不改别的拍</div>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-slate-600 shrink-0">每次</span>
+                  <input
+                    type="number"
+                    min={0.05}
+                    step={0.1}
+                    value={seekStep}
+                    aria-label="每次移动的秒数"
+                    onChange={event => {
+                      const next = Number(event.target.value);
+                      if (Number.isFinite(next) && next > 0) setSeekStep(next);
+                    }}
+                    className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900"
+                  />
+                  <span className="text-xs text-slate-500">秒</span>
+                  <button
+                    type="button"
+                    disabled={!voiceSeekEnabled}
+                    onClick={() => onNudgeVoice(-Math.abs(seekStep))}
+                    className="h-8 px-2.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-800 disabled:opacity-40"
+                  >
+                    后退
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!voiceSeekEnabled}
+                    onClick={() => onNudgeVoice(Math.abs(seekStep))}
+                    className="h-8 px-2.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-800 disabled:opacity-40"
+                  >
+                    前进
+                  </button>
+                </div>
+              </div>
+            )}
+
             {hasSpeech && target.onPlayVoice && (
               <button
                 type="button"

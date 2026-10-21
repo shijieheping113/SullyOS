@@ -8,7 +8,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { APIConfig, CharacterProfile } from '../types';
 import { normalizeApiKey } from './minimaxApiKey';
-import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
+import { hashTtsParams, getCachedTts, saveCachedTts, TtsCacheMiss } from './ttsCache';
 import type { TtsResult } from './minimaxTts';
 import { normalizeVoiceTags } from './sanitize';
 import { getProxyWorkerUrl } from './proxyWorker';
@@ -305,7 +305,7 @@ export async function synthesizeSpeechElevenLabsDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean },
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; cacheOnly?: boolean },
 ): Promise<TtsResult> {
   const apiKey = resolveElevenLabsApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 ElevenLabs API Key');
@@ -329,6 +329,7 @@ export async function synthesizeSpeechElevenLabsDetailed(
     const cached = await getCachedTts(cacheKey);
     if (cached) return { url: URL.createObjectURL(cached), blob: cached };
   }
+  if (options?.cacheOnly) throw new TtsCacheMiss();
 
   console.log('[elevenlabs] TTS', {
     model: payload.model_id,

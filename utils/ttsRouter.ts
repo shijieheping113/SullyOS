@@ -21,13 +21,14 @@ import {
 } from './elevenLabsTts';
 import { cleanTextForTts, cleanVoiceMarkupForDisplay } from './minimaxTts';
 import { cleanTextForTtsFish, resolveFishAudioApiKey, stripFishMarkupForDisplay } from './fishAudioTts';
+import { TtsCacheMiss } from './ttsCache';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { supportsElevenLabsAudioTags } from './elevenLabsModels';
 
 export type { TtsResult };
 
 // volumeDb 目前只有电话（CallApp）会传；聊天/约会/语音设计器不传，行为不变。
-type SynthOptions = { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; volumeDb?: number };
+type SynthOptions = { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; cacheOnly?: boolean; volumeDb?: number };
 
 /** 粤语并非三家所有模型都支持；在发起计费请求前给出明确错误。 */
 export const assertTtsLanguageSupported = (
@@ -71,6 +72,25 @@ export async function synthesizeSpeech(
 ): Promise<string> {
   const { url } = await synthesizeSpeechDetailed(text, char, apiConfig, options);
   return url;
+}
+
+/**
+ * 只读本机 TTS 缓存。命中就给出还能播的地址；没有就返回 null，绝不请求服务商。
+ * 电波回放旧录音走这里。缓存没有时，调用方再决定要不要新合成。
+ */
+export async function readCachedSpeechUrl(
+  text: string,
+  char: CharacterProfile,
+  apiConfig: APIConfig,
+  options?: Omit<SynthOptions, 'cacheOnly' | 'skipCache'>,
+): Promise<string | null> {
+  try {
+    const { url } = await synthesizeSpeechDetailed(text, char, apiConfig, { ...options, cacheOnly: true });
+    return url || null;
+  } catch (err) {
+    if (err instanceof TtsCacheMiss || (err as { name?: string })?.name === 'TtsCacheMiss') return null;
+    throw err;
+  }
 }
 
 /**

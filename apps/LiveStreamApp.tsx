@@ -13,7 +13,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { synthesizeSpeech } from '../utils/ttsRouter';
+import { readCachedSpeechUrl, synthesizeSpeech } from '../utils/ttsRouter';
+import { resolveTtsProvider } from '../utils/ttsProvider';
+import { fishTimestampCacheKey, resolveFishCallRefs, synthesizeFishWithTimestamp } from '../utils/fishTimestampTts';
+import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { chooseLiveReplaySource, mergeBeatAudio, type StoredPlay } from '../utils/liveReplayAudio';
+import {
+  acceptRepairedTranslation,
+  alignLiveSpeech,
+  buildLiveTranslationRepairPrompt,
+} from '../utils/liveSpeechPairs';
+import type { SpeechTimeline } from '../utils/callSpeechTimeline';
 import {
   StreamerChannelProfile,
   ViewerPersona,
@@ -33,6 +43,7 @@ import {
   OnAirRealtimeSettings,
   DEFAULT_ONAIR_REALTIME_SETTINGS,
   LivePlatformTheme,
+  LiveVoiceClock,
   STREAM_PRESET_TEMPLATES,
 } from '../utils/liveStreamTypes';
 import {
@@ -197,42 +208,111 @@ const LiveStreamApp: React.FC = () => {
   const [ttsPlayingBeatId, setTtsPlayingBeatId] = useState<string | null>(null);
   const [ttsLoadingBeatId, setTtsLoadingBeatId] = useState<string | null>(null);
   const [voiceEnd, setVoiceEnd] = useState<{ id: string; n: number } | null>(null);
+  const [voiceClock, setVoiceClock] = useState<LiveVoiceClock | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceJobRef = useRef<{ id: string; token: object } | null>(null);
   const screenBackRef = useRef<() => boolean>(() => false);
+
+  const publishVoiceClock = useCallback((audio: HTMLAudioElement, id: string) => {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    setVoiceClock(prev => {
+      if (
+        prev
+        && prev.beatId === id
+        && Math.abs(prev.currentTime - currentTime) < 0.05
+        && Math.abs(prev.duration - duration) < 0.05
+      ) return prev;
+      return { beatId: id, currentTime, duration };
+    });
+  }, []);
 
   const stopVoiceAudio = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    audio.onended = null;
-    audio.onerror = null;
-    audio.pause();
-    audioRef.current = null;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.ontimeupdate = null;
+      audio.onloadedmetadata = null;
+      audio.pause();
+      audioRef.current = null;
+    }
+    setVoiceClock(null);
   }, []);
 
   const playVoiceUrl = useCallback(
-    async (url: string, id: string): Promise<boolean> => {
+    async (url: string, id: string): Promise<StoredPlay> => {
       stopVoiceAudio();
-      if (!url) return false;
+      if (!url) return 'failed';
       const audio = new Audio();
       audioRef.current = audio;
-      audio.onended = () => {
+      const clearThis = () => {
         setTtsPlayingBeatId(prev => (prev === id ? null : prev));
+        setVoiceClock(prev => (prev?.beatId === id ? null : prev));
+      };
+      audio.ontimeupdate = () => {
+        if (audioRef.current !== audio) return;
+        publishVoiceClock(audio, id);
+      };
+      audio.onloadedmetadata = () => {
+        if (audioRef.current !== audio) return;
+        publishVoiceClock(audio, id);
+      };
+      audio.onended = () => {
+        clearThis();
         setVoiceEnd(prev => ({ id, n: (prev?.n ?? 0) + 1 }));
       };
-      audio.onerror = () => setTtsPlayingBeatId(prev => (prev === id ? null : prev));
+      audio.onerror = () => clearThis();
       audio.src = url;
       setTtsPlayingBeatId(id);
+      setVoiceClock({ beatId: id, currentTime: 0, duration: 0 });
       try {
         await audio.play();
-        return true;
-      } catch {
+        return 'played';
+      } catch (err) {
+        const superseded = audioRef.current !== audio;
         if (audioRef.current === audio) audioRef.current = null;
-        setTtsPlayingBeatId(prev => (prev === id ? null : prev));
-        return false;
+        clearThis();
+        if (superseded) return 'superseded';
+        const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+        if (name === 'NotAllowedError') return 'blocked';
+        return 'failed';
       }
     },
-    [stopVoiceAudio],
+    [publishVoiceClock, stopVoiceAudio],
   );
+
+  const seekVoiceSeconds = useCallback((nextSec: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    const raw = Number.isFinite(nextSec) ? nextSec : 0;
+    const clamped = duration > 0 ? Math.max(0, Math.min(duration, raw)) : Math.max(0, raw);
+    try {
+      audio.currentTime = clamped;
+    } catch {
+      return;
+    }
+    setVoiceClock(prev => (
+      prev ? { ...prev, currentTime: audio.currentTime, duration: duration || prev.duration } : prev
+    ));
+  }, []);
+
+  const nudgeVoiceSeconds = useCallback((delta: number) => {
+    const audio = audioRef.current;
+    if (!audio || !Number.isFinite(delta) || delta === 0) return;
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    const raw = (Number.isFinite(audio.currentTime) ? audio.currentTime : 0) + delta;
+    const clamped = duration > 0 ? Math.max(0, Math.min(duration, raw)) : Math.max(0, raw);
+    try {
+      audio.currentTime = clamped;
+    } catch {
+      return;
+    }
+    setVoiceClock(prev => (
+      prev ? { ...prev, currentTime: audio.currentTime, duration: duration || prev.duration } : prev
+    ));
+  }, []);
 
   useEffect(() => {
     return registerBackHandler(() => {
@@ -421,16 +501,23 @@ const LiveStreamApp: React.FC = () => {
   }, [liveSessions]);
 
   const persistBeatAudioUrl = useCallback(
-    async (sessionId: string, beatId: string, audioUrl: string) => {
+    async (
+      sessionId: string,
+      beatId: string,
+      audioUrl: string,
+      speechTimeline?: SpeechTimeline | null,
+    ) => {
       const latest = liveSessionsRef.current.find(session => session.id === sessionId);
       if (!latest) return;
       const target = latest.chunks.flatMap(chunk => chunk.beats).find(beat => beat.id === beatId);
-      if (!target || target.audioUrl === audioUrl) return;
+      if (!target) return;
+      const updatedBeat = mergeBeatAudio(target, audioUrl, speechTimeline);
+      if (updatedBeat === target) return;
       const next: LiveStreamSession = {
         ...latest,
         chunks: latest.chunks.map(chunk => ({
           ...chunk,
-          beats: chunk.beats.map(beat => (beat.id === beatId ? { ...beat, audioUrl } : beat)),
+          beats: chunk.beats.map(beat => (beat.id === beatId ? updatedBeat : beat)),
         })),
       };
       // 先同步 ref，排队的下一句合成就能接着最新版本写，不会互相覆盖缓存地址。
@@ -599,6 +686,80 @@ const LiveStreamApp: React.FC = () => {
 
   // ==================== TTS 语音合成与缓存（点击台词播放，长按菜单重试/下载） ====================
 
+  const buildLiveVoiceChar = useCallback((channel?: StreamerChannelProfile) => {
+    if (!currentChar) return null;
+    const langOverride = channel?.voiceConfig?.language;
+    const voiceIdOverride = channel?.voiceConfig?.overrideVoiceId;
+    return {
+      ...currentChar,
+      voiceProfile: {
+        ...(currentChar.voiceProfile || {}),
+        ...(voiceIdOverride ? { voiceId: voiceIdOverride } : {}),
+        ...(langOverride ? { languageBoost: langOverride } : {}),
+      },
+    };
+  }, [currentChar]);
+
+  const liveFishSpeed = (speed: number | undefined): number => (
+    typeof speed === 'number' && speed > 0 ? speed : 0.9
+  );
+
+  const synthesizeLiveBeatAudio = useCallback(
+    async (
+      text: string,
+      channel: StreamerChannelProfile | undefined,
+      skipCache?: boolean,
+    ): Promise<{ url: string; timeline: SpeechTimeline | null }> => {
+      const tempChar = buildLiveVoiceChar(channel);
+      if (!tempChar) throw new Error('没有角色');
+      if (resolveTtsProvider(apiConfig) === 'fishaudio') {
+        const refs = resolveFishCallRefs(apiConfig, tempChar);
+        if (refs.proxy && refs.apiKey && refs.referenceId) {
+          const speed = liveFishSpeed(tempChar.voiceProfile?.speed);
+          const stamped = await synthesizeFishWithTimestamp({
+            text,
+            referenceId: refs.referenceId,
+            apiKey: refs.apiKey,
+            model: refs.model,
+            proxyBase: refs.proxy,
+            speed,
+          });
+          if (stamped?.url && stamped.timeline?.segments?.length) {
+            if (!skipCache && stamped.blob) {
+              const key = fishTimestampCacheKey({
+                text,
+                referenceId: refs.referenceId,
+                model: refs.model,
+                speed,
+              });
+              if (key) saveCachedTts(key, stamped.blob).catch(() => { /* 缓存失败仍可先播这一次 */ });
+            }
+            return { url: stamped.url, timeline: stamped.timeline };
+          }
+        }
+      }
+      const url = await synthesizeSpeech(text, tempChar, apiConfig, { skipCache });
+      return { url, timeline: null };
+    },
+    [apiConfig, buildLiveVoiceChar],
+  );
+
+  const readLiveTimestampCache = useCallback(async (text: string, channel?: StreamerChannelProfile) => {
+    const tempChar = buildLiveVoiceChar(channel);
+    if (!tempChar || resolveTtsProvider(apiConfig) !== 'fishaudio') return null;
+    const refs = resolveFishCallRefs(apiConfig, tempChar);
+    if (!refs.referenceId) return null;
+    const key = fishTimestampCacheKey({
+      text,
+      referenceId: refs.referenceId,
+      model: refs.model,
+      speed: liveFishSpeed(tempChar.voiceProfile?.speed),
+    });
+    if (!key) return null;
+    const blob = await getCachedTts(key);
+    return blob ? URL.createObjectURL(blob) : null;
+  }, [apiConfig, buildLiveVoiceChar]);
+
   const speakTextWithChannelConfig = useCallback(
     async (
       id: string,
@@ -607,53 +768,86 @@ const LiveStreamApp: React.FC = () => {
       options?: {
         skipCache?: boolean;
         cachedUrl?: string;
-        onAudioUrlReady?: (url: string) => void;
+        onAudioUrlReady?: (url: string, timeline?: SpeechTimeline | null) => void;
       },
     ) => {
       if (!currentChar || !text.trim()) return;
       if (ttsPlayingBeatId === id && !options?.skipCache) {
         stopVoiceAudio();
         setTtsPlayingBeatId(null);
+        if (voiceJobRef.current?.id === id) voiceJobRef.current = null;
         return;
       }
-      if (ttsLoadingBeatId === id) return;
-
-      if (!options?.skipCache && options?.cachedUrl) {
-        const cachedOk = await playVoiceUrl(options.cachedUrl, id);
-        if (cachedOk) return;
-      }
-
-      setTtsLoadingBeatId(id);
+      if ((ttsLoadingBeatId === id || voiceJobRef.current?.id === id) && !options?.skipCache) return;
+      const token = {};
+      voiceJobRef.current = { id, token };
+      const stillThisJob = () => voiceJobRef.current?.token === token;
       try {
         const ch = overrideChannel || activeChannel;
-        const langOverride = ch?.voiceConfig?.language;
-        const voiceIdOverride = ch?.voiceConfig?.overrideVoiceId;
+        const tempChar = buildLiveVoiceChar(ch);
+        if (!tempChar) return;
 
-        const tempChar = {
-          ...currentChar,
-          voiceProfile: {
-            ...(currentChar.voiceProfile || {}),
-            ...(voiceIdOverride ? { voiceId: voiceIdOverride } : {}),
-            ...(langOverride ? { languageBoost: langOverride } : {}),
-          },
-        };
+        let storedPlay: StoredPlay = 'none';
+        if (!options?.skipCache && options?.cachedUrl) {
+          storedPlay = await playVoiceUrl(options.cachedUrl, id);
+          if (!stillThisJob()) return;
+        }
 
-        const audioUrl = await synthesizeSpeech(text, tempChar, apiConfig, {
-          skipCache: options?.skipCache,
+        let timestampUrl: string | null = null;
+        let speechUrl: string | null = null;
+        if (!options?.skipCache && storedPlay !== 'played' && storedPlay !== 'blocked' && storedPlay !== 'superseded') {
+          timestampUrl = await readLiveTimestampCache(text, ch);
+          if (!stillThisJob()) return;
+          speechUrl = await readCachedSpeechUrl(text, tempChar, apiConfig);
+          if (!stillThisJob()) return;
+        }
+
+        let source = chooseLiveReplaySource({
+          skipCache: Boolean(options?.skipCache),
+          storedPlay,
+          timestampCacheHit: Boolean(timestampUrl),
+          speechCacheHit: Boolean(speechUrl),
         });
-        options?.onAudioUrlReady?.(audioUrl);
+        if (source === 'stored' || source === 'blocked') return;
+
+        const playSaved = async (url: string, timeline: SpeechTimeline | null | undefined) => {
+          options?.onAudioUrlReady?.(url, timeline);
+          return playVoiceUrl(url, id);
+        };
+        if (source === 'timestamp-cache' && timestampUrl) {
+          const played = await playSaved(timestampUrl, undefined);
+          if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
+          source = speechUrl ? 'speech-cache' : 'synthesize';
+        }
+        if (source === 'speech-cache' && speechUrl) {
+          const played = await playSaved(speechUrl, null);
+          if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
+        }
+
+        if (!stillThisJob()) return;
+        setTtsLoadingBeatId(id);
+        const made = await synthesizeLiveBeatAudio(text, ch, options?.skipCache);
+        options?.onAudioUrlReady?.(made.url, made.timeline);
+        if (!stillThisJob()) {
+          setTtsLoadingBeatId(prev => (prev === id ? null : prev));
+          return;
+        }
         setTtsLoadingBeatId(null);
-        const played = await playVoiceUrl(audioUrl, id);
-        if (!played) {
+        const played = await playVoiceUrl(made.url, id);
+        if (played !== 'played' && played !== 'superseded') {
           addToast('这句声音没播出来。再点一次「听这句」，或到「这一段的操作」里重新合成。', 'error');
         }
       } catch (err: any) {
+        if (!stillThisJob()) return;
         setTtsLoadingBeatId(null);
         setTtsPlayingBeatId(null);
+        setVoiceClock(null);
         addToast(err?.message || '语音合成失败，请检查设置里的语音', 'error');
+      } finally {
+        if (voiceJobRef.current?.token === token) voiceJobRef.current = null;
       }
     },
-    [currentChar, activeChannel, apiConfig, ttsPlayingBeatId, ttsLoadingBeatId, addToast, playVoiceUrl, stopVoiceAudio],
+    [currentChar, activeChannel, apiConfig, ttsPlayingBeatId, ttsLoadingBeatId, addToast, playVoiceUrl, stopVoiceAudio, synthesizeLiveBeatAudio, buildLiveVoiceChar, readLiveTimestampCache],
   );
 
   const preGenerateBeatVoice = useCallback(
@@ -663,23 +857,13 @@ const LiveStreamApp: React.FC = () => {
       const latestBeat = latest?.chunks.flatMap(chunk => chunk.beats).find(item => item.id === beat.id);
       if (!latestBeat || latestBeat.audioUrl || latestBeat.speechOriginal !== beat.speechOriginal) return;
       try {
-        const langOverride = activeChannel?.voiceConfig?.language;
-        const voiceIdOverride = activeChannel?.voiceConfig?.overrideVoiceId;
-        const tempChar = {
-          ...currentChar,
-          voiceProfile: {
-            ...(currentChar.voiceProfile || {}),
-            ...(voiceIdOverride ? { voiceId: voiceIdOverride } : {}),
-            ...(langOverride ? { languageBoost: langOverride } : {}),
-          },
-        };
-        const audioUrl = await synthesizeSpeech(beat.speechOriginal, tempChar, apiConfig);
-        await persistBeatAudioUrl(sessionId, beat.id, audioUrl);
+        const made = await synthesizeLiveBeatAudio(beat.speechOriginal, activeChannel);
+        await persistBeatAudioUrl(sessionId, beat.id, made.url, made.timeline);
       } catch {
         // 静默预生成失败不打断直播；用户仍可点当前台词即时合成。
       }
     },
-    [currentChar, activeChannel, apiConfig, persistBeatAudioUrl],
+    [currentChar, activeChannel, persistBeatAudioUrl, synthesizeLiveBeatAudio],
   );
 
   // ==================== 1. Char 直播间核心流程 ====================
@@ -789,6 +973,35 @@ const LiveStreamApp: React.FC = () => {
 
   // ==================== 1. Char 直播间核心流程 ====================
 
+  const repairLiveSpeechTranslations = async (
+    beats: LiveBeat[],
+    channel: StreamerChannelProfile,
+  ): Promise<LiveBeat[]> => {
+    const lang = (channel.voiceConfig?.language || '').trim();
+    if (!currentChar || !lang || lang === 'zh') return beats;
+    const next = beats.slice();
+    for (let i = 0; i < next.length; i += 1) {
+      const beat = next[i];
+      const spoken = beat.speechOriginal || '';
+      const zh = beat.speechTranslated || '';
+      if (!alignLiveSpeech(spoken, zh).needsRepair) continue;
+      try {
+        const raw = await callMainStreamerLlm({
+          apiConfig,
+          char: currentChar,
+          messages: [{ role: 'user', content: buildLiveTranslationRepairPrompt(spoken, zh) }],
+          temperature: 0.2,
+          purpose: '对齐直播台词中文',
+        });
+        const accepted = acceptRepairedTranslation(spoken, zh, raw);
+        if (accepted !== zh) next[i] = { ...beat, speechTranslated: accepted };
+      } catch {
+        // 这一拍中文对不齐就留原文。嘴里的话照常按秒换，中文整段跟着显示。
+      }
+    }
+    return next;
+  };
+
   const runGenerateLiveChunk = async (
     session: LiveStreamSession,
     channel: StreamerChannelProfile,
@@ -850,13 +1063,14 @@ const LiveStreamApp: React.FC = () => {
         ...viewerPersonas.map(p => p.name),
       ].filter(Boolean);
 
-      const beats = parseLiveBeatsResponse(
+      const parsedBeats = parseLiveBeatsResponse(
         rawText,
         session.id,
         targetChunkIndex,
         queuedInputs,
         forbiddenViewerNames,
       );
+      const beats = await repairLiveSpeechTranslations(parsedBeats, channel);
 
       // 旧场次可能没有这两个字段（重建的场次、老数据），给个保底值再累加
       let peak = session.peakViewerCount ?? session.viewerCount;
@@ -1237,16 +1451,27 @@ const LiveStreamApp: React.FC = () => {
     const targetChunk = activeLiveSession.chunks.find(c => c.id === chunkId);
     if (!targetChunk) return;
 
-    const nextBeats = targetChunk.beats.map(b =>
-      b.id === beatId
-        ? {
-            ...b,
-            screen: nextScreen,
-            speechOriginal: nextSpeechOriginal,
-            speechTranslated: nextSpeechTranslated,
-          }
-        : b,
+    const speechChanged = targetChunk.beats.some(
+      b => b.id === beatId && (b.speechOriginal || '') !== (nextSpeechOriginal || ''),
     );
+    const nextBeats = targetChunk.beats.map(b => {
+      if (b.id !== beatId) return b;
+      const nextBeat: LiveBeat = {
+        ...b,
+        screen: nextScreen,
+        speechOriginal: nextSpeechOriginal,
+        speechTranslated: nextSpeechTranslated,
+      };
+      if ((b.speechOriginal || '') !== (nextSpeechOriginal || '')) {
+        delete nextBeat.audioUrl;
+        delete nextBeat.speechTimeline;
+      }
+      return nextBeat;
+    });
+    if (speechChanged && ttsPlayingBeatId === beatId) {
+      stopVoiceAudio();
+      setTtsPlayingBeatId(null);
+    }
 
     let dbId = targetChunk.dbMessageId;
     try {
@@ -1543,6 +1768,9 @@ const LiveStreamApp: React.FC = () => {
           isSummarizing={isSummarizing}
           ttsPlayingBeatId={ttsPlayingBeatId}
           ttsLoadingBeatId={ttsLoadingBeatId}
+          voiceClock={voiceClock}
+          onSeekVoice={seekVoiceSeconds}
+          onNudgeVoice={nudgeVoiceSeconds}
           voiceEnd={voiceEnd}
           onBindBack={fn => {
             screenBackRef.current = fn;
@@ -1566,7 +1794,7 @@ const LiveStreamApp: React.FC = () => {
             void speakTextWithChannelConfig(beat.id, beat.speechOriginal, activeChannel, {
               skipCache: opts?.skipCache,
               cachedUrl: beat.audioUrl,
-              onAudioUrlReady: url => void persistBeatAudioUrl(activeLiveSession.id, beat.id, url),
+              onAudioUrlReady: (url, timeline) => void persistBeatAudioUrl(activeLiveSession.id, beat.id, url, timeline),
             })
           }
           onPreGenerateBeatVoice={preGenerateBeatVoice}

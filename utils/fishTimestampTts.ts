@@ -15,6 +15,7 @@
 
 import { resolveFishAudioApiKey, normalizeFishReferenceId, cleanTextForTtsFish } from './fishAudioTts';
 import { getCallTtsTimestampProxy } from './callTtsProxy';
+import { hashTtsParams } from './ttsCache';
 import type { SpeechTimeline, SpeechTimelineSegment } from './callSpeechTimeline';
 
 const FISH_TS_TIMEOUT_MS = 85_000;
@@ -42,7 +43,41 @@ export const extractSseData = (block: string): string => {
   return parts.join('\n');
 };
 
-export type FishTimestampResult = { url: string; timeline: SpeechTimeline };
+export type FishTimestampResult = { url: string; blob: Blob; timeline: SpeechTimeline };
+
+/**
+ * 时间轴录音自己的缓存键。不写进普通鱼声那把键，免得聊天里同一句话播到这一段。
+ * 文本会先洗一遍，调用方传嘴里的原文即可。
+ */
+export function fishTimestampCacheKey(params: {
+  text: string;
+  referenceId: string;
+  model: string;
+  speed?: number;
+  volumeDb?: number;
+}): string | null {
+  const spoken = cleanTextForTtsFish(params.text);
+  const referenceId = normalizeFishReferenceId(params.referenceId);
+  const model = (params.model || '').trim();
+  if (!spoken || !referenceId || !model) return null;
+  const prosody: Record<string, number> = {};
+  if (typeof params.speed === 'number' && params.speed > 0) {
+    prosody.speed = Math.max(0.5, Math.min(2, params.speed));
+  }
+  if (typeof params.volumeDb === 'number' && Number.isFinite(params.volumeDb) && params.volumeDb > 0) {
+    prosody.volume = Math.max(0, Math.min(12, params.volumeDb));
+  }
+  return hashTtsParams({
+    kind: 'fishaudio-tts-timestamp',
+    text: spoken,
+    model,
+    reference_id: referenceId,
+    format: 'mp3',
+    normalize: true,
+    latency: 'normal',
+    prosody: Object.keys(prosody).length ? prosody : null,
+  });
+}
 
 /** 归并各 chunk 的 alignment 快照：同 chunk_seq 取最新、偏移加到全局时间上。 */
 export function mergeTimelineSnapshots(
@@ -174,7 +209,7 @@ export async function synthesizeFishWithTimestamp(params: {
     let at = 0;
     for (const u of decoded) { merged.set(u, at); at += u.length; }
     const blob = new Blob([merged], { type: 'audio/mpeg' });
-    return { url: URL.createObjectURL(blob), timeline: { segments, durationSec } };
+    return { url: URL.createObjectURL(blob), blob, timeline: { segments, durationSec } };
   } catch (e) {
     console.warn('[fish-ts] 时间轴合成失败，退回普通合成:', (e as any)?.message || e);
     return null;

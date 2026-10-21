@@ -13,7 +13,7 @@
  */
 import { CharacterProfile, APIConfig } from '../types';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
+import { hashTtsParams, getCachedTts, saveCachedTts, TtsCacheMiss } from './ttsCache';
 import { normalizeApiKey } from './minimaxApiKey';
 import { getProxyWorkerUrl } from './proxyWorker';
 import { fetchViaProxy, workerProxyUrl } from './proxyFallback';
@@ -438,7 +438,7 @@ export async function synthesizeSpeechFishDetailed(
   // volumeDb：**只有电话这一岔会传**，聊天语音条 / 约会 / 语音设计器都不传。
   // 不传 = payload 里根本没有 volume 字段 = 行为与改动前逐字节一致。
   // （鱼声 prosody.volume 单位是 dB；不传时我们连字段都不写。）
-  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; volumeDb?: number },
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; cacheOnly?: boolean; volumeDb?: number },
 ): Promise<TtsResult> {
   const apiKey = resolveFishAudioApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少鱼声 Fish Audio API Key');
@@ -511,6 +511,7 @@ export async function synthesizeSpeechFishDetailed(
       return { url: URL.createObjectURL(cached), blob: cached };
     }
   }
+  if (options?.cacheOnly) throw new TtsCacheMiss();
 
   const blob = await fishFetchAudio(payload, apiKey, model);
   if (!options?.skipCache) saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });

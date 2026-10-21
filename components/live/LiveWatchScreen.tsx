@@ -21,6 +21,7 @@ import {
   StreamGiftOption,
   LivePlatformTheme,
   LiveGuidance,
+  LiveVoiceClock,
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
 import {
@@ -40,6 +41,14 @@ import {
   clockFromIndex,
 } from './platformChrome';
 import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
+import {
+  alignLiveSpeech,
+  pairCursorAfterClock,
+  spokenLineIndexAt,
+  spokenLineStartSec,
+  visibleLivePair,
+} from '../../utils/liveSpeechPairs';
+import { LiveSpeechPair } from './LiveSpeechPair';
 
 type TimelineItem = { chunkId: string; chunkIndex: number; beat: LiveBeat; globalIdx: number };
 
@@ -56,6 +65,11 @@ export function LiveWatchScreen(props: {
   isSummarizing: boolean;
   ttsPlayingBeatId: string | null;
   ttsLoadingBeatId: string | null;
+  voiceClock: LiveVoiceClock | null;
+  onSeekVoice: (seconds: number) => void;
+  onNudgeVoice: (deltaSec: number) => void;
+  followVoiceSentences: boolean;
+  setFollowVoiceSentences: React.Dispatch<React.SetStateAction<boolean>>;
   isFullscreen: boolean;
   setIsFullscreen: (v: boolean) => void;
   showPlayerControls: boolean;
@@ -248,6 +262,8 @@ export function LiveWatchScreen(props: {
       return next;
     });
 
+  const [pairCursor, setPairCursor] = useState(0);
+  const [cursorBeatId, setCursorBeatId] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<'chat' | 'script' | 'summary'>('chat');
   const activeTab = props.lowerTab === 'script' && subTab === 'chat' ? 'script' : subTab;
   const switchTab = (next: 'chat' | 'script' | 'summary') => {
@@ -265,6 +281,43 @@ export function LiveWatchScreen(props: {
   const trans = beat?.speechTranslated
     ? beat.speechTranslated.replace(/^译[：:]\s*/, '').trim()
     : '';
+  const spokenFull = beat?.speechOriginal || '';
+  const pairAlignment = alignLiveSpeech(spokenFull, trans);
+  const clockForThis = props.voiceClock && props.voiceClock.beatId === beat?.id ? props.voiceClock : null;
+  const playingThis = Boolean(beat && props.ttsPlayingBeatId === beat.id && clockForThis);
+  const followedIndex = props.followVoiceSentences && playingThis
+    ? spokenLineIndexAt(
+        pairAlignment.spokenLines,
+        beat?.speechTimeline,
+        clockForThis!.currentTime,
+        clockForThis!.duration || beat?.speechTimeline?.durationSec,
+      )
+    : null;
+  const beatKey = beat?.id || '';
+  const beatChanged = beatKey !== cursorBeatId;
+  const heldCursor = pairCursorAfterClock(pairCursor, followedIndex, beatChanged);
+  if (beatChanged) setCursorBeatId(beatKey);
+  if (heldCursor !== pairCursor) setPairCursor(heldCursor);
+  const pairIndex = pairAlignment.spokenLines.length
+    ? Math.max(0, Math.min(pairAlignment.spokenLines.length - 1, followedIndex != null ? followedIndex : heldCursor))
+    : 0;
+  const pair = visibleLivePair(spokenFull, trans, pairIndex);
+  const goPair = (dir: -1 | 1) => {
+    const count = pairAlignment.spokenLines.length;
+    const next = pairIndex + dir;
+    if (!beat || next < 0 || next >= count) return;
+    if (props.followVoiceSentences && playingThis) {
+      const start = spokenLineStartSec(
+        pairAlignment.spokenLines,
+        next,
+        beat.speechTimeline,
+        clockForThis?.duration || beat.speechTimeline?.durationSec,
+      );
+      if (start != null) props.onSeekVoice(start);
+      return;
+    }
+    setPairCursor(next);
+  };
   const maxIdx = Math.max(0, allTimelineBeats.length - 1);
 
   // 量高逐档收缩：先按满字号排版，塞不下就 3% 一步往下收，最低收到 floor
@@ -296,7 +349,7 @@ export function LiveWatchScreen(props: {
     const ro = new ResizeObserver(fit);
     ro.observe(box);
     return () => ro.disconnect();
-  }, [beat?.screen, beat?.speechOriginal, trans, props.isFullscreen, props.showTranslation]);
+  }, [beat?.screen, pair.spokenLine, pair.translatedLine, props.isFullscreen, props.showTranslation]);
 
   // 台词带同样要收：中日双语同时灌进来时，先降一档字号，名额固定、绝不挤压聊天区
   React.useLayoutEffect(() => {
@@ -308,7 +361,7 @@ export function LiveWatchScreen(props: {
     const ro = new ResizeObserver(fit);
     ro.observe(box);
     return () => ro.disconnect();
-  }, [beat?.speechOriginal, trans, props.showTranslation, props.isFullscreen]);
+  }, [pair.spokenLine, pair.translatedLine, props.showTranslation, props.isFullscreen]);
 
   const font = isNico
     ? '"Yu Gothic UI", "Hiragino Sans", Meiryo, "PingFang SC", "Noto Sans SC", sans-serif'
@@ -399,7 +452,7 @@ export function LiveWatchScreen(props: {
 
   // 自适应字号：小窗台词放在画面外的白带上，全屏台词放在气泡里，都是长文自动降档、不滚不截
   const screenText = beat?.screen || (props.isGenerating ? '主播正在镜头前反应…' : '');
-  const speechText = beat?.speechOriginal || '';
+  const speechText = pair.spokenLine || beat?.speechOriginal || '';
   const pickSize = (len: number, tiers: Array<[number, number]>) => {
     for (const [limit, size] of tiers) if (len <= limit) return size;
     return tiers[tiers.length - 1][1];
@@ -681,41 +734,38 @@ export function LiveWatchScreen(props: {
           className="w-[2px] shrink-0 rounded-full transition-colors"
           style={{ backgroundColor: voiceOn ? accent : '#d7dbe1' }}
         />
-        <div className="min-w-0 flex-1">
-          {speechText ? (
-            <p
-              className="break-words"
-              style={{
-                fontSize: `calc(${speechFontSize}px * var(--k))`,
-                lineHeight: 1.46,
-                fontWeight: 800,
-                letterSpacing: '-0.012em',
-                color: voiceOn ? accent : ink,
-                transition: 'color 200ms',
-              }}
-            >
-              {speechText}
-            </p>
-          ) : (
+        {speechText ? (
+          <LiveSpeechPair
+            spokenLine={pair.spokenLine || speechText}
+            translatedLine={pair.translatedLine}
+            showTranslation={props.showTranslation}
+            showButtons={pair.count > 1}
+            canPrev={pairIndex > 0}
+            canNext={pairIndex < pair.count - 1}
+            onPrev={() => goPair(-1)}
+            onNext={() => goPair(1)}
+            spokenStyle={{
+              fontSize: `calc(${speechFontSize}px * var(--k))`,
+              lineHeight: 1.46,
+              fontWeight: 800,
+              letterSpacing: '-0.012em',
+              color: voiceOn ? accent : ink,
+              transition: 'color 200ms',
+            }}
+            translatedStyle={{
+              fontSize: `calc(${transFontSize}px * var(--k))`,
+              lineHeight: 1.45,
+              fontWeight: 600,
+              color: isNico ? '#005eb8' : '#075985',
+            }}
+          />
+        ) : (
+          <div className="min-w-0 flex-1">
             <p className="text-[13px] font-semibold" style={{ color: '#a1a1aa' }}>
               {props.isGenerating ? '正在准备下一句…' : '这一拍还没有台词'}
             </p>
-          )}
-
-          {props.showTranslation && trans && trans !== speechText && (
-            <p
-              className="break-words mt-[3px]"
-              style={{
-                fontSize: `calc(${transFontSize}px * var(--k))`,
-                lineHeight: 1.45,
-                fontWeight: 600,
-                color: isNico ? '#005eb8' : '#075985',
-              }}
-            >
-              {trans}
-            </p>
-          )}
-        </div>
+          </div>
+        )}
 
         {(voiceOn || voiceBusy) && (
           <span className="shrink-0 self-end pb-1">
@@ -911,9 +961,16 @@ export function LiveWatchScreen(props: {
               style={{ backgroundColor: 'rgba(255,255,255,0.97)' }}
             />
             <div ref={stackInnerRef}>
-              <p
-                className="relative break-words"
-                style={{
+              <LiveSpeechPair
+                spokenLine={pair.spokenLine || speechText}
+                translatedLine={pair.translatedLine}
+                showTranslation={props.showTranslation}
+                showButtons={pair.count > 1}
+                canPrev={pairIndex > 0}
+                canNext={pairIndex < pair.count - 1}
+                onPrev={() => goPair(-1)}
+                onNext={() => goPair(1)}
+                spokenStyle={{
                   fontSize: `calc(${speechFontSize}px * var(--k))`,
                   lineHeight: 1.46,
                   fontWeight: 800,
@@ -921,22 +978,13 @@ export function LiveWatchScreen(props: {
                   color: voiceOn ? accent : '#0f0f0f',
                   transition: 'color 200ms',
                 }}
-              >
-                {speechText}
-              </p>
-              {props.showTranslation && trans && trans !== speechText && (
-                <p
-                  className="relative break-words mt-[3px]"
-                  style={{
-                    fontSize: `calc(${transFontSize}px * var(--k))`,
-                    lineHeight: 1.45,
-                    fontWeight: 600,
-                    color: isNico ? '#005eb8' : '#075985',
-                  }}
-                >
-                  {trans}
-                </p>
-              )}
+                translatedStyle={{
+                  fontSize: `calc(${transFontSize}px * var(--k))`,
+                  lineHeight: 1.45,
+                  fontWeight: 600,
+                  color: isNico ? '#005eb8' : '#075985',
+                }}
+              />
             </div>
           </div>
         )}
@@ -1468,6 +1516,11 @@ export function LiveWatchScreen(props: {
               onToggle={() => props.setAutoPlayStep(v => !v)}
             />
             <SettingToggleRow
+              title="字跟着录音换"
+              checked={props.followVoiceSentences}
+              onToggle={() => props.setFollowVoiceSentences(v => !v)}
+            />
+            <SettingToggleRow
               title="台词出现后静默预生成语音"
               checked={props.preGenerateVoice}
               onToggle={props.onTogglePreGenerateVoice}
@@ -1607,6 +1660,11 @@ export function LiveWatchScreen(props: {
         target={props.actionSheetTarget}
         ttsLoading={Boolean(props.ttsLoadingBeatId)}
         onClose={() => props.setActionSheetTarget(null)}
+        onNudgeVoice={props.onNudgeVoice}
+        voiceSeekEnabled={Boolean(
+          props.actionSheetTarget?.beatId
+          && props.ttsPlayingBeatId === props.actionSheetTarget.beatId,
+        )}
       />
     </div>
   );

@@ -3,6 +3,8 @@
  * 支持双套真实视频平台 UI 主题：YouTube 明亮现代风 ('youtube') / NicoNico 经典弹幕风 ('niconico')
  */
 
+import type { SpeechTimeline } from './callSpeechTimeline';
+
 export type LivePlatformTheme = 'youtube' | 'niconico';
 
 /** 频道身份模式：公开本尊号 / 匿名小号马甲 / 虚拟皮套人(VTuber) */
@@ -131,11 +133,20 @@ export interface LiveBeat {
   emotion?: string;
   /** 已经合成好的 TTS 语音 URL（支持直接点击播放与下载音频） */
   audioUrl?: string;
+  /** 鱼声带回的逐字秒数。没有时播放按句长估算。只属于这一拍的嘴里录音。 */
+  speechTimeline?: SpeechTimeline | null;
   /** 本拍同步飘过的弹幕列表 */
   danmaku: LiveDanmakuItem[];
   /** 在线人数微调变化 */
   viewerDelta?: number;
 }
+
+/** 正在播的这一条录音走到了第几秒。只描述当前这一次播放，不写入别的拍。 */
+export type LiveVoiceClock = {
+  beatId: string;
+  currentTime: number;
+  duration: number;
+};
 
 /** 直播中的一段切片（Chunk，每次请求 LLM 生成 4~5 个连续 Beat） */
 export interface LiveChunk {

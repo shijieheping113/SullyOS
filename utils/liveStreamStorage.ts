@@ -173,6 +173,10 @@ function normalizeLiveSessionRecord(raw: any): LiveStreamSession {
               speechOriginal: b?.speechOriginal || '',
               speechTranslated: b?.speechTranslated || '',
               audioUrl: b?.audioUrl || b?.ttsAudioUrl || undefined,
+              speechTimeline:
+                b?.speechTimeline && Array.isArray(b.speechTimeline.segments) && b.speechTimeline.segments.length
+                  ? b.speechTimeline
+                  : undefined,
               danmaku: Array.isArray(b?.danmaku) ? b.danmaku : [],
             }))
           : [],

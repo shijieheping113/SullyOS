@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractSseData, mergeTimelineSnapshots, b64ToBytes } from './fishTimestampTts';
+import { extractSseData, mergeTimelineSnapshots, b64ToBytes, fishTimestampCacheKey } from './fishTimestampTts';
 
 describe('extractSseData', () => {
     it('去掉 "data:" 前缀与其后一个空格', () => {
@@ -74,4 +74,39 @@ describe('mergeTimelineSnapshots', () => {
     it('空输入 → 空结果（调用方据此退回估算）', () => {
         expect(mergeTimelineSnapshots([]).segments).toEqual([]);
     });
+});
+
+describe('fishTimestampCacheKey', () => {
+  it('same mouth line and voice keep one key', () => {
+    const first = fishTimestampCacheKey({
+      text: 'Wait, really? That\'s insane.',
+      referenceId: 'a'.repeat(32),
+      model: 's2.1-pro',
+      speed: 0.9,
+    });
+    const second = fishTimestampCacheKey({
+      text: 'Wait, really? That\'s insane.',
+      referenceId: 'a'.repeat(32),
+      model: 's2.1-pro',
+      speed: 0.9,
+    });
+    expect(first).toBe(second);
+    expect(first).toBeTruthy();
+  });
+
+  it('a different line does not reuse the key', () => {
+    const spoken = fishTimestampCacheKey({
+      text: 'Wait, really? That\'s insane.',
+      referenceId: 'a'.repeat(32),
+      model: 's2.1-pro',
+      speed: 0.9,
+    });
+    const other = fishTimestampCacheKey({
+      text: 'Hello. How are you?',
+      referenceId: 'a'.repeat(32),
+      model: 's2.1-pro',
+      speed: 0.9,
+    });
+    expect(spoken).not.toBe(other);
+  });
 });

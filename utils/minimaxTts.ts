@@ -4,7 +4,7 @@
 import { CharacterProfile, APIConfig } from '../types';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { minimaxFetch } from './minimaxEndpoint';
-import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
+import { hashTtsParams, getCachedTts, saveCachedTts, TtsCacheMiss } from './ttsCache';
 import { normalizeVoiceTags } from './sanitize';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
@@ -474,7 +474,7 @@ export async function synthesizeSpeechDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean }
+  options?: { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; cacheOnly?: boolean }
 ): Promise<TtsResult> {
   const apiKey = resolveMiniMaxApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 MiniMax API Key');
@@ -499,6 +499,7 @@ export async function synthesizeSpeechDetailed(
       return { url: URL.createObjectURL(cached), blob: cached };
     }
   }
+  if (options?.cacheOnly) throw new TtsCacheMiss();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

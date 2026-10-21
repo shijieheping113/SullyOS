@@ -14,6 +14,7 @@ import {
   StreamGiftOption,
   LivePlatformTheme,
   LiveGuidance,
+  LiveVoiceClock,
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
 import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
@@ -25,6 +26,7 @@ import {
 import { processImageToBlob } from '../../utils/file';
 import { putImageBlobDeduped } from '../../utils/blobRef';
 import { BeatActionSheetTarget } from './LiveSharedWidgets';
+import { LIVE_SILENT_BEAT_HOLD_MS, nextIndexAfterSilentBeat } from '../../utils/liveSpeechPairs';
 import { LiveWatchScreen } from './LiveWatchScreen';
 
 /** 直播间播放设置：记住用户上次拨过的开关，回到直播间不再重置。 */
@@ -33,6 +35,7 @@ type LiveRoomSettings = {
   showTranslation: boolean;
   autoPlayStep: boolean;
   immediateReplyOnSend: boolean;
+  followVoiceSentences: boolean;
 };
 const LIVE_ROOM_SETTINGS_KEY = 'live_room_settings_v1';
 const loadLiveRoomSettings = (): Partial<LiveRoomSettings> => {
@@ -65,6 +68,9 @@ interface LiveRoomViewProps {
   isSummarizing: boolean;
   ttsPlayingBeatId: string | null;
   ttsLoadingBeatId: string | null;
+  voiceClock: LiveVoiceClock | null;
+  onSeekVoice: (seconds: number) => void;
+  onNudgeVoice: (deltaSec: number) => void;
   voiceEnd: { id: string; n: number } | null;
   onBindBack: (fn: () => boolean) => void;
   onChangePlatformTheme: (theme: LivePlatformTheme) => void;
@@ -119,6 +125,9 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   isSummarizing,
   ttsPlayingBeatId,
   ttsLoadingBeatId,
+  voiceClock,
+  onSeekVoice,
+  onNudgeVoice,
   voiceEnd,
   onBindBack,
   onChangePlatformTheme,
@@ -169,6 +178,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [activeBottomDrawer, setActiveBottomDrawer] = useState<'none' | 'sc' | 'gift'>('none');
   const [selectedScTierIdx, setSelectedScTierIdx] = useState<number>(0);
   const [immediateReplyOnSend, setImmediateReplyOnSend] = useState(savedRoomSettings.immediateReplyOnSend ?? true);
+  const [followVoiceSentences, setFollowVoiceSentences] = useState(savedRoomSettings.followVoiceSentences ?? false);
 
   // 首次挂载不算用户操作，之后每次改动才写回偏好
   const roomSettingsReadyRef = useRef(false);
@@ -177,8 +187,14 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       roomSettingsReadyRef.current = true;
       return;
     }
-    saveLiveRoomSettings({ showDanmakuOverlay, showTranslation, autoPlayStep, immediateReplyOnSend });
-  }, [showDanmakuOverlay, showTranslation, autoPlayStep, immediateReplyOnSend]);
+    saveLiveRoomSettings({
+      showDanmakuOverlay,
+      showTranslation,
+      autoPlayStep,
+      immediateReplyOnSend,
+      followVoiceSentences,
+    });
+  }, [showDanmakuOverlay, showTranslation, autoPlayStep, immediateReplyOnSend, followVoiceSentences]);
 
   // 私聊小手机浮窗状态
   const [showFloatingPhone, setShowFloatingPhone] = useState(false);
@@ -296,6 +312,30 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     if (next.speechOriginal?.trim()) playRef.current(next);
   }, [voiceEnd, autoPlayStep, allTimelineBeats]);
 
+  // 两个开关都开时，没有台词的描写拍停 8 秒再进下一拍。最后一拍停住。
+  const beatsRef = useRef(allTimelineBeats);
+  beatsRef.current = allTimelineBeats;
+  useEffect(() => {
+    const current = allTimelineBeats[currentGlobalBeatIdx];
+    const nextIndex = nextIndexAfterSilentBeat({
+      autoNext: autoPlayStep,
+      follow: followVoiceSentences,
+      index: currentGlobalBeatIdx,
+      count: allTimelineBeats.length,
+      hasSpeech: Boolean(current?.beat.speechOriginal?.trim()),
+    });
+    if (nextIndex == null) return;
+    const from = currentGlobalBeatIdx;
+    const timer = window.setTimeout(() => {
+      const list = beatsRef.current;
+      const nextItem = list[from + 1];
+      if (!nextItem || list[from]?.beat.speechOriginal?.trim()) return;
+      setCurrentGlobalBeatIdx(from + 1);
+      if (nextItem.beat.speechOriginal?.trim()) playRef.current(nextItem.beat);
+    }, LIVE_SILENT_BEAT_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [autoPlayStep, followVoiceSentences, currentGlobalBeatIdx, allTimelineBeats]);
+
   const currentTimelineItem =
     allTimelineBeats[currentGlobalBeatIdx] || allTimelineBeats[allTimelineBeats.length - 1];
   const currentBeat = currentTimelineItem?.beat;
@@ -352,6 +392,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const openBeatMenu = (chunkId: string, beat: LiveBeat, labelPrefix: string) => {
     setActionSheetTarget({
       title: `${labelPrefix} · 分镜操作`,
+      beatId: beat.id,
       screen: beat.screen,
       speechOriginal: beat.speechOriginal,
       speechTranslated: beat.speechTranslated,
@@ -437,6 +478,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       isSummarizing={isSummarizing}
       ttsPlayingBeatId={ttsPlayingBeatId}
       ttsLoadingBeatId={ttsLoadingBeatId}
+      voiceClock={voiceClock}
+      onSeekVoice={onSeekVoice}
+      onNudgeVoice={onNudgeVoice}
+      followVoiceSentences={followVoiceSentences}
+      setFollowVoiceSentences={setFollowVoiceSentences}
       isFullscreen={isFullscreen}
       setIsFullscreen={setIsFullscreen}
       showPlayerControls={showPlayerControls}
