@@ -1196,12 +1196,18 @@ const LiveStreamApp: React.FC = () => {
         ...viewerPersonas.map(p => p.name),
       ].filter(Boolean);
 
+      const priorDanmakuTexts = session.chunks.flatMap(chunk =>
+        chunk.beats.flatMap(beat =>
+          (beat.danmaku || []).flatMap(item => [item.text || '', item.translation || '', item.giftName || '']),
+        ),
+      );
       const parsedBeats = parseLiveBeatsResponse(
         rawText,
         session.id,
         targetChunkIndex,
         queuedInputs,
         forbiddenViewerNames,
+        priorDanmakuTexts,
       );
       const beats = await repairLiveSpeechTranslations(parsedBeats, channel);
 

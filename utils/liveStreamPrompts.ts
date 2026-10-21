@@ -29,7 +29,7 @@ const REAL_STREAMER_VIBE_RULES = `
 2. **去“端着”的真实口语细节（必须高频自然出现）**：
    - **半截话、口癖与思维跳跃**：真人在镜头前说话会有停顿、语气词、说到一半被手头操作打断（如“Wait—刚才说到哪了？”“草，等一下这波——”）。
    - **留白专注拍（允许不开口）**：你这一轮直播里至少有 1 拍专注于手头动作、喝水、调麦克风、盯屏幕操作或憋笑，此时 \`speechOriginal\` 填空字符串 \`""\`，只在 \`screen\` 里写动作、神态与环境声。
-   - **扫视聊天栏的半拍延迟**：主播是忙完手头这一小段动作后，才偏头扫一眼副屏/手机屏幕上的聊天栏，挑有意思的梗、Super Chat（SC）或送礼物的观众念一下回嘴。
+   - **扫视聊天栏的半拍延迟**：主播是忙完手头这一小段动作后，才偏头扫一眼副屏/手机屏幕上的聊天栏，挑有意思的梗、Super Chat（SC）或送礼物的观众念一下回嘴。念出来的必须是已经写在公屏上的那一句原文，不许现编一句观众没发过的话再假装看见了。
 3. **真实聊天栏生态（去“夸夸群”，做嘴碎损友与复读机）**：
    - 聊天栏观众有老会员（Member）、起哄损友（抓主播口误、刷问号 \`???\`、\`LMAO\`、\`草\`、\`www\`）、指令党、纯路人和外国观众。
    - **随直播类型与当拍节奏变调**：弹幕重心紧贴本场题材与当拍画面——竞技/游戏局盯战况、操作与下饭失误；下厨/手作/日常盯具体步骤、物件与小插曲；电台/陪伴/歌回随节奏放缓，聊心事、听歌共鸣或安静打卡；杂谈顺着话头延伸或歪楼，不刷与当前场景脱节的万金油套话。
@@ -113,7 +113,21 @@ export function buildSessionHistoryBlock(session: LiveStreamSession): string {
     }
     const beatLines = c.beats.map((b, bi) => {
       const sp = b.speechTranslated ? `${b.speechOriginal}（${b.speechTranslated}）` : b.speechOriginal;
-      return `  [拍 ${bi + 1}] 画面：${b.screen} ｜ 台词：${sp || '（专注未开口）'}`;
+      const lines = [`  [拍 ${bi + 1}] 画面：${b.screen} ｜ 台词：${sp || '（专注未开口）'}`];
+      (b.danmaku || []).forEach(d => {
+        const body = (d.text || '').trim();
+        if (!body && !d.giftName && !(d.scAmount && d.scAmount > 0)) return;
+        const extra = d.translation && d.translation.trim() && d.translation.trim() !== body
+          ? `（译：${d.translation.trim()}）`
+          : '';
+        const tag = d.scAmount && d.scAmount > 0
+          ? `SC¥${d.scAmount}`
+          : d.giftName
+            ? `礼物${d.giftName}`
+            : '弹幕';
+        lines.push(`    已出现的${tag} ${d.senderName || '观众'}：「${body}」${extra}`);
+      });
+      return lines.join('\n');
     });
     rawLines.push(`【第 ${c.index + 1} 轮 · 原文】\n${beatLines.join('\n')}`);
   });
@@ -188,7 +202,7 @@ export async function buildLiveChunkGenerationMessages(opts: {
   // 2. 待结算的观众互动队列（物理隔离小号真名！）
   const pendingQueue = session.pendingDanmakuQueue || [];
   let audienceInputBlock =
-    '### 本轮期间新收到的观众弹幕与 Super Chat\n（本轮没有指定弹幕，请你按自己的直播节奏往前推进，并自然扫视路人弹幕互动。）';
+    '### 本轮期间新收到的观众弹幕与 Super Chat\n（本轮没有指定弹幕。请按自己的直播节奏往前推进。若要和公屏互动，只能回应你写进本拍 danmaku 的原文，或前情里标着「已出现的弹幕」的原句。禁止在台词里编一条没出现过的观众发言。）';
   if (pendingQueue.length > 0) {
     const items = pendingQueue.map(d => {
       const scPrefix =
@@ -272,7 +286,11 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
   }
 ]
 \`\`\`
-注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等；具体生态随本场直播类型与当拍画面切换，体现不同观众视角，拒绝纯夸夸与五类身份机械排班，观众按客人心态随主播当拍表现给出或热场或施压的反馈）。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！`;
+注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等；具体生态随本场直播类型与当拍画面切换，体现不同观众视角，拒绝纯夸夸与五类身份机械排班，观众按客人心态随主播当拍表现给出或热场或施压的反馈）。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！
+### 互动只能对着已经出现的弹幕（禁止幻觉）
+- 台词里如果要点名、念出或回应某一条观众发言，那句话必须能在下面两处对上原文：本拍 \`danmaku[].text\`（或它的 \`translation\`），以及上方「刚刚刷出」列表 / 前情里「已出现的弹幕」。
+- 先把要互动的那句写进本拍 \`danmaku\`，再在台词里用同一句原文回应。禁止先在台词里编「有人说／刚才刷了／弹幕问」一句观众没发过的话。
+- 不想互动就继续做手头的事，不要为了热闹凭空念弹幕。导演引导不是弹幕，不能被观众念出来。`;
 
   const taskParts: string[] = [progressBlock, boundaryBlock, audienceInputBlock, guidanceBlock, rerollBlock];
   if (includeUserLocation) {
@@ -360,12 +378,63 @@ export async function buildLiveStreamTurnPrompt(opts: {
 
 // ==================== 6. 两层容错解析器 + 物理剔除冒充用户/小号的假弹幕 ====================
 
+function normalizeDanmakuQuote(value?: string): string {
+  return (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[「」"'“”『』。！？!?、，,.\u2026~～]/g, '');
+}
+
+const INVENTED_CHAT_CUE =
+  /有人(?:说|刷|问|写|留言)|刚才(?:有人|那条|那句|弹幕|刷)|刚刚(?:有人|那条|弹幕|刷)|弹幕(?:说|里|上|写着)|公屏(?:上|里)|聊天栏|水友(?:说|刷)|这条弹幕|那条弹幕|コメントで|チャットで|って書いてある|って来てる/;
+
+function quoteMatchesRealDanmaku(quote: string, allowed: string[]): boolean {
+  const normalized = normalizeDanmakuQuote(quote);
+  if (!normalized) return true;
+  return allowed.some(item => {
+    if (!item) return false;
+    if (normalized.length < 2) return item === normalized;
+    return item.includes(normalized) || normalized.includes(item);
+  });
+}
+
+/** 台词里用引号念出的观众发言，对不上真正出现过的弹幕就删掉那一句 */
+export function stripInventedDanmakuCitations(speech: string, allowed: string[]): string {
+  if (!speech || !speech.trim()) return speech || '';
+  const kept = speech.split(/(?<=[。！？!?…\n])/).filter(sentence => {
+    if (!INVENTED_CHAT_CUE.test(sentence)) return true;
+    const quotes = [...sentence.matchAll(/[「“"『]([^」”"』]{1,80})[」”"』]/g)].map(match => match[1]);
+    if (quotes.length === 0) return true;
+    return quotes.every(quote => quoteMatchesRealDanmaku(quote, allowed));
+  });
+  return kept.join('').replace(/[ \t]{2,}/g, ' ').trim();
+}
+
+function collectAllowedDanmakuTexts(beats: LiveBeat[], priorTexts: string[]): string[] {
+  const bag: string[] = [];
+  const push = (value?: string) => {
+    const normalized = normalizeDanmakuQuote(value);
+    if (normalized) bag.push(normalized);
+  };
+  priorTexts.forEach(push);
+  beats.forEach(beat => {
+    (beat.danmaku || []).forEach(item => {
+      push(item.text);
+      push(item.translation);
+      push(item.giftName);
+    });
+  });
+  return bag;
+}
+
 export function parseLiveBeatsResponse(
   rawText: string,
   chunkIdOrSessionId: string,
   arg3: any,
   arg4: any = [],
   arg5?: string[],
+  priorDanmakuTexts: string[] = [],
 ): LiveBeat[] {
   const isFiveArgs = typeof arg3 === 'number';
   const chunkId = isFiveArgs ? `chunk_${chunkIdOrSessionId}_${arg3}` : chunkIdOrSessionId;
@@ -550,5 +619,13 @@ export function parseLiveBeatsResponse(
     beats[0].danmaku = [...pendingUserInputs, ...beats[0].danmaku];
   }
 
-  return beats;
+  const priorTexts = isFiveArgs && Array.isArray(priorDanmakuTexts) ? priorDanmakuTexts : [];
+  const allowed = collectAllowedDanmakuTexts(beats, priorTexts);
+  return beats.map(beat => ({
+    ...beat,
+    speechOriginal: stripInventedDanmakuCitations(beat.speechOriginal || '', allowed),
+    speechTranslated: beat.speechTranslated
+      ? stripInventedDanmakuCitations(beat.speechTranslated, allowed)
+      : beat.speechTranslated,
+  }));
 }

@@ -562,8 +562,8 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
   const rowCount = isNico ? Math.max(1, Math.min(5, tracks)) : Math.max(1, Math.min(2, tracks));
   const rowTops = isNico
     ? Array.from({ length: rowCount }, (_, i) => `${i * 21}px`)
-    : Array.from({ length: rowCount }, (_, i) => `${4 + i * 30}px`);
-  const laneHeight = isNico ? rowCount * 21 : 64;
+    : Array.from({ length: rowCount }, (_, i) => `${2 + i * 44}px`);
+  const laneHeight = isNico ? rowCount * 21 : 92;
 
   const estimateWidth = (text: string) => {
     let w = 0;
@@ -593,8 +593,9 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
       ? `${dm.giftName}${dm.giftCount && dm.giftCount > 1 ? ` ×${dm.giftCount}` : ' ×1'}`
       : '';
     const bodyText = isGift ? giftLabel || comment : comment || dm.text || '';
-    const full = `${isSc ? `¥${dm.scAmount} ` : ''}${bodyText}${
-      showTranslation && cleanTrans && cleanTrans !== bodyText ? ` / ${cleanTrans}` : ''
+    const transShown = showTranslation && cleanTrans && cleanTrans !== bodyText ? cleanTrans : '';
+    const full = `${isSc ? `¥${dm.scAmount} ` : ''}${
+      estimateWidth(transShown) > estimateWidth(bodyText) ? transShown : bodyText
     }`;
     const duration = Math.max(isNico ? 6.5 : 12, (460 + estimateWidth(full)) / (isNico ? 52 : 40));
     const seed = seedOf(dm.id || `${idx}_${dm.text}`);
@@ -628,11 +629,10 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
       return <span className="onair-dm__jp">{main}</span>;
     }
     return (
-      <>
+      <span className="onair-dm__stack">
         <span className="onair-dm__jp">{main}</span>
-        <span className="onair-dm__sep">/</span>
         <span className="onair-dm__zh">{trans}</span>
-      </>
+      </span>
     );
   };
 
@@ -669,11 +669,28 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
           paint-order: stroke fill;
         }
         .onair-dm--plain.is-mine { color: #047857; }
-        .onair-dm__sep { margin: 0 5px; opacity: 0.75; font-weight: 500; }
-        .onair-dm__zh { font-weight: 600; }
+        .onair-dm__stack {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 1px;
+          min-width: 0;
+        }
+        .onair-dm__zh {
+          display: block;
+          font-size: 10px;
+          font-weight: 600;
+          line-height: 1.15;
+          opacity: 0.92;
+        }
+        .onair-dm--plain .onair-dm__zh {
+          font-weight: 650;
+          opacity: 1;
+        }
         .onair-dm--sc {
-          height: 28px;
-          padding: 0 10px 0 3px;
+          height: auto;
+          min-height: 28px;
+          padding: 3px 10px 3px 3px;
           border-radius: 14px;
           text-shadow: none;
           -webkit-text-stroke: 0;
@@ -709,8 +726,9 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
           white-space: nowrap;
         }
         .onair-dm--gift {
-          height: 28px;
-          padding: 0 10px 0 6px;
+          height: auto;
+          min-height: 28px;
+          padding: 3px 10px 3px 6px;
           border-radius: 14px;
           background: #8e24aa;
           color: #fff;
@@ -818,7 +836,7 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
             className={`onair-dm onair-dm--nico${isMine ? ' is-mine' : ''}${
               isSc ? ' is-sc' : ''
             }${isGift ? ' is-gift' : ''}`}
-            style={{ ...anim, lineHeight: '20px' }}
+            style={anim}
           >
             {isSc && (
               <span className="onair-dm__badge onair-dm__badge--sc">¥{dm.scAmount}</span>
@@ -828,10 +846,7 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
                 {dm.giftEmoji || '🎁'} {dm.giftName}
               </span>
             )}
-            {comment ? <span>{comment}</span> : null}
-            {showTranslation && cleanTrans && cleanTrans !== comment ? (
-              <span style={{ fontSize: 11, fontWeight: 600, color: '#475569' }}>（{cleanTrans}）</span>
-            ) : null}
+            {comment || cleanTrans ? bilingual(comment || bodyText, cleanTrans) : null}
           </div>
         );
       })}

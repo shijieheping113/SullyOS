@@ -60,6 +60,6 @@ describe('直播轮次卡布局', () => {
     expect(handler).toContain('DB.deleteMessages(dropIds)');
     expect(handler).toContain('runGenerateLiveChunk(baseSession, activeChannel, nextQueue)');
     expect(handler).not.toContain('continueChunkId');
-    expect(liveAppSource).toContain(': [...session.chunks, newChunk]');
+    expect(liveAppSource).toContain(': [...latestSession.chunks, newChunk]');
   });
 });
