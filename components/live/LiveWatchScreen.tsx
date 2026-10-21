@@ -49,10 +49,11 @@ import {
   visibleLivePair,
 } from '../../utils/liveSpeechPairs';
 import { LiveSpeechPair } from './LiveSpeechPair';
+import { LiveYouTubeRoom } from './LiveYouTubeRoom';
 
 type TimelineItem = { chunkId: string; chunkIndex: number; beat: LiveBeat; globalIdx: number };
 
-export function LiveWatchScreen(props: {
+export interface LiveWatchScreenProps {
   charId: string;
   charName: string;
   userName: string;
@@ -136,7 +137,15 @@ export function LiveWatchScreen(props: {
   onForwardRoundToPrivate: (chunkId: string) => void;
   onRegenerateRoundSummary: (chunk: LiveChunk) => void;
   onEndStreamClick: () => void;
-}) {
+}
+
+export function LiveWatchScreen(props: LiveWatchScreenProps) {
+  if (props.platformTheme !== 'niconico') return <LiveYouTubeRoom {...props} />;
+  return <NicoWatchScreen {...props} />;
+}
+
+/** ニコニコ生放送：保留旧骨架（黑播放槽 / 三列コメント）。 */
+function NicoWatchScreen(props: LiveWatchScreenProps) {
   const {
     channel,
     session,
