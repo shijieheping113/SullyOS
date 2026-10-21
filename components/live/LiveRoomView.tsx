@@ -27,6 +27,7 @@ import { processImageToBlob } from '../../utils/file';
 import { putImageBlobDeduped } from '../../utils/blobRef';
 import { BeatActionSheetTarget } from './LiveSharedWidgets';
 import { LIVE_SILENT_BEAT_HOLD_MS, nextIndexAfterSilentBeat } from '../../utils/liveSpeechPairs';
+import { nextAutoBeatIndex } from '../../utils/liveReplayAudio';
 import { LiveWatchScreen } from './LiveWatchScreen';
 
 /** 直播间播放设置：记住用户上次拨过的开关，回到直播间不再重置。 */
@@ -72,6 +73,7 @@ interface LiveRoomViewProps {
   onSeekVoice: (seconds: number) => void;
   onNudgeVoice: (deltaSec: number) => void;
   voiceEnd: { id: string; n: number } | null;
+  onBindAfterVoiceEnd: (handler: ((endedBeatId: string, endCount: number) => void) | null) => void;
   onBindBack: (fn: () => boolean) => void;
   onChangePlatformTheme: (theme: LivePlatformTheme) => void;
   onSelectPersona: (id: string) => void;
@@ -87,7 +89,7 @@ interface LiveRoomViewProps {
     nextSpeechOriginal: string,
     nextSpeechTranslated?: string,
   ) => void;
-  onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean }) => void;
+  onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean; fromAuto?: boolean }) => void;
   onPreGenerateBeatVoice: (beat: LiveBeat, sessionId: string) => Promise<void>;
   onSendUserDanmaku: (
     text: string,
@@ -129,6 +131,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onSeekVoice,
   onNudgeVoice,
   voiceEnd,
+  onBindAfterVoiceEnd,
   onBindBack,
   onChangePlatformTheme,
   onSelectPersona,
@@ -297,24 +300,45 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     prevChunksLenRef.current = session.chunks.length;
   }, [session.id, session.chunks.length, allTimelineBeats.length, session.status, latestChunkFirstBeatIdx]);
 
+  const beatsRef = useRef(allTimelineBeats);
+  beatsRef.current = allTimelineBeats;
+
   // 「播完自动下一句」只在声音真正播完时跳到已经写好的下一句，不向模型要新内容。
+  // 录音结束的那一下就接下一拍，避免等页面刷新完再播，被浏览器拦住。
   const seenVoiceEnd = useRef(0);
   const playRef = useRef(onPlayBeatVoice);
   playRef.current = onPlayBeatVoice;
+  const autoPlayStepRef = useRef(autoPlayStep);
+  autoPlayStepRef.current = autoPlayStep;
+  const handledVoiceEndRef = useRef<string | null>(null);
+  const advanceAfterVoice = (endedId: string, endCount: number) => {
+    const stamp = `${endedId}:${endCount}`;
+    if (handledVoiceEndRef.current === stamp) return;
+    handledVoiceEndRef.current = stamp;
+    const list = beatsRef.current;
+    const idx = nextAutoBeatIndex({
+      autoPlayStep: autoPlayStepRef.current,
+      endedId,
+      beatIds: list.map(item => item.beat.id),
+    });
+    if (idx == null) return;
+    const next = list[idx].beat;
+    setCurrentGlobalBeatIdx(idx);
+    if (next.speechOriginal?.trim()) playRef.current(next, { fromAuto: true });
+  };
+  const advanceAfterVoiceRef = useRef(advanceAfterVoice);
+  advanceAfterVoiceRef.current = advanceAfterVoice;
+  useEffect(() => {
+    onBindAfterVoiceEnd((endedId, endCount) => advanceAfterVoiceRef.current(endedId, endCount));
+    return () => onBindAfterVoiceEnd(null);
+  }, [onBindAfterVoiceEnd]);
   useEffect(() => {
     if (!voiceEnd || voiceEnd.n === seenVoiceEnd.current) return;
     seenVoiceEnd.current = voiceEnd.n;
-    if (!autoPlayStep) return;
-    const idx = allTimelineBeats.findIndex(item => item.beat.id === voiceEnd.id);
-    if (idx < 0 || idx >= allTimelineBeats.length - 1) return;
-    const next = allTimelineBeats[idx + 1].beat;
-    setCurrentGlobalBeatIdx(idx + 1);
-    if (next.speechOriginal?.trim()) playRef.current(next);
+    advanceAfterVoice(voiceEnd.id, voiceEnd.n);
   }, [voiceEnd, autoPlayStep, allTimelineBeats]);
 
   // 两个开关都开时，没有台词的描写拍停 8 秒再进下一拍。最后一拍停住。
-  const beatsRef = useRef(allTimelineBeats);
-  beatsRef.current = allTimelineBeats;
   useEffect(() => {
     const current = allTimelineBeats[currentGlobalBeatIdx];
     const nextIndex = nextIndexAfterSilentBeat({
@@ -331,7 +355,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       const nextItem = list[from + 1];
       if (!nextItem || list[from]?.beat.speechOriginal?.trim()) return;
       setCurrentGlobalBeatIdx(from + 1);
-      if (nextItem.beat.speechOriginal?.trim()) playRef.current(nextItem.beat);
+      if (nextItem.beat.speechOriginal?.trim()) playRef.current(nextItem.beat, { fromAuto: true });
     }, LIVE_SILENT_BEAT_HOLD_MS);
     return () => window.clearTimeout(timer);
   }, [autoPlayStep, followVoiceSentences, currentGlobalBeatIdx, allTimelineBeats]);
@@ -347,7 +371,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     if (!channel.voiceConfig?.autoPlayTts || !currentBeat?.speechOriginal?.trim()) return;
     if (lastAutoSpokenBeatRef.current === currentBeat.id) return;
     lastAutoSpokenBeatRef.current = currentBeat.id;
-    onPlayBeatVoice(currentBeat);
+    onPlayBeatVoice(currentBeat, { fromAuto: true });
   }, [currentBeat?.id, channel.voiceConfig?.autoPlayTts]);
 
   const activeChunkId = currentTimelineItem?.chunkId || latestChunk?.id || '';

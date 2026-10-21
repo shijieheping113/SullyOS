@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseLiveReplaySource, mergeBeatAudio } from './liveReplayAudio';
+import { chooseLiveReplaySource, liveVoiceTapAction, mergeBeatAudio, nextAutoBeatIndex } from './liveReplayAudio';
 
 const oldTimeline = {
   segments: [{ text: 'That', start: 2, end: 2.4 }],
@@ -74,6 +74,60 @@ describe('chooseLiveReplaySource', () => {
       timestampCacheHit: true,
       speechCacheHit: true,
     })).toBe('synthesize');
+  });
+});
+
+describe('liveVoiceTapAction', () => {
+  it('does not stop a beat that automatic advance just started', () => {
+    expect(liveVoiceTapAction({
+      fromAuto: true,
+      sameBeatPlaying: true,
+      sameBeatBusy: false,
+    })).toBe('ignore');
+    expect(liveVoiceTapAction({
+      fromAuto: true,
+      sameBeatPlaying: false,
+      sameBeatBusy: true,
+    })).toBe('ignore');
+  });
+
+  it('stops only when a person taps the beat that is already playing', () => {
+    expect(liveVoiceTapAction({
+      fromAuto: false,
+      sameBeatPlaying: true,
+      sameBeatBusy: false,
+    })).toBe('stop');
+  });
+
+  it('starts when the beat is idle', () => {
+    expect(liveVoiceTapAction({
+      fromAuto: true,
+      sameBeatPlaying: false,
+      sameBeatBusy: false,
+    })).toBe('start');
+  });
+});
+
+describe('nextAutoBeatIndex', () => {
+  it('moves from Wait, really? to the next beat when auto advance is on', () => {
+    expect(nextAutoBeatIndex({
+      autoPlayStep: true,
+      endedId: 'wait',
+      beatIds: ['wait', 'insane'],
+    })).toBe(1);
+  });
+
+  it('stays put on the last beat and when the switch is off', () => {
+    expect(nextAutoBeatIndex({
+      autoPlayStep: true,
+      endedId: 'insane',
+      beatIds: ['wait', 'insane'],
+    })).toBeNull();
+    expect(nextAutoBeatIndex({
+      autoPlayStep: false,
+      endedId: 'wait',
+      beatIds: ['wait', 'insane'],
+    })).toBeNull();
   });
 });
 

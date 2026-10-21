@@ -17,7 +17,7 @@ import { readCachedSpeechUrl, synthesizeSpeech } from '../utils/ttsRouter';
 import { resolveTtsProvider } from '../utils/ttsProvider';
 import { fishTimestampCacheKey, resolveFishCallRefs, synthesizeFishWithTimestamp } from '../utils/fishTimestampTts';
 import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
-import { chooseLiveReplaySource, mergeBeatAudio, type StoredPlay } from '../utils/liveReplayAudio';
+import { chooseLiveReplaySource, liveVoiceTapAction, mergeBeatAudio, type StoredPlay } from '../utils/liveReplayAudio';
 import {
   acceptRepairedTranslation,
   alignLiveSpeech,
@@ -118,6 +118,8 @@ import {
 
 type MainTab = 'char_live' | 'char_vod' | 'npc_watch';
 
+const SILENT_UNLOCK_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+
 const LiveStreamApp: React.FC = () => {
   const {
     closeApp,
@@ -210,7 +212,13 @@ const LiveStreamApp: React.FC = () => {
   const [voiceEnd, setVoiceEnd] = useState<{ id: string; n: number } | null>(null);
   const [voiceClock, setVoiceClock] = useState<LiveVoiceClock | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playTokenRef = useRef(0);
   const voiceJobRef = useRef<{ id: string; token: object } | null>(null);
+  const afterVoiceEndRef = useRef<((endedBeatId: string, endCount: number) => void) | null>(null);
+  const voiceEndCountRef = useRef(0);
+  const bindAfterVoiceEnd = useCallback((fn: ((endedBeatId: string, endCount: number) => void) | null) => {
+    afterVoiceEndRef.current = fn;
+  }, []);
   const screenBackRef = useRef<() => boolean>(() => false);
 
   const publishVoiceClock = useCallback((audio: HTMLAudioElement, id: string) => {
@@ -228,6 +236,7 @@ const LiveStreamApp: React.FC = () => {
   }, []);
 
   const stopVoiceAudio = useCallback(() => {
+    playTokenRef.current += 1;
     const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
@@ -235,51 +244,67 @@ const LiveStreamApp: React.FC = () => {
       audio.ontimeupdate = null;
       audio.onloadedmetadata = null;
       audio.pause();
-      audioRef.current = null;
     }
     setVoiceClock(null);
   }, []);
 
   const playVoiceUrl = useCallback(
     async (url: string, id: string): Promise<StoredPlay> => {
-      stopVoiceAudio();
+      const token = ++playTokenRef.current;
       if (!url) return 'failed';
-      const audio = new Audio();
+      const audio = audioRef.current ?? new Audio();
       audioRef.current = audio;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.ontimeupdate = null;
+      audio.onloadedmetadata = null;
+      audio.pause();
+      audio.muted = false;
+      const still = () => playTokenRef.current === token;
       const clearThis = () => {
         setTtsPlayingBeatId(prev => (prev === id ? null : prev));
         setVoiceClock(prev => (prev?.beatId === id ? null : prev));
       };
       audio.ontimeupdate = () => {
-        if (audioRef.current !== audio) return;
+        if (!still()) return;
         publishVoiceClock(audio, id);
       };
       audio.onloadedmetadata = () => {
-        if (audioRef.current !== audio) return;
+        if (!still()) return;
         publishVoiceClock(audio, id);
       };
       audio.onended = () => {
+        if (!still()) return;
         clearThis();
-        setVoiceEnd(prev => ({ id, n: (prev?.n ?? 0) + 1 }));
+        voiceEndCountRef.current += 1;
+        const endCount = voiceEndCountRef.current;
+        setVoiceEnd({ id, n: endCount });
+        afterVoiceEndRef.current?.(id, endCount);
       };
-      audio.onerror = () => clearThis();
+      audio.onerror = () => {
+        if (!still()) return;
+        clearThis();
+      };
       audio.src = url;
       setTtsPlayingBeatId(id);
       setVoiceClock({ beatId: id, currentTime: 0, duration: 0 });
       try {
         await audio.play();
+        if (!still()) return 'superseded';
         return 'played';
       } catch (err) {
-        const superseded = audioRef.current !== audio;
-        if (audioRef.current === audio) audioRef.current = null;
+        if (!still()) return 'superseded';
+        audio.onended = null;
+        audio.onerror = null;
+        audio.ontimeupdate = null;
+        audio.onloadedmetadata = null;
         clearThis();
-        if (superseded) return 'superseded';
         const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
         if (name === 'NotAllowedError') return 'blocked';
         return 'failed';
       }
     },
-    [publishVoiceClock, stopVoiceAudio],
+    [publishVoiceClock],
   );
 
   const seekVoiceSeconds = useCallback((nextSec: number) => {
@@ -628,6 +653,30 @@ const LiveStreamApp: React.FC = () => {
     return () => {
       stopVoiceAudio();
     };
+  }, [stopVoiceAudio]);
+
+  useEffect(() => {
+    const unlock = () => {
+      const playing = audioRef.current;
+      if (playing && !playing.paused && playing.src && !playing.src.startsWith('data:')) return;
+      const audio = audioRef.current ?? new Audio();
+      audioRef.current = audio;
+      const tokenAtUnlock = playTokenRef.current;
+      audio.muted = true;
+      audio.src = SILENT_UNLOCK_WAV;
+      const pending = audio.play();
+      if (!pending) return;
+      pending.then(() => {
+        if (playTokenRef.current !== tokenAtUnlock) return;
+        audio.pause();
+        audio.muted = false;
+        window.removeEventListener('pointerdown', unlock, true);
+      }).catch(() => {
+        audio.muted = false;
+      });
+    };
+    window.addEventListener('pointerdown', unlock, true);
+    return () => window.removeEventListener('pointerdown', unlock, true);
   }, []);
 
   const activeLiveSession = useMemo(
@@ -767,18 +816,24 @@ const LiveStreamApp: React.FC = () => {
       overrideChannel?: StreamerChannelProfile,
       options?: {
         skipCache?: boolean;
+        fromAuto?: boolean;
         cachedUrl?: string;
         onAudioUrlReady?: (url: string, timeline?: SpeechTimeline | null) => void;
       },
     ) => {
       if (!currentChar || !text.trim()) return;
-      if (ttsPlayingBeatId === id && !options?.skipCache) {
+      const tap = liveVoiceTapAction({
+        fromAuto: Boolean(options?.fromAuto),
+        sameBeatPlaying: ttsPlayingBeatId === id && !options?.skipCache,
+        sameBeatBusy: (ttsLoadingBeatId === id || voiceJobRef.current?.id === id) && !options?.skipCache,
+      });
+      if (tap === 'stop') {
         stopVoiceAudio();
         setTtsPlayingBeatId(null);
         if (voiceJobRef.current?.id === id) voiceJobRef.current = null;
         return;
       }
-      if ((ttsLoadingBeatId === id || voiceJobRef.current?.id === id) && !options?.skipCache) return;
+      if (tap === 'ignore') return;
       const token = {};
       voiceJobRef.current = { id, token };
       const stillThisJob = () => voiceJobRef.current?.token === token;
@@ -1772,6 +1827,7 @@ const LiveStreamApp: React.FC = () => {
           onSeekVoice={seekVoiceSeconds}
           onNudgeVoice={nudgeVoiceSeconds}
           voiceEnd={voiceEnd}
+          onBindAfterVoiceEnd={bindAfterVoiceEnd}
           onBindBack={fn => {
             screenBackRef.current = fn;
           }}
@@ -1793,6 +1849,7 @@ const LiveStreamApp: React.FC = () => {
           onPlayBeatVoice={(beat, opts) =>
             void speakTextWithChannelConfig(beat.id, beat.speechOriginal, activeChannel, {
               skipCache: opts?.skipCache,
+              fromAuto: opts?.fromAuto,
               cachedUrl: beat.audioUrl,
               onAudioUrlReady: (url, timeline) => void persistBeatAudioUrl(activeLiveSession.id, beat.id, url, timeline),
             })
