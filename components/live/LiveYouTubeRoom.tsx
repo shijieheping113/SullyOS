@@ -49,6 +49,7 @@ const Ico = {
   prevSkip: 'M6 6h2v12H6V6zm3.5 6l8.5 6V6l-8.5 6z',
   nextSkip: 'M6 18l8.5-6L6 6v12zM16 6h2v12h-2V6z',
   chevR: 'M8.59 7.41 10 6l6 6-6 6-1.41-1.41L13.17 12z',
+  expand: 'M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z',
   signal:
     'M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.5 5.5a9.2 9.2 0 0 0 0 13M18.5 5.5a9.2 9.2 0 0 1 0 13',
 };
@@ -1111,23 +1112,23 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       <section className="dyt-content">
         <div className="dyt-chead">
           <div className="dyt-chead__left">
-            <h2 className="dyt-chead__title">{tabLabel}</h2>
-            <div className="dyt-chead__meta">
-              <span>重要消息</span>
-              <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-                style={{ width: 16, height: 16, fill: 'currentColor' }}
-              >
-                <path d="M7 10l5 5 5-5z" />
-              </svg>
-              <span style={{ display: 'inline-flex', marginLeft: 4 }}>
+            <div className="dyt-chead__titlerow">
+              <h2 className="dyt-chead__title">{tabLabel}</h2>
+              <span className="dyt-chead__count">
                 <SVG d={Ico.person} size={16} />
+                {formatCount(session.viewerCount)}
               </span>
-              <span>{formatCount(session.viewerCount)}</span>
             </div>
           </div>
           <div className="dyt-chead__tools">
+            <button
+              type="button"
+              className="dyt-ico"
+              aria-label="全屏"
+              onClick={() => props.setIsFullscreen(true)}
+            >
+              <SVG d={Ico.expand} size={22} />
+            </button>
             <button
               type="button"
               className="dyt-ico"

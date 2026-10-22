@@ -86,8 +86,14 @@
   position: relative;
   flex: 0 0 auto;
   width: 100%;
+  /* 画面区比原来高 6px：内容框仍按 16:9 算画面，底边额外垫 6px，
+     6px 正好是聊天标题区删掉「重要消息」那一行真正让出来的净高度
+     （标题区高度由右边那排 40px 图标按钮撑着，所以净高度只有 6px）。
+     底部实时聊天列表高度因此一分不变。 */
+  box-sizing: content-box;
   aspect-ratio: 16 / 9;
   max-height: 218px;
+  padding-bottom: 6px;
   background: #000;
   overflow: hidden;
 }
@@ -562,9 +568,13 @@
 .dyt-chead {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-start;
+  /* 标题和右边那排图标按钮上下居中：以前标题贴顶、图标沉底，看着散。
+     行高仍由 40px 的图标按钮决定，这一行的高度一分不变。 */
+  align-items: center;
   gap: 8px;
-  padding: 6px 4px 2px 12px;
+  /* 上下留白收紧：上 6→2、下 2→0，整行矮 6px，
+     让出来的 6px 正好给下面「画面描写」那块（下面那块的字大了一号）。 */
+  padding: 2px 4px 0 12px;
   background: var(--yt-bg);
 }
 .dyt-chead__left {
@@ -579,15 +589,22 @@
   line-height: 1.25;
   color: #0f0f0f;
 }
-.dyt-chead__meta {
-  margin-top: 2px;
-  font-size: 12px;
-  color: #606060;
+/* 标题行：标题 + 观众人数同一行（原来「重要消息」那一行已删） */
+.dyt-chead__titlerow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.dyt-chead__count {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #606060;
+  white-space: nowrap;
 }
-.dyt-chead__meta svg {
+.dyt-chead__count svg {
   width: 16px;
   height: 16px;
   fill: currentColor;
@@ -665,12 +682,13 @@
 .dyt-scene__text {
   margin: 0;
   display: block;
-  max-height: 42px;
+  /* 12px 字 × 1.4 行高 = 16.8px 一行，这里放得下 2 行（33.6px） */
+  max-height: 36px;
   overflow-x: hidden;
   overflow-y: auto;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  line-height: 1.35;
+  line-height: 1.4;
   color: #303030;
   letter-spacing: 0.01em;
   word-break: break-word;
