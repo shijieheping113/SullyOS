@@ -121,7 +121,7 @@ export interface LiveWatchScreenProps {
   displayBackgroundUrl: string;
   activeGifts: StreamGiftOption[];
   openBeatMenu: (chunkId: string, beat: LiveBeat, labelPrefix: string) => void;
-  handleSendSubmit: () => void;
+  handleSendSubmit: (override?: { scAmount?: number }) => void;
   handleSendGift: (gift: StreamGiftOption) => void;
   handleUploadBgFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onChangePlatformTheme: (theme: LivePlatformTheme) => void;

@@ -144,6 +144,10 @@ function normalizeChannelRecord(raw: any, idx = 0): StreamerChannelProfile {
       autoPlayTts: Boolean(vc.autoPlayTts),
       overrideVoiceId: vc.overrideVoiceId || '',
     },
+    danmakuWarmth:
+      typeof raw.danmakuWarmth === 'number'
+        ? Math.max(0, Math.min(100, Math.round(raw.danmakuWarmth)))
+        : 50,
     customGifts: Array.isArray(raw.customGifts) && raw.customGifts.length > 0
       ? raw.customGifts
       : [

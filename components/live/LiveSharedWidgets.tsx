@@ -19,6 +19,7 @@ import {
   LiveDanmakuItem,
   LivePlatformTheme,
   SC_TIER_OPTIONS,
+  SC_GOLD_BORDER,
   resolveScTier,
 } from '../../utils/liveStreamTypes';
 import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
@@ -792,6 +793,9 @@ export const FloatingDanmakuOverlay: React.FC<FloatingDanmakuOverlayProps> = ({
                 ...anim,
                 background: scTier.bodyBg,
                 color: scTier.textColor,
+                boxShadow: scTier.goldBorder
+                  ? `inset 0 0 0 2px ${SC_GOLD_BORDER}, 0 2px 6px rgba(0, 0, 0, 0.28)`
+                  : undefined,
               }}
             >
               <span className="onair-dm__amt">

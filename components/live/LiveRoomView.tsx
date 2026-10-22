@@ -442,15 +442,18 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   };
 
   // 发送弹幕或 SC
-  const handleSendSubmit = () => {
+  const handleSendSubmit = (override?: { scAmount?: number }) => {
     const trimmed = danmakuInput.trim();
     if (!trimmed) return;
     const targetBeat = currentTimelineItem
       ? { chunkId: currentTimelineItem.chunkId, beatId: currentTimelineItem.beat.id }
       : undefined;
     if (activeBottomDrawer === 'sc') {
+      const custom = Math.floor(Number(override?.scAmount) || 0);
       const tier = SC_TIER_OPTIONS[selectedScTierIdx] || SC_TIER_OPTIONS[0];
-      onSendUserDanmaku(trimmed, tier.amount, tier.color, immediateReplyOnSend, undefined, targetBeat);
+      const amount = custom >= 800 ? custom : tier.amount;
+      const color = custom >= 800 ? 'red' : tier.color;
+      onSendUserDanmaku(trimmed, amount, color, immediateReplyOnSend, undefined, targetBeat);
       setActiveBottomDrawer('none');
     } else {
       onSendUserDanmaku(trimmed, undefined, undefined, immediateReplyOnSend, undefined, targetBeat);

@@ -1691,6 +1691,25 @@
   color: var(--yt-muted);
 }
 
+.dyt-custom-sc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f0f0f;
+}
+.dyt-custom-sc input {
+  width: 88px;
+  height: 32px;
+  border: 2px solid #e6b422;
+  border-radius: 8px;
+  padding: 0 8px;
+  background: #e53935;
+  color: #fff;
+  font-weight: 700;
+}
 .dyt-tiers {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

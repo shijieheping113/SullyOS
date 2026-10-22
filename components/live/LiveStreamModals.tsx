@@ -55,6 +55,7 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
   const [streamerPersonaPrompt, setStreamerPersonaPrompt] = useState('');
   const [fanBadgeName, setFanBadgeName] = useState('Member');
   const [followerCount, setFollowerCount] = useState(12800);
+  const [danmakuWarmth, setDanmakuWarmth] = useState(50);
   const [language, setLanguage] = useState('');
   const [enableTranslation, setEnableTranslation] = useState(false);
   const [autoPlayTts, setAutoPlayTts] = useState(false);
@@ -78,6 +79,9 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
       setStreamerPersonaPrompt(initialChannel.streamerPersonaPrompt);
       setFanBadgeName(initialChannel.fanBadgeName || 'Member');
       setFollowerCount(initialChannel.followerCount || 5000);
+      setDanmakuWarmth(
+        typeof initialChannel.danmakuWarmth === 'number' ? initialChannel.danmakuWarmth : 50,
+      );
       setLanguage(initialChannel.voiceConfig?.language || '');
       setEnableTranslation(Boolean(initialChannel.voiceConfig?.enableTranslation));
       setAutoPlayTts(Boolean(initialChannel.voiceConfig?.autoPlayTts));
@@ -100,6 +104,7 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
       setStreamerPersonaPrompt('');
       setFanBadgeName('Member');
       setFollowerCount(6800);
+      setDanmakuWarmth(50);
       setLanguage('');
       setEnableTranslation(false);
       setAutoPlayTts(false);
@@ -153,6 +158,7 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
     bio: bio.trim(),
     streamerPersonaPrompt: streamerPersonaPrompt.trim(),
     followerCount: Number(followerCount) || 1000,
+    danmakuWarmth: Math.max(0, Math.min(100, Math.round(danmakuWarmth))),
     fanBadgeName: fanBadgeName.trim() || 'Member',
     defaultCategory: initialChannel?.defaultCategory || 'just_chatting',
     voiceConfig: {
@@ -367,6 +373,29 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
                 onChange={e => setFollowerCount(Number(e.target.value) || 0)}
                 className="w-full mt-1 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
               />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-slate-600">弹幕风格 · 叛逆度</label>
+              <span className="text-[11px] font-bold text-slate-700">{danmakuWarmth}</span>
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+              越低越叛逆：吐槽、对抗、施压，抵触主播有伴侣和私联，甚至恶评。越高越友好溺爱，狂热粉极少出现。
+            </p>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={danmakuWarmth}
+              aria-label="弹幕叛逆度"
+              onChange={e => setDanmakuWarmth(Number(e.target.value))}
+              className="mt-2 w-full"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400">
+              <span>叛逆对抗</span>
+              <span>友好溺爱</span>
             </div>
           </div>
 

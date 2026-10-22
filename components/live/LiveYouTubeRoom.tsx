@@ -10,6 +10,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import TokenImg from '../os/TokenImg';
 import {
   LiveDanmakuItem,
+  SC_CUSTOM_MIN,
+  SC_GOLD_BORDER,
   SC_TIER_OPTIONS,
   StreamGiftOption,
   resolveScTier,
@@ -79,6 +81,10 @@ function initial(name: string) {
 
 function scTierFor(dm: LiveDanmakuItem) {
   return resolveScTier(dm.scAmount, dm.scColor);
+}
+
+function goldFrame(tier: { goldBorder?: boolean }): React.CSSProperties {
+  return tier.goldBorder ? { boxShadow: `inset 0 0 0 2px ${SC_GOLD_BORDER}` } : {};
 }
 
 /** 顶部 pill：绿黄橙紫红 + 礼物紫 */
@@ -217,6 +223,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   const [titleOpen, setTitleOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [supportTab, setSupportTab] = useState<'sc' | 'gift'>('sc');
+  const [customScText, setCustomScText] = useState('');
   const [guidanceOpen, setGuidanceOpen] = useState(false);
   const [guidanceDraft, setGuidanceDraft] = useState('');
   const [pinDetail, setPinDetail] = useState<LiveDanmakuItem | null>(null);
@@ -674,7 +681,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               <article
                 key={dm.id || idx}
                 className={`dyt-sc dyt-sc--${tier.color}`}
-                style={{ color: tier.textColor }}
+                style={{ color: tier.textColor, ...goldFrame(tier) }}
                 {...list.handlers(dm)}
               >
                 <div className="dyt-sc__head" style={{ background: tier.headerBg }}>
@@ -1208,7 +1215,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                       className={`dyt-pill dyt-pill--${tone}`}
                       style={
                         tier
-                          ? { background: tier.bodyBg, color: tier.textColor }
+                          ? { background: tier.bodyBg, color: tier.textColor, ...goldFrame(tier) }
                           : { background: '#8e24aa', color: '#ffffff' }
                       }
                       onClick={e => {
@@ -1737,7 +1744,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               return (
                 <article
                   className={`dyt-sc dyt-sc--${tier.color}`}
-                  style={{ color: tier.textColor, margin: 0 }}
+                  style={{ color: tier.textColor, margin: 0, ...goldFrame(tier) }}
                 >
                   <div className="dyt-sc__head" style={{ background: tier.headerBg }}>
                     <span className="dyt-sc__av">{initial(pinDetail.senderName)}</span>
@@ -1813,20 +1820,38 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
 
           {supportTab === 'sc' ? (
             <>
-              <p className="dyt-hint">选择金额档位，留言会以醒目卡片出现在实时聊天。</p>
+              <p className="dyt-hint">选择金额档位，留言会以醒目卡片出现在实时聊天。¥800 起可以自己填，是红底金边。</p>
               <div className="dyt-tiers">
-                {SC_TIER_OPTIONS.map((tier, idx) => (
-                  <button
-                    key={tier.amount}
-                    type="button"
-                    className={`dyt-tier${props.selectedScTierIdx === idx ? ' is-on' : ''}`}
-                    onClick={() => props.setSelectedScTierIdx(idx)}
-                  >
-                    {tier.label}
-                    <small>{tier.pinDurationLabel.replace('置顶 ', '')}</small>
-                  </button>
-                ))}
+                {SC_TIER_OPTIONS.map((tier, idx) =>
+                  tier.goldBorder ? null : (
+                    <button
+                      key={tier.amount}
+                      type="button"
+                      className={`dyt-tier${props.selectedScTierIdx === idx && Math.floor(Number(customScText) || 0) < SC_CUSTOM_MIN ? ' is-on' : ''}`}
+                      onClick={() => {
+                        setCustomScText('');
+                        props.setSelectedScTierIdx(idx);
+                      }}
+                    >
+                      {tier.label}
+                      <small>{tier.pinDurationLabel.replace('置顶 ', '')}</small>
+                    </button>
+                  ),
+                )}
               </div>
+              <label className="dyt-custom-sc">
+                自定义
+                <input
+                  type="number"
+                  min={SC_CUSTOM_MIN}
+                  inputMode="numeric"
+                  value={customScText}
+                  placeholder="800"
+                  aria-label="自定义 Super Chat 金额"
+                  onChange={e => setCustomScText(e.target.value)}
+                />
+                <span>元起，红底金边</span>
+              </label>
               <label className="dyt-scnote">
                 <textarea
                   rows={3}
@@ -1840,13 +1865,16 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                 className="dyt-submit"
                 disabled={!props.danmakuInput.trim()}
                 onClick={() => {
-                  showToast(
-                    `Super Chat · ${SC_TIER_OPTIONS[props.selectedScTierIdx]?.label || ''}`,
-                  );
-                  props.handleSendSubmit();
+                  const custom = Math.floor(Number(customScText) || 0);
+                  const usingCustom = custom >= SC_CUSTOM_MIN;
+                  showToast(usingCustom ? `Super Chat · ¥${custom} 红底金边` : `Super Chat · ${SC_TIER_OPTIONS[props.selectedScTierIdx]?.label || ''}`);
+                  props.handleSendSubmit(usingCustom ? { scAmount: custom } : undefined);
+                  if (usingCustom) setCustomScText('');
                 }}
               >
-                发送 {SC_TIER_OPTIONS[props.selectedScTierIdx]?.label || ''} Super Chat
+                发送 {Math.floor(Number(customScText) || 0) >= SC_CUSTOM_MIN
+                  ? `¥${Math.floor(Number(customScText))} 红底金边`
+                  : SC_TIER_OPTIONS[props.selectedScTierIdx]?.label || ''} Super Chat
               </button>
             </>
           ) : (

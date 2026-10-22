@@ -14,6 +14,7 @@ import {
   LiveDanmakuItem,
   STREAM_PRESET_TEMPLATES,
   resolveScTier,
+  SC_CUSTOM_MIN,
 } from './liveStreamTypes';
 import type { CharacterProfile, Message, RealtimeConfig, UserProfile } from '../types';
 
@@ -29,7 +30,7 @@ const REAL_STREAMER_VIBE_RULES = `
 2. **去“端着”的真实口语细节（必须高频自然出现）**：
    - **半截话、口癖与思维跳跃**：真人在镜头前说话会有停顿、语气词、说到一半被手头操作打断（如“Wait—刚才说到哪了？”“草，等一下这波——”）。
    - **留白专注拍（允许不开口）**：你这一轮直播里至少有 1 拍专注于手头动作、喝水、调麦克风、盯屏幕操作或憋笑，此时 \`speechOriginal\` 填空字符串 \`""\`，只在 \`screen\` 里写动作、神态与环境声。
-   - **扫视聊天栏的半拍延迟**：主播是忙完手头这一小段动作后，才偏头扫一眼副屏/手机屏幕上的聊天栏，挑有意思的梗、Super Chat（SC）或送礼物的观众念一下回嘴。念出来的必须是已经写在公屏上的那一句原文，不许现编一句观众没发过的话再假装看见了。
+   - **扫视聊天栏的半拍延迟**：主播是忙完手头这一小段动作后，才偏头扫一眼副屏/手机屏幕上的聊天栏。要回应的那一条，先把弹幕原文念出来，再接自己的话。一次扫到很多条时，不用把每条原文都念完，挑要接的那几条念原文，其余可以带过。念出来的必须是已经写在公屏上的那一句原文，不许现编一句观众没发过的话再假装看见了。
 3. **真实聊天栏生态（去“夸夸群”，做嘴碎损友与复读机）**：
    - 聊天栏观众有老会员（Member）、起哄损友（抓主播口误、刷问号 \`???\`、\`LMAO\`、\`草\`、\`www\`）、指令党、纯路人和外国观众。
    - **随直播类型与当拍节奏变调**：弹幕重心紧贴本场题材与当拍画面——竞技/游戏局盯战况、操作与下饭失误；下厨/手作/日常盯具体步骤、物件与小插曲；电台/陪伴/歌回随节奏放缓，聊心事、听歌共鸣或安静打卡；杂谈顺着话头延伸或歪楼，不刷与当前场景脱节的万金油套话。
@@ -39,6 +40,22 @@ const REAL_STREAMER_VIBE_RULES = `
 `;
 
 // ==================== 2. 多语种配信与同传双轨规则 ====================
+
+/** 频道里的弹幕风格。0 最叛逆，100 最友好。中间（默认）不追加提示词。 */
+export function buildDanmakuWarmthRule(warmth?: number): string {
+  const n = Math.max(0, Math.min(100, Math.round(typeof warmth === 'number' ? warmth : 50)));
+  // 中间档就是默认公屏，不再塞一段「中等温度」说明
+  if (n > 40 && n < 60) return '';
+  const tone =
+    n <= 20
+      ? `观众温度很低（${n}/100，数值越低越叛逆）。路人弹幕不顺着主播：吐槽、抬杠、对抗、欺负、调戏、施压。他们抵触主播有私人伴侣，也抵触私联和私下接触。可以发展成恶评和攻击，但不要每条都是辱骂，仍要像真人公屏。`
+      : n <= 40
+        ? `观众温度偏低（${n}/100）。弹幕经常不买账，喜欢挑刺、调侃主播的私事和私联，偶尔冲出更难听的恶评。`
+        : n <= 80
+          ? `观众温度偏高（${n}/100）。弹幕比较友好、护着主播，会接话、会心疼，少见尖酸。`
+          : `观众温度很高（${n}/100）。整体溺爱、护短。狂热粉只允许极其稀少地出现一条，不要刷屏。`;
+  return `### 弹幕风格（频道设置，生成路人弹幕时必须遵守）\n${tone}`;
+}
 
 export function buildVoiceLanguageAndTranslationRule(channel: StreamerChannelProfile): string {
   const lang = (channel.voiceConfig?.language || '').trim();
@@ -198,6 +215,8 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const progressBlock =
     sessionHistoryBlock ||
     '### 当前进度\n这是本场直播的**第 1 轮**，请展现刚开播调设备、跟陆续进房的观众打招呼或直接进入今日主题的状态。';
+  const roomPulseBlock = `### 此刻直播间背景（主播知道，不必每拍报数）
+- 当前在线大约 ${session.viewerCount || 0} 人。大部分直播是糊的，不要表现得像突然爆火，除非这个在线人数已经高到说得通。`;
 
   // 2. 待结算的观众互动队列（物理隔离小号真名！）
   const pendingQueue = session.pendingDanmakuQueue || [];
@@ -210,7 +229,7 @@ export async function buildLiveChunkGenerationMessages(opts: {
           ? (() => {
               // 颜色必须和画面档位一致：绿¥5 / 黄¥20 / 橙¥50 / 紫¥200 / 红¥500，禁止自己编成别的颜色
               const tier = resolveScTier(d.scAmount, d.scColor);
-              return `💎【Super Chat 付费醒目留言 ${d.scCurrency || '¥'}${d.scAmount} · ${tier.colorLabel}卡片（档位：绿¥5／黄¥20／橙¥50／紫¥200／红¥500；念颜色时必须说「${tier.colorLabel}」，禁止说成别的颜色！必须在第 1 拍立刻看到并重点回应！）】`;
+              return `💎【Super Chat 付费醒目留言 ${d.scCurrency || '¥'}${d.scAmount} · ${tier.colorLabel}卡片（档位：绿¥5／黄¥20／橙¥50／紫¥200／红¥500／¥800起红底金边；念颜色时必须说「${tier.colorLabel}」，禁止说成别的颜色！必须在第 1 拍先把这条原文念出来再回应！）】`;
             })()
           : d.giftName
           ? `🎁【频道礼物打赏：送出数字贴纸 ${d.giftEmoji || '🎁'}「${d.giftName}」（${d.giftCurrency || '¥'}${d.giftAmount || 0}；不是 Super Chat，也不是实物）（必须在第 1 拍看到并感谢/反应！）】`
@@ -260,6 +279,14 @@ ${REAL_STREAMER_VIBE_RULES}
 
 ${buildVoiceLanguageAndTranslationRule(channel)}
 
+${buildDanmakuWarmthRule(channel.danmakuWarmth)}
+
+### 收到 Super Chat 和礼物（主播看得到，不是装饰）
+- 你写进本拍 \`danmaku\` 的 SC、礼物，以及上方「刚刚刷出」、前情里「已出现」的 SC 和礼物，都是观众已经打过来的。主播看得到。
+- 直播惯例上，SC **理应**念出原文和金额（¥800 及以上是红底金边，念颜色时说「红底金边」）；礼物 **理应**道谢并点出礼物名。这不是强制：可以按性格没看见、故意不念、或者过一会儿才补。
+- 若要回应某一条：先念那条原文，再接自己的话。同时扫到很多条时，不用逐条把原文全念完。
+- 不念、不谢，会员和观众可能不满、刷恶评、人走掉。怎么做由主播性格自由发挥，不要写成每条都必须营业的客服。
+
 ### 输出格式要求（严格输出 JSON 数组，包含 ${beatCountRule} 连续的直播节拍 Beat）
 请直接输出一个 JSON 数组（不要包裹额外的解释文字），数组每一项代表 1 个直播小节（Beat），结构如下：
 \`\`\`json
@@ -290,9 +317,10 @@ ${buildVoiceLanguageAndTranslationRule(channel)}
 ### 互动只能对着已经出现的弹幕（禁止幻觉）
 - 台词里如果要点名、念出或回应某一条观众发言，那句话必须能在下面两处对上原文：本拍 \`danmaku[].text\`（或它的 \`translation\`），以及上方「刚刚刷出」列表 / 前情里「已出现的弹幕」。
 - 先把要互动的那句写进本拍 \`danmaku\`，再在台词里用同一句原文回应。禁止先在台词里编「有人说／刚才刷了／弹幕问」一句观众没发过的话。
-- 不想互动就继续做手头的事，不要为了热闹凭空念弹幕。导演引导不是弹幕，不能被观众念出来。`;
+- 不想互动就继续做手头的事，不要为了热闹凭空念弹幕。导演引导不是弹幕，不能被观众念出来。
+- 路人也可以偶尔发 Super Chat 或频道礼物，不要每拍都有。SC 金额只能是 5、20、50、200、500，或 800 及以上的自定义金额（800 及以上是红底金边，\`scAmount\` 写实际整数，不要写 501 到 799）。礼物填 \`giftName/giftEmoji/giftAmount\`，用这个频道已有的礼物名。写进 danmaku 的付费和礼物，主播这一拍或下一拍要能当作真的收到了。`;
 
-  const taskParts: string[] = [progressBlock, boundaryBlock, audienceInputBlock, guidanceBlock, rerollBlock];
+  const taskParts: string[] = [roomPulseBlock, progressBlock, boundaryBlock, audienceInputBlock, guidanceBlock, rerollBlock];
   if (includeUserLocation) {
     const locationText = await getUserLocationContext(userName).catch(() => '');
     if (locationText && locationText.trim()) taskParts.splice(1, 0, locationText.trim());
@@ -526,7 +554,8 @@ export function parseLiveBeatsResponse(
       );
 
       const danmakuList: LiveDanmakuItem[] = filteredRaw.map((d: any, di: number) => {
-        const scAmt = Number(d?.scAmount) > 0 ? Number(d.scAmount) : undefined;
+        let scAmt = Number(d?.scAmount) > 0 ? Math.round(Number(d.scAmount)) : undefined;
+        if (scAmt && scAmt > 500 && scAmt < SC_CUSTOM_MIN) scAmt = SC_CUSTOM_MIN;
         return {
           id: `dm_${chunkId}_${idx}_${di}_${Date.now()}`,
           senderName: String(d?.senderName || d?.author || d?.user || `Viewer_${100 + di}`).trim(),

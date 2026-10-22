@@ -64,6 +64,11 @@ export interface StreamerChannelProfile {
   voiceConfig: ChannelVoiceConfig;
   /** 该频道的专属礼物列表（可由 AI 根据人设生成或手动编辑） */
   customGifts?: StreamGiftOption[];
+  /**
+   * 弹幕观众温度 0–100。0 最叛逆（吐槽、对抗、恶评），100 最友好溺爱。
+   * 缺省按 50，有人抬杠也有人热场。
+   */
+  danmakuWarmth?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -543,6 +548,8 @@ export const SC_TIER_OPTIONS: Array<{
   bodyBg: string;
   textColor: string;
   pillBg: string;
+  /** ¥800 起的自定义金额：红底再加一圈金边 */
+  goldBorder?: boolean;
 }> = [
   {
     amount: 5,
@@ -599,7 +606,23 @@ export const SC_TIER_OPTIONS: Array<{
     textColor: '#ffffff',
     pillBg: '#e53935',
   },
+  {
+    amount: 800,
+    label: '¥800+',
+    color: 'red',
+    colorLabel: '红底金边',
+    pinDurationLabel: '置顶 2 小时',
+    headerBg: '#b71c1c',
+    bodyBg: '#e53935',
+    textColor: '#ffffff',
+    pillBg: '#e53935',
+    goldBorder: true,
+  },
 ];
+
+/** 自定义 Super Chat 最低金额。达到后走红底金边，不再另开颜色名。 */
+export const SC_CUSTOM_MIN = 800;
+export const SC_GOLD_BORDER = '#e6b422';
 
 const LEGACY_SC_COLOR: Record<string, LiveScColor> = {
   blue: 'green',
@@ -632,4 +655,67 @@ export function resolveScTier(
     if (byColor) return byColor;
   }
   return SC_TIER_OPTIONS[0];
+}
+
+/**
+ * 下一轮在线人数。大部分直播是糊的：每轮最多小幅起伏，
+ * 不回答 SC、不理弹幕、冷场或态度差会往下走，接得住会慢慢往上，但不会一下冲到粉丝量。
+ */
+export function settleLiveViewerCount(input: {
+  current: number;
+  followers: number;
+  beats: Array<{
+    speechOriginal?: string;
+    speechTranslated?: string;
+    emotion?: string;
+    danmaku?: LiveDanmakuItem[];
+  }>;
+}): number {
+  const followers = Math.max(1, Math.round(input.followers) || 1000);
+  const current = Math.max(1, Math.round(input.current) || Math.round(followers * 0.04));
+  const beats = input.beats || [];
+  const speeches = beats.map(beat => `${beat.speechOriginal || ''}\n${beat.speechTranslated || ''}`);
+  const paid = beats.flatMap(beat =>
+    (beat.danmaku || []).filter(item => (item.scAmount && item.scAmount > 0) || item.giftName),
+  );
+  const plain = beats.flatMap(beat =>
+    (beat.danmaku || []).filter(item => !(item.scAmount && item.scAmount > 0) && !item.giftName && item.text),
+  );
+  const said = (snippet?: string) => {
+    const text = (snippet || '').trim();
+    if (text.length < 2) return false;
+    return speeches.some(speech => speech.includes(text));
+  };
+  let unansweredPaid = 0;
+  for (const item of paid) {
+    const hit =
+      said(item.text) ||
+      said(item.giftName) ||
+      (item.scAmount ? speeches.some(speech => speech.includes(String(item.scAmount))) : false);
+    if (!hit) unansweredPaid += 1;
+  }
+  const quotedPlain = plain.filter(item => said(item.text)).length;
+  const silentBeats = beats.filter(beat => !(beat.speechOriginal || '').trim()).length;
+  const harshBeats = beats.filter(beat => beat.emotion === 'angry').length;
+
+  let delta = -0.02;
+  if (unansweredPaid > 0) delta -= Math.min(0.1, 0.035 * unansweredPaid);
+  if (plain.length >= 3 && quotedPlain === 0) delta -= 0.03;
+  if (beats.length > 0 && silentBeats >= Math.ceil(beats.length / 2)) delta -= 0.025;
+  if (harshBeats >= 2) delta -= 0.04;
+  if (quotedPlain > 0) delta += 0.03;
+  if (paid.length > 0 && unansweredPaid === 0) delta += 0.045;
+  if (beats.some(beat => beat.emotion === 'happy') && quotedPlain > 0) delta += 0.015;
+  delta = Math.max(-0.12, Math.min(0.06, delta));
+
+  let next = Math.round(current * (1 + delta));
+  const softCap = Math.max(80, Math.round(followers * 0.18));
+  const hardCap = Math.max(softCap, Math.round(followers * 0.35));
+  if (next > softCap && delta > 0) {
+    next = Math.round(current + (next - current) * 0.35);
+  }
+  if (current > hardCap) {
+    return Math.max(hardCap, Math.round(current - (current - hardCap) * 0.12));
+  }
+  return Math.max(30, Math.min(hardCap, next));
 }

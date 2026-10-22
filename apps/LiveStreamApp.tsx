@@ -45,6 +45,7 @@ import {
   LivePlatformTheme,
   LiveVoiceClock,
   STREAM_PRESET_TEMPLATES,
+  settleLiveViewerCount,
 } from '../utils/liveStreamTypes';
 import {
   loadPlatformTheme,
@@ -1222,8 +1223,21 @@ const LiveStreamApp: React.FC = () => {
           if (inp.scAmount && inp.scAmount > 0) scTotal += inp.scAmount;
           if (inp.gift && inp.gift.price > 0) giftTotal += inp.gift.price;
         });
+        beats.forEach(beat => {
+          (beat.danmaku || []).forEach(item => {
+            if (item.isUserMain || item.isUserAlt) return;
+            if (item.scAmount && item.scAmount > 0) scTotal += item.scAmount;
+            if (item.giftAmount && item.giftAmount > 0) {
+              giftTotal += item.giftAmount * (item.giftCount && item.giftCount > 1 ? item.giftCount : 1);
+            }
+          });
+        });
+        currViewers = settleLiveViewerCount({
+          current: currViewers,
+          followers: channel.followerCount,
+          beats,
+        });
       }
-      currViewers = Math.max(50, currViewers + Math.floor(Math.random() * 140) - 35);
       if (currViewers > peak) peak = currViewers;
 
       const existingChunk = options?.replaceChunkId
