@@ -90,4 +90,87 @@ describe('forkBackup', () => {
         expect(layer.forkBackupVersion).toBe(FORK_BACKUP_VERSION);
         expect(Array.isArray(layer.miaomiaoSessions)).toBe(true);
     });
+
+    it('电波只带文字与设置：背景图 / 音频 / 时间轴被剥掉，本机开关进包', async () => {
+        const db = await openDB();
+        const put = (store: string, row: any) => new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(store, 'readwrite');
+            tx.objectStore(store).put(row);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+
+        await put('live_channels', {
+            id: 'fork-ch1', charId: 'c1', channelName: '频道', handle: '@a',
+            avatar: 'blobref:avatar', roomBackgroundUrl: 'blobref:bg',
+            bannerGradient: 'g', identityMode: 'public_main', bio: '简介',
+            streamerPersonaPrompt: '', followerCount: 1, fanBadgeName: 'M',
+            defaultCategory: 'x', voiceConfig: { language: '', enableTranslation: false, autoPlayTts: true },
+            createdAt: 1, updatedAt: 1,
+        });
+        await put('live_sessions', {
+            id: 'fork-s1', channelId: 'fork-ch1', charId: 'c1', title: '标题', categoryKey: 'k', categoryLabel: 'L',
+            customBackgroundUrl: 'blobref:sessionbg',
+            status: 'ended', viewerCount: 1, likeCount: 2,
+            chunks: [{
+                id: 'k1', index: 0, createdAt: 1, userInputs: [], beats: [
+                    {
+                        id: 'b1', chunkId: 'k1', index: 0, screen: '画面', speechOriginal: '台词',
+                        audioUrl: 'blobref:voice', speechTimeline: { segments: [] }, danmaku: [],
+                    },
+                ],
+            }],
+            rollingSummaries: [], pendingDanmakuQueue: [], foldEveryNChunks: 3, foldKeepRecentChunks: 1,
+            startedAt: 1,
+        });
+        await put('live_vods', {
+            id: 'fork-v1', channelId: 'fork-ch1', charId: 'c1', title: '投稿', categoryLabel: 'L',
+            durationLabel: '10:00', coverGradient: 'g', coverImageUrl: 'blobref:cover',
+            viewsCount: 1, likesCount: 2, streamerPinnedNote: 'note',
+            chapters: [{
+                id: 'vc1', timestampLabel: '00:00', chapterTitle: '章', screen: '画面',
+                speechOriginal: '台词', audioUrl: 'blobref:vodvoice', danmaku: [],
+            }],
+            comments: [], createdAt: 1,
+        });
+        await put('live_npc_watches', {
+            id: 'fork-w1', charId: 'c1', npcStreamerName: 'NPC', npcCategoryLabel: 'L', npcRoomTitle: '房间',
+            npcBio: 'bio', coverGradient: 'g', viewerCount: 1,
+            beats: [{
+                id: 'nb1', index: 0, npcScreen: '画面', npcSpeech: '话', npcDanmaku: [],
+                charReactionAction: '动作', charReactionSpeech: '反应', charAudioUrl: 'blobref:npcvoice',
+            }],
+            createdAt: 1,
+        });
+        localStorage.setItem('live_stage_avatar', '1');
+
+        try {
+            const layer = await collectForkBackupLayer();
+
+            const channel = (layer.liveChannels as any[]).find((c) => c.id === 'fork-ch1');
+            expect(channel.channelName).toBe('频道');
+            expect(channel.bio).toBe('简介');
+            expect(channel.avatar).toBeUndefined();
+            expect(channel.roomBackgroundUrl).toBeUndefined();
+
+            const session = (layer.liveSessions as any[]).find((s) => s.id === 'fork-s1');
+            expect(session.customBackgroundUrl).toBeUndefined();
+            expect(session.chunks[0].beats[0].speechOriginal).toBe('台词');
+            expect(session.chunks[0].beats[0].audioUrl).toBeUndefined();
+            expect(session.chunks[0].beats[0].speechTimeline).toBeUndefined();
+
+            const vod = (layer.liveVods as any[]).find((v) => v.id === 'fork-v1');
+            expect(vod.coverImageUrl).toBeUndefined();
+            expect(vod.chapters[0].speechOriginal).toBe('台词');
+            expect(vod.chapters[0].audioUrl).toBeUndefined();
+
+            const watch = (layer.liveNpcWatches as any[]).find((w) => w.id === 'fork-w1');
+            expect(watch.beats[0].charReactionSpeech).toBe('反应');
+            expect(watch.beats[0].charAudioUrl).toBeUndefined();
+
+            expect(layer.forkLiveLocal?.live_stage_avatar).toBe('1');
+        } finally {
+            localStorage.removeItem('live_stage_avatar');
+        }
+    });
 });

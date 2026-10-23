@@ -32,6 +32,13 @@ export const FORK_MIAOMIAO_LOCAL_KEYS = [
     'miaomiao-voice-seq',
 ] as const;
 
+/** 电波 OnAir：本机开关（舞台小人 / 静音预生成 / 上次替身），随二改包一起走 */
+export const FORK_LIVE_LOCAL_KEYS = [
+    'live_stage_avatar',
+    'live_silent_tts_pregeneration',
+    'live_last_alt_persona_v1',
+] as const;
+
 export type ForkBackupLayer = Pick<
     FullBackupData,
     | 'customFork'
@@ -41,6 +48,7 @@ export type ForkBackupLayer = Pick<
     | 'miaomiaoSettings'
     | 'forkSparkLocal'
     | 'forkMiaomiaoLocal'
+    | 'forkLiveLocal'
     | 'forkSparkAssets'
     | 'liveChannels'
     | 'liveSessions'
@@ -75,6 +83,76 @@ function writeLocalStorageMap(map: Record<string, string> | undefined): void {
             /* ignore quota */
         }
     }
+}
+
+/**
+ * 电波备份只留文字与设置：剥掉背景图和音频（含逐字时间轴）。
+ *
+ * 图片字段存的是 blobref 令牌，语音是合成好的地址——两者都不随包走。
+ * 导入后界面回落到默认氛围背景、回放按需重新合成，代码里本来就有兜底
+ * （背景兜底在 components/live/，音频兜底见 utils/liveReplayAudio.ts 的 synthesize 分支）。
+ */
+function stripLiveMediaRows(storeName: string, rows: any[]): any[] {
+    return rows.map((row) => stripLiveMediaRow(storeName, row));
+}
+
+function stripLiveMediaRow(storeName: string, row: any): any {
+    if (!row || typeof row !== 'object') return row;
+    const next: any = { ...row };
+    switch (storeName) {
+        case STORE_LIVE_CHANNELS:
+            // 频道头像 / 直播间背景
+            delete next.avatar;
+            delete next.roomBackgroundUrl;
+            break;
+        case STORE_LIVE_SESSIONS:
+            // 本场自定义背景
+            delete next.customBackgroundUrl;
+            // 每一拍的语音与逐字时间轴
+            if (Array.isArray(next.chunks)) {
+                next.chunks = next.chunks.map((chunk: any) => {
+                    if (!chunk || typeof chunk !== 'object' || !Array.isArray(chunk.beats)) return chunk;
+                    return {
+                        ...chunk,
+                        beats: chunk.beats.map((beat: any) => {
+                            if (!beat || typeof beat !== 'object') return beat;
+                            const copy = { ...beat };
+                            delete copy.audioUrl;
+                            delete copy.speechTimeline;
+                            return copy;
+                        }),
+                    };
+                });
+            }
+            break;
+        case STORE_LIVE_VODS:
+            // 录播封面
+            delete next.coverImageUrl;
+            // 录播每一章的语音
+            if (Array.isArray(next.chapters)) {
+                next.chapters = next.chapters.map((chapter: any) => {
+                    if (!chapter || typeof chapter !== 'object') return chapter;
+                    const copy = { ...chapter };
+                    delete copy.audioUrl;
+                    return copy;
+                });
+            }
+            break;
+        case STORE_LIVE_NPC_WATCHES:
+            // 陪看每一拍角色的语音
+            if (Array.isArray(next.beats)) {
+                next.beats = next.beats.map((beat: any) => {
+                    if (!beat || typeof beat !== 'object') return beat;
+                    const copy = { ...beat };
+                    delete copy.charAudioUrl;
+                    return copy;
+                });
+            }
+            break;
+        default:
+            break;
+    }
+    return next;
 }
 
 /** 收集二改层字段（在完整 backupData 上 Object.assign，再走 writeV2Backup） */
@@ -118,11 +196,12 @@ export async function collectForkBackupLayer(): Promise<ForkBackupLayer> {
         miaomiaoSettings,
         forkSparkLocal: readLocalStorageMap(FORK_SPARK_LOCAL_KEYS),
         forkMiaomiaoLocal: readLocalStorageMap(FORK_MIAOMIAO_LOCAL_KEYS),
+        forkLiveLocal: readLocalStorageMap(FORK_LIVE_LOCAL_KEYS),
         forkSparkAssets,
-        liveChannels,
-        liveSessions,
-        liveVods,
-        liveNpcWatches,
+        liveChannels: stripLiveMediaRows(STORE_LIVE_CHANNELS, liveChannels),
+        liveSessions: stripLiveMediaRows(STORE_LIVE_SESSIONS, liveSessions),
+        liveVods: stripLiveMediaRows(STORE_LIVE_VODS, liveVods),
+        liveNpcWatches: stripLiveMediaRows(STORE_LIVE_NPC_WATCHES, liveNpcWatches),
         liveKv,
     };
 }
@@ -148,6 +227,7 @@ export async function restoreForkBackupLayer(
         || data.miaomiaoSettings !== undefined
         || data.forkSparkLocal !== undefined
         || data.forkMiaomiaoLocal !== undefined
+        || data.forkLiveLocal !== undefined
         || (data.forkSparkAssets?.length ?? 0) > 0
         || data.liveChannels !== undefined
         || data.liveSessions !== undefined
@@ -165,6 +245,7 @@ export async function restoreForkBackupLayer(
 
     if (data.forkSparkLocal) writeLocalStorageMap(data.forkSparkLocal);
     if (data.forkMiaomiaoLocal) writeLocalStorageMap(data.forkMiaomiaoLocal);
+    if (data.forkLiveLocal) writeLocalStorageMap(data.forkLiveLocal);
 
     // 电波：整表替换（包里有这一层才动，没有就不碰本机现有直播数据）
     await replaceStoreIfPresent(STORE_LIVE_CHANNELS, data.liveChannels);
@@ -229,7 +310,7 @@ export async function clearForkBackupStores(): Promise<void> {
         await clearIndexedDbStore(storeName);
     }
     if (typeof localStorage !== 'undefined') {
-        for (const key of [...FORK_SPARK_LOCAL_KEYS, ...FORK_MIAOMIAO_LOCAL_KEYS]) {
+        for (const key of [...FORK_SPARK_LOCAL_KEYS, ...FORK_MIAOMIAO_LOCAL_KEYS, ...FORK_LIVE_LOCAL_KEYS]) {
             localStorage.removeItem(key);
         }
     }
