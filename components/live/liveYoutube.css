@@ -1459,7 +1459,8 @@
 /* 左下弹幕轨：胶囊，不飞。
    上面是从开场到现在播过的全部弹幕（手指上滑能一路看回去），
    底下每 1.2 秒追加一条「本拍」的弹幕。
-   高度上限按 4 条双语算（48.5×4 + 6×3 ≈ 212），顶到台词块下面。
+   高度上限按 4 条双语算（40×4 + 6×3 ≈ 178，再留 30px 余量 → 208），
+   顶到台词块下面。Ann 2026-10-24 弹幕变小后，这条上限跟着从 242 收到 208。
    最上面那几条走一条柔雾过渡，轻轻化进画面，不硬切一刀。 */
 .dyt-rail {
   position: absolute;
@@ -1467,7 +1468,7 @@
   bottom: 78px;
   z-index: 5;
   width: min(calc(100% - 32px), 460px);
-  max-height: 242px;
+  max-height: 208px;
   /* 顶部柔雾（Ann 2026-10-23 定的 ①）：弹幕不再从控制条下面 12px 才开头，
      而是紧贴控制条下方直接开始；最上面那条由全透明渐渐化实
      （20px 到三成、52px 全显），和上面那条已有的渐隐是同一个手法。
@@ -1493,25 +1494,31 @@
 .dyt-chip {
   flex: 0 0 auto;
   align-self: flex-start;
-  max-width: 100%;
-  padding: 6px 14px;
+  /* Ann 2026-10-24：弹幕要「短一点」，横向不许超过屏幕宽的 62%。
+     轨宽本身是「屏宽 − 32px」，所以这里写 62% + 20px——落到屏幕上
+     正好是 62%；屏再宽也不会超（轨宽有 460px 上限兜着）。 */
+  max-width: calc(62% + 20px);
+  padding: 4px 11px;
   border-radius: 999px;
   /* Ann 2026-10-24：灰胶囊换成半透明奶白，壁纸透上来 → 整屏一种料子。
      七成二的奶白压得住黑字（不管壁纸多深多浅，字都还看得清）。 */
   background: rgba(255, 255, 255, 0.64);
   color: #131416;
-  font-size: 13px;
+  /* Ann 2026-10-24：跟着「短一点」一起变小一档（13 → 12），行距收一点，
+     一条双语弹幕从 48.5px 高降到约 40px。 */
+  font-size: 12px;
   font-weight: 400;
-  line-height: 1.38;
+  line-height: 1.35;
   letter-spacing: 0.01em;
   word-break: break-word;
 }
 /* 新的一条直接出现：不淡入、不位移；往上走全靠整列顺滑滚动（Ann 挑的动法） */
 .dyt-chip__trans {
   display: block;
-  margin-top: 2px;
+  /* Ann 2026-10-24：翻译留在正文下面（她要的位置），只是跟着变小一档。 */
+  margin-top: 1px;
   color: #5d5f60;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
 }
 .dyt-chip--sc {
@@ -1527,6 +1534,19 @@
 }
 .dyt-chip--gift .dyt-chip__user {
   color: #606060;
+}
+/* 名字按身份上色（Ann 2026-10-24 选的方案 ②）：
+   本尊蓝、会员/老粉绿、路人/匿名不额外上色（跟正文同一个墨色）。
+   色值跟小窗公屏那三档（.dyt-msg__user--*）一模一样，
+   判定也照抄小窗的 renderChatList。写在 sc / gift 后面，好让身份色说了算。 */
+.dyt-chip__user--host {
+  color: #065fd4;
+}
+.dyt-chip__user--member {
+  color: #2ba640;
+}
+.dyt-chip__user--anon {
+  color: #131416;
 }
 
 /* 同一底栏：进度 + 切拍 / 身份嵌聊天 / 礼物导演

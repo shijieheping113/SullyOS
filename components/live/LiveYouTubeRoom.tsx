@@ -678,13 +678,22 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     const comment = getLiveDanmakuComment(dm);
     const railTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
     const railBody = isGift ? `送出 ${dm.giftName}` : comment;
+    // 名字按身份上色（Ann 2026-10-24 选的方案 ②）：
+    // 判定跟小窗公屏那条 renderChatList 一字不差——本尊蓝、会员/老粉绿、路人/匿名不额外上色
+    const railUserClass = dm.isUserMain
+      ? ' dyt-chip__user--host'
+      : dm.isUserAlt
+      ? ' dyt-chip__user--anon'
+      : dm.fanBadge || dm.roleType === 'old_fan'
+      ? ' dyt-chip__user--member'
+      : ' dyt-chip__user--anon';
     return (
       <div
         key={key}
         data-rail-flow={isFlow ? '1' : undefined}
         className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}`}
       >
-        <span className="dyt-chip__user">
+        <span className={`dyt-chip__user${railUserClass}`}>
           {dm.senderName}
           {isSc ? ` · ${dm.scCurrency || '¥'}${dm.scAmount}` : ''}
         </span>
