@@ -1382,9 +1382,11 @@
   /* 台词块整体上移 56px（原 248px）。
      Ann 2026-10-23：台词下方那条切句导航已去掉（改成双击画面左右切句），
      块里少了「导航」那 40px，台词自己往下落 40px 补上那块空位。
-     Ann 2026-10-24：落下来之后贴着弹幕了，整块再往上提 20px
-     （304 → 324），让台词和弹幕之间那条空行拉开一点。 */
-  bottom: 324px;
+     Ann 2026-10-24：先往上提 20px（304 → 324），想把跟弹幕之间的空行拉开；
+     当天再看，硬留一条纯白缝反而像两块地方，于是又放下来 12px（324 → 312），
+     把那条约 20 像素的白缝收成约 8 像素，改成让台词下缘和弹幕上缘
+     各自变淡、在中间碰头（见 .dyt-lines__text 与 .dyt-rail 的遮罩）。 */
+  bottom: 312px;
   z-index: 4;
   max-height: 28%;
   overflow: hidden;
@@ -1400,6 +1402,12 @@
   flex: 0 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* Ann 2026-10-24：底边留一条短渐隐（最后 10 像素淡到七成二），
+     让台词下缘不是一条硬线，跟下面弹幕那条长坡接上。
+     第一版写的 14 像素 / 五成五，实测把整行日文都洗淡了（日文是要读的内容），
+     所以收短、收浅。长台词被裁掉时，下面 .is-clipped 那条更长的渐隐会盖掉这一条。 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.72) 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.72) 100%);
 }
 .dyt-lines__text.is-clipped {
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
@@ -1452,9 +1460,12 @@
   max-height: 242px;
   /* 顶部柔雾（Ann 2026-10-23 定的 ①）：弹幕不再从控制条下面 12px 才开头，
      而是紧贴控制条下方直接开始；最上面那条由全透明渐渐化实
-     （20px 到三成、52px 全显），和上面那条已有的渐隐是同一个手法。 */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 20px, #000 52px);
-  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 20px, #000 52px);
+     （20px 到三成、52px 全显），和上面那条已有的渐隐是同一个手法。
+     Ann 2026-10-24：坡太短，一条弹幕就从鬼影变实心，看着像被裁掉；
+     拉长成 96px、后段放缓（22px 到三成、58px 到七成二、96px 全显），
+     弹幕像从雾里慢慢浮出来，跟台词下缘那条短渐隐接上。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 22px, rgba(0, 0, 0, 0.72) 58px, #000 96px);
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 22px, rgba(0, 0, 0, 0.72) 58px, #000 96px);
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
