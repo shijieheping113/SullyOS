@@ -586,21 +586,67 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     return () => window.clearInterval(timer);
   }, [props.isFullscreen, railPaused, beatDanmakuKey]);
 
-  // 没在手动回看时，永远贴在最底下
+  // 没在手动回看时，整列顺滑地往上滑到底（不是「啪」地跳一格）
+  const railAutoRef = useRef(false); // 正在自动滑：这期间的滚动事件不算「手动上滑」
+  const railRafRef = useRef<number | null>(null);
+  const railInitRef = useRef(false);
+  const stopRailAuto = () => {
+    railAutoRef.current = false;
+    if (railRafRef.current !== null) {
+      window.cancelAnimationFrame(railRafRef.current);
+      railRafRef.current = null;
+    }
+  };
+  // 刚进全屏时直接落到底，不要从最上面长距离滑下来
+  useEffect(() => {
+    railInitRef.current = false;
+  }, [props.isFullscreen]);
   useEffect(() => {
     const el = railRef.current;
     if (!el || railPaused) return;
-    el.scrollTop = el.scrollHeight;
-  }, [railLastSeq, railPaused, props.isFullscreen]);
+    const target = el.scrollHeight - el.clientHeight;
+    if (!railInitRef.current) {
+      railInitRef.current = true;
+      el.scrollTop = target;
+      return;
+    }
+    const start = el.scrollTop;
+    if (target - start < 1) {
+      el.scrollTop = target;
+      return;
+    }
+    railAutoRef.current = true;
+    const dur = 340;
+    const t0 = performance.now();
+    const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / dur);
+      el.scrollTop = start + (target - start) * ease(p);
+      if (p < 1) {
+        railRafRef.current = window.requestAnimationFrame(step);
+      } else {
+        railRafRef.current = null;
+        railAutoRef.current = false;
+      }
+    };
+    railRafRef.current = window.requestAnimationFrame(step);
+    return () => {
+      if (railRafRef.current !== null) {
+        window.cancelAnimationFrame(railRafRef.current);
+        railRafRef.current = null;
+      }
+      railAutoRef.current = false;
+    };
+  }, [railLastSeq, visibleDanmakuFeed.length, railPaused, props.isFullscreen]);
 
   const handleRailScroll = () => {
     const el = railRef.current;
-    if (!el) return;
+    if (!el || railAutoRef.current) return; // 自动滑动那一下不算手动
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 14;
     setRailPaused(prev => (prev === !atBottom ? prev : !atBottom));
   };
 
-  const renderRailChip = (dm: LiveDanmakuItem, key: string, animated: boolean) => {
+  const renderRailChip = (dm: LiveDanmakuItem, key: string) => {
     const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
     const isGift = Boolean(dm.giftName);
     const comment = getLiveDanmakuComment(dm);
@@ -609,9 +655,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     return (
       <div
         key={key}
-        className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}${
-          animated ? ' dyt-chip--in' : ''
-        }`}
+        className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}`}
       >
         <span className="dyt-chip__user">
           {dm.senderName}
@@ -1551,9 +1595,11 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             aria-label="全屏左下弹幕"
             ref={railRef}
             onScroll={handleRailScroll}
+            onPointerDown={stopRailAuto}
+            onWheel={stopRailAuto}
           >
-            {visibleDanmakuFeed.map((dm, i) => renderRailChip(dm, `h_${dm.id || i}`, false))}
-            {railLoop.map(({ dm, seq }) => renderRailChip(dm, `l_${seq}`, true))}
+            {visibleDanmakuFeed.map((dm, i) => renderRailChip(dm, `h_${dm.id || i}`))}
+            {railLoop.map(({ dm, seq }) => renderRailChip(dm, `l_${seq}`))}
           </div>
 
           {renderStageAvatar('dyt-fs__avatar')}

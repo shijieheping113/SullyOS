@@ -1422,14 +1422,21 @@
 
 /* 左下弹幕轨：胶囊，不飞。
    上面是从开场到现在播过的全部弹幕（手指上滑能一路看回去），
-   底下每 1.2 秒追加一条「本拍」的弹幕；高度按 3 条双语算，不压扁、不渐隐。 */
+   底下每 1.2 秒追加一条「本拍」的弹幕。
+   高度上限按 4 条双语算（48.5×4 + 6×3 ≈ 212），顶到台词块下面。
+   最上面那几条走一条柔雾过渡，轻轻化进画面，不硬切一刀。 */
 .dyt-rail {
   position: absolute;
   left: 12px;
   bottom: 78px;
   z-index: 5;
   width: min(86%, 320px);
-  max-height: 160px;
+  max-height: 242px;
+  /* 顶部柔雾（Ann 2026-10-23 定的 ①）：弹幕不再从控制条下面 12px 才开头，
+     而是紧贴控制条下方直接开始；最上面那条由全透明渐渐化实
+     （20px 到三成、52px 全显），和上面那条已有的渐隐是同一个手法。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 20px, #000 52px);
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 20px, #000 52px);
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -1458,20 +1465,7 @@
   letter-spacing: 0.01em;
   word-break: break-word;
 }
-/* 只有新追加的那一条淡入滑上来；上面那些历史弹幕不动 */
-.dyt-chip--in {
-  animation: dyt-chip-in 320ms ease-out;
-}
-@keyframes dyt-chip-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+/* 新的一条直接出现：不淡入、不位移；往上走全靠整列顺滑滚动（Ann 挑的动法） */
 .dyt-chip__trans {
   display: block;
   margin-top: 2px;
