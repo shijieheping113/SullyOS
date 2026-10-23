@@ -96,6 +96,8 @@
   padding-bottom: 6px;
   background: #000;
   overflow: hidden;
+  /* 双击切句要用双击手势：关掉浏览器自己的「双击缩放」，不然手机上双击会放大页面 */
+  touch-action: manipulation;
 }
 
 .dyt-player__scene {
@@ -209,27 +211,22 @@
   color: #cfcfcf;
 }
 
-/* 语音切句：箭头 + 圆点，固定在字幕区右侧 */
+/* 语音切句：小窗已改成「双击画面左右切句」，画面里不再有任何浮层控件，
+   这里只留全屏机位那套白底静态排布要用的基础样式 */
 .dyt-snav {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  z-index: 8;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 24px;
   padding: 0 4px;
   border-radius: 999px;
-  background: rgba(15, 15, 15, 0.72);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 .dyt-snav--fs {
   position: static;
   align-self: flex-start;
   display: inline-flex;
-  margin-bottom: 10px;
+  /* 全屏控制条现在贴在台词下方（原来在台词上方） */
+  margin-top: 10px;
   height: 30px;
   padding: 0 6px;
   background: rgba(255, 255, 255, 0.9);
@@ -281,6 +278,55 @@
 }
 .dyt-snav--fs .dyt-snav__dot.is-on {
   background: #ff0033;
+}
+
+/* 双击切句的提示：贴画面顶边正中，很小，1.2 秒后自己消失。
+   弹幕道是从 28px 才开始跑的，这里占 5~23px，压不到弹幕也碰不到台词。
+   整个提示不吃点按（pointer-events: none），免得挡住双击。 */
+.dyt-ptip {
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  transform: translateX(-50%);
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(15, 15, 15, 0.78);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.dyt-ptip__arrow {
+  font-size: 11px;
+  opacity: 0.9;
+}
+.dyt-ptip.is-blocked .dyt-ptip__arrow {
+  opacity: 0.32;
+}
+.dyt-ptip__dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.dyt-ptip__dot {
+  width: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.4);
+}
+.dyt-ptip__dot.is-past {
+  background: rgba(255, 255, 255, 0.72);
+}
+.dyt-ptip__dot.is-on {
+  width: 12px;
+  background: #fff;
 }
 
 /* 画面正中圆盘头像（原型没有的既有功能，由设置开关控制，默认关） */
@@ -1333,7 +1379,10 @@
   position: absolute;
   left: 18px;
   right: 18px;
-  bottom: 248px;
+  /* 台词块整体上移 56px（原 248px）：控制条挪到台词下方后，
+     腾出来的高度全给下面那条弹幕轨（Ann 2026-10-23 定）。
+     上移后台词落在屏幕中部偏下，离顶部「镜头」那一块还隔着很远。 */
+  bottom: 304px;
   z-index: 4;
   max-height: 28%;
   overflow: hidden;
@@ -1341,8 +1390,18 @@
   flex-direction: column;
   align-items: flex-start;
   padding-bottom: 16px;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+}
+/* 台词那一层：长台词超过整块高度时在这里裁掉；
+   只有真的裁掉了（.is-clipped）才在底部渐隐，平时不留，免得把日语那行洗白 */
+.dyt-lines__text {
+  align-self: stretch;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.dyt-lines__text.is-clipped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
 }
 .dyt-lines__zh {
   margin: 0;
@@ -1361,25 +1420,32 @@
   word-break: break-word;
 }
 
-/* 左下弹幕轨：胶囊，不飞 */
+/* 左下弹幕轨：胶囊，不飞。
+   上面是从开场到现在播过的全部弹幕（手指上滑能一路看回去），
+   底下每 1.2 秒追加一条「本拍」的弹幕；高度按 3 条双语算，不压扁、不渐隐。 */
 .dyt-rail {
   position: absolute;
   left: 12px;
   bottom: 78px;
   z-index: 5;
-  width: min(70%, 248px);
-  max-height: 140px;
-  overflow: hidden;
+  width: min(86%, 320px);
+  max-height: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  align-items: flex-start;
   gap: 6px;
-  padding-top: 20px;
-  pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  scrollbar-width: none;
+}
+.dyt-rail::-webkit-scrollbar {
+  display: none;
 }
 .dyt-chip {
+  flex: 0 0 auto;
   align-self: flex-start;
   max-width: 100%;
   padding: 6px 14px;
@@ -1391,6 +1457,27 @@
   line-height: 1.38;
   letter-spacing: 0.01em;
   word-break: break-word;
+}
+/* 只有新追加的那一条淡入滑上来；上面那些历史弹幕不动 */
+.dyt-chip--in {
+  animation: dyt-chip-in 320ms ease-out;
+}
+@keyframes dyt-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dyt-chip__trans {
+  display: block;
+  margin-top: 2px;
+  color: #606060;
+  font-size: 12px;
+  font-weight: 400;
 }
 .dyt-chip--sc {
   background: #fff2cc;
@@ -1407,7 +1494,8 @@
   color: #606060;
 }
 
-/* 同一底栏：进度 + 切拍 / 身份嵌聊天 / 礼物导演 */
+/* 同一底栏：进度 + 切拍 / 身份嵌聊天 / 礼物导演
+   上边那条 1px 灰线已去掉（Ann 2026-10-23 定：弹幕区底下不要这条线） */
 .dyt-dock {
   position: absolute;
   left: 0;
@@ -1415,7 +1503,6 @@
   bottom: 0;
   z-index: 7;
   background: #ffffff;
-  border-top: 1px solid #e5e5e5;
   padding: 0 10px calc(10px + var(--safe-b));
 }
 .dyt-dock__track {

@@ -557,7 +557,82 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     .slice(-4)
     .reverse();
 
-  const railItems = visibleDanmakuFeed.slice(-6);
+  // 全屏左下弹幕：上面接「从开场到现在播过的全部弹幕」（手指上滑能回看），
+  // 底下每 1.2 秒循环追加一条「当前这一拍」的弹幕；手动上滑时整条停住。
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const [railLoop, setRailLoop] = useState<{ dm: LiveDanmakuItem; seq: number }[]>([]);
+  const [railPaused, setRailPaused] = useState(false);
+  const railLoopSeqRef = useRef(0);
+  const railLoopIdxRef = useRef(0);
+  const beatDanmaku = props.scrollingDanmakuFeed || [];
+  const beatDanmakuKey = beatDanmaku.map(dm => dm.id || dm.text || '').join('|');
+  const railLastSeq = railLoop.length ? railLoop[railLoop.length - 1].seq : 0;
+
+  // 换拍：循环从头开始（已经追加出来的那几条留着，它们和上面的历史本来就是同一批）
+  useEffect(() => {
+    railLoopIdxRef.current = 0;
+  }, [beatDanmakuKey]);
+
+  useEffect(() => {
+    if (!props.isFullscreen || railPaused || beatDanmaku.length === 0) return;
+    const timer = window.setInterval(() => {
+      const idx = railLoopIdxRef.current % beatDanmaku.length;
+      railLoopIdxRef.current = idx + 1;
+      railLoopSeqRef.current += 1;
+      const dm = beatDanmaku[idx];
+      const seq = railLoopSeqRef.current;
+      setRailLoop(prev => [...prev, { dm, seq }].slice(-12));
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [props.isFullscreen, railPaused, beatDanmakuKey]);
+
+  // 没在手动回看时，永远贴在最底下
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el || railPaused) return;
+    el.scrollTop = el.scrollHeight;
+  }, [railLastSeq, railPaused, props.isFullscreen]);
+
+  const handleRailScroll = () => {
+    const el = railRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 14;
+    setRailPaused(prev => (prev === !atBottom ? prev : !atBottom));
+  };
+
+  const renderRailChip = (dm: LiveDanmakuItem, key: string, animated: boolean) => {
+    const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
+    const isGift = Boolean(dm.giftName);
+    const comment = getLiveDanmakuComment(dm);
+    const railTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
+    const railBody = isGift ? `送出 ${dm.giftName}` : comment;
+    return (
+      <div
+        key={key}
+        className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}${
+          animated ? ' dyt-chip--in' : ''
+        }`}
+      >
+        <span className="dyt-chip__user">
+          {dm.senderName}
+          {isSc ? ` · ${dm.scCurrency || '¥'}${dm.scAmount}` : ''}
+        </span>
+        {railBody}
+        {props.showTranslation && railTrans && railTrans !== railBody ? (
+          <span className="dyt-chip__trans">{railTrans}</span>
+        ) : null}
+      </div>
+    );
+  };
+
+  // 台词那一层只有「真的超出被裁掉」时才渐隐；平时不留，免得把日语那行洗白
+  const linesTextRef = useRef<HTMLDivElement | null>(null);
+  const [linesClipped, setLinesClipped] = useState(false);
+  useEffect(() => {
+    const el = linesTextRef.current;
+    if (!el) return;
+    setLinesClipped(el.scrollHeight > el.clientHeight + 1);
+  }, [zhLine, jaLine, props.isGenerating, props.isFullscreen]);
 
   // 待生效导演引导：贴在输入框上方的窄条；本轮生成后 pendingGuidance 会被清空，自然消失
   const pendingCue = props.pendingGuidance[0];
@@ -659,6 +734,36 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         </button>
       </div>
     );
+  };
+
+  // ============ 小窗双击切句：左半边上一句 / 右半边下一句 ============
+  // 台词那一条、画面最底进度条、左上返回键都不算双击区，
+  // 所以单击字幕播语音还是立刻出声，一点延迟都没有。
+  const [pairTip, setPairTip] = useState<{ dir: -1 | 1; blocked: boolean } | null>(null);
+  const pairTipTimer = useRef<number | null>(null);
+  const lastTapAt = useRef(0);
+  useEffect(
+    () => () => {
+      if (pairTipTimer.current != null) window.clearTimeout(pairTipTimer.current);
+    },
+    [],
+  );
+  const handlePlayerTap = (e: React.MouseEvent<HTMLElement>) => {
+    if (sentenceCount <= 1) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('.dyt-cap, .dyt-player__bar, .dyt-back')) return;
+    const now = Date.now();
+    // 连点第三下、第四下都算「接着切」，不必重新成对双击
+    const isFollowUpTap = now - lastTapAt.current < 320;
+    lastTapAt.current = now;
+    if (!isFollowUpTap) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dir: -1 | 1 = e.clientX - rect.left < rect.width / 2 ? -1 : 1;
+    const blocked = dir === -1 ? pairIndex <= 0 : pairIndex >= sentenceCount - 1;
+    goPair(dir);
+    if (pairTipTimer.current != null) window.clearTimeout(pairTipTimer.current);
+    setPairTip({ dir, blocked });
+    pairTipTimer.current = window.setTimeout(() => setPairTip(null), 1200);
   };
 
   // ============ 聊天列表（原型油管公屏 + 既有 SC / 礼物 / 长按能力）============
@@ -955,7 +1060,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       <LiveUiStyle />
 
       {/* ==================== 小窗机位 ==================== */}
-      <section className="dyt-player">
+      <section className="dyt-player" onClick={handlePlayerTap}>
         {renderBackdrop('dyt-player__scene')}
 
         {props.showDanmakuOverlay && (
@@ -1024,8 +1129,28 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               </p>
             )}
           </div>
-          {renderSentenceNav()}
         </div>
+
+        {pairTip ? (
+          <div className={`dyt-ptip${pairTip.blocked ? ' is-blocked' : ''}`} role="status">
+            <span className="dyt-ptip__arrow" aria-hidden="true">
+              {pairTip.dir === -1 ? '‹' : '›'}
+            </span>
+            <span>
+              第 {pairIndex + 1}/{sentenceCount} 句
+            </span>
+            {sentenceCount <= 8 ? (
+              <span className="dyt-ptip__dots" aria-hidden="true">
+                {pairAlignment.spokenLines.map((_, i) => (
+                  <i
+                    key={i}
+                    className={`dyt-ptip__dot${i === pairIndex ? ' is-on' : ''}${i < pairIndex ? ' is-past' : ''}`}
+                  />
+                ))}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="dyt-player__bar">
           <SeekBar
@@ -1040,7 +1165,8 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
 
         {renderStageAvatar()}
 
-        {giftEffect && (
+        {/* 全屏时这里不画：全屏自己那条在下面，否则两条红条会叠在一起（z-index 55 > 全屏 30） */}
+        {giftEffect && !props.isFullscreen && (
           <div
             key={giftEffect.key}
             className="dyt-fx"
@@ -1383,55 +1509,51 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           </aside>
 
           <section className="dyt-lines" aria-label="本拍语音">
+            {/* 台词单独包一层：长台词超高度时只把这一层裁掉（底部渐隐），
+                控制条留在外面，不会被裁掉也不会被渐隐盖住 */}
+            <div
+              className={`dyt-lines__text${linesClipped ? ' is-clipped' : ''}`}
+              ref={linesTextRef}
+            >
+              {zhLine ? (
+                <p
+                  className="dyt-lines__zh"
+                  style={{ fontSize: fsZhSize }}
+                  onClick={() => {
+                    if (longPress.wasLongPressTriggered()) return;
+                    toggleVoice();
+                  }}
+                  {...longPress.handlers}
+                >
+                  {zhLine}
+                </p>
+              ) : null}
+              {jaLine ? (
+                <p
+                  className="dyt-lines__ja"
+                  style={jaOnly ? { fontSize: 18, fontWeight: 700, color: '#0f0f0f' } : undefined}
+                >
+                  {jaLine}
+                </p>
+              ) : null}
+              {!zhLine && !jaLine && (
+                <p className="dyt-lines__ja">
+                  {props.isGenerating ? '主播正在准备下一句…' : '这一拍还没有台词'}
+                </p>
+              )}
+            </div>
+            {/* 控制条放在台词下方（Ann 2026-10-23 定） */}
             {renderSentenceNav(true)}
-            {zhLine ? (
-              <p
-                className="dyt-lines__zh"
-                style={{ fontSize: fsZhSize }}
-                onClick={() => {
-                  if (longPress.wasLongPressTriggered()) return;
-                  toggleVoice();
-                }}
-                {...longPress.handlers}
-              >
-                {zhLine}
-              </p>
-            ) : null}
-            {jaLine ? (
-              <p
-                className="dyt-lines__ja"
-                style={jaOnly ? { fontSize: 18, fontWeight: 700, color: '#0f0f0f' } : undefined}
-              >
-                {jaLine}
-              </p>
-            ) : null}
-            {!zhLine && !jaLine && (
-              <p className="dyt-lines__ja">
-                {props.isGenerating ? '主播正在准备下一句…' : '这一拍还没有台词'}
-              </p>
-            )}
           </section>
 
-          <div className="dyt-rail" aria-label="全屏左下弹幕">
-            {railItems.map((dm, i) => {
-              const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
-              const isGift = Boolean(dm.giftName);
-              const comment = getLiveDanmakuComment(dm);
-              return (
-                <div
-                  key={dm.id || `fs_${i}`}
-                  className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${
-                    isGift ? ' dyt-chip--gift' : ''
-                  }`}
-                >
-                  <span className="dyt-chip__user">
-                    {dm.senderName}
-                    {isSc ? ` · ${dm.scCurrency || '¥'}${dm.scAmount}` : ''}
-                  </span>
-                  {isGift ? `送出 ${dm.giftName}` : comment}
-                </div>
-              );
-            })}
+          <div
+            className="dyt-rail"
+            aria-label="全屏左下弹幕"
+            ref={railRef}
+            onScroll={handleRailScroll}
+          >
+            {visibleDanmakuFeed.map((dm, i) => renderRailChip(dm, `h_${dm.id || i}`, false))}
+            {railLoop.map(({ dm, seq }) => renderRailChip(dm, `l_${seq}`, true))}
           </div>
 
           {renderStageAvatar('dyt-fs__avatar')}
