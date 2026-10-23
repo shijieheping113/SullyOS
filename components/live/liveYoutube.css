@@ -1292,7 +1292,10 @@
   align-items: flex-start;
   gap: 4px;
   padding: 8px 8px 18px;
-  background: linear-gradient(to bottom, #ffffff 0%, #ffffff 72%, rgba(255, 255, 255, 0) 100%);
+  /* Ann 2026-10-24：顶栏原来是"白到透明的渐变"，白得死板、跟壁纸割裂。
+     改成一层很淡的奶白纱（不是实白），壁纸的颜色能透上来，
+     字照样压得住——顶栏只是一个"让标题看得清"的底，不该是一块白板。 */
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.7) 58%, rgba(255, 255, 255, 0) 100%);
 }
 .dyt-fsbar__ico {
   flex: 0 0 auto;
@@ -1316,9 +1319,9 @@
 .dyt-fsbar__title {
   margin: 0;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.4;
-  color: #0f0f0f;
+  color: #131416;
   white-space: normal;
   word-break: break-word;
 }
@@ -1331,15 +1334,17 @@
 /* 镜头笺 */
 .dyt-note {
   position: absolute;
-  left: 14px;
-  right: 14px;
+  left: 16px;
+  right: 16px;
   z-index: 3;
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  background: #f2f2f2;
-  border-radius: 12px;
+  /* Ann 2026-10-24：跟弹幕、底栏统一成同一种"奶白纱"料子，
+     不再是那块跟壁纸打架的灰板。 */
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
   max-height: 112px;
   overflow: hidden;
 }
@@ -1363,22 +1368,22 @@
   margin: 0 0 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #0f0f0f;
+  color: #5d5f60;
 }
 .dyt-note__text {
   margin: 0;
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
-  color: #606060;
+  color: #3f4247;
   word-break: break-word;
 }
 
 /* 台词台 */
 .dyt-lines {
   position: absolute;
-  left: 18px;
-  right: 18px;
+  left: 16px;
+  right: 16px;
   /* 台词块整体上移 56px（原 248px）。
      Ann 2026-10-23：台词下方那条切句导航已去掉（改成双击画面左右切句），
      块里少了「导航」那 40px，台词自己往下落 40px 补上那块空位。
@@ -1418,16 +1423,21 @@
   font-size: 18px;
   font-weight: 700;
   line-height: 1.45;
-  color: #0f0f0f;
+  color: #131416;
   word-break: break-word;
+  /* Ann 2026-10-24「不能看不全字」：台词是不带底的，压在壁纸上。
+     壁纸要是深色，黑字就没了——所以给字加一层很淡的白晕（不是描边，
+     是往外散的柔光），任何壁纸上都读得清，字本身还是"飘"在画面上。 */
+  text-shadow: 0 1px 12px rgba(255, 255, 255, 0.92), 0 0 3px rgba(255, 255, 255, 0.75);
 }
 .dyt-lines__ja {
   margin: 8px 0 0;
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
-  color: #606060;
+  color: #4a4d52;
   word-break: break-word;
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.9), 0 0 3px rgba(255, 255, 255, 0.7);
 }
 
 /* 双击切句的提示：小窗那条贴画面顶边正中（.dyt-ptip 本体）；
@@ -1453,10 +1463,10 @@
    最上面那几条走一条柔雾过渡，轻轻化进画面，不硬切一刀。 */
 .dyt-rail {
   position: absolute;
-  left: 12px;
+  left: 16px;
   bottom: 78px;
   z-index: 5;
-  width: min(92%, 460px);
+  width: min(calc(100% - 32px), 460px);
   max-height: 242px;
   /* 顶部柔雾（Ann 2026-10-23 定的 ①）：弹幕不再从控制条下面 12px 才开头，
      而是紧贴控制条下方直接开始；最上面那条由全透明渐渐化实
@@ -1486,8 +1496,10 @@
   max-width: 100%;
   padding: 6px 14px;
   border-radius: 999px;
-  background: #f2f2f2;
-  color: #0f0f0f;
+  /* Ann 2026-10-24：灰胶囊换成半透明奶白，壁纸透上来 → 整屏一种料子。
+     七成二的奶白压得住黑字（不管壁纸多深多浅，字都还看得清）。 */
+  background: rgba(255, 255, 255, 0.64);
+  color: #131416;
   font-size: 13px;
   font-weight: 400;
   line-height: 1.38;
@@ -1498,17 +1510,17 @@
 .dyt-chip__trans {
   display: block;
   margin-top: 2px;
-  color: #606060;
+  color: #5d5f60;
   font-size: 12px;
   font-weight: 400;
 }
 .dyt-chip--sc {
-  background: #fff2cc;
+  background: rgba(255, 242, 204, 0.82);
 }
 .dyt-chip__user {
   margin-right: 5px;
-  font-weight: 500;
-  color: #3ea6ff;
+  font-weight: 600;
+  color: #131416;
 }
 .dyt-chip--sc .dyt-chip__user {
   color: #0f0f0f;
@@ -1518,14 +1530,20 @@
 }
 
 /* 同一底栏：进度 + 切拍 / 身份嵌聊天 / 礼物导演
-   上边那条 1px 灰线已去掉（Ann 2026-10-23 定：弹幕区底下不要这条线） */
+   上边那条 1px 灰线已去掉（Ann 2026-10-23 定：弹幕区底下不要这条线）。
+   Ann 2026-10-24：底栏原来是块实白，跟壁纸之间像贴了一条白胶带；
+   改成半透明奶白 + 背景模糊（只模糊底栏这一层，弹幕不动，省电），
+   顶边收两个圆角，像一张从下面升上来的纸，不再是一条硬边。 */
 .dyt-dock {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 7;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border-radius: 16px 16px 0 0;
   padding: 0 10px calc(10px + var(--safe-b));
 }
 .dyt-dock__track {
@@ -1583,10 +1601,12 @@
   gap: 8px;
   padding: 0 12px 0 4px;
   border-radius: 999px;
-  background: #f2f2f2;
+  /* 底栏自己已经是奶白纱了，输入框用一点点墨色的透明层压出"凹下去"的层次，
+     不再是一块实心灰。 */
+  background: rgba(19, 20, 22, 0.06);
 }
 .dyt-compose.is-focus {
-  background: #efefef;
+  background: rgba(19, 20, 22, 0.1);
 }
 .dyt-compose__ident {
   flex: 0 0 auto;
@@ -1650,6 +1670,9 @@
   height: 96px;
   border-width: 3px;
   font-size: 34px;
+  /* Ann 2026-10-24：原来的投影太重（0 6px 20px / 18%），像贴纸。
+     收成一层很浅的贴地影，靠白圈把头像从壁纸上分出来。 */
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.14);
 }
 .dyt-fs__avatar .dyt-avatar__ring {
   width: 96px;
