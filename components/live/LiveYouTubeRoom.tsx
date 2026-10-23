@@ -557,31 +557,55 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     .slice(-4)
     .reverse();
 
-  // 全屏左下弹幕：上面接「从开场到现在播过的全部弹幕」（手指上滑能回看），
-  // 底下每 1.2 秒循环追加一条「当前这一拍」的弹幕；手动上滑时整条停住。
+  // 全屏左下弹幕（Ann 2026-10-23 定的机制：循环是「流水」，不是「存货」）：
+  // 上面是「当前这一拍之前、从开场到现在」的真实弹幕，一条只出现一次，不封顶；
+  // 底下是「当前这一拍」的循环：一条条从最底下冒出来、往上滑。
+  // 收的规矩：只收「整条已经滑出弹幕区上边缘」的（收的时候看不见，视野里的一条都不动），
+  // 而且本拍整整一轮——本拍有几条就留几条，不设上限——永远留在弹幕区里接着转。
   const railRef = useRef<HTMLDivElement | null>(null);
-  const [railLoop, setRailLoop] = useState<{ dm: LiveDanmakuItem; seq: number }[]>([]);
+  const [railFlow, setRailFlow] = useState<{ dm: LiveDanmakuItem; seq: number }[]>([]);
   const [railPaused, setRailPaused] = useState(false);
-  const railLoopSeqRef = useRef(0);
-  const railLoopIdxRef = useRef(0);
+  const railFlowSeqRef = useRef(0);
+  const railFlowIdxRef = useRef(0);
   const beatDanmaku = props.scrollingDanmakuFeed || [];
   const beatDanmakuKey = beatDanmaku.map(dm => dm.id || dm.text || '').join('|');
-  const railLastSeq = railLoop.length ? railLoop[railLoop.length - 1].seq : 0;
+  const railLastSeq = railFlow.length ? railFlow[railFlow.length - 1].seq : 0;
+  // 真实弹幕：把「当前这一拍」摘掉（本拍只在底下的循环里出现，免得同一条出现两遍）
+  const railHistory = beatDanmaku.length
+    ? visibleDanmakuFeed.slice(0, Math.max(0, visibleDanmakuFeed.length - beatDanmaku.length))
+    : visibleDanmakuFeed;
 
-  // 换拍：循环从头开始（已经追加出来的那几条留着，它们和上面的历史本来就是同一批）
+  // 收掉已经整条滑出弹幕区上边缘的循环弹幕。本拍整整一轮（本拍几条就是几条）永远留着，不截。
+  const trimRailFlow = () => {
+    const el = railRef.current;
+    if (!el) return;
+    const chips = el.querySelectorAll<HTMLElement>('[data-rail-flow="1"]');
+    const keep = Math.max(beatDanmaku.length, 1);
+    const maxDrop = Math.max(0, chips.length - keep);
+    let drop = 0;
+    while (drop < maxDrop) {
+      const chip = chips[drop];
+      if (chip.offsetTop + chip.offsetHeight <= el.scrollTop + 1) drop += 1;
+      else break;
+    }
+    if (drop > 0) setRailFlow(prev => prev.slice(drop));
+  };
+
+  // 换拍：底下的循环从新的一拍重新开始（旧那一拍已经进了上面的真实弹幕）
   useEffect(() => {
-    railLoopIdxRef.current = 0;
+    railFlowIdxRef.current = 0;
+    setRailFlow([]);
   }, [beatDanmakuKey]);
 
   useEffect(() => {
     if (!props.isFullscreen || railPaused || beatDanmaku.length === 0) return;
     const timer = window.setInterval(() => {
-      const idx = railLoopIdxRef.current % beatDanmaku.length;
-      railLoopIdxRef.current = idx + 1;
-      railLoopSeqRef.current += 1;
+      const idx = railFlowIdxRef.current % beatDanmaku.length;
+      railFlowIdxRef.current = idx + 1;
+      railFlowSeqRef.current += 1;
       const dm = beatDanmaku[idx];
-      const seq = railLoopSeqRef.current;
-      setRailLoop(prev => [...prev, { dm, seq }].slice(-12));
+      const seq = railFlowSeqRef.current;
+      setRailFlow(prev => [...prev, { dm, seq }]);
     }, 1200);
     return () => window.clearInterval(timer);
   }, [props.isFullscreen, railPaused, beatDanmakuKey]);
@@ -627,6 +651,8 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       } else {
         railRafRef.current = null;
         railAutoRef.current = false;
+        // 滑到位了：把已经整条滑出上边缘的循环弹幕收掉（收的时候看不见，看不出动静）
+        trimRailFlow();
       }
     };
     railRafRef.current = window.requestAnimationFrame(step);
@@ -646,7 +672,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     setRailPaused(prev => (prev === !atBottom ? prev : !atBottom));
   };
 
-  const renderRailChip = (dm: LiveDanmakuItem, key: string) => {
+  const renderRailChip = (dm: LiveDanmakuItem, key: string, isFlow = false) => {
     const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
     const isGift = Boolean(dm.giftName);
     const comment = getLiveDanmakuComment(dm);
@@ -655,6 +681,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     return (
       <div
         key={key}
+        data-rail-flow={isFlow ? '1' : undefined}
         className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}`}
       >
         <span className="dyt-chip__user">
@@ -1598,8 +1625,8 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             onPointerDown={stopRailAuto}
             onWheel={stopRailAuto}
           >
-            {visibleDanmakuFeed.map((dm, i) => renderRailChip(dm, `h_${dm.id || i}`))}
-            {railLoop.map(({ dm, seq }) => renderRailChip(dm, `l_${seq}`))}
+            {railHistory.map((dm, i) => renderRailChip(dm, `h_${dm.id || i}`))}
+            {railFlow.map(({ dm, seq }) => renderRailChip(dm, `l_${seq}`, true))}
           </div>
 
           {renderStageAvatar('dyt-fs__avatar')}
