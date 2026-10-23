@@ -819,10 +819,17 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     },
     [],
   );
-  const handlePlayerTap = (e: React.MouseEvent<HTMLElement>) => {
+  // 小窗和全屏共用这一套双击切句，只是「不算双击区」的那几块不一样：
+  // 小窗是台词条 / 画面底进度条 / 左上返回键；
+  // 全屏是台词台 / 底栏 / 顶栏 / 镜头笺 / 左下弹幕轨（那些地方点了要么播语音、要么滚弹幕）。
+  const handlePlayerTap = (e: React.MouseEvent<HTMLElement>, scope: 'small' | 'full' = 'small') => {
     if (sentenceCount <= 1) return;
     const target = e.target as HTMLElement | null;
-    if (target?.closest('.dyt-cap, .dyt-player__bar, .dyt-back')) return;
+    const blockedSel =
+      scope === 'full'
+        ? '.dyt-lines, .dyt-dock, .dyt-fsbar, .dyt-note, .dyt-rail'
+        : '.dyt-cap, .dyt-player__bar, .dyt-back';
+    if (target?.closest(blockedSel)) return;
     const now = Date.now();
     // 连点第三下、第四下都算「接着切」，不必重新成对双击
     const isFollowUpTap = now - lastTapAt.current < 320;
@@ -1545,7 +1552,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
 
       {/* ==================== 全屏机位（独立一套，不是小窗放大） ==================== */}
       {props.isFullscreen && (
-        <div className="dyt-fs">
+        <div className="dyt-fs" onClick={e => handlePlayerTap(e, 'full')}>
           {renderBackdrop('dyt-fs__scene')}
 
           <header className="dyt-fsbar" ref={fsBarRef}>
@@ -1580,8 +1587,32 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           </aside>
 
           <section className="dyt-lines" aria-label="本拍语音">
+            {/* 全屏双击切句的提示：内容跟小窗那条一模一样，
+                位置挪到台词正上方（全屏中间那块是空的，贴台词最顺眼，
+                也不压顶栏和镜头笺）。它是这一块的第一个孩子，
+                出现/消失只让整块往上长或缩，台词本身一动不动。 */}
+            {pairTip ? (
+              <div className={`dyt-ptip dyt-ptip--fs${pairTip.blocked ? ' is-blocked' : ''}`} role="status">
+                <span className="dyt-ptip__arrow" aria-hidden="true">
+                  {pairTip.dir === -1 ? '‹' : '›'}
+                </span>
+                <span>
+                  第 {pairIndex + 1}/{sentenceCount} 句
+                </span>
+                {sentenceCount <= 8 ? (
+                  <span className="dyt-ptip__dots" aria-hidden="true">
+                    {pairAlignment.spokenLines.map((_, i) => (
+                      <i
+                        key={i}
+                        className={`dyt-ptip__dot${i === pairIndex ? ' is-on' : ''}${i < pairIndex ? ' is-past' : ''}`}
+                      />
+                    ))}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {/* 台词单独包一层：长台词超高度时只把这一层裁掉（底部渐隐），
-                控制条留在外面，不会被裁掉也不会被渐隐盖住 */}
+                上面那条「第 N/M 句」小提示留在外面，不会被裁掉也不会被渐隐盖住 */}
             <div
               className={`dyt-lines__text${linesClipped ? ' is-clipped' : ''}`}
               ref={linesTextRef}
@@ -1613,8 +1644,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                 </p>
               )}
             </div>
-            {/* 控制条放在台词下方（Ann 2026-10-23 定） */}
-            {renderSentenceNav(true)}
           </section>
 
           <div

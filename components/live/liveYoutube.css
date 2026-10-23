@@ -1379,10 +1379,12 @@
   position: absolute;
   left: 18px;
   right: 18px;
-  /* 台词块整体上移 56px（原 248px）：控制条挪到台词下方后，
-     腾出来的高度全给下面那条弹幕轨（Ann 2026-10-23 定）。
-     上移后台词落在屏幕中部偏下，离顶部「镜头」那一块还隔着很远。 */
-  bottom: 304px;
+  /* 台词块整体上移 56px（原 248px）。
+     Ann 2026-10-23：台词下方那条切句导航已去掉（改成双击画面左右切句），
+     块里少了「导航」那 40px，台词自己往下落 40px 补上那块空位。
+     Ann 2026-10-24：落下来之后贴着弹幕了，整块再往上提 20px
+     （304 → 324），让台词和弹幕之间那条空行拉开一点。 */
+  bottom: 324px;
   z-index: 4;
   max-height: 28%;
   overflow: hidden;
@@ -1420,6 +1422,22 @@
   word-break: break-word;
 }
 
+/* 双击切句的提示：小窗那条贴画面顶边正中（.dyt-ptip 本体）；
+   全屏这条不飘在顶上（顶上被标题和镜头笺占着），改成落在台词正上方，
+   所以走静态排布，由 .dyt-lines 这个弹性列把它居中。
+   1.2 秒后自己消失，出现和消失都只让台词块往上长/缩，台词本身不动。 */
+.dyt-ptip--fs {
+  position: static;
+  transform: none;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-bottom: 10px;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  background: rgba(15, 15, 15, 0.82);
+}
+
 /* 左下弹幕轨：胶囊，不飞。
    上面是从开场到现在播过的全部弹幕（手指上滑能一路看回去），
    底下每 1.2 秒追加一条「本拍」的弹幕。
@@ -1430,7 +1448,7 @@
   left: 12px;
   bottom: 78px;
   z-index: 5;
-  width: min(86%, 320px);
+  width: min(92%, 460px);
   max-height: 242px;
   /* 顶部柔雾（Ann 2026-10-23 定的 ①）：弹幕不再从控制条下面 12px 才开头，
      而是紧贴控制条下方直接开始；最上面那条由全透明渐渐化实
@@ -1606,10 +1624,25 @@
   fill: currentColor;
 }
 
-/* 全屏居中圆盘头像（原型没有的既有功能，由设置开关控制，默认关） */
+/* 全屏居中圆盘头像（原型没有的既有功能，由设置开关控制，默认关）
+   Ann 2026-10-23：全屏这一枚放大到 96（小窗那枚仍是 52），
+   并往上挪——原来 bottom:112px 时圆心落在屏幕 43% 处，
+   上面那一段（镜头笺底下）空得慌。
+   新位置让圆心落在「镜头笺底边」和「台词顶边」这中间那段的中间：
+   上下各留七八十像素，不偏上也不偏下。 */
 .dyt-fs__avatar {
   z-index: 6;
-  bottom: 112px;
+  bottom: 214px;
+}
+.dyt-fs__avatar .dyt-avatar__disc {
+  width: 96px;
+  height: 96px;
+  border-width: 3px;
+  font-size: 34px;
+}
+.dyt-fs__avatar .dyt-avatar__ring {
+  width: 96px;
+  height: 96px;
 }
 
 /* =========================
