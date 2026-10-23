@@ -1473,10 +1473,13 @@
      而是紧贴控制条下方直接开始；最上面那条由全透明渐渐化实
      （20px 到三成、52px 全显），和上面那条已有的渐隐是同一个手法。
      Ann 2026-10-24：坡太短，一条弹幕就从鬼影变实心，看着像被裁掉；
-     拉长成 96px、后段放缓（22px 到三成、58px 到七成二、96px 全显），
-     弹幕像从雾里慢慢浮出来，跟台词下缘那条短渐隐接上。 */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 22px, rgba(0, 0, 0, 0.72) 58px, #000 96px);
-  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 22px, rgba(0, 0, 0, 0.72) 58px, #000 96px);
+     拉长成 96px、后段放缓（22px 到三成、58px 到七成二、96px 全显）。
+     当天晚些：弹幕变小了，96px 占了弹幕区将近一半，最上面两条都发虚，
+     于是按缩小后的条目高度（44px）收到 56px，坡度照旧。
+     条目之间也从 6px 松到 10px（Ann 说「太紧绷」，参考图里条目之间的空档就是这么开的），
+     弹幕区上限 208px 不动——4 条 44px + 3 个 10px 空档 = 206px，正好装下 4 条。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 14px, rgba(0, 0, 0, 0.72) 34px, #000 56px);
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 14px, rgba(0, 0, 0, 0.72) 34px, #000 56px);
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -1485,7 +1488,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 10px;
   scrollbar-width: none;
 }
 .dyt-rail::-webkit-scrollbar {
@@ -1498,25 +1501,29 @@
      轨宽本身是「屏宽 − 32px」，所以这里写 62% + 20px——落到屏幕上
      正好是 62%；屏再宽也不会超（轨宽有 460px 上限兜着）。 */
   max-width: calc(62% + 20px);
-  padding: 4px 11px;
-  border-radius: 999px;
+  /* Ann 2026-10-24：原来是 999px 全圆角，两行的胶囊就成了「跑道形」，
+     看着奇怪。收成 12px 的圆角矩形，跟镜头笺（14px）、底栏（16px）同一族。 */
+  padding: 5px 12px;
+  border-radius: 12px;
   /* Ann 2026-10-24：灰胶囊换成半透明奶白，壁纸透上来 → 整屏一种料子。
      七成二的奶白压得住黑字（不管壁纸多深多浅，字都还看得清）。 */
   background: rgba(255, 255, 255, 0.64);
   color: #131416;
-  /* Ann 2026-10-24：跟着「短一点」一起变小一档（13 → 12），行距收一点，
-     一条双语弹幕从 48.5px 高降到约 40px。 */
+  /* Ann 2026-10-24：变小一档（13 → 12）。当天晚些又说「太紧绷」，
+     于是行距回到 1.4、内衬从 4px 松到 5px——一条约 44px 高，
+     仍比原来的 48.5px 矮，但两行之间不再挤在一起。 */
   font-size: 12px;
   font-weight: 400;
-  line-height: 1.35;
+  line-height: 1.4;
   letter-spacing: 0.01em;
   word-break: break-word;
 }
 /* 新的一条直接出现：不淡入、不位移；往上走全靠整列顺滑滚动（Ann 挑的动法） */
 .dyt-chip__trans {
   display: block;
-  /* Ann 2026-10-24：翻译留在正文下面（她要的位置），只是跟着变小一档。 */
-  margin-top: 1px;
+  /* Ann 2026-10-24：翻译留在正文下面（她要的位置），跟着变小一档；
+     当天晚些说「太紧绷」，上间距从 1px 松到 2px。 */
+  margin-top: 2px;
   color: #5d5f60;
   font-size: 11px;
   font-weight: 400;
