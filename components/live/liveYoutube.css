@@ -1330,6 +1330,27 @@
   right: 8px;
   box-shadow: 0 0 0 1.5px #fff;
 }
+/* 标题下面那行在线人数（Ann 2026-10-24）：只要图标 + 人数，不要多余的文字。
+   第一版离标题只有 1px、图标挨着数字，Ann 说「太紧凑很难看」——
+   上间距放到 6px 当成一行独立的副信息，图标和数字之间留 5px，
+   字收小到 11.5 并压浅一档，跟标题拉开主次。 */
+.dyt-fsbar__views {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  color: #585c61;
+  font-variant-numeric: tabular-nums;
+}
+.dyt-fsbar__views svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+  opacity: 0.85;
+}
 
 /* 镜头笺 */
 .dyt-note {
@@ -1388,9 +1409,11 @@
      Ann 2026-10-23：台词下方那条切句导航已去掉（改成双击画面左右切句），
      块里少了「导航」那 40px，台词自己往下落 40px 补上那块空位。
      Ann 2026-10-24：先往上提 20px（304 → 324），想把跟弹幕之间的空行拉开；
-     当天再看，硬留一条纯白缝反而像两块地方，于是又放下来 12px（324 → 312），
-     把那条约 20 像素的白缝收成约 8 像素，改成让台词下缘和弹幕上缘
-     各自变淡、在中间碰头（见 .dyt-lines__text 与 .dyt-rail 的遮罩）。 */
+     当天再看，硬留一条纯白缝反而像两块地方，于是又放下来 12px（324 → 312）。
+     Ann 2026-10-24 再说「弹幕跟台词之间不要有直接的空白、是弹幕往上」：
+     台词这一块**位置一格都不动**（还是 312、还是 16px 下内衬），
+     由弹幕区把自己的下沿抬高去咬住台词（见 .dyt-rail 的 bottom 104）。
+     台词下缘那条渐隐顺手拉长一点，好跟弹幕那条坡接成一条。 */
   bottom: 312px;
   z-index: 4;
   max-height: 28%;
@@ -1407,12 +1430,14 @@
   flex: 0 1 auto;
   min-height: 0;
   overflow: hidden;
-  /* Ann 2026-10-24：底边留一条短渐隐（最后 10 像素淡到七成二），
-     让台词下缘不是一条硬线，跟下面弹幕那条长坡接上。
+  /* Ann 2026-10-24：底边留一条短渐隐，让台词下缘不是一条硬线，
+     跟下面弹幕那条长坡接上。
      第一版写的 14 像素 / 五成五，实测把整行日文都洗淡了（日文是要读的内容），
-     所以收短、收浅。长台词被裁掉时，下面 .is-clipped 那条更长的渐隐会盖掉这一条。 */
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.72) 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.72) 100%);
+     所以收短、收浅。长台词被裁掉时，下面 .is-clipped 那条更长的渐隐会盖掉这一条。
+     当天再说「渐变处还是有割裂感」：从 10px/七成二 放宽到 18px/五成五，
+     坡变长变缓，跟弹幕那条五点采样的坡在接缝处连上。 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), rgba(0, 0, 0, 0.55) 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), rgba(0, 0, 0, 0.55) 100%);
 }
 .dyt-lines__text.is-clipped {
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
@@ -1465,7 +1490,10 @@
 .dyt-rail {
   position: absolute;
   left: 16px;
-  bottom: 78px;
+  /* Ann 2026-10-24：空白要由弹幕这一侧让出来——台词块不许动。
+     下沿从 78 抬到 104（104 = 台词底边 312 − 高度上限 208），
+     弹幕盒子的上边缘正好顶到台词块底边，中间不留硬缝。 */
+  bottom: 104px;
   z-index: 5;
   width: min(calc(100% - 32px), 460px);
   max-height: 208px;
@@ -1477,9 +1505,14 @@
      当天晚些：弹幕变小了，96px 占了弹幕区将近一半，最上面两条都发虚，
      于是按缩小后的条目高度（44px）收到 56px，坡度照旧。
      条目之间也从 6px 松到 10px（Ann 说「太紧绷」，参考图里条目之间的空档就是这么开的），
-     弹幕区上限 208px 不动——4 条 44px + 3 个 10px 空档 = 206px，正好装下 4 条。 */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 14px, rgba(0, 0, 0, 0.72) 34px, #000 56px);
-  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.3) 14px, rgba(0, 0, 0, 0.72) 34px, #000 56px);
+     弹幕区上限 208px 不动——4 条 44px + 3 个 10px 空档 = 206px，正好装下 4 条。
+     Ann 2026-10-24 再说「渐变处还是有割裂感」：原来只有三个点（0 / 14 / 34 / 56），
+     头一段从「全透明」跳到「三成」太陡，胶囊像凭空冒出来。改成六点采样，
+     总长仍是 56px（不占掉更多条目），让不透明度 0 → 0.06 → 0.24 → 0.52 → 0.8 → 1
+     一路缓上去，最上面那条在被糊掉的位置以下才露出来，不再有一条「看不清又占地方」
+     的鬼影夹在接缝里，跟台词下缘那条坡接成一条，看不出两段。 */
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0.06) 10px, rgba(0, 0, 0, 0.24) 22px, rgba(0, 0, 0, 0.52) 34px, rgba(0, 0, 0, 0.8) 46px, #000 56px);
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0.06) 10px, rgba(0, 0, 0, 0.24) 22px, rgba(0, 0, 0, 0.52) 34px, rgba(0, 0, 0, 0.8) 46px, #000 56px);
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;

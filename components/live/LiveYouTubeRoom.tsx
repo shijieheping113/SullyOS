@@ -1575,6 +1575,11 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             </button>
             <div className="dyt-fsbar__mid">
               <p className="dyt-fsbar__title">{session.title}</p>
+              {/* Ann 2026-10-24：标题下面一行在线人数，只要图标 + 人数，不要文字 */}
+              <p className="dyt-fsbar__views">
+                <SVG d={Ico.person} size={13} />
+                {formatCount(session.viewerCount)}
+              </p>
             </div>
             <button
               type="button"
