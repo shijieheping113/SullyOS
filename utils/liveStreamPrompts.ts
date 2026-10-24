@@ -46,15 +46,22 @@ export function buildDanmakuWarmthRule(warmth?: number): string {
   const n = Math.max(0, Math.min(100, Math.round(typeof warmth === 'number' ? warmth : 50)));
   // 中间档就是默认公屏，不再塞一段「中等温度」说明
   if (n > 40 && n < 60) return '';
+  // 只给分档区间和味道，绝不给示范句——模型会照抄示范，档位就废了
   const tone =
-    n <= 20
-      ? `观众温度很低（${n}/100，数值越低越叛逆）。路人弹幕不顺着主播：吐槽、抬杠、对抗、欺负、调戏、施压。他们抵触主播有私人伴侣，也抵触私联和私下接触。可以发展成恶评和攻击，但不要每条都是辱骂，仍要像真人公屏。`
+    n <= 15
+      ? `极低档（0–15，当前 ${n}）：公屏几乎不顺着主播。吐槽、抬杠、对抗、调戏、施压是常态，不满会直接写出来，可以出现难听的恶评，但整体仍要像真人公屏——阴阳怪气、看热闹、起哄多过单纯辱骂。夸奖类弹幕极其稀有：多数拍一条都没有，整轮至多一两条，且不带热烈语气。`
+      : n <= 35
+      ? `偏低档（16–35，当前 ${n}）：弹幕经常不买账。挑刺、调侃主播的私事和私联、泼冷水是常见味道，偶尔冲出更难听的恶评。友好弹幕是少数，往往还带着挑刺的尾巴。`
       : n <= 40
-        ? `观众温度偏低（${n}/100）。弹幕经常不买账，喜欢挑刺、调侃主播的私事和私联，偶尔冲出更难听的恶评。`
-        : n <= 80
-          ? `观众温度偏高（${n}/100）。弹幕比较友好、护着主播，会接话、会心疼，少见尖酸。`
-          : `观众温度很高（${n}/100）。整体溺爱、护短。狂热粉只允许极其稀少地出现一条，不要刷屏。`;
-  return `### 弹幕风格（频道设置，生成路人弹幕时必须遵守）\n${tone}`;
+      ? `略低档（36–40，当前 ${n}）：弹幕整体平常，但毒舌和挑刺明显多过夸奖，客套话很少。`
+      : n <= 80
+      ? `偏高档（60–80，当前 ${n}）：弹幕整体护着主播。接话、心疼、捧场是主流，毒舌罕见且多半是玩笑。`
+      : `溺爱档（86–100，当前 ${n}）：公屏整体溺爱、护短，几乎见不到刺。狂热粉只允许极其稀少地出现一条，不要刷屏。`;
+  return `### 弹幕风格（频道设置，生成路人弹幕时必须严格遵守）
+
+${tone}
+
+生成每一条路人弹幕前先对照当前档位，拿不准往哪个味道写时，往档位方向靠。`;
 }
 
 export function buildVoiceLanguageAndTranslationRule(channel: StreamerChannelProfile): string {
@@ -241,8 +248,11 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const progressBlock =
     sessionHistoryBlock ||
     '### 当前进度\n这是本场直播的**第 1 轮**，请展现刚开播调设备、跟陆续进房的观众打招呼或直接进入今日主题的状态。';
-  const roomPulseBlock = `### 此刻直播间背景（主播知道，不必每拍报数）
-- 当前在线大约 ${session.viewerCount || 0} 人。大部分直播是糊的，不要表现得像突然爆火，除非这个在线人数已经高到说得通。`;
+  const roomPulseBlock = `### 直播间热度（你手里的温度计，跟着你的表现走，不是装饰）
+- 现在在线大约 ${session.viewerCount || 0} 人；频道订阅约 ${channel.followerCount} 人。多数时间是糊糊的日常直播，不是每一拍都是爆点。
+- 在线人数随你的直播状态真实涨跌：整活成功、话题爆了、高光名场面，观众会涌进来；摆烂、冷场、得罪观众，人会慢慢走掉，只剩僵尸粉挂着。
+- 你输出的每个 Beat 都有一个 \`viewerDelta\` 字段：这一拍在线人数的**净变化**（进来减走掉的绝对人数；正数涨、负数跌、没动静写 0）。按因果写，别乱猜大数字：平铺的日常 ±个位数到几十；真爆点可以上百；小频道突然破圈那种奇迹级场面才允许上千。
+- 小频道也可能一夜爆火，大频道也可能今天没人掏钱——一切皆有可能，但必须由这一拍的实际内容说得出理由。`;
 
   // 2. 待结算的观众互动队列（物理隔离小号真名！）
   const pendingQueue = session.pendingDanmakuQueue || [];
@@ -277,7 +287,7 @@ export async function buildLiveChunkGenerationMessages(opts: {
   // 3.5 导演引导：不是弹幕，是接下来走向的要求
   const guidance = session.pendingGuidance || [];
   const guidanceBlock = guidance.length > 0
-    ? `### 导演引导（重要：这不是观众弹幕，不要把它写成公屏发言，也不要让任何观众念出它）\n用户希望接下来的直播往这些方向走，请让画面、话题和主播反应自然体现出来：\n${guidance.map(g => `- ${g.text}`).join('\n')}`
+    ? `### 导演引导（重要：这不是观众弹幕，不要把它写成公屏发言，也不要让任何观众念出它）\n用户希望接下来的直播往这些方向走，请让画面、话题和主播反应自然体现出来：\n${guidance.map(g => `- ${g.text}`).join('\n')}\n- 引导里涉及在线人数、打赏热度的要求，直接照办：用 viewerDelta 和当拍内容把它落实，不要讨价还价，也不要解释。`
     : '';
 
   // 3.6 圈出来的弹幕：行尾已经标好「← 待回应」，不重复抄原文
@@ -313,9 +323,14 @@ ${session.customTopic ? `- 今天播什么（主题）：${session.customTopic}`
 
 ${REAL_STREAMER_VIBE_RULES}
 
+${buildDanmakuWarmthRule(channel.danmakuWarmth)}
+
 ${buildVoiceLanguageAndTranslationRule(channel)}
 
-${buildDanmakuWarmthRule(channel.danmakuWarmth)}
+### 打赏与营收常识
+- 公屏弹幕是大头，Super Chat 和频道礼物是稀罕事：一轮里大多数拍只有普通弹幕，付费零星出现，频率跟着直播状态走，不是每拍都有。
+- 金额跟着现场热度走：糊糊直播大多是小额（¥5/¥20），¥50 算偶尔，¥200 已经是稀客，¥500/¥800+ 只有真高光时刻才可能出现；摆烂冷场时一分钱都没有也很正常，只剩僵尸粉挂着。
+- 频道大小不决定今天收多少——小主播整出爆活也可能有人豪掷一把，大火主播摆烂也可能没人愿意花钱。乱发大额和常年大零蛋都不真实。
 
 ### 收到 Super Chat 和礼物（主播看得到，不是装饰）
 - 你写进本拍 \`danmaku\` 的 SC、礼物，以及上方「刚刚刷出」、前情里「已出现」的 SC 和礼物，都是观众已经打过来的。主播看得到。
@@ -332,7 +347,7 @@ ${buildDanmakuWarmthRule(channel.danmakuWarmth)}
     "speechOriginal": "主播这一拍开口说的原声台词（若是外语配信则写地道外语口语；若是留白专注拍可为空字符串）",
     "speechTranslated": "若开启外语配信，这里直接写中文同传译文（不要加'译：'前缀）；若本身是中文配信则填空字符串",
     "emotion": "calm | happy | sad | angry | surprised | fearful 之一",
-    "viewerDelta": 85,
+    "viewerDelta": 12,
     "danmaku": [
       {
         "senderName": "路人网友昵称（严禁使用 ${allForbidden.join('/')}！）",
@@ -349,7 +364,7 @@ ${buildDanmakuWarmthRule(channel.danmakuWarmth)}
   }
 ]
 \`\`\`
-注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等；具体生态随本场直播类型与当拍画面切换，体现不同观众视角，拒绝纯夸夸与五类身份机械排班，观众按客人心态随主播当拍表现给出或热场或施压的反馈）。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！
+注意：每一拍的 \`danmaku\` 数组请生成 4~6 条鲜活、有梗的路人实时弹幕（包含复读、吐槽、问号海等；具体生态随本场直播类型与当拍画面切换，体现不同观众视角，拒绝纯夸夸与五类身份机械排班，观众按客人心态随主播当拍表现给出或热场或施压的反馈）。**弹幕的味道严格执行上面「弹幕风格」段的档位；SC 和礼物的出现频率与金额严格执行「打赏与营收常识」**。\`viewerDelta\` 按「直播间热度」段的因果规则写，没有明显动静就写 0。\`scAmount\` 只用于 Super Chat 付费醒目留言；普通频道礼物要填 \`giftName/giftEmoji/giftAmount\`，不能填进 \`scAmount\`。礼物是数字贴纸形式的打赏，不是实物。**绝对禁止在 danmaku 里出现 ${allForbidden.join('、')} 的名字**！
 ### 互动只能对着已经出现的弹幕（禁止幻觉）
 - 台词里如果要点名、念出或回应某一条观众发言，那句话必须能在下面两处对上原文：本拍 \`danmaku[].text\`（或它的 \`translation\`），以及上方「刚刚刷出」列表 / 前情里「已出现的弹幕」。
 - 先把要互动的那句写进本拍 \`danmaku\`，再在台词里用同一句原文回应。禁止先在台词里编「有人说／刚才刷了／弹幕问」一句观众没发过的话。
@@ -492,6 +507,75 @@ function collectAllowedDanmakuTexts(beats: LiveBeat[], priorTexts: string[]): st
   return bag;
 }
 
+// ==================== 7. 一轮打赏总额的宽闸（只拦天文数字，不拦正常爆火） ====================
+
+/**
+ * Ann 2026-10-25 定的规矩：打赏多少该跟着直播状态走，提示词讲常识；
+ * 代码只留一道宽闸防模型乱编——一轮（AI 生成的路人部分）SC+礼物总额
+ * 不超过「在线人数 × ¥15」（糊糊直播保底 ¥150），超了就从最大那笔开始往下削，
+ * 削到 0 就退回普通弹幕（文字保留，钱没了）。爆火时人数也涨，闸跟着人数走，自洽。
+ * 用户自己发的 SC/礼物（isUserMain/isUserAlt）绝不碰。
+ */
+const LIVE_PAID_BUDGET_PER_VIEWER = 15;
+const LIVE_PAID_BUDGET_FLOOR = 150;
+
+function clampRoundPaidBudget(beats: LiveBeat[], viewerCount?: number): void {
+  // 没给在线人数就算不出预算：这趟不设闸（真实生成路径永远带 viewerCount）
+  if (typeof viewerCount !== 'number' || !Number.isFinite(viewerCount)) return;
+  const viewers = Math.max(0, Math.round(viewerCount));
+  const cap = Math.max(LIVE_PAID_BUDGET_FLOOR, viewers * LIVE_PAID_BUDGET_PER_VIEWER);
+  const paidRows: Array<{ item: LiveDanmakuItem; amount: number }> = [];
+  let total = 0;
+  beats.forEach(beat => {
+    (beat.danmaku || []).forEach(item => {
+      if (item.isUserMain || item.isUserAlt) return;
+      const amount =
+        (item.scAmount && item.scAmount > 0 ? item.scAmount : 0) +
+        (item.giftAmount && item.giftAmount > 0
+          ? item.giftAmount * (item.giftCount && item.giftCount > 1 ? item.giftCount : 1)
+          : 0);
+      if (amount > 0) {
+        paidRows.push({ item, amount });
+        total += amount;
+      }
+    });
+  });
+  if (total <= cap) return;
+
+  paidRows.sort((a, b) => b.amount - a.amount);
+  for (const row of paidRows) {
+    const excess = total - cap;
+    if (excess <= 0) break;
+    const item = row.item;
+    const isSc = Boolean(item.scAmount && item.scAmount > 0);
+    const keep = Math.max(0, row.amount - excess);
+    if (keep <= 0) {
+      // 削到 0：整笔退回普通弹幕，文字还在，钱没了
+      if (isSc) {
+        item.scAmount = undefined;
+        item.scColor = undefined;
+        item.scCurrency = undefined;
+      } else {
+        item.giftName = undefined;
+        item.giftEmoji = undefined;
+        item.giftAmount = undefined;
+        item.giftCurrency = undefined;
+        item.giftCount = undefined;
+      }
+      total -= row.amount;
+    } else {
+      if (isSc) {
+        item.scAmount = Math.round(keep);
+        item.scColor = resolveScTier(item.scAmount).color;
+      } else {
+        item.giftAmount = Math.round(keep);
+        item.giftCount = undefined;
+      }
+      total -= row.amount - keep;
+    }
+  }
+}
+
 export function parseLiveBeatsResponse(
   rawText: string,
   chunkIdOrSessionId: string,
@@ -499,6 +583,7 @@ export function parseLiveBeatsResponse(
   arg4: any = [],
   arg5?: string[],
   priorDanmakuTexts: string[] = [],
+  gate?: { viewerCount?: number },
 ): LiveBeat[] {
   const isFiveArgs = typeof arg3 === 'number';
   const chunkId = isFiveArgs ? `chunk_${chunkIdOrSessionId}_${arg3}` : chunkIdOrSessionId;
@@ -621,7 +706,8 @@ export function parseLiveBeatsResponse(
           ? String(item.speechTranslated).replace(/^译[:：]\s*/i, '').trim()
           : undefined,
         emotion: String(item?.emotion || 'calm').trim(),
-        viewerDelta: Number(item?.viewerDelta) || Math.floor(Math.random() * 60) - 15,
+        // 模型没写人数变化就是这一拍没动静；旧版这里随机抽 -15~45，现在是死代码抽卡，改 0
+        viewerDelta: Number.isFinite(Number(item?.viewerDelta)) ? Math.round(Number(item.viewerDelta)) : 0,
         danmaku: danmakuList,
       });
     });
@@ -643,7 +729,7 @@ export function parseLiveBeatsResponse(
         screen,
         speechOriginal: speech,
         emotion: 'calm',
-        viewerDelta: 30,
+        viewerDelta: 0,
         danmaku: [
           {
             id: `dm_fb_${idx}_1`,
@@ -674,7 +760,7 @@ export function parseLiveBeatsResponse(
       screen: '主播调整了一下麦克风支架，视线落回屏幕前。',
       speechOriginal: rawText.slice(0, 120) || 'Can everyone hear me clearly?',
       emotion: 'calm',
-      viewerDelta: 20,
+      viewerDelta: 0,
       danmaku: [],
     });
   }
@@ -683,6 +769,9 @@ export function parseLiveBeatsResponse(
   if (pendingUserInputs && pendingUserInputs.length > 0 && beats[0]) {
     beats[0].danmaku = [...pendingUserInputs, ...beats[0].danmaku];
   }
+
+  // 打赏宽闸：只拦一轮总额离谱，用户自己发的钱不碰
+  clampRoundPaidBudget(beats, gate?.viewerCount);
 
   const priorTexts = isFiveArgs && Array.isArray(priorDanmakuTexts) ? priorDanmakuTexts : [];
   const allowed = collectAllowedDanmakuTexts(beats, priorTexts);

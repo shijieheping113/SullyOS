@@ -148,6 +148,12 @@ export interface LiveBeat {
   emotion?: string;
   /** 已经合成好的 TTS 语音 URL（支持直接点击播放与下载音频） */
   audioUrl?: string;
+  /**
+   * 带语音表演标注的念稿版（辅助模型按当前语音服务商的规范补的停顿/动作/情绪标注）。
+   * 只给 TTS 合成用：画面显示、逐句配对、时间轴同步、摘要和聊天卡全部继续用
+   * speechOriginal 干净原文，标注混进去会把时间轴搅乱。
+   */
+  speechPerform?: string;
   /** 鱼声带回的逐字秒数。没有时播放按句长估算。只属于这一拍的嘴里录音。 */
   speechTimeline?: SpeechTimeline | null;
   /** 本拍同步飘过的弹幕列表 */
@@ -674,61 +680,36 @@ export function resolveScTier(
  * 下一轮在线人数。大部分直播是糊的：每轮最多小幅起伏，
  * 不回答 SC、不理弹幕、冷场或态度差会往下走，接得住会慢慢往上，但不会一下冲到粉丝量。
  */
+/**
+ * 结算在线人数：主播自己掌握热度，代码只记账。
+ *
+ * 每个 Beat 的 viewerDelta 是模型写好的「这一拍在线人数净变化」（进来减走掉的绝对人数）。
+ * 旧版按「有没有回应SC、有没有沉默」自己算涨跌、还压着订阅数 18%/35% 的天花板——
+ * 导演指令要涨人、直播整活爆点全都生效不了，整套死代码已拆。
+ *
+ * 现在代码只留两道宽护栏，拦的只是离谱，不拦真实：
+ * 1. 人数不许小于 0；
+ * 2. 在线不许超过「订阅数 × 10」（几百粉的频道在线上万，就是模型乱编）。
+ * 小主播突然爆火、大主播摆烂掉粉，只要在护栏内都照单全收。
+ */
 export function settleLiveViewerCount(input: {
   current: number;
   followers: number;
-  beats: Array<{
-    speechOriginal?: string;
-    speechTranslated?: string;
-    emotion?: string;
-    danmaku?: LiveDanmakuItem[];
-  }>;
+  beats: Array<{ viewerDelta?: number }>;
 }): number {
   const followers = Math.max(1, Math.round(input.followers) || 1000);
-  const current = Math.max(1, Math.round(input.current) || Math.round(followers * 0.04));
-  const beats = input.beats || [];
-  const speeches = beats.map(beat => `${beat.speechOriginal || ''}\n${beat.speechTranslated || ''}`);
-  const paid = beats.flatMap(beat =>
-    (beat.danmaku || []).filter(item => (item.scAmount && item.scAmount > 0) || item.giftName),
-  );
-  const plain = beats.flatMap(beat =>
-    (beat.danmaku || []).filter(item => !(item.scAmount && item.scAmount > 0) && !item.giftName && item.text),
-  );
-  const said = (snippet?: string) => {
-    const text = (snippet || '').trim();
-    if (text.length < 2) return false;
-    return speeches.some(speech => speech.includes(text));
-  };
-  let unansweredPaid = 0;
-  for (const item of paid) {
-    const hit =
-      said(item.text) ||
-      said(item.giftName) ||
-      (item.scAmount ? speeches.some(speech => speech.includes(String(item.scAmount))) : false);
-    if (!hit) unansweredPaid += 1;
-  }
-  const quotedPlain = plain.filter(item => said(item.text)).length;
-  const silentBeats = beats.filter(beat => !(beat.speechOriginal || '').trim()).length;
-  const harshBeats = beats.filter(beat => beat.emotion === 'angry').length;
+  // 只有「没给初始人数」（undefined/NaN/负数）才按订阅数的 4% 播种；
+  // 真的掉到 0 人在线是合法状态，原样保留，不许偷偷回血
+  const rawCurrent = Number(input.current);
+  const current = Number.isFinite(rawCurrent) && rawCurrent >= 0
+    ? Math.round(rawCurrent)
+    : Math.max(1, Math.round(followers * 0.04));
+  const delta = (input.beats || []).reduce((sum, beat) => {
+    const d = Number(beat?.viewerDelta);
+    if (!Number.isFinite(d)) return sum;
+    return sum + Math.round(d);
+  }, 0);
 
-  let delta = -0.02;
-  if (unansweredPaid > 0) delta -= Math.min(0.1, 0.035 * unansweredPaid);
-  if (plain.length >= 3 && quotedPlain === 0) delta -= 0.03;
-  if (beats.length > 0 && silentBeats >= Math.ceil(beats.length / 2)) delta -= 0.025;
-  if (harshBeats >= 2) delta -= 0.04;
-  if (quotedPlain > 0) delta += 0.03;
-  if (paid.length > 0 && unansweredPaid === 0) delta += 0.045;
-  if (beats.some(beat => beat.emotion === 'happy') && quotedPlain > 0) delta += 0.015;
-  delta = Math.max(-0.12, Math.min(0.06, delta));
-
-  let next = Math.round(current * (1 + delta));
-  const softCap = Math.max(80, Math.round(followers * 0.18));
-  const hardCap = Math.max(softCap, Math.round(followers * 0.35));
-  if (next > softCap && delta > 0) {
-    next = Math.round(current + (next - current) * 0.35);
-  }
-  if (current > hardCap) {
-    return Math.max(hardCap, Math.round(current - (current - hardCap) * 0.12));
-  }
-  return Math.max(30, Math.min(hardCap, next));
+  const hardMax = Math.max(50, Math.round(followers * 10));
+  return Math.min(hardMax, Math.max(0, current + delta));
 }

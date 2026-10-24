@@ -185,6 +185,8 @@ export interface BeatActionSheetTarget {
   screen: string;
   speechOriginal: string;
   speechTranslated?: string;
+  /** 带语音表演标注的念稿版（只给 TTS 用）；空 = 还没标注 */
+  speechPerform?: string;
   audioUrl?: string;
   canPlayVoice?: boolean;
   canEdit?: boolean;
@@ -194,6 +196,8 @@ export interface BeatActionSheetTarget {
   onRetryVoice?: () => void;
   onDownloadVoice?: () => void;
   onSaveEdit?: (nextScreen: string, nextSpeech: string, nextTranslated?: string) => void;
+  /** 保存手动改的语音标注；传了才会出现标注编辑框 */
+  onSavePerform?: (nextPerform: string) => void;
   onRerollChunk?: () => void;
   onShareClip?: () => void;
 }
@@ -267,6 +271,9 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
   const [screenDraft, setScreenDraft] = useState('');
   const [speechDraft, setSpeechDraft] = useState('');
   const [transDraft, setTransDraft] = useState('');
+  const [performDraft, setPerformDraft] = useState('');
+  // 编辑区默认只显示一个台词框：有语音标注默认显示标注，没有就显示原文；小字切换
+  const [performMode, setPerformMode] = useState(false);
   const [seekStep, setSeekStep] = useState(0.5);
 
   useEffect(() => {
@@ -275,6 +282,8 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
       setScreenDraft(target.screen || '');
       setSpeechDraft(target.speechOriginal || '');
       setTransDraft(target.speechTranslated || '');
+      setPerformDraft(target.speechPerform || '');
+      setPerformMode(Boolean(target.speechPerform));
     }
   }, [target]);
 
@@ -325,17 +334,56 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
                 className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 leading-relaxed focus:outline-none focus:border-red-500"
               />
             </div>
-            <div>
-              <label className="text-xs font-bold text-slate-600 block mb-1">
-                🎙️ 主播原声台词（留空代表专注动作不说话）
-              </label>
-              <textarea
-                value={speechDraft}
-                onChange={e => setSpeechDraft(e.target.value)}
-                rows={3}
-                className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-900 font-medium leading-relaxed focus:outline-none focus:border-red-500"
-              />
-            </div>
+            {hasSpeech && target.onSavePerform ? (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-600">
+                    {performMode
+                      ? '🎭 语音标注（念稿版，只影响听感）'
+                      : '🎙️ 主播原声台词（留空代表专注动作不说话）'}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setPerformMode(v => !v)}
+                    className="text-[11px] font-semibold text-slate-500 underline underline-offset-2 shrink-0 pl-2"
+                  >
+                    {performMode ? '切到原声台词' : '切到语音标注'}
+                  </button>
+                </div>
+                {performMode ? (
+                  <textarea
+                    value={performDraft}
+                    onChange={e => setPerformDraft(e.target.value)}
+                    rows={3}
+                    className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-mono text-slate-800 leading-relaxed focus:outline-none focus:border-red-500"
+                  />
+                ) : (
+                  <textarea
+                    value={speechDraft}
+                    onChange={e => setSpeechDraft(e.target.value)}
+                    rows={3}
+                    className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-900 font-medium leading-relaxed focus:outline-none focus:border-red-500"
+                  />
+                )}
+                {performMode && (
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    画面台词、时间轴同步都走原声台词，标注只给语音合成用。
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs font-bold text-slate-600 block mb-1">
+                  🎙️ 主播原声台词（留空代表专注动作不说话）
+                </label>
+                <textarea
+                  value={speechDraft}
+                  onChange={e => setSpeechDraft(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-900 font-medium leading-relaxed focus:outline-none focus:border-red-500"
+                />
+              </div>
+            )}
             <div>
               <label className="text-xs font-bold text-slate-600 block mb-1">
                 🌐 中文同传翻译（选填）
@@ -363,6 +411,9 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
                     speechDraft.trim(),
                     transDraft.trim() || undefined,
                   );
+                  if (target.onSavePerform) {
+                    target.onSavePerform(performDraft.trim());
+                  }
                   onClose();
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-bold"

@@ -108,6 +108,8 @@ export const spokenLineIndexAt = (
   timeline: SpeechTimeline | null | undefined,
   currentSec: number,
   durationSec?: number,
+  /** 方案 A：有念稿权重时估算用它（音频是按念稿合成的），比按原文估准 */
+  weights?: number[] | null,
 ): number => {
   if (!spokenLines.length) return 0;
   const timings = buildLineTimings(spokenLines, timeline, cleanTextForTtsFish);
@@ -115,6 +117,18 @@ export const spokenLineIndexAt = (
   if (byTime >= 0) return Math.max(0, Math.min(spokenLines.length - 1, byTime));
   const duration = durationSec && durationSec > 0 ? durationSec : 0;
   const p = duration > 0 ? Math.max(0, Math.min(1, currentSec / duration)) : 0;
+  if (weights && weights.length === spokenLines.length) {
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      const target = p * total;
+      let acc = 0;
+      for (let i = 0; i < weights.length; i += 1) {
+        acc += weights[i];
+        if (target < acc || i === weights.length - 1) return i;
+      }
+      return weights.length - 1;
+    }
+  }
   const at = resolveSpeakingLineProgress(spokenLines, p, 0);
   if (at.index < 0) return 0;
   return Math.max(0, Math.min(spokenLines.length - 1, at.index));
@@ -126,6 +140,8 @@ export const spokenLineStartSec = (
   index: number,
   timeline: SpeechTimeline | null | undefined,
   durationSec?: number,
+  /** 方案 A：有念稿权重时估算用它 */
+  weights?: number[] | null,
 ): number | null => {
   if (!spokenLines.length) return 0;
   const i = Math.max(0, Math.min(spokenLines.length - 1, index));
@@ -134,14 +150,22 @@ export const spokenLineStartSec = (
   if (typeof marked === 'number' && Number.isFinite(marked)) return marked;
   const duration = durationSec && durationSec > 0 ? durationSec : 0;
   if (!duration) return null;
+  if (weights && weights.length === spokenLines.length) {
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      let acc = 0;
+      for (let n = 0; n < i; n += 1) acc += weights[n];
+      return (acc / total) * duration;
+    }
+  }
   let acc = 0;
   let total = 0;
-  const weights = spokenLines.map(line => {
+  const weightsFallback = spokenLines.map(line => {
     const w = Math.max(1, estimateLineMs(line));
     total += w;
     return w;
   });
-  for (let n = 0; n < i; n += 1) acc += weights[n];
+  for (let n = 0; n < i; n += 1) acc += weightsFallback[n];
   if (total <= 0) return 0;
   return (acc / total) * duration;
 };
@@ -201,6 +225,90 @@ export const acceptRepairedTranslation = (spoken: string, current: string, model
   const check = alignLiveSpeech(spoken, cleaned);
   if (!check.aligned || !check.translatedLines.length) return current;
   return cleaned;
+};
+
+// ==================== 念稿版：估算权重与严格校验（Ann 2026-10-25 定的 A + B） ====================
+
+/**
+ * 把念稿里的表演标注全剥掉，剩「纯文字」。严格校验用：
+ * 辅助模型补标注只许插标注，剥完必须和原文剥完一字不差——动了字就整段丢弃。
+ */
+export const stripPerformanceMarkup = (text: string): string =>
+  (text || '')
+    .replace(/<语音[^>]*>|<\/\s*[语語]音\s*>/g, '')
+    .replace(/<#\s*[\d.]+\s*#>/g, '')
+    .replace(/（[^）]{0,80}）/g, '')
+    .replace(/\[[^\[\]]{1,40}\]/g, '')
+    .replace(/\([^()]{1,40}\)/g, '')
+    .replace(/\s+/g, '');
+
+/** 会真实占掉时长的音效类 cue（叹气/笑声/呼吸这类），估算按固定折算加时。 */
+const SOUND_CUE_MS = 500;
+const SOUND_CUE_RE =
+  /^(pause|break|stop|sigh|sighs|sighing|laugh|laughs|laughing|chuckle|chuckles|gasp|gasps|breath|breathing|inhale|exhale|cough|coughs|hum|hums|sniff|sniffle|sniffles|kiss|groan|groans|moan|whimper|whimpers|sob|sobs|yawn|tremble|trembling|whisper|whispers)$/i;
+
+/** 念稿一句的估算权重：剥掉标注后的净文字正常估时，音效/停顿折算加时。 */
+const performLineWeightMs = (line: string): number => {
+  let pauseMs = 0;
+  let t = (line || '').replace(/<#\s*([\d.]+)\s*#>/g, (_m, sec: string) => {
+    pauseMs += Math.max(0, Math.min(2, parseFloat(sec) || 0)) * 1000;
+    return '';
+  });
+  const countSoundCue = (cue: string): string => {
+    const inner = cue.slice(1, -1).trim();
+    if (SOUND_CUE_RE.test(inner)) pauseMs += SOUND_CUE_MS;
+    return '';
+  };
+  t = t
+    .replace(/（[^）]{0,80}）/g, '')
+    .replace(/\[[^\[\]]{1,40}\]/g, countSoundCue)
+    .replace(/\([^()]{1,40}\)/g, countSoundCue);
+  return Math.max(1, estimateLineMs(t)) + pauseMs;
+};
+
+/** 句首连着的标注（上一句句号后面那种）。它们的时间属于两句之间的空隙。 */
+const LEADING_MARK_RE =
+  /^(?:\s|<#\s*[\d.]+\s*#>|\[[^\[\]]{1,40}\]|\([^()]{1,40}\)|（[^）]{0,80}）)+/;
+
+/** 句首标注里会占时间的部分折算成毫秒（停顿按秒值，音效按固定折算）。 */
+const leadingMarkPauseMs = (line: string): number => {
+  const run = (line || '').match(LEADING_MARK_RE);
+  if (!run) return 0;
+  let ms = 0;
+  const marks = run[0].match(/<#\s*([\d.]+)\s*#>|\[[^\[\]]{1,40}\]|\([^()]{1,40}\)/g) || [];
+  for (const mark of marks) {
+    if (mark.indexOf('<#') === 0) {
+      const sec = parseFloat(mark.replace(/[^0-9.]/g, '')) || 0;
+      ms += Math.max(0, Math.min(2, sec)) * 1000;
+    } else if (SOUND_CUE_RE.test(mark.slice(1, -1).trim())) {
+      ms += SOUND_CUE_MS;
+    }
+  }
+  return ms;
+};
+
+/**
+ * 方案 A：估算每句时长改用念稿版算权重。
+ * 音频是拿念稿合成的，标注的停顿/音效占真实时间；拿干净原文估时字幕会整体超前。
+ * 念稿按句拆开后必须和原文句数一一对应，对不上退回原文估算（返回 null）。
+ * 归账规矩：句首的停顿/音效（写在上一句句号后面）记到**上一句**头上——
+ * 下一句的起点 = 前面所有句的权重和，空隙不在下一句自己的时长里。
+ */
+export const buildPerformEstimateWeights = (
+  spokenLines: string[],
+  perform?: string | null,
+): number[] | null => {
+  if (!perform || !perform.trim() || !spokenLines.length) return null;
+  const performLines = splitLiveSpeech(perform);
+  if (performLines.length !== spokenLines.length) return null;
+  const weights = performLines.map(performLineWeightMs);
+  for (let i = 1; i < performLines.length; i += 1) {
+    const moved = leadingMarkPauseMs(performLines[i]);
+    if (moved <= 0) continue;
+    weights[i] = Math.max(1, weights[i] - moved);
+    weights[i - 1] += moved;
+  }
+  return weights;
 };
 
 export const buildLiveTranslationRepairPrompt = (spoken: string, translated: string): string => {

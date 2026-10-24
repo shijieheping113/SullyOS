@@ -89,6 +89,8 @@ interface LiveRoomViewProps {
     nextSpeechOriginal: string,
     nextSpeechTranslated?: string,
   ) => void;
+  /** 手动改某一拍的语音表演标注（念稿版）；空字符串 = 清掉标注，播放回落干净原文 */
+  onEditBeatPerform: (chunkId: string, beatId: string, nextPerform: string) => void;
   onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean; fromAuto?: boolean }) => void;
   onPreGenerateBeatVoice: (beat: LiveBeat, sessionId: string) => Promise<void>;
   onSendUserDanmaku: (
@@ -143,6 +145,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onGenerateNextChunk,
   onRerollChunk,
   onEditBeat,
+  onEditBeatPerform,
   onPlayBeatVoice,
   onPreGenerateBeatVoice,
   onSendUserDanmaku,
@@ -439,6 +442,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       },
       onSaveEdit: (nextScreen, nextSpeech, nextTrans) => {
         onEditBeat(chunkId, beat.id, nextScreen, nextSpeech, nextTrans);
+      },
+      speechPerform: beat.speechPerform,
+      onSavePerform: (nextPerform: string) => {
+        onEditBeatPerform(chunkId, beat.id, nextPerform);
       },
       onRerollChunk: () => onRerollChunk(chunkId),
       onShareClip: () => onShareClipToChat(beat),

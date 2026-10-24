@@ -21,6 +21,7 @@ import { LiveUiStyle, formatCount } from './platformChrome';
 import { getLiveDanmakuComment } from '../../utils/liveStreamTimeline';
 import {
   alignLiveSpeech,
+  buildPerformEstimateWeights,
   pairCursorAfterClock,
   spokenLineIndexAt,
   spokenLineStartSec,
@@ -420,6 +421,8 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   const trans = beat?.speechTranslated ? beat.speechTranslated.replace(/^译[：:]\s*/, '').trim() : '';
   const spokenFull = beat?.speechOriginal || '';
   const pairAlignment = alignLiveSpeech(spokenFull, trans);
+  // 方案 A：没有逐字时间轴退回估算时，用念稿版的权重估（音频是按念稿合成的）
+  const performWeights = buildPerformEstimateWeights(pairAlignment.spokenLines, beat?.speechPerform);
   const clockForThis =
     props.voiceClock && props.voiceClock.beatId === beat?.id ? props.voiceClock : null;
   const playingThis = Boolean(beat && props.ttsPlayingBeatId === beat.id && clockForThis);
@@ -430,6 +433,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           beat?.speechTimeline,
           clockForThis!.currentTime,
           clockForThis!.duration || beat?.speechTimeline?.durationSec,
+          performWeights,
         )
       : null;
   const [pairCursor, setPairCursor] = useState(0);
@@ -459,6 +463,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         next,
         beat.speechTimeline,
         clockForThis?.duration || beat.speechTimeline?.durationSec,
+        performWeights,
       );
       if (start != null) props.onSeekVoice(start);
       return;

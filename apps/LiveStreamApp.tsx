@@ -15,6 +15,9 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { readCachedSpeechUrl, synthesizeSpeech } from '../utils/ttsRouter';
 import { resolveTtsProvider } from '../utils/ttsProvider';
+import { isSecondaryLlmReady } from '../utils/secondaryLlmApi';
+import { secondaryLlmCall } from '../utils/secondaryLlmCall';
+import { resolveVoiceActingGuideFromApiConfig } from '../utils/voiceMessagePrompt';
 import { fishTimestampCacheKey, resolveFishCallRefs, synthesizeFishWithTimestamp } from '../utils/fishTimestampTts';
 import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { chooseLiveReplaySource, liveVoiceTapAction, mergeBeatAudio, type StoredPlay } from '../utils/liveReplayAudio';
@@ -22,6 +25,7 @@ import {
   acceptRepairedTranslation,
   alignLiveSpeech,
   buildLiveTranslationRepairPrompt,
+  stripPerformanceMarkup,
 } from '../utils/liveSpeechPairs';
 import type { SpeechTimeline } from '../utils/callSpeechTimeline';
 import {
@@ -869,6 +873,14 @@ const LiveStreamApp: React.FC = () => {
     typeof speed === 'number' && speed > 0 ? speed : 0.9
   );
 
+  /**
+   * 同一段念稿的合成请求在飞时，别的地方（自动连播/预生成/手点）再要同一段就直接共用
+   * 这一趟结果——电波里预生成和自动播会同时盯上同一拍，没有这一道闸会真的扣两次费
+   * （Ann 2026-10-25 实测抓到过）。skipCache 的「重新合成」也共用在飞的那一趟：
+   * 同一段字重合成一遍意义不大，钱省下来。
+   */
+  const liveSynthInflightRef = useRef<Map<string, Promise<{ url: string; timeline: SpeechTimeline | null }>>>(new Map());
+
   const synthesizeLiveBeatAudio = useCallback(
     async (
       text: string,
@@ -877,34 +889,52 @@ const LiveStreamApp: React.FC = () => {
     ): Promise<{ url: string; timeline: SpeechTimeline | null }> => {
       const tempChar = buildLiveVoiceChar(channel);
       if (!tempChar) throw new Error('没有角色');
-      if (resolveTtsProvider(apiConfig) === 'fishaudio') {
-        const refs = resolveFishCallRefs(apiConfig, tempChar);
-        if (refs.proxy && refs.apiKey && refs.referenceId) {
-          const speed = liveFishSpeed(tempChar.voiceProfile?.speed);
-          const stamped = await synthesizeFishWithTimestamp({
-            text,
-            referenceId: refs.referenceId,
-            apiKey: refs.apiKey,
-            model: refs.model,
-            proxyBase: refs.proxy,
-            speed,
-          });
-          if (stamped?.url && stamped.timeline?.segments?.length) {
-            if (!skipCache && stamped.blob) {
-              const key = fishTimestampCacheKey({
-                text,
-                referenceId: refs.referenceId,
-                model: refs.model,
-                speed,
-              });
-              if (key) saveCachedTts(key, stamped.blob).catch(() => { /* 缓存失败仍可先播这一次 */ });
+      const synthKey = [
+        resolveTtsProvider(apiConfig),
+        tempChar.id,
+        channel?.voiceConfig?.overrideVoiceId || '',
+        text,
+      ].join('|');
+      const running = liveSynthInflightRef.current.get(synthKey);
+      if (running) return running;
+      const job = (async (): Promise<{ url: string; timeline: SpeechTimeline | null }> => {
+        if (resolveTtsProvider(apiConfig) === 'fishaudio') {
+          const refs = resolveFishCallRefs(apiConfig, tempChar);
+          if (refs.proxy && refs.apiKey && refs.referenceId) {
+            const speed = liveFishSpeed(tempChar.voiceProfile?.speed);
+            const stamped = await synthesizeFishWithTimestamp({
+              text,
+              referenceId: refs.referenceId,
+              apiKey: refs.apiKey,
+              model: refs.model,
+              proxyBase: refs.proxy,
+              speed,
+            });
+            if (stamped?.url && stamped.timeline?.segments?.length) {
+              if (!skipCache && stamped.blob) {
+                const key = fishTimestampCacheKey({
+                  text,
+                  referenceId: refs.referenceId,
+                  model: refs.model,
+                  speed,
+                });
+                if (key) saveCachedTts(key, stamped.blob).catch(() => { /* 缓存失败仍可先播这一次 */ });
+              }
+              return { url: stamped.url, timeline: stamped.timeline };
             }
-            return { url: stamped.url, timeline: stamped.timeline };
           }
         }
+        const url = await synthesizeSpeech(text, tempChar, apiConfig, { skipCache });
+        return { url, timeline: null };
+      })();
+      liveSynthInflightRef.current.set(synthKey, job);
+      try {
+        return await job;
+      } finally {
+        if (liveSynthInflightRef.current.get(synthKey) === job) {
+          liveSynthInflightRef.current.delete(synthKey);
+        }
       }
-      const url = await synthesizeSpeech(text, tempChar, apiConfig, { skipCache });
-      return { url, timeline: null };
     },
     [apiConfig, buildLiveVoiceChar],
   );
@@ -996,6 +1026,19 @@ const LiveStreamApp: React.FC = () => {
         }
 
         if (!stillThisJob()) return;
+        // 合成前最后看一眼直播库里这一拍：预生成可能刚好把录音存好了，
+        // 场次状态比渲染时的快照新——直接播存好的，别再扣一次费
+        if (!options?.skipCache) {
+          const latestBeat = liveSessionsRef.current
+            .flatMap(session => session.chunks)
+            .flatMap(chunk => chunk.beats)
+            .find(item => item.id === id);
+          if (latestBeat?.audioUrl) {
+            const replayed = await playSaved(latestBeat.audioUrl, null);
+            if (!stillThisJob()) return;
+            if (replayed === 'played' || replayed === 'blocked' || replayed === 'superseded') return;
+          }
+        }
         setTtsLoadingBeatId(id);
         const made = await synthesizeLiveBeatAudio(text, ch, options?.skipCache);
         options?.onAudioUrlReady?.(made.url, made.timeline);
@@ -1023,12 +1066,20 @@ const LiveStreamApp: React.FC = () => {
 
   const preGenerateBeatVoice = useCallback(
     async (beat: LiveBeat, sessionId: string) => {
-      if (!currentChar || !beat.speechOriginal?.trim()) return;
+      // 合成用的念稿版优先（带表演标注）；没有标注回落干净原文
+      const performText = (beat.speechPerform || beat.speechOriginal || '').trim();
+      if (!currentChar || !performText) return;
+      // 主路径（自动连播/手点）已经在合成这一拍了：让给它，别再来一趟扣两次费
+      if (voiceJobRef.current?.id === beat.id) return;
       const latest = liveSessionsRef.current.find(session => session.id === sessionId);
       const latestBeat = latest?.chunks.flatMap(chunk => chunk.beats).find(item => item.id === beat.id);
-      if (!latestBeat || latestBeat.audioUrl || latestBeat.speechOriginal !== beat.speechOriginal) return;
+      if (
+        !latestBeat
+        || latestBeat.audioUrl
+        || (latestBeat.speechPerform || latestBeat.speechOriginal || '') !== performText
+      ) return;
       try {
-        const made = await synthesizeLiveBeatAudio(beat.speechOriginal, activeChannel);
+        const made = await synthesizeLiveBeatAudio(performText, activeChannel);
         await persistBeatAudioUrl(sessionId, beat.id, made.url, made.timeline);
       } catch {
         // 静默预生成失败不打断直播；用户仍可点当前台词即时合成。
@@ -1174,6 +1225,75 @@ const LiveStreamApp: React.FC = () => {
     return next;
   };
 
+  /**
+   * 整轮语音表演标注（Ann 2026-10-25 定的简化方案）：
+   * 主模型输出后、写库/合成前，把这一轮所有开口的台词打包**一次**辅助模型调用，
+   * 按设置里当前语音服务商那套表演规范（自定义覆盖自动生效）补标注，
+   * 存进 beat.speechPerform「念稿版」——只给 TTS 用，显示/时间轴/摘要全走干净原文。
+   * 没配辅助模型：跳过，播放用干净原文合成（不回退主模型，慢又贵）。
+   * 超时（15 秒）或解析失败：这一轮不带标注，绝不卡住生成。
+   */
+  const LIVE_SPEECH_PERFORM_TIMEOUT_MS = 15_000;
+  const performLiveSpeechBeats = useCallback(async (
+    beats: LiveBeat[],
+    channel: StreamerChannelProfile,
+  ): Promise<LiveBeat[]> => {
+    if (!isSecondaryLlmReady(apiConfig.secondaryLlm)) return beats;
+    const rows = beats
+      .map((beat, i) => ({ i, text: (beat.speechOriginal || '').trim(), emotion: (beat.emotion || '').trim() }))
+      .filter(row => row.text);
+    if (rows.length === 0) return beats;
+
+    const guide = resolveVoiceActingGuideFromApiConfig(apiConfig);
+    const system = `你是直播语音的表演标注员。给你一位主播的若干段台词（已按拍编号），任务：给每一段补上语音表演标注，让合成出来的语音有停顿、有呼吸、有情绪起伏。
+
+规则（格式绝对严格，违反任何一条、那一段就作废）：
+1. 台词的文字一个都不能动：不许增字、删字、改字、换同义词、调换位置、增删标点、拆句、并句、改大小写。只能在原有文字的标点之间插入标注符号。
+2. 标注只许用下面语音表演指南列出的写法，一个都不许自创格式，不许在标注里塞台词。
+3. 有内容才加：情绪平的句子可以不加，不要每句都塞满标注。
+4. 输出严格 JSON 数组，不要任何解释文字：[{"n":编号,"perform":"标注后的整段台词"}]。「n」必须用输入行首的编号，每一段都要给，一段都不能漏。
+
+${guide}`;
+    const user = `主播台词（行首数字是编号；括号里是这一拍的参考情绪，仅供语气参考）：
+${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：${row.emotion}）` : ''}`).join('\n')}`;
+
+    try {
+      const raw = await secondaryLlmCall({
+        config: apiConfig.secondaryLlm!,
+        purpose: '直播语音表演标注',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        featureOpts: { temperature: 0.3 },
+        charId: channel.charId,
+        timeoutMs: LIVE_SPEECH_PERFORM_TIMEOUT_MS,
+      });
+      const cleaned = (raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+      const start = cleaned.indexOf('[');
+      const end = cleaned.lastIndexOf(']');
+      if (start === -1 || end <= start) return beats;
+      const list = JSON.parse(cleaned.slice(start, end + 1)) as Array<{ n?: number; perform?: string }>;
+      if (!Array.isArray(list)) return beats;
+      const next = beats.slice();
+      for (const entry of list) {
+        const idx = Number(entry?.n) - 1;
+        const perform = typeof entry?.perform === 'string' ? entry.perform.trim() : '';
+        if (!Number.isFinite(idx) || idx < 0 || idx >= next.length || !perform) continue;
+        // B：严格校验——剥掉所有标注后必须和原文一字不差；
+        // 模型动了字（增删改/换词/动标点）就整段丢弃，这一拍回落干净原文
+        const sourceNet = stripPerformanceMarkup(next[idx].speechOriginal || '');
+        const performNet = stripPerformanceMarkup(perform);
+        if (!performNet || performNet !== sourceNet) continue;
+        next[idx] = { ...next[idx], speechPerform: perform };
+      }
+      return next;
+    } catch {
+      // 辅助模型慢/挂：这轮先不带标注，播放用干净原文兜底
+      return beats;
+    }
+  }, [apiConfig]);
+
   // 圈出来的弹幕只由「下一轮」回应一次；这一轮重 Roll 时要继续带着，到再下一轮才失效。
   // 例子：第 2 轮圈的 → 第 3 轮（含重 Roll）带上 → 第 4 轮生成时清掉。
   const pruneReplyRequests = (chunks: LiveChunk[], targetChunkIndex: number): LiveChunk[] => {
@@ -1269,8 +1389,12 @@ const LiveStreamApp: React.FC = () => {
         queuedInputs,
         forbiddenViewerNames,
         priorDanmakuTexts,
+        // 打赏宽闸用开播时的在线人数算预算
+        { viewerCount: session.viewerCount },
       );
-      const beats = await repairLiveSpeechTranslations(parsedBeats, channel);
+      // 外语同传先对齐，再给整轮补语音表演标注（标注只存念稿版，不动台词原文）
+      const translatedBeats = await repairLiveSpeechTranslations(parsedBeats, channel);
+      const beats = await performLiveSpeechBeats(translatedBeats, channel);
 
       // 旧场次可能没有这两个字段（重建的场次、老数据），给个保底值再累加
       let peak = session.peakViewerCount ?? session.viewerCount;
@@ -1905,6 +2029,44 @@ const LiveStreamApp: React.FC = () => {
     else addToast('分镜已更新，但没能存进本地数据库', 'error');
   };
 
+  /**
+   * 手动改某一拍的语音表演标注（编辑弹窗里的「语音标注」框）。
+   * Ann 2026-10-25 定的：改台词不重标、标注保留；手动改标注后旧的录音作废，
+   * 下次播放按新念稿重新合成（缓存 key 跟着念稿文本走，天然不冲突）。
+   */
+  const handleEditBeatPerform = async (chunkId: string, beatId: string, nextPerform: string) => {
+    if (!activeLiveSession || !activeChannel) return;
+    const targetChunk = activeLiveSession.chunks.find(c => c.id === chunkId);
+    if (!targetChunk) return;
+    const trimmed = nextPerform.trim();
+    const nextBeats = targetChunk.beats.map(b => {
+      if (b.id !== beatId) return b;
+      if ((b.speechPerform || '') === trimmed) return b;
+      const nextBeat: LiveBeat = { ...b, speechPerform: trimmed || undefined };
+      // 念稿变了，旧录音跟着作废（旧录音是按旧念稿合成的）
+      if (b.speechPerform) {
+        delete nextBeat.audioUrl;
+        delete nextBeat.speechTimeline;
+      }
+      return nextBeat;
+    });
+    const changed = nextBeats.some((b, i) => b !== targetChunk.beats[i]);
+    if (!changed) return;
+    if (ttsPlayingBeatId === beatId) {
+      stopVoiceAudio();
+      setTtsPlayingBeatId(null);
+    }
+    // 标注只进直播库，不进记忆/聊天卡（卡里的正文从来不含标注）
+    const nextSession: LiveStreamSession = {
+      ...activeLiveSession,
+      chunks: activeLiveSession.chunks.map(c =>
+        c.id === chunkId ? { ...c, beats: nextBeats } : c,
+      ),
+    };
+    const saved = await rememberLiveSession(nextSession);
+    if (!saved) addToast('标注改好了，但没能存进本地数据库', 'error');
+  };
+
   // 下播：只改状态和结束时间，不生成整场总结、不发下播卡
   const handleEndStream = async () => {
     if (!activeLiveSession) return;
@@ -2203,13 +2365,21 @@ const LiveStreamApp: React.FC = () => {
           onEditBeat={(chunkId, beatId, nextScreen, nextSpeech, nextTrans) =>
             void handleEditBeat(chunkId, beatId, nextScreen, nextSpeech, nextTrans)
           }
+          onEditBeatPerform={(chunkId, beatId, nextPerform) =>
+            void handleEditBeatPerform(chunkId, beatId, nextPerform)
+          }
           onPlayBeatVoice={(beat, opts) =>
-            void speakTextWithChannelConfig(beat.id, beat.speechOriginal, activeChannel, {
-              skipCache: opts?.skipCache,
-              fromAuto: opts?.fromAuto,
-              cachedUrl: beat.audioUrl,
-              onAudioUrlReady: (url, timeline) => void persistBeatAudioUrl(activeLiveSession.id, beat.id, url, timeline),
-            })
+            void speakTextWithChannelConfig(
+              beat.id,
+              (beat.speechPerform || beat.speechOriginal || '').trim(),
+              activeChannel,
+              {
+                skipCache: opts?.skipCache,
+                fromAuto: opts?.fromAuto,
+                cachedUrl: beat.audioUrl,
+                onAudioUrlReady: (url, timeline) => void persistBeatAudioUrl(activeLiveSession.id, beat.id, url, timeline),
+              },
+            )
           }
           onPreGenerateBeatVoice={preGenerateBeatVoice}
           onSendUserDanmaku={handleSendUserDanmaku}

@@ -3,11 +3,13 @@ import {
   acceptRepairedTranslation,
   alignLiveSpeech,
   buildLiveTranslationRepairPrompt,
+  buildPerformEstimateWeights,
   nextIndexAfterSilentBeat,
   pairCursorAfterClock,
   spokenLineIndexAt,
   spokenLineStartSec,
   splitLiveSpeech,
+  stripPerformanceMarkup,
   visibleLivePair,
 } from './liveSpeechPairs';
 
@@ -195,5 +197,40 @@ describe('buildLiveTranslationRepairPrompt', () => {
     expect(prompt).toContain('1. Wait, really?');
     expect(prompt).toContain('2. That\'s insane.');
     expect(prompt).toContain('不要输出弹幕');
+  });
+});
+
+describe('念稿版：标注剥离与估算权重', () => {
+  it('剥掉所有标注后剩下纯文字', () => {
+    expect(stripPerformanceMarkup('[sighs] 等等。<#0.5#>真的假的？（笑）(laughs)')).toBe(
+      '等等。真的假的？',
+    );
+  });
+
+  it('句数对不上时退回原文估算（返回 null）', () => {
+    const lines = splitLiveSpeech('等等。真的假的？');
+    expect(buildPerformEstimateWeights(lines, null)).toBeNull();
+    expect(buildPerformEstimateWeights(lines, '[sighs] 等等。真的假的？多出来的一句。')).toBeNull();
+  });
+
+  it('有标注的句权重更大；句首的停顿记到上一句头上', () => {
+    const lines = splitLiveSpeech('等等。真的假的？');
+    const plain = buildPerformEstimateWeights(lines, '等等。真的假的？')!;
+    // <#1#> 写在上一句句号后面 → 时间归上一句，下一句自己的权重不变
+    const withPause = buildPerformEstimateWeights(lines, '等等。<#1#>真的假的？')!;
+    expect(withPause[0]).toBeGreaterThan(plain[0]);
+    expect(withPause[1]).toBe(plain[1]);
+    // 句首音效同理
+    const withCue = buildPerformEstimateWeights(lines, '等等。[sighs]真的假的？')!;
+    expect(withCue[0]).toBeGreaterThan(plain[0]);
+    expect(withCue[1]).toBe(plain[1]);
+  });
+
+  it('没有时间轴时，带停顿的念稿把后面句的估算起点往后推', () => {
+    const lines = splitLiveSpeech('等等。真的假的？');
+    const plainStart = spokenLineStartSec(lines, 1, null, 4)!;
+    const paused = buildPerformEstimateWeights(lines, '等等。<#1.5#>真的假的？');
+    const pausedStart = spokenLineStartSec(lines, 1, null, 4, paused)!;
+    expect(pausedStart).toBeGreaterThan(plainStart);
   });
 });
