@@ -6,10 +6,12 @@ import {
   buildPerformEstimateWeights,
   nextIndexAfterSilentBeat,
   pairCursorAfterClock,
+  reapplyPerformanceMarkup,
   spokenLineIndexAt,
   spokenLineStartSec,
   splitLiveSpeech,
   stripPerformanceMarkup,
+  stripPerformanceMarkupKeepSpacing,
   visibleLivePair,
 } from './liveSpeechPairs';
 
@@ -222,6 +224,32 @@ describe('念稿版：标注剥离与估算权重', () => {
     expect(stripPerformanceMarkup('[sighs] 等等。<#0.5#>真的假的？（笑）(laughs)')).toBe(
       '等等。真的假的？',
     );
+  });
+
+  it('改原声台词后，旧标签按标点位置放回新字上（标签不丢）', () => {
+    const oldPerform = '『老実回答……被電一下就知道疼了吧、[excited] 還有懲罰！這次就罰你学猪叫吧』って、momo_8921さん！ボク、[sad] もう白状したのに！？';
+    const newPlain = '正直に答えて……ちょっと電気流れただけで痛いってわかっただろ、 それに罰もあるよ！今回は豚の鳴き声を覚える罰だ';
+    // [excited] 原来在第 2 个标点（…… 算一个、顿号算一个）后面 → 放到新字第 2 个标点后面
+    // [sad] 原来在第 6 个标点后面 → 新字标点不够 → 排到句尾
+    expect(reapplyPerformanceMarkup(oldPerform, newPlain)).toBe(
+      '正直に答えて……ちょっと電気流れただけで痛いってわかっただろ、[excited] それに罰もあるよ！今回は豚の鳴き声を覚える罰だ[sad]',
+    );
+  });
+
+  it('新字的标点够放时，标签各回各位', () => {
+    expect(reapplyPerformanceMarkup('等等、[sighs] 真的？', '好的， 明白！'))
+      .toBe('好的，[sighs] 明白！');
+  });
+
+  it('旧念稿没有标签时，新字原样返回', () => {
+    expect(reapplyPerformanceMarkup('老台词。', '新台词。')).toBe('新台词。');
+    expect(reapplyPerformanceMarkup('', ' 新台词。 ')).toBe('新台词。');
+  });
+
+  it('从标注栏倒推原文：只抠标签，空格原样留着', () => {
+    expect(
+      stripPerformanceMarkupKeepSpacing('正直に答えて……わかっただろ、[excited] それに罰もあるよ！'),
+    ).toBe('正直に答えて……わかっただろ、 それに罰もあるよ！');
   });
 
   it('句数对不上时退回原文估算（返回 null）', () => {

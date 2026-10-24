@@ -162,4 +162,11 @@ describe('mergeBeatAudio', () => {
     );
     expect(next.speechTimeline).toEqual(timeline);
   });
+
+  it('存了新录音就擦掉「旧录音作废」的记号（改过台词后第一次重录）', () => {
+    const beat = { audioUrl: undefined as string | undefined, speechTimeline: null, voiceVoidedAt: 123 };
+    const next = mergeBeatAudio(beat, 'blob:new', null);
+    expect(next.audioUrl).toBe('blob:new');
+    expect(next.voiceVoidedAt).toBeUndefined();
+  });
 });

@@ -257,6 +257,76 @@ export const stripPerformanceMarkup = (text: string): string =>
     .replace(/\([^()]{1,40}\)/g, '')
     .replace(/\s+/g, '');
 
+/** 数标点用：连续一串标点（比如 ……）算一个。 */
+const PERFORM_PUNCT_RE = /[。，、！？…；：!?;,.]/;
+
+/**
+ * 只把标签抠掉，其余（包括空格）原样留着。
+ * 从语音标注栏倒推出原声台词栏的字时用它——严格校验那份会顺手吃掉空格，不能拿来当原文。
+ */
+export const stripPerformanceMarkupKeepSpacing = (text: string): string =>
+  (text || '')
+    .replace(/<语音[^>]*>|<\/\s*[语語]音\s*>/g, '')
+    .replace(/<#\s*[\d.]+\s*#>/g, '')
+    .replace(/（[^）]{0,80}）/g, '')
+    .replace(/\[[^\[\]]{1,40}\]/g, '')
+    .replace(/\([^()]{1,40}\)/g, '')
+    .trim();
+
+/** 念稿里的标签写法（和 stripPerformanceMarkup 认的是同一批）。 */
+const PERFORM_TAG_RE =
+  /<语音[^>]*>|<\/\s*[语語]音\s*>|<#\s*[\d.]+\s*#>|（[^）]{0,80}）|\[[^\[\]]{1,40}\]|\([^()]{1,40}\)/g;
+
+/**
+ * 改原声台词后，把旧念稿里的标签按标点位置套到新文字上（Ann 2026-10-25 定：标签不丢）。
+ *
+ * 规矩：旧念稿里第 n 个标点后面的标签，放到新文字第 n 个标点后面；
+ * 新文字的标点不够放，多出来的标签按原顺序排到句尾；标点前面就有、或整段最前面的标签，放到新文字开头。
+ */
+export function reapplyPerformanceMarkup(oldPerform: string, newPlain: string): string {
+  const source = oldPerform || '';
+  const tags: Array<{ tag: string; markIndex: number }> = [];
+  let markIndex = 0;
+  let lastWasPunct = false;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  PERFORM_TAG_RE.lastIndex = 0;
+  const countPlain = (chunk: string) => {
+    for (const ch of chunk) {
+      const isPunct = PERFORM_PUNCT_RE.test(ch);
+      if (isPunct && !lastWasPunct) markIndex += 1;
+      lastWasPunct = isPunct;
+    }
+  };
+  while ((match = PERFORM_TAG_RE.exec(source))) {
+    countPlain(source.slice(cursor, match.index));
+    tags.push({ tag: match[0], markIndex });
+    cursor = match.index + match[0].length;
+  }
+  const plain = (newPlain || '').trim();
+  if (tags.length === 0) return plain;
+
+  const out: string[] = [];
+  let i = 0;
+  while (i < tags.length && tags[i].markIndex === 0) out.push(tags[i++].tag);
+  const chars = Array.from(plain);
+  let newMarkIndex = 0;
+  let prevWasPunct = false;
+  for (let idx = 0; idx < chars.length; idx += 1) {
+    const ch = chars[idx];
+    out.push(ch);
+    const isPunct = PERFORM_PUNCT_RE.test(ch);
+    if (isPunct && !prevWasPunct) newMarkIndex += 1;
+    const runEnds = isPunct && !(idx + 1 < chars.length && PERFORM_PUNCT_RE.test(chars[idx + 1]));
+    if (runEnds) {
+      while (i < tags.length && tags[i].markIndex === newMarkIndex) out.push(tags[i++].tag);
+    }
+    prevWasPunct = isPunct;
+  }
+  while (i < tags.length) out.push(tags[i++].tag);
+  return out.join('');
+}
+
 /** 会真实占掉时长的音效类 cue（叹气/笑声/呼吸这类），估算按固定折算加时。 */
 const SOUND_CUE_MS = 500;
 const SOUND_CUE_RE =

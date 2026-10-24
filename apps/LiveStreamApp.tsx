@@ -25,7 +25,9 @@ import {
   acceptRepairedTranslation,
   alignLiveSpeech,
   buildLiveTranslationRepairPrompt,
+  reapplyPerformanceMarkup,
   stripPerformanceMarkup,
+  stripPerformanceMarkupKeepSpacing,
 } from '../utils/liveSpeechPairs';
 import type { SpeechTimeline } from '../utils/callSpeechTimeline';
 import {
@@ -586,17 +588,30 @@ const LiveStreamApp: React.FC = () => {
     });
   }, [liveSessions]);
 
+  /**
+   * 把一段录音的地址挂到某一拍身上。
+   * usedText：这段录音是拿哪版文字做的。改过台词或念稿之后，旧录音不许再挂回来，
+   * 所以写之前先核对这一拍现在的两版文字里还有没有它（Ann 2026-10-25 定：改了就不一样，点播放重新录）。
+   */
   const persistBeatAudioUrl = useCallback(
     async (
       sessionId: string,
       beatId: string,
       audioUrl: string,
       speechTimeline?: SpeechTimeline | null,
+      usedText?: string,
     ) => {
       const latest = liveSessionsRef.current.find(session => session.id === sessionId);
       if (!latest) return;
       const target = latest.chunks.flatMap(chunk => chunk.beats).find(beat => beat.id === beatId);
       if (!target) return;
+      if (usedText !== undefined) {
+        const used = (usedText || '').trim();
+        const stillMine =
+          used !== '' &&
+          (used === (target.speechOriginal || '').trim() || used === (target.speechPerform || '').trim());
+        if (!stillMine) return;
+      }
       const updatedBeat = mergeBeatAudio(target, audioUrl, speechTimeline);
       if (updatedBeat === target) return;
       const next: LiveStreamSession = {
@@ -900,6 +915,21 @@ const LiveStreamApp: React.FC = () => {
   /** 从本机资料库取出来播放时现生成的地址；同一拍再取就先把上一个放掉，别堆垃圾 */
   const beatAssetUrlsRef = useRef<Map<string, string>>(new Map());
 
+  /**
+   * 这一拍现在的文字里还有没有这一版（原声台词栏或标注栏对得上就算有）。
+   * 录音做完要挂回这一拍之前先问一句：合成途中你把台词或念稿改了，旧录音就不许再挂回来。
+   */
+  const beatStillUsesText = useCallback((beatId: string, usedText: string): boolean => {
+    const used = (usedText || '').trim();
+    if (!beatId || !used) return false;
+    const beat = liveSessionsRef.current
+      .flatMap(session => session.chunks)
+      .flatMap(chunk => chunk.beats)
+      .find(item => item.id === beatId);
+    if (!beat) return false;
+    return used === (beat.speechOriginal || '').trim() || used === (beat.speechPerform || '').trim();
+  }, []);
+
   const synthesizeLiveBeatAudio = useCallback(
     async (
       text: string,
@@ -946,7 +976,8 @@ const LiveStreamApp: React.FC = () => {
                 if (key) saveCachedTts(key, stamped.blob).catch(() => { /* 缓存失败仍可先播这一次 */ });
               }
               // 录音本体存进本机资料库（照聊天同款）：刷新、关浏览器后还能取回来播
-              if (beatId && stamped.blob) {
+              // 只在这一拍现在的文字里还有这一版时才存：改过台词或念稿之后，旧录音不许再挂回来
+              if (beatId && stamped.blob && beatStillUsesText(beatId, text)) {
                 void saveLiveBeatVoiceAsset(beatId, stamped.blob, stamped.timeline);
               }
               return { url: stamped.url, timeline: stamped.timeline };
@@ -954,7 +985,7 @@ const LiveStreamApp: React.FC = () => {
           }
         }
         const { url, blob } = await synthesizeSpeechDetailed(text, tempChar, apiConfig, { skipCache });
-        if (beatId && blob) {
+        if (beatId && blob && beatStillUsesText(beatId, text)) {
           void saveLiveBeatVoiceAsset(beatId, blob, null);
         }
         return { url, timeline: null };
@@ -972,7 +1003,7 @@ const LiveStreamApp: React.FC = () => {
         }
       }
     },
-    [apiConfig, buildLiveVoiceChar],
+    [apiConfig, buildLiveVoiceChar, beatStillUsesText],
   );
 
   const readLiveTimestampCache = useCallback(async (text: string, channel?: StreamerChannelProfile) => {
@@ -1000,7 +1031,7 @@ const LiveStreamApp: React.FC = () => {
         skipCache?: boolean;
         fromAuto?: boolean;
         cachedUrl?: string;
-        onAudioUrlReady?: (url: string, timeline?: SpeechTimeline | null) => void;
+        onAudioUrlReady?: (url: string, timeline?: SpeechTimeline | null, usedText?: string) => void;
       },
     ) => {
       if (!currentChar || !text.trim()) return;
@@ -1040,18 +1071,22 @@ const LiveStreamApp: React.FC = () => {
             latestBeat = findLatestBeat();
           }
         }
-        // 合成用念稿版（后台标注刚落地也算数）；没有标注回落干净原文
-        let synthText = ((latestBeat?.speechPerform || latestBeat?.speechOriginal || text) || '').trim() || text;
+        // 门 3 要拿去录的字（Ann 2026-10-25 定的）：
+        // 语气标注开关关着 = 拿原声台词栏的字，不叫辅助模型；开着 = 拿标注栏的字。
+        const performEnabled = loadLiveSpeechPerformEnabled();
+        let performText = (latestBeat?.speechPerform || '').trim();
         // 「重新合成语音」且这一拍还没有标注：先补一趟标注再合成（Ann 2026-10-25 定的）
-        if (options?.skipCache && loadLiveSpeechPerformEnabled() && latestBeat && !latestBeat.speechPerform) {
+        if (options?.skipCache && performEnabled && latestBeat && !performText) {
           const freshPerform = await annotateSingleBeatForVoice(latestBeat, ch);
           if (!stillThisJob()) return;
           if (freshPerform) {
             // 存库后从最新场次再取一次念稿（万一同场别的拍也更新了）
             latestBeat = findLatestBeat();
-            synthText = ((latestBeat?.speechPerform || freshPerform) || '').trim() || freshPerform;
+            performText = ((latestBeat?.speechPerform || freshPerform) || '').trim();
           }
         }
+        const originalText = ((latestBeat?.speechOriginal || text) || '').trim() || text;
+        let synthText = performEnabled && performText ? performText : originalText;
 
         let storedPlay: StoredPlay = 'none';
         if (!options?.skipCache && options?.cachedUrl) {
@@ -1075,17 +1110,31 @@ const LiveStreamApp: React.FC = () => {
           }
         }
 
+        // 门 2：按文字存的历史缓存。标注栏的字、原声台词栏的字，两版都翻，
+        // 翻到哪版放哪版（Ann 2026-10-25 定的：有历史语音就放，不追究当初是按哪版做的）。
+        // 例外：这一拍的台词或念稿被改过、旧录音当场作废过 → 不翻老缓存，直接重新录。
+        const voiceVoided = Boolean(latestBeat?.voiceVoidedAt);
         let timestampUrl: string | null = null;
         let speechUrl: string | null = null;
+        /** 门 2 翻到的是哪一版文字；写回声音地址时用它核对这一拍现在的文字 */
+        let cacheTextHit: string | undefined;
         if (
           !options?.skipCache
           && storedPlay !== 'played' && storedPlay !== 'blocked' && storedPlay !== 'superseded'
           && !assetUrl
+          && !voiceVoided
         ) {
-          timestampUrl = await readLiveTimestampCache(synthText, ch);
-          if (!stillThisJob()) return;
-          speechUrl = await readCachedSpeechUrl(synthText, tempChar, apiConfig);
-          if (!stillThisJob()) return;
+          const cacheTexts = Array.from(new Set([synthText, originalText, performText].filter(Boolean)));
+          for (const cacheText of cacheTexts) {
+            timestampUrl = await readLiveTimestampCache(cacheText, ch);
+            if (!stillThisJob()) return;
+            speechUrl = await readCachedSpeechUrl(cacheText, tempChar, apiConfig);
+            if (!stillThisJob()) return;
+            if (timestampUrl || speechUrl) {
+              cacheTextHit = cacheText;
+              break;
+            }
+          }
         }
 
         let source = chooseLiveReplaySource({
@@ -1096,8 +1145,12 @@ const LiveStreamApp: React.FC = () => {
         });
         if (source === 'stored' || source === 'blocked') return;
 
-        const playSaved = async (url: string, timeline: SpeechTimeline | null | undefined) => {
-          options?.onAudioUrlReady?.(url, timeline);
+        const playSaved = async (
+          url: string,
+          timeline: SpeechTimeline | null | undefined,
+          usedText?: string,
+        ) => {
+          options?.onAudioUrlReady?.(url, timeline, usedText);
           return playVoiceUrl(url, id);
         };
         // 本机资料库里存着这一拍的录音：直接播它（刷新/关浏览器后也在这条路上）
@@ -1106,12 +1159,12 @@ const LiveStreamApp: React.FC = () => {
           if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
         }
         if (source === 'timestamp-cache' && timestampUrl) {
-          const played = await playSaved(timestampUrl, undefined);
+          const played = await playSaved(timestampUrl, undefined, cacheTextHit);
           if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
           source = speechUrl ? 'speech-cache' : 'synthesize';
         }
         if (source === 'speech-cache' && speechUrl) {
-          const played = await playSaved(speechUrl, null);
+          const played = await playSaved(speechUrl, null, cacheTextHit);
           if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
         }
 
@@ -1128,7 +1181,7 @@ const LiveStreamApp: React.FC = () => {
         }
         setTtsLoadingBeatId(id);
         const made = await synthesizeLiveBeatAudio(synthText, ch, options?.skipCache, id);
-        options?.onAudioUrlReady?.(made.url, made.timeline);
+        options?.onAudioUrlReady?.(made.url, made.timeline, synthText);
         if (!stillThisJob()) {
           setTtsLoadingBeatId(prev => (prev === id ? null : prev));
           return;
@@ -1168,12 +1221,16 @@ const LiveStreamApp: React.FC = () => {
       const latest = liveSessionsRef.current.find(session => session.id === sessionId);
       const latestBeat = latest?.chunks.flatMap(chunk => chunk.beats).find(item => item.id === beat.id);
       if (!latestBeat || latestBeat.audioUrl) return;
-      // 合成用念稿版（后台标注刚落地也算数）；没有标注回落干净原文
-      const performText = (latestBeat.speechPerform || latestBeat.speechOriginal || '').trim();
+      // 拿哪个字去录，跟点播放同一套（Ann 2026-10-25 定的）：
+      // 开关关着 = 原声台词栏；开关开着 = 标注栏，没有标注回落原声台词栏
+      const performEnabled = loadLiveSpeechPerformEnabled();
+      const performText = (
+        (performEnabled && latestBeat.speechPerform) || latestBeat.speechOriginal || ''
+      ).trim();
       if (!performText) return;
       try {
         const made = await synthesizeLiveBeatAudio(performText, activeChannel, undefined, beat.id);
-        await persistBeatAudioUrl(sessionId, beat.id, made.url, made.timeline);
+        await persistBeatAudioUrl(sessionId, beat.id, made.url, made.timeline, performText);
       } catch {
         // 静默预生成失败不打断直播；用户仍可点当前台词即时合成。
       }
@@ -2264,50 +2321,103 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
     addToast('已重新生成全新走向的直播切片', 'success');
   };
 
-  // 编辑单拍画面或台词
+  /**
+   * 保存某一拍的画面、台词与语音标注（一次写完，Ann 2026-10-25 定的）。
+   *
+   * 两栏是同一条台词的两个格子：
+   * - 你改了语音标注栏（nextPerform 有值）：剥掉标签后的字成为新的原声台词栏；带标签的那版只给配音读，不进聊天。
+   * - 你改了原声台词栏（nextPerform 没传）：标注栏的字跟着换成同一句话，旧标签按标点位置放回，标签不丢。
+   * - 两栏里任何一处跟原来不一样：这条台词原来存的录音作废（本机录音、声音地址、逐字时间轴一起清），
+   *   所以点播放只能重新录。
+   *
+   * 写回之前先取手机里的最新场次，只把这一拍换掉：旧写法拿的是打开编辑框时的旧整套，
+   * 后落地会把同时发生的别的改动盖回去（Ann 2026-10-25 抓到的那个「改了就变回去」）。
+   */
   const handleEditBeat = async (
     chunkId: string,
     beatId: string,
     nextScreen: string,
     nextSpeechOriginal: string,
     nextSpeechTranslated?: string,
+    nextPerform?: string,
   ) => {
     if (!activeLiveSession || !activeChannel || !currentChar) return;
-    const targetChunk = activeLiveSession.chunks.find(c => c.id === chunkId);
-    if (!targetChunk) return;
+    const latestSession = liveSessionsRef.current.find(s => s.id === activeLiveSession.id);
+    if (!latestSession) return;
+    const targetChunk = latestSession.chunks.find(c => c.id === chunkId);
+    const beforeBeat = targetChunk?.beats.find(b => b.id === beatId);
+    if (!targetChunk || !beforeBeat) return;
 
-    const speechChanged = targetChunk.beats.some(
-      b => b.id === beatId && (b.speechOriginal || '') !== (nextSpeechOriginal || ''),
-    );
-    const nextBeats = targetChunk.beats.map(b => {
-      if (b.id !== beatId) return b;
-      const nextBeat: LiveBeat = {
-        ...b,
-        screen: nextScreen,
-        speechOriginal: nextSpeechOriginal,
-        speechTranslated: nextSpeechTranslated,
-      };
-      if ((b.speechOriginal || '') !== (nextSpeechOriginal || '')) {
-        delete nextBeat.audioUrl;
-        delete nextBeat.speechTimeline;
-        // 台词改了，旧录音作废：连本机资料库里那一段一起清掉
-        void forgetLiveBeatVoices([b.id]);
+    // 两栏同一句话：改标注栏就从标注里取字；改原文栏就把旧标签按标点位置放回新字上。
+    // 只有标注栏的内容真的跟手机里存的不一样，才算「你改了标注栏」——
+    // 只是打开编辑框看了眼标注、顺手改了镜头画面，原文和标注都不许被悄悄换掉。
+    const storedPerform = (beforeBeat.speechPerform || '').trim();
+    const editedPerform = nextPerform !== undefined && (nextPerform || '').trim() !== storedPerform;
+    const trimmedPerform = (nextPerform || '').trim();
+    let nextOriginal: string;
+    let nextPerformValue: string | undefined;
+    if (editedPerform) {
+      if (trimmedPerform) {
+        nextOriginal = stripPerformanceMarkupKeepSpacing(trimmedPerform);
+        nextPerformValue = trimmedPerform;
+      } else {
+        // 标注栏清空 = 这条不要标注了，台词留原来的
+        nextOriginal = (beforeBeat.speechOriginal || '').trim();
+        nextPerformValue = undefined;
       }
-      return nextBeat;
-    });
-    if (speechChanged && ttsPlayingBeatId === beatId) {
-      stopVoiceAudio();
-      setTtsPlayingBeatId(null);
+    } else {
+      nextOriginal = nextSpeechOriginal;
+      // 原文栏的字没动（只改了镜头画面之类）→ 标注一个字不碰；
+      // 原文栏的字改了 → 标注栏跟着换成同一句话，旧标签按标点位置放回，标签不丢
+      const textSame = (beforeBeat.speechOriginal || '') === (nextOriginal || '');
+      nextPerformValue =
+        !textSame && beforeBeat.speechPerform
+          ? reapplyPerformanceMarkup(beforeBeat.speechPerform, nextOriginal)
+          : beforeBeat.speechPerform;
     }
 
+    const textChanged = (beforeBeat.speechOriginal || '') !== (nextOriginal || '');
+    const performChanged = (beforeBeat.speechPerform || '') !== (nextPerformValue || '');
+    const translatedChanged = (beforeBeat.speechTranslated || '') !== (nextSpeechTranslated || '');
+    if (!textChanged && !performChanged && !translatedChanged && beforeBeat.screen === nextScreen) return;
+
+    const voiceVoid = textChanged || performChanged;
+    // 只把你改的这几处放到手机上那一拍身上，别的拍、别的字段（比如后台刚对齐的中文）一个字不动
+    const applyEdit = (beat: LiveBeat): LiveBeat => {
+      const next: LiveBeat = {
+        ...beat,
+        screen: nextScreen,
+        speechOriginal: nextOriginal,
+        speechTranslated: nextSpeechTranslated,
+        speechPerform: nextPerformValue || undefined,
+      };
+      if (voiceVoid) {
+        // 旧录音作废：声音地址、逐字时间轴清掉，再记一个记号，
+        // 点播放就不会去翻按文字存的老缓存，直接重新录（Ann 2026-10-25 定的）
+        delete next.audioUrl;
+        delete next.speechTimeline;
+        next.voiceVoidedAt = Date.now();
+      }
+      return next;
+    };
+    if (voiceVoid) {
+      // 台词或念稿变了，旧录音作废：本机资料库里那一段一起清
+      void forgetLiveBeatVoices([beatId]);
+      if (ttsPlayingBeatId === beatId) {
+        stopVoiceAudio();
+        setTtsPlayingBeatId(null);
+      }
+    }
+
+    // 先把这一轮卡同步进聊天（卡里的正文只有原声台词栏，标签从来不进）
     let dbId = targetChunk.dbMessageId;
     try {
       dbId = await syncLiveChunkToDb({
         charId: currentChar.id,
         channel: activeChannel,
-        session: activeLiveSession,
+        session: latestSession,
         chunkIndex: targetChunk.index,
-        beats: nextBeats,
+        beats: targetChunk.beats.map(b => (b.id === beatId ? applyEdit(b) : b)),
         existingDbMsgId: targetChunk.dbMessageId,
       });
     } catch (e: any) {
@@ -2315,55 +2425,19 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       addToast(`台词已改，但同步进记忆失败（${e?.name || '未知错误'}）`, 'error');
     }
 
+    // 写场次：再取一次最新（同步聊天卡这段时间里，别的后台件可能刚写过），只把这一拍换掉
+    const fresh = liveSessionsRef.current.find(s => s.id === activeLiveSession.id) || latestSession;
     const nextSession: LiveStreamSession = {
-      ...activeLiveSession,
-      chunks: activeLiveSession.chunks.map(c =>
-        c.id === chunkId ? { ...c, beats: nextBeats, dbMessageId: dbId } : c,
+      ...fresh,
+      chunks: fresh.chunks.map(c =>
+        c.id === chunkId
+          ? { ...c, dbMessageId: dbId, beats: c.beats.map(b => (b.id === beatId ? applyEdit(b) : b)) }
+          : c,
       ),
     };
     const beatSaved = await rememberLiveSession(nextSession);
     if (beatSaved) addToast('分镜与台词已保存并同步到记忆', 'success');
     else addToast('分镜已更新，但没能存进本地数据库', 'error');
-  };
-
-  /**
-   * 手动改某一拍的语音表演标注（编辑弹窗里的「语音标注」框）。
-   * Ann 2026-10-25 定的：改台词不重标、标注保留；手动改标注后旧的录音作废，
-   * 下次播放按新念稿重新合成（缓存 key 跟着念稿文本走，天然不冲突）。
-   */
-  const handleEditBeatPerform = async (chunkId: string, beatId: string, nextPerform: string) => {
-    if (!activeLiveSession || !activeChannel) return;
-    const targetChunk = activeLiveSession.chunks.find(c => c.id === chunkId);
-    if (!targetChunk) return;
-    const trimmed = nextPerform.trim();
-    const nextBeats = targetChunk.beats.map(b => {
-      if (b.id !== beatId) return b;
-      if ((b.speechPerform || '') === trimmed) return b;
-      const nextBeat: LiveBeat = { ...b, speechPerform: trimmed || undefined };
-      // 念稿变了，旧录音跟着作废（旧录音是按旧念稿合成的）
-      if (b.speechPerform) {
-        delete nextBeat.audioUrl;
-        delete nextBeat.speechTimeline;
-        // 连本机资料库里那一段一起清掉
-        void forgetLiveBeatVoices([b.id]);
-      }
-      return nextBeat;
-    });
-    const changed = nextBeats.some((b, i) => b !== targetChunk.beats[i]);
-    if (!changed) return;
-    if (ttsPlayingBeatId === beatId) {
-      stopVoiceAudio();
-      setTtsPlayingBeatId(null);
-    }
-    // 标注只进直播库，不进记忆/聊天卡（卡里的正文从来不含标注）
-    const nextSession: LiveStreamSession = {
-      ...activeLiveSession,
-      chunks: activeLiveSession.chunks.map(c =>
-        c.id === chunkId ? { ...c, beats: nextBeats } : c,
-      ),
-    };
-    const saved = await rememberLiveSession(nextSession);
-    if (!saved) addToast('标注改好了，但没能存进本地数据库', 'error');
   };
 
   // 下播：只改状态和结束时间，不生成整场总结、不发下播卡
@@ -2661,11 +2735,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
             void runGenerateLiveChunk(activeLiveSession, activeChannel, pendingUserInputs)
           }
           onRerollChunk={chunkId => void handleRerollChunk(chunkId)}
-          onEditBeat={(chunkId, beatId, nextScreen, nextSpeech, nextTrans) =>
-            void handleEditBeat(chunkId, beatId, nextScreen, nextSpeech, nextTrans)
-          }
-          onEditBeatPerform={(chunkId, beatId, nextPerform) =>
-            void handleEditBeatPerform(chunkId, beatId, nextPerform)
+          onEditBeat={(chunkId, beatId, nextScreen, nextSpeech, nextTrans, nextPerform) =>
+            void handleEditBeat(chunkId, beatId, nextScreen, nextSpeech, nextTrans, nextPerform)
           }
           onPlayBeatVoice={(beat, opts) =>
             void speakTextWithChannelConfig(
@@ -2676,7 +2747,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
                 skipCache: opts?.skipCache,
                 fromAuto: opts?.fromAuto,
                 cachedUrl: beat.audioUrl,
-                onAudioUrlReady: (url, timeline) => void persistBeatAudioUrl(activeLiveSession.id, beat.id, url, timeline),
+                onAudioUrlReady: (url, timeline, usedText) =>
+                  void persistBeatAudioUrl(activeLiveSession.id, beat.id, url, timeline, usedText),
               },
             )
           }

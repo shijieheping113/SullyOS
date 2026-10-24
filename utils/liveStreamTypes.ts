@@ -156,6 +156,11 @@ export interface LiveBeat {
   speechPerform?: string;
   /** 鱼声带回的逐字秒数。没有时播放按句长估算。只属于这一拍的嘴里录音。 */
   speechTimeline?: SpeechTimeline | null;
+  /**
+   * 台词或念稿被改过、这一拍原来的录音当场作废的时间（Ann 2026-10-25 定：改了就不一样，点播放重新录）。
+   * 存了新录音就擦掉。点播放看到这个记号，就不再去翻按文字存的老缓存，直接重新录。
+   */
+  voiceVoidedAt?: number;
   /** 本拍同步飘过的弹幕列表 */
   danmaku: LiveDanmakuItem[];
   /** 在线人数微调变化 */

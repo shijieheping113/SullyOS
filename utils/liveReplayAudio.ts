@@ -53,6 +53,8 @@ export function chooseLiveReplaySource(opts: {
 type BeatAudioFields = {
   audioUrl?: string;
   speechTimeline?: SpeechTimeline | null;
+  /** 旧录音作废的记号；存了新录音就擦掉（见 LiveBeat.voiceVoidedAt） */
+  voiceVoidedAt?: number;
 };
 
 /**
@@ -60,6 +62,7 @@ type BeatAudioFields = {
  * 不传秒数：原来的秒数留着，只换一个还能播的地址。
  * 传入 null：这是另一段录音，秒数清掉。
  * 传入带 segments 的秒数：改用这份。
+ * 存了新录音就把「旧录音作废」的记号擦掉。
  */
 export function mergeBeatAudio<T extends BeatAudioFields>(
   beat: T,
@@ -68,14 +71,17 @@ export function mergeBeatAudio<T extends BeatAudioFields>(
 ): T {
   const touchTimeline = speechTimeline !== undefined;
   if (!touchTimeline) {
-    if (beat.audioUrl === audioUrl) return beat;
-    return { ...beat, audioUrl };
+    if (beat.audioUrl === audioUrl && !beat.voiceVoidedAt) return beat;
+    const updated = { ...beat, audioUrl };
+    delete updated.voiceVoidedAt;
+    return updated;
   }
   const nextTimeline = speechTimeline && speechTimeline.segments?.length ? speechTimeline : undefined;
   const sameUrl = beat.audioUrl === audioUrl;
   const sameTimeline = JSON.stringify(beat.speechTimeline || null) === JSON.stringify(nextTimeline || null);
-  if (sameUrl && sameTimeline) return beat;
+  if (sameUrl && sameTimeline && !beat.voiceVoidedAt) return beat;
   const updated: T = { ...beat, audioUrl };
+  delete updated.voiceVoidedAt;
   if (nextTimeline) updated.speechTimeline = nextTimeline;
   else delete updated.speechTimeline;
   return updated;

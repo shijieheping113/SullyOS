@@ -88,9 +88,9 @@ interface LiveRoomViewProps {
     nextScreen: string,
     nextSpeechOriginal: string,
     nextSpeechTranslated?: string,
+    /** 只有你改的是语音标注栏时才传；不传 = 你改的是原声台词栏 */
+    nextPerform?: string,
   ) => void;
-  /** 手动改某一拍的语音表演标注（念稿版）；空字符串 = 清掉标注，播放回落干净原文 */
-  onEditBeatPerform: (chunkId: string, beatId: string, nextPerform: string) => void;
   onPlayBeatVoice: (beat: LiveBeat, options?: { skipCache?: boolean; fromAuto?: boolean }) => void;
   onPreGenerateBeatVoice: (beat: LiveBeat, sessionId: string) => Promise<void>;
   onSendUserDanmaku: (
@@ -145,7 +145,6 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onGenerateNextChunk,
   onRerollChunk,
   onEditBeat,
-  onEditBeatPerform,
   onPlayBeatVoice,
   onPreGenerateBeatVoice,
   onSendUserDanmaku,
@@ -449,13 +448,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           onPlayBeatVoice(beat);
         }
       },
-      onSaveEdit: (nextScreen, nextSpeech, nextTrans) => {
-        onEditBeat(chunkId, beat.id, nextScreen, nextSpeech, nextTrans);
+      onSaveEdit: (nextScreen, nextSpeech, nextTrans, nextPerform) => {
+        onEditBeat(chunkId, beat.id, nextScreen, nextSpeech, nextTrans, nextPerform);
       },
       speechPerform: beat.speechPerform,
-      onSavePerform: (nextPerform: string) => {
-        onEditBeatPerform(chunkId, beat.id, nextPerform);
-      },
+      canEditPerform: true,
       onRerollChunk: () => onRerollChunk(chunkId),
       onShareClip: () => onShareClipToChat(beat),
     });

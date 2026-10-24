@@ -195,9 +195,9 @@ export interface BeatActionSheetTarget {
   onPlayVoice?: () => void;
   onRetryVoice?: () => void;
   onDownloadVoice?: () => void;
-  onSaveEdit?: (nextScreen: string, nextSpeech: string, nextTranslated?: string) => void;
-  /** 保存手动改的语音标注；传了才会出现标注编辑框 */
-  onSavePerform?: (nextPerform: string) => void;
+  onSaveEdit?: (nextScreen: string, nextSpeech: string, nextTranslated?: string, nextPerform?: string) => void;
+  /** 传了才会出现语音标注编辑框；保存时把它那一栏的内容当第 4 个参数一起交出去 */
+  canEditPerform?: boolean;
   onRerollChunk?: () => void;
   onShareClip?: () => void;
 }
@@ -334,7 +334,7 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
                 className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 leading-relaxed focus:outline-none focus:border-red-500"
               />
             </div>
-            {hasSpeech && target.onSavePerform ? (
+            {hasSpeech && target.canEditPerform ? (
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-bold text-slate-600">
@@ -406,14 +406,14 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  // 一次保存只写一遍：标注栏那一栏正显示着才把它的内容交出去，
+                  // 显示的是原声台词栏就交 undefined（程序按旧标签重新放回）
                   target.onSaveEdit?.(
                     screenDraft.trim(),
                     speechDraft.trim(),
                     transDraft.trim() || undefined,
+                    target.canEditPerform && performMode ? performDraft.trim() : undefined,
                   );
-                  if (target.onSavePerform) {
-                    target.onSavePerform(performDraft.trim());
-                  }
                   onClose();
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-bold"
