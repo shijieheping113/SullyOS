@@ -30,6 +30,8 @@ export type SecondaryLlmCallOpts = {
     streamHooks?: StreamHooks;
     /** 缺省仍用修格式 80 秒；长按外语翻译等可传入更短超时。 */
     timeoutMs?: number;
+    /** 最大输出 token：摘要这类必须封顶的活用它，防止模型跑飞写出巨型结果（Ann 2026-10-25） */
+    maxTokens?: number;
 };
 
 export async function secondaryLlmCall(opts: SecondaryLlmCallOpts): Promise<string> {
@@ -51,6 +53,9 @@ export async function secondaryLlmCall(opts: SecondaryLlmCallOpts): Promise<stri
         };
         if (includeTemperature && typeof featureOpts?.temperature === 'number') {
             body.temperature = featureOpts.temperature;
+        }
+        if (typeof opts.maxTokens === 'number' && opts.maxTokens > 0) {
+            body.max_tokens = Math.round(opts.maxTokens);
         }
         const data = await safeFetchJson(
             url,

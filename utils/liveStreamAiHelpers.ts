@@ -32,6 +32,8 @@ export async function callMainStreamerLlm(opts: {
   messages: Array<{ role: string; content: string }>;
   temperature?: number;
   purpose?: string;
+  /** 最大输出 token：摘要这类必须封顶的活用它，防止模型跑飞（Ann 2026-10-25） */
+  maxTokens?: number;
 }): Promise<string> {
   const { apiConfig, char, messages, temperature, purpose = 'live_stream' } = opts;
   const effective = resolveDialogueApi(apiConfig, char);
@@ -52,6 +54,9 @@ export async function callMainStreamerLlm(opts: {
         messages,
         temperature: temperature ?? effective.temperature ?? 0.88,
         stream: true,
+        ...(typeof opts.maxTokens === 'number' && opts.maxTokens > 0
+          ? { max_tokens: Math.round(opts.maxTokens) }
+          : {}),
       }),
     },
     1,
@@ -69,6 +74,8 @@ export async function callAuxOrMainLlm(opts: {
   purpose?: string;
   /** 传给辅助模型那趟的兜底超时（Ann 2026-10-25：卡流检测不要了——有的模型不支持流式输出，秒表会错杀；只留超时兜底） */
   timeoutMs?: number;
+  /** 最大输出 token：辅助模型和主模型回退都封顶，防止跑飞写巨型结果 */
+  maxTokens?: number;
 }): Promise<string> {
   const { apiConfig, char, messages, temperature = 0.8, purpose = 'live_aux' } = opts;
   if (isSecondaryLlmReady(apiConfig.secondaryLlm)) {
@@ -80,13 +87,21 @@ export async function callAuxOrMainLlm(opts: {
         featureOpts: { temperature },
         charId: char.id,
         timeoutMs: opts.timeoutMs,
+        maxTokens: opts.maxTokens,
       });
       if (text && text.trim()) return text.trim();
     } catch (e) {
       console.warn('[LiveStream] 辅助模型调用失败，自动回退主模型:', e);
     }
   }
-  return callMainStreamerLlm({ apiConfig, char, messages, temperature, purpose });
+  return callMainStreamerLlm({
+    apiConfig,
+    char,
+    messages,
+    temperature,
+    purpose,
+    maxTokens: opts.maxTokens,
+  });
 }
 
 // ==================== 全场景「✨ 交给 AI 代写」助手（根据人设与记忆自动构思） ====================
@@ -673,6 +688,7 @@ export async function generateLiveRoundSummary(opts: {
 2. 公屏互动按重要性取舍：保留值得记的互动与观众名称，普通弹幕可选最有代表性的；重复弹幕可合并计数。外语弹幕有翻译时保留原文与翻译。
 3. 只写这一轮真实发生的内容，不写整场总结，不提前写后面还没发生的事。
 4. 不编造、不提及私聊、手机消息或场外对话。Super Chat 是付费醒目留言；频道礼物是独立的数字贴纸打赏，二者不能混为一类，礼物不是现实实物。
+5. **不要反复思考、不要分步推演、不要复述原文、不要写分析或提纲草稿**：看完记录直接按四项写完就停，越短越好。
 
 这一轮的直播记录：
 ${rawTranscript}`;
@@ -681,8 +697,10 @@ ${rawTranscript}`;
     apiConfig,
     char,
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.45,
+    // Ann 2026-10-25：温度压低防跑飞；输出封顶 8000 token（后台实测过一次跑飞写了几十万 token）
+    temperature: 0.15,
     purpose: 'live_rolling_summary',
+    maxTokens: 8000,
   });
   return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 }
@@ -723,8 +741,10 @@ ${unfoldedPart || '（无）'}`;
     apiConfig,
     char,
     messages: [{ role: 'user', content: prompt }],
+    // 下播纪要同样封顶 8000 token，防止跑飞把聊天记录撑爆（Ann 2026-10-25）
     temperature: 0.55,
     purpose: 'live_final_summary',
+    maxTokens: 8000,
   });
   return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 }
