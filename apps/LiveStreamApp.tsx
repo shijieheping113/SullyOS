@@ -17,7 +17,6 @@ import { readCachedSpeechUrl, synthesizeSpeech } from '../utils/ttsRouter';
 import { resolveTtsProvider } from '../utils/ttsProvider';
 import { isSecondaryLlmReady } from '../utils/secondaryLlmApi';
 import { secondaryLlmCall } from '../utils/secondaryLlmCall';
-import { withHardTimeout } from '../utils/liveStreamAiHelpers';
 import { resolveVoiceActingGuideFromApiConfig } from '../utils/voiceMessagePrompt';
 import { fishTimestampCacheKey, resolveFishCallRefs, synthesizeFishWithTimestamp } from '../utils/fishTimestampTts';
 import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
@@ -989,6 +988,35 @@ const LiveStreamApp: React.FC = () => {
         const tempChar = buildLiveVoiceChar(ch);
         if (!tempChar) return;
 
+        // 这一拍的最新状态 + 等待后台标注（Ann 定的：自动读和手点台词走同一套等待机制）
+        const findLatestBeat = () =>
+          liveSessionsRef.current
+            .flatMap(session => session.chunks)
+            .flatMap(chunk => chunk.beats)
+            .find(item => item.id === id);
+        let latestBeat = findLatestBeat();
+        if (latestBeat && !latestBeat.speechPerform) {
+          const pendingPerform = performJobsRef.current.get(id);
+          if (pendingPerform) {
+            // 等的是在飞的那趟标注（不重发）；失败也会放行，回落干净原文
+            await pendingPerform;
+            if (!stillThisJob()) return;
+            latestBeat = findLatestBeat();
+          }
+        }
+        // 合成用念稿版（后台标注刚落地也算数）；没有标注回落干净原文
+        let synthText = ((latestBeat?.speechPerform || latestBeat?.speechOriginal || text) || '').trim() || text;
+        // 「重新合成语音」且这一拍还没有标注：先补一趟标注再合成（Ann 2026-10-25 定的）
+        if (options?.skipCache && latestBeat && !latestBeat.speechPerform) {
+          const freshPerform = await annotateSingleBeatForVoice(latestBeat, ch);
+          if (!stillThisJob()) return;
+          if (freshPerform) {
+            // 存库后从最新场次再取一次念稿（万一同场别的拍也更新了）
+            latestBeat = findLatestBeat();
+            synthText = ((latestBeat?.speechPerform || freshPerform) || '').trim() || freshPerform;
+          }
+        }
+
         let storedPlay: StoredPlay = 'none';
         if (!options?.skipCache && options?.cachedUrl) {
           storedPlay = await playVoiceUrl(options.cachedUrl, id);
@@ -998,9 +1026,9 @@ const LiveStreamApp: React.FC = () => {
         let timestampUrl: string | null = null;
         let speechUrl: string | null = null;
         if (!options?.skipCache && storedPlay !== 'played' && storedPlay !== 'blocked' && storedPlay !== 'superseded') {
-          timestampUrl = await readLiveTimestampCache(text, ch);
+          timestampUrl = await readLiveTimestampCache(synthText, ch);
           if (!stillThisJob()) return;
-          speechUrl = await readCachedSpeechUrl(text, tempChar, apiConfig);
+          speechUrl = await readCachedSpeechUrl(synthText, tempChar, apiConfig);
           if (!stillThisJob()) return;
         }
 
@@ -1030,10 +1058,7 @@ const LiveStreamApp: React.FC = () => {
         // 合成前最后看一眼直播库里这一拍：预生成可能刚好把录音存好了，
         // 场次状态比渲染时的快照新——直接播存好的，别再扣一次费
         if (!options?.skipCache) {
-          const latestBeat = liveSessionsRef.current
-            .flatMap(session => session.chunks)
-            .flatMap(chunk => chunk.beats)
-            .find(item => item.id === id);
+          if (!latestBeat) latestBeat = findLatestBeat();
           if (latestBeat?.audioUrl) {
             const replayed = await playSaved(latestBeat.audioUrl, null);
             if (!stillThisJob()) return;
@@ -1041,7 +1066,7 @@ const LiveStreamApp: React.FC = () => {
           }
         }
         setTtsLoadingBeatId(id);
-        const made = await synthesizeLiveBeatAudio(text, ch, options?.skipCache);
+        const made = await synthesizeLiveBeatAudio(synthText, ch, options?.skipCache);
         options?.onAudioUrlReady?.(made.url, made.timeline);
         if (!stillThisJob()) {
           setTtsLoadingBeatId(prev => (prev === id ? null : prev));
@@ -1067,18 +1092,24 @@ const LiveStreamApp: React.FC = () => {
 
   const preGenerateBeatVoice = useCallback(
     async (beat: LiveBeat, sessionId: string) => {
-      // 合成用的念稿版优先（带表演标注）；没有标注回落干净原文
-      const performText = (beat.speechPerform || beat.speechOriginal || '').trim();
-      if (!currentChar || !performText) return;
-      // 主路径（自动连播/手点）已经在合成这一拍了：让给它，别再来一趟扣两次费
+      if (!currentChar) return;
+      // 主路径（自动连播/手点台词）已经在合成这一拍了：让给它，别再来一趟扣两次费
       if (voiceJobRef.current?.id === beat.id) return;
+      // 等后台标注落地再合成：不然先合成干净版、标注到了又得合成一遍，白扣一次费
+      const latestBefore = liveSessionsRef.current.find(session => session.id === sessionId);
+      const beforeBeat = latestBefore?.chunks.flatMap(chunk => chunk.beats).find(item => item.id === beat.id);
+      if (beforeBeat && !beforeBeat.speechPerform) {
+        const pendingPerform = performJobsRef.current.get(beat.id);
+        if (pendingPerform) {
+          try { await pendingPerform; } catch { /* 失败回落干净原文 */ }
+        }
+      }
       const latest = liveSessionsRef.current.find(session => session.id === sessionId);
       const latestBeat = latest?.chunks.flatMap(chunk => chunk.beats).find(item => item.id === beat.id);
-      if (
-        !latestBeat
-        || latestBeat.audioUrl
-        || (latestBeat.speechPerform || latestBeat.speechOriginal || '') !== performText
-      ) return;
+      if (!latestBeat || latestBeat.audioUrl) return;
+      // 合成用念稿版（后台标注刚落地也算数）；没有标注回落干净原文
+      const performText = (latestBeat.speechPerform || latestBeat.speechOriginal || '').trim();
+      if (!performText) return;
       try {
         const made = await synthesizeLiveBeatAudio(performText, activeChannel);
         await persistBeatAudioUrl(sessionId, beat.id, made.url, made.timeline);
@@ -1196,59 +1227,104 @@ const LiveStreamApp: React.FC = () => {
 
   // ==================== 1. Char 直播间核心流程 ====================
 
-  /** 一拍中文对齐最多等 8 秒：辅助模型/主模型谁卡住都不许拖直播节奏 */
-  const REPAIR_TRANSLATION_TIMEOUT_MS = 8_000;
+  /**
+   * 后台两件套（Ann 2026-10-25 定稿）：出字绝不等辅助活。
+   * 存库之后这两件才开跑，一起后台：
+   *   1) 对齐中文（喂同传字幕）：只挑本来就对不齐的拍（句数/结尾符号不一致），
+   *      本来就对的绝不动；回来把中文写回那一拍，并原地更新主聊天里那张轮次卡
+   *   2) 补语音标注（喂发音）：整轮开口台词打包一次辅助模型调用；回来把念稿写进那一拍
+   *   落地前都核对：这一拍还在、台词没被 Ann 改过、念稿没被 Ann 手动写过，对得上才写。
+   * 兜底上限统一一分钟（Ann 2026-10-25 定的）只在彻底卡死时轮到，轮到了结果照样落地。
+   * 卡流检测已按 Ann 指示拆除（2026-10-25）：有的模型不支持流式输出，秒表会错杀。
+   */
+  const REPAIR_TRANSLATION_TIMEOUT_MS = 60_000;
+  const LIVE_SPEECH_PERFORM_TIMEOUT_MS = 60_000;
 
-  const repairLiveSpeechTranslations = async (
-    beats: LiveBeat[],
+  /** 等待点注册表：标注落地（含失败）之前，点台词让它发声会等这一趟，不重发不多扣钱 */
+  const performJobsRef = useRef<Map<string, Promise<void>>>(new Map());
+
+  const repairLiveSpeechTranslationsInBackground = async (
+    sessionId: string,
+    savedBeats: LiveBeat[],
     channel: StreamerChannelProfile,
-  ): Promise<LiveBeat[]> => {
+  ): Promise<void> => {
     const lang = (channel.voiceConfig?.language || '').trim();
-    if (!currentChar || !lang || lang === 'zh') return beats;
-    const next = beats.slice();
-    // 并行修：几拍同时对不齐时一起发，等的最长的一趟就是总等待
-    const jobs: Array<Promise<void>> = [];
-    for (let i = 0; i < next.length; i += 1) {
-      const beat = next[i];
-      const spoken = beat.speechOriginal || '';
-      const zh = beat.speechTranslated || '';
-      if (!alignLiveSpeech(spoken, zh).needsRepair) continue;
-      jobs.push((async () => {
-        try {
-          // 这是机械对齐（只重写中文，不改原话），走辅助模型；没配辅助模型时自动回退主模型。
-          // Ann 2026-10-25：后台看到这条跑了 80 秒——流式响应头回来后 safeFetchJson 的
-          // 超时就不再管了，卡住的流会把「推进一轮」拖成几分钟。套上 8 秒硬闸，
-          // 辅助模型和主模型回退都算在这 8 秒里，超了就留原文。
-          const raw = await withHardTimeout(
-            callAuxOrMainLlm({
-              apiConfig,
-              char: currentChar,
-              messages: [{ role: 'user', content: buildLiveTranslationRepairPrompt(spoken, zh) }],
-              temperature: 0.2,
-              purpose: '对齐直播台词中文',
-            }),
-            REPAIR_TRANSLATION_TIMEOUT_MS,
-          );
-          const accepted = acceptRepairedTranslation(spoken, zh, raw);
-          if (accepted !== zh) next[i] = { ...beat, speechTranslated: accepted };
-        } catch {
-          // 这一拍中文对不齐就留原文。嘴里的话照常按秒换，中文整段跟着显示。
-        }
-      })());
+    if (!currentChar || !lang || lang === 'zh') return;
+    // 只挑本来就需要修的拍；对得齐的根本不发请求（Ann 强调过：对的文本不用对齐）
+    const targets = savedBeats
+      .map(beat => ({
+        beat,
+        spoken: (beat.speechOriginal || '').trim(),
+        zh: beat.speechTranslated || '',
+      }))
+      .filter(row => alignLiveSpeech(row.spoken, row.zh).needsRepair);
+    if (targets.length === 0) return;
+
+    // 并行修：几拍同时对不齐就一起发，总等待 = 最长那一趟
+    const repaired = await Promise.all(targets.map(async row => {
+      try {
+        // 机械对齐（只重写中文不改原话）：辅助模型优先，没配/挂了自动回退主模型；
+        // 一分钟兜底，谁也拖不死后台件
+        const raw = await callAuxOrMainLlm({
+          apiConfig,
+          char: currentChar,
+          messages: [{ role: 'user', content: buildLiveTranslationRepairPrompt(row.spoken, row.zh) }],
+          temperature: 0.2,
+          purpose: '对齐直播台词中文',
+          timeoutMs: REPAIR_TRANSLATION_TIMEOUT_MS,
+        });
+        return { ...row, raw };
+      } catch {
+        // 这一拍中文对不齐就留原文。嘴里的话照常按秒换，中文整段跟着显示。
+        return null;
+      }
+    }));
+
+    // 落地：找最新场次逐拍核对（重 Roll / 改台词 / 删拍之后，旧结果不许乱写）
+    const latest = liveSessionsRef.current.find(s => s.id === sessionId);
+    if (!latest) return;
+    let changed = false;
+    let nextChunks = latest.chunks;
+    for (const row of repaired) {
+      if (!row) continue;
+      nextChunks = nextChunks.map(chunk => ({
+        ...chunk,
+        beats: chunk.beats.map(beat => {
+          if (beat.id !== row.beat.id) return beat;
+          if ((beat.speechOriginal || '').trim() !== row.spoken) return beat; // 台词被改过：旧结果作废
+          const accepted = acceptRepairedTranslation(row.spoken, beat.speechTranslated || row.zh, row.raw);
+          if (accepted === (beat.speechTranslated || '')) return beat;
+          changed = true;
+          return { ...beat, speechTranslated: accepted };
+        }),
+      }));
     }
-    if (jobs.length) await Promise.all(jobs);
-    return next;
+    if (!changed) return;
+    const nextSession: LiveStreamSession = { ...latest, chunks: nextChunks };
+    const saved = await rememberLiveSession(nextSession);
+    if (!saved) return;
+    // 中文变了：主聊天里那张轮次卡原地更新（卡被删了就不重建，摘要不受影响）
+    for (const chunk of nextSession.chunks) {
+      const touched = chunk.beats.some(beat => repaired.some(row => row && row.beat.id === beat.id));
+      if (!touched || !chunk.dbMessageId || !currentChar) continue;
+      void syncLiveChunkToDb({
+        charId: currentChar.id,
+        charName: currentChar.name,
+        channel,
+        session: nextSession,
+        chunkIndex: chunk.index,
+        beats: chunk.beats,
+        existingDbMsgId: chunk.dbMessageId,
+      }).catch(() => { /* 卡没更新上不影响字幕本身 */ });
+    }
   };
 
   /**
-   * 整轮语音表演标注（Ann 2026-10-25 定的简化方案）：
-   * 主模型输出后、写库/合成前，把这一轮所有开口的台词打包**一次**辅助模型调用，
-   * 按设置里当前语音服务商那套表演规范（自定义覆盖自动生效）补标注，
-   * 存进 beat.speechPerform「念稿版」——只给 TTS 用，显示/时间轴/摘要全走干净原文。
-   * 没配辅助模型：跳过，播放用干净原文合成（不回退主模型，慢又贵）。
-   * 超时（15 秒）或解析失败：这一轮不带标注，绝不卡住生成。
+   * 整轮语音表演标注（纯计算件，不写库）：这一轮所有开口台词打包**一次**辅助模型调用，
+   * 按设置里当前语音服务商那套表演规范（自定义覆盖自动生效）补标注。
+   * 严格校验：剥掉所有标注后必须和原文一字不差，动了字整段丢弃。
+   * 没配辅助模型：返回原样，后台件也不会注册等待点，播报直接用干净原文。
    */
-  const LIVE_SPEECH_PERFORM_TIMEOUT_MS = 15_000;
   const performLiveSpeechBeats = useCallback(async (
     beats: LiveBeat[],
     channel: StreamerChannelProfile,
@@ -1273,20 +1349,17 @@ ${guide}`;
 ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：${row.emotion}）` : ''}`).join('\n')}`;
 
     try {
-      const raw = await withHardTimeout(
-        secondaryLlmCall({
-          config: apiConfig.secondaryLlm!,
-          purpose: '直播语音表演标注',
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-          featureOpts: { temperature: 0.3 },
-          charId: channel.charId,
-          timeoutMs: LIVE_SPEECH_PERFORM_TIMEOUT_MS,
-        }),
-        LIVE_SPEECH_PERFORM_TIMEOUT_MS,
-      );
+      const raw = await secondaryLlmCall({
+        config: apiConfig.secondaryLlm!,
+        purpose: '直播语音表演标注',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        featureOpts: { temperature: 0.3 },
+        charId: channel.charId,
+        timeoutMs: LIVE_SPEECH_PERFORM_TIMEOUT_MS,
+      });
       const cleaned = (raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();
       const start = cleaned.indexOf('[');
       const end = cleaned.lastIndexOf(']');
@@ -1307,10 +1380,100 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       }
       return next;
     } catch {
-      // 辅助模型慢/挂：这轮先不带标注，播放用干净原文兜底
+      // 超时/解析失败：这轮先不带标注，播放用干净原文兜底
       return beats;
     }
   }, [apiConfig]);
+
+  /**
+   * 补语音标注（后台件）：调用 + 落地 + 等待点注册。
+   * 等待点：出字后 Ann 随时能点台词让它发声——标注还没落地就等这一趟（在飞的那趟，
+   * 不重发）；失败也放行，回落干净原文。所以这一趟的结果永远有人接，不会白花。
+   */
+  const performLiveSpeechBeatsInBackground = async (
+    sessionId: string,
+    savedBeats: LiveBeat[],
+    channel: StreamerChannelProfile,
+  ): Promise<void> => {
+    if (!isSecondaryLlmReady(apiConfig.secondaryLlm)) return;
+    const speaking = savedBeats.filter(beat => (beat.speechOriginal || '').trim());
+    if (speaking.length === 0) return;
+
+    let releaseWaiters!: () => void;
+    const waiters = new Promise<void>(resolve => { releaseWaiters = resolve; });
+    speaking.forEach(beat => performJobsRef.current.set(beat.id, waiters));
+    try {
+      const annotated = await performLiveSpeechBeats(savedBeats, channel);
+      // 落地：找最新场次逐拍核对（重 Roll / 改台词 / 手动标注之后，旧结果不许乱写）
+      const latest = liveSessionsRef.current.find(s => s.id === sessionId);
+      if (!latest) return;
+      let changed = false;
+      const nextChunks = latest.chunks.map(chunk => ({
+        ...chunk,
+        beats: chunk.beats.map(beat => {
+          const nextPerform = annotated.find(item => item.id === beat.id)?.speechPerform;
+          if (!nextPerform) return beat;
+          // Ann 已经手动写过标注：她的优先，后台结果不盖
+          if (beat.speechPerform) return beat;
+          // 台词被改过：这拍不要旧标注（念稿对不上新词）
+          const source = savedBeats.find(item => item.id === beat.id);
+          if (!source || (beat.speechOriginal || '').trim() !== (source.speechOriginal || '').trim()) return beat;
+          changed = true;
+          return { ...beat, speechPerform: nextPerform };
+        }),
+      }));
+      if (!changed) return;
+      await rememberLiveSession({ ...latest, chunks: nextChunks });
+    } finally {
+      // 无论成败都放行等待者：失败的拍走干净原文，绝不让点台词无限等
+      releaseWaiters();
+      speaking.forEach(beat => performJobsRef.current.delete(beat.id));
+    }
+  };
+
+  /** 存库之后才开跑：出字绝不等这两件（Ann 定的顺序），两件一起后台 */
+  const runBackgroundLiveJobs = (
+    sessionId: string,
+    savedBeats: LiveBeat[],
+    channel: StreamerChannelProfile,
+  ) => {
+    void repairLiveSpeechTranslationsInBackground(sessionId, savedBeats, channel);
+    void performLiveSpeechBeatsInBackground(sessionId, savedBeats, channel);
+  };
+
+  /**
+   * 单拍补标注（「重新合成语音」专用，Ann 2026-10-25 定的）：
+   * 重新合成时这一拍还没有标注（旧场次记录 / 上次标注失败），就先补一趟再合成。
+   * 补完落地存库（核对：这一拍还在、台词没被改过、念稿没被手动写过），下一播直接用。
+   */
+  const annotateSingleBeatForVoice = async (
+    beat: LiveBeat,
+    channel: StreamerChannelProfile,
+  ): Promise<string | null> => {
+    const annotated = await performLiveSpeechBeats([beat], channel);
+    const perform = annotated[0]?.speechPerform;
+    if (!perform) return null;
+    const latest = liveSessionsRef.current.find(session =>
+      session.chunks.some(chunk => chunk.beats.some(item => item.id === beat.id)),
+    );
+    if (!latest) return perform;
+    let changed = false;
+    const nextChunks = latest.chunks.map(chunk => ({
+      ...chunk,
+      beats: chunk.beats.map(item => {
+        if (item.id !== beat.id) return item;
+        if (item.speechPerform) return item; // Ann 手动写的优先
+        if ((item.speechOriginal || '').trim() !== (beat.speechOriginal || '').trim()) return item;
+        changed = true;
+        return { ...item, speechPerform: perform };
+      }),
+    }));
+    if (changed) {
+      const saved = await rememberLiveSession({ ...latest, chunks: nextChunks });
+      if (!saved) return perform;
+    }
+    return perform;
+  };
 
   // 圈出来的弹幕只由「下一轮」回应一次；这一轮重 Roll 时要继续带着，到再下一轮才失效。
   // 例子：第 2 轮圈的 → 第 3 轮（含重 Roll）带上 → 第 4 轮生成时清掉。
@@ -1410,9 +1573,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         // 打赏宽闸用开播时的在线人数算预算
         { viewerCount: session.viewerCount },
       );
-      // 外语同传先对齐，再给整轮补语音表演标注（标注只存念稿版，不动台词原文）
-      const translatedBeats = await repairLiveSpeechTranslations(parsedBeats, channel);
-      const beats = await performLiveSpeechBeats(translatedBeats, channel);
+      // 出字绝不等辅助活（Ann 2026-10-25 定稿）：对齐中文、补标注挪到存库之后后台跑
+      const beats = parsedBeats;
 
       // 旧场次可能没有这两个字段（重建的场次、老数据），给个保底值再累加
       let peak = session.peakViewerCount ?? session.viewerCount;
@@ -1524,6 +1686,9 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
 
       setPendingUserInputs([]);
       await rememberLiveSession(updatedSession);
+
+      // 存库即出字；对齐中文、补标注从这里开始后台跑，谁也不挡出字
+      runBackgroundLiveJobs(updatedSession.id, beats, channel);
 
       // 重 Roll 会把这轮的旧摘要清掉（内容变了），统一交给压缩那一趟重新判断；
       // 不 await：压缩不该拖慢「推进」。

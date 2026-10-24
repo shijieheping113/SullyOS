@@ -59,6 +59,21 @@ export const splitLiveSpeech = (text: string): string[] => {
     if (out.length) out[out.length - 1] += leftover;
     else out.push(leftover);
   }
+  // 尾巴归并（Ann 2026-10-25 抓到的 bug）：末段若除标点/引号外几乎没有实字
+  // （「っ！？」「w！？」「』……」这种语气尾巴 / 引号残段），并回上一句——不算独立一句。
+  // 引号括号（』」】这类）不算实字：日文 `……っ！？` 会被 ……+っ 切成 `』……` + `っ！？` 两段，
+  // 中文 `……！？` 只有一段；不归并就是假不对齐，这类文本会反复触发中文对照、字幕退回整段。
+  // 循环归并：并完一段后新的末段若还是小尾巴，继续并（`っ！？` 并进 `』……` 后还要再并一次）。
+  const countMeaningfulChars = (line: string): number =>
+    line
+      .replace(TAG_RE, '')
+      .replace(/[「」『』【】〔〕《》〈〉""''（）]/g, '')
+      .split('')
+      .filter(ch => REAL_RE.test(ch)).length;
+  while (out.length >= 2 && countMeaningfulChars(out[out.length - 1]) <= 1) {
+    out[out.length - 2] += out[out.length - 1];
+    out.pop();
+  }
   if (out.length) return out;
   const fallback = src.trim();
   return fallback ? [fallback] : [];

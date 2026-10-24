@@ -67,6 +67,8 @@ export async function callAuxOrMainLlm(opts: {
   messages: Array<{ role: string; content: string }>;
   temperature?: number;
   purpose?: string;
+  /** 传给辅助模型那趟的兜底超时（Ann 2026-10-25：卡流检测不要了——有的模型不支持流式输出，秒表会错杀；只留超时兜底） */
+  timeoutMs?: number;
 }): Promise<string> {
   const { apiConfig, char, messages, temperature = 0.8, purpose = 'live_aux' } = opts;
   if (isSecondaryLlmReady(apiConfig.secondaryLlm)) {
@@ -77,6 +79,7 @@ export async function callAuxOrMainLlm(opts: {
         messages,
         featureOpts: { temperature },
         charId: char.id,
+        timeoutMs: opts.timeoutMs,
       });
       if (text && text.trim()) return text.trim();
     } catch (e) {
@@ -84,32 +87,6 @@ export async function callAuxOrMainLlm(opts: {
     }
   }
   return callMainStreamerLlm({ apiConfig, char, messages, temperature, purpose });
-}
-
-/**
- * 硬闸：到点必回，不管底下的流卡不卡。
- *
- * 为什么必须有：safeFetchJson 的超时只在「响应头到达之前」生效——
- * 头一到就把计时器清了（utils/safeApi.ts 里 fetch 返回后立刻 clearTimeout）。
- * 流式响应（stream: true）头回来之后如果服务器慢慢吐甚至卡住，客户端会一直等，
- * 80 秒的「超时」根本拦不住——Ann 2026-10-25 在后台看到一条生成跑了 80 秒，
- * 卡的就是这条。给「对齐台词中文」「补语音标注」这类不能拖直播节奏的活套上，
- * 到点直接当失败处理，调用方走各自的兜底。
- */
-export function withHardTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`hard-timeout ${ms}ms`)), ms);
-    promise.then(
-      value => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      error => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 // ==================== 全场景「✨ 交给 AI 代写」助手（根据人设与记忆自动构思） ====================

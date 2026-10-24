@@ -41,6 +41,23 @@ describe('splitLiveSpeech', () => {
       'Wait, really, that\'s insane.',
     ]);
   });
+
+  it('末尾的语气小尾巴并回上一句，不算独立一句', () => {
+    expect(splitLiveSpeech('よし！終わり……っ！？')).toEqual(['よし！', '終わり……っ！？']);
+    expect(splitLiveSpeech('ダメ。w！？')).toEqual(['ダメ。w！？']);
+  });
+
+  it('实字够多的尾巴照常成句；只有一句时不动', () => {
+    expect(splitLiveSpeech('ダメ。ほんとに？')).toEqual(['ダメ。', 'ほんとに？']);
+    expect(splitLiveSpeech('っ！？')).toEqual(['っ！？']);
+  });
+
+  it('Ann 抓到的样本：日文句数与中文对上，不再触发对照', () => {
+    const jp = 'もー！みんなケチなんだから……ボク自分で傷舐めるもん。はい、次の質問！体重はもう禁止だからね！……えっと、『質問：ブラックリストに入れられるのが一番怖いと聞きましたが、中はどういう感じですか？』……っ！？';
+    const zh = '真是的！大家都太小气了……猫儿自己舔伤口。好啦，下一个问题！体重已经禁止了哦！……那个，『提问：听说你最怕被拉黑，黑名单里面到底是什么感觉？』……！？';
+    expect(splitLiveSpeech(jp).length).toBe(splitLiveSpeech(zh).length);
+    expect(alignLiveSpeech(jp, zh).needsRepair).toBe(false);
+  });
 });
 
 describe('alignLiveSpeech', () => {
