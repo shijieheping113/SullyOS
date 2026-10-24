@@ -104,6 +104,8 @@ interface LiveRoomViewProps {
   pendingGuidance: LiveGuidance[];
   onAddGuidance: (text: string) => void;
   onRemoveGuidance: (id: string) => void;
+  onEditGuidance: (id: string, text: string) => void;
+  onToggleDanmakuReply: (danmakuId: string) => void;
   onUpdateCustomBackground: (url: string) => void;
   onManualFoldChunks: () => void;
   onEditRoundSummary: (chunkId: string, nextText: string) => void;
@@ -149,6 +151,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   pendingGuidance,
   onAddGuidance,
   onRemoveGuidance,
+  onEditGuidance,
+  onToggleDanmakuReply,
   onUpdateCustomBackground,
   onManualFoldChunks,
   onEditRoundSummary,
@@ -554,6 +558,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       pendingGuidance={pendingGuidance}
       onAddGuidance={onAddGuidance}
       onRemoveGuidance={onRemoveGuidance}
+      onEditGuidance={onEditGuidance}
+      onToggleDanmakuReply={onToggleDanmakuReply}
       displayAvatar={displayAvatar}
       displayBackgroundUrl={displayBackgroundUrl}
       activeGifts={activeGifts}

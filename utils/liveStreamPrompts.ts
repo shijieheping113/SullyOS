@@ -113,7 +113,11 @@ function buildChannelPersonaBlock(
 // ==================== 4. 直播/NPC 专用上下文组装 ====================
 
 /** 本场前情：压缩过的轮次用逐轮摘要，最近 3 轮用原文；兼容旧的阶段摘要 */
-export function buildSessionHistoryBlock(session: LiveStreamSession): string {
+export function buildSessionHistoryBlock(
+  session: LiveStreamSession,
+  /** 即将生成的那一轮下标；圈出来的弹幕只对这一轮（含重 Roll）生效 */
+  replyTargetChunkIndex = session.chunks.length,
+): string {
   const chunks = [...(session.chunks || [])].sort((a, b) => a.index - b.index);
   if (chunks.length === 0) return '';
 
@@ -142,7 +146,9 @@ export function buildSessionHistoryBlock(session: LiveStreamSession): string {
           : d.giftName
             ? `礼物${d.giftName}`
             : '弹幕';
-        lines.push(`    已出现的${tag} ${d.senderName || '观众'}：「${body}」${extra}`);
+        lines.push(`    已出现的${tag} ${d.senderName || '观众'}：「${body}」${extra}${
+          d.replyRequested && d.replyTargetChunkIndex === replyTargetChunkIndex ? '  ← 待回应' : ''
+        }`);
       });
       return lines.join('\n');
     });
@@ -211,7 +217,23 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const categoryHint = preset ? preset.promptHint : '自由直播，展现真实自然的主播状态。';
 
   // 1. 本场前情（逐轮摘要 + 最近 3 轮原文）
-  const sessionHistoryBlock = buildSessionHistoryBlock(session);
+  // 即将生成的那一轮下标：新建一轮 = 现有轮数；重 Roll = 被替换那一轮的下标（传进来的 session 已经摘掉它）
+  const replyTargetChunkIndex = session.chunks.length;
+  const sessionHistoryBlock = buildSessionHistoryBlock(session, replyTargetChunkIndex);
+  // Ann 在公屏上圈出来、这一轮必须接住的弹幕：标记已经贴在原文行尾，这里只算条数决定要不要写说明
+  const replyRequestCount = session.chunks.reduce(
+    (total, chunk) =>
+      total +
+      chunk.beats.reduce(
+        (n, beat) =>
+          n +
+          (beat.danmaku || []).filter(
+            d => d.replyRequested && d.replyTargetChunkIndex === replyTargetChunkIndex,
+          ).length,
+        0,
+      ),
+    0,
+  );
   const progressBlock =
     sessionHistoryBlock ||
     '### 当前进度\n这是本场直播的**第 1 轮**，请展现刚开播调设备、跟陆续进房的观众打招呼或直接进入今日主题的状态。';
@@ -252,6 +274,16 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const guidance = session.pendingGuidance || [];
   const guidanceBlock = guidance.length > 0
     ? `### 导演引导（重要：这不是观众弹幕，不要把它写成公屏发言，也不要让任何观众念出它）\n用户希望接下来的直播往这些方向走，请让画面、话题和主播反应自然体现出来：\n${guidance.map(g => `- ${g.text}`).join('\n')}`
+    : '';
+
+  // 3.6 圈出来的弹幕：行尾已经标好「← 待回应」，不重复抄原文
+  const replyRequestBlock = replyRequestCount > 0
+    ? `### 我圈出来的弹幕（这一轮必须接住）
+- 上面公屏里行尾标着「← 待回应」的那几条，是我这一轮想让你接的，不要整轮装作没看见。
+- 最多用前三拍把它们全部接住，不要拖到后面。
+- 用你自己的性格、当时手头的状态去接：可以顺着话头歪、可以吐槽、可以只接半句，不要生硬，不要客服腔，不要一条一条排队答问。
+- 原话不用一字不差，念一部分、念关键词、或者只接意思都行，但那条弹幕必须被明确接住。
+- 「← 待回应」是我给你的字，不是观众发的内容，绝对不要出现在公屏上，也不许让任何观众念出来。`
     : '';
 
   // 4. 重 Roll 强烈反雷同指令
@@ -320,7 +352,7 @@ ${buildDanmakuWarmthRule(channel.danmakuWarmth)}
 - 不想互动就继续做手头的事，不要为了热闹凭空念弹幕。导演引导不是弹幕，不能被观众念出来。
 - 路人也可以偶尔发 Super Chat 或频道礼物，不要每拍都有。SC 金额只能是 5、20、50、200、500，或 800 及以上的自定义金额（800 及以上是红底金边，\`scAmount\` 写实际整数，不要写 501 到 799）。礼物填 \`giftName/giftEmoji/giftAmount\`，用这个频道已有的礼物名。写进 danmaku 的付费和礼物，主播这一拍或下一拍要能当作真的收到了。`;
 
-  const taskParts: string[] = [roomPulseBlock, progressBlock, boundaryBlock, audienceInputBlock, guidanceBlock, rerollBlock];
+  const taskParts: string[] = [roomPulseBlock, progressBlock, boundaryBlock, audienceInputBlock, replyRequestBlock, guidanceBlock, rerollBlock];
   if (includeUserLocation) {
     const locationText = await getUserLocationContext(userName).catch(() => '');
     if (locationText && locationText.trim()) taskParts.splice(1, 0, locationText.trim());

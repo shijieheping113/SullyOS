@@ -116,6 +116,9 @@ export interface LiveWatchScreenProps {
   /** 导演引导：写接下来走向，不进公屏，生效后消失 */
   pendingGuidance: LiveGuidance[];
   onAddGuidance: (text: string) => void;
+  onEditGuidance: (id: string, text: string) => void;
+  /** 圈中/取消本轮一条路人弹幕，让主播下一轮必须接住 */
+  onToggleDanmakuReply: (danmakuId: string) => void;
   onRemoveGuidance: (id: string) => void;
   displayAvatar?: string;
   displayBackgroundUrl: string;
@@ -161,6 +164,26 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
   const [titleOpen, setTitleOpen] = useState(false);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
   const [guidanceDraft, setGuidanceDraft] = useState('');
+  const [editingGuidanceId, setEditingGuidanceId] = useState<string | null>(null);
+  const [guidanceEditDraft, setGuidanceEditDraft] = useState('');
+  // 圈出来的弹幕（只可能落在最新一轮）：抽屉里列清单，底栏 🎬 上挂数字
+  const replyRequestedItems = React.useMemo(
+    () =>
+      session.chunks.flatMap(chunk =>
+        chunk.beats.flatMap(beat => (beat.danmaku || []).filter(d => d.replyRequested)),
+      ),
+    [session.chunks],
+  );
+  const directorCount = props.pendingGuidance.length + replyRequestedItems.length;
+  // 圈出来的弹幕两种状态：下轮回应（琥珀）/ 本轮已回应（蓝灰）
+  const nextReplyTarget = session.chunks.length;
+  const latestReplyTarget = session.chunks.length - 1;
+  const replyStateOf = (dm: LiveDanmakuItem): 'pending' | 'done' | null => {
+    if (!dm.replyRequested) return null;
+    if (dm.replyTargetChunkIndex === nextReplyTarget) return 'pending';
+    if (dm.replyTargetChunkIndex === latestReplyTarget) return 'done';
+    return null;
+  };
   // 送 SC / 礼物时的瞬时横幅（小窗和全屏都显示）
   const [giftEffect, setGiftEffect] = useState<{
     kind: 'sc' | 'gift';
@@ -281,6 +304,8 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
   };
 
   const { bindLongPress, wasLongPressTriggered } = useLongPressMenu();
+  // 一套手势给公屏表格和全屏 5 条弹幕流共用；菜单也只挂一处
+  const dmGestures = useDanmakuPressMenu({ onToggleReply: props.onToggleDanmakuReply });
   const item =
     allTimelineBeats[currentGlobalBeatIdx] || allTimelineBeats[allTimelineBeats.length - 1];
   const beat = item?.beat;
@@ -808,7 +833,22 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
               key={dm.id || `fs_dm_${i}`}
               className="text-[11.5px] leading-[1.35] break-words"
               style={haloSoft}
+              title="长按编辑或删除；左滑让主播下一轮回应"
+              {...dmGestures.pressHandlers(dm)}
             >
+              {dm.replyRequested && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    color: replyStateOf(dm) === 'done' ? '#7b93b3' : '#f0a500',
+                    marginRight: 4,
+                    fontSize: 9,
+                    verticalAlign: 1,
+                  }}
+                >
+                  {replyStateOf(dm) === 'done' ? '✓' : '●'}
+                </span>
+              )}
               <span
                 style={{
                   fontWeight: 800,
@@ -1098,49 +1138,7 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
         borderTop: overlay ? 'none' : `1px solid ${isNico ? '#e0e4ea' : hairline}`,
       }}
     >
-      {/* 导演引导：写走向，不进公屏；这一轮生成后自动消失 */}
-      {props.pendingGuidance.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 px-2 pt-2">
-          {props.pendingGuidance.map(g => (
-            <span
-              key={g.id}
-              className="inline-flex items-center gap-1.5 max-w-full px-2 py-1 rounded-full bg-amber-50 border border-amber-200 text-[11px] text-amber-800"
-            >
-              <span className="truncate">🎬 引导：{g.text}</span>
-              <button
-                type="button"
-                aria-label="移除这条引导"
-                onClick={() => props.onRemoveGuidance(g.id)}
-                className="text-amber-500 font-bold shrink-0"
-              >
-                ✕
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      {guidanceOpen && (
-        <div className="flex items-center gap-1.5 px-2 pt-2">
-          <input
-            value={guidanceDraft}
-            onChange={e => setGuidanceDraft(e.target.value)}
-            placeholder="写一句接下来想让直播往哪走（不会作为弹幕发出）"
-            className="flex-1 min-w-0 h-9 px-3 text-[12px] rounded-full bg-amber-50 border border-amber-200 text-amber-900 focus:outline-none"
-          />
-          <button
-            type="button"
-            disabled={!guidanceDraft.trim()}
-            onClick={() => {
-              props.onAddGuidance(guidanceDraft.trim());
-              setGuidanceDraft('');
-              setGuidanceOpen(false);
-            }}
-            className="px-3 h-9 rounded-full bg-amber-500 text-white text-xs font-bold disabled:opacity-40 shrink-0"
-          >
-            加入引导
-          </button>
-        </div>
-      )}
+      {/* 导演台（本轮指令 + 待回应弹幕）收进底栏 🎬 打开的抽屉 */}
     <form
       onSubmit={e => {
         e.preventDefault();
@@ -1221,9 +1219,9 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
       <button
         type="button"
         onClick={() => setGuidanceOpen(v => !v)}
-        aria-label="导演引导"
-        title="导演引导：写接下来想让直播往哪走"
-        className="w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-full transition active:scale-95"
+        aria-label="导演台"
+        title="导演台：本轮指令与要回应的弹幕"
+        className="relative w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-full transition active:scale-95"
         style={
           guidanceOpen
             ? { backgroundColor: '#f59e0b', color: '#ffffff' }
@@ -1234,6 +1232,11 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
         }
       >
         🎬
+        {directorCount > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-[#e11d48] text-white text-[10px] font-extrabold leading-[15px] text-center border border-white">
+            {directorCount}
+          </span>
+        )}
       </button>
 
       <button
@@ -1344,25 +1347,14 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
           >
             {activeTab === 'chat' ? (
               <>
-                {props.pendingGuidance.length > 0 && (
-                  <div className="px-3 pt-2 space-y-1" aria-label="导演引导预览">
-                    {props.pendingGuidance.map(guidance => (
-                      <div
-                        key={guidance.id}
-                        className="rounded-lg border-l-[3px] border-amber-500 bg-amber-50 px-2.5 py-1.5"
-                      >
-                        <div className="text-[10px] font-bold text-amber-800">导演引导 · 仅供直播走向，不是公屏弹幕</div>
-                        <div className="mt-0.5 break-words text-[11px] leading-relaxed text-amber-950">{guidance.text}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
                 {isNico ? (
                   <NicoCommentTable
                     items={visibleDanmakuFeed}
                     showTranslation={props.showTranslation}
                     onEditUserDanmaku={props.onEditUserDanmaku}
                     onDeleteUserDanmaku={props.onDeleteUserDanmaku}
+                    pressHandlers={dmGestures.pressHandlers}
+                    replyStateOf={replyStateOf}
                   />
                 ) : (
                   <YtChatList
@@ -1370,6 +1362,8 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
                     showTranslation={props.showTranslation}
                     onEditUserDanmaku={props.onEditUserDanmaku}
                     onDeleteUserDanmaku={props.onDeleteUserDanmaku}
+                    pressHandlers={dmGestures.pressHandlers}
+                    replyStateOf={replyStateOf}
                   />
                 )}
               </>
@@ -1438,6 +1432,192 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
           </div>
         </div>
       )}
+
+      {/* 长按弹幕的编辑 / 删除菜单：公屏表格和全屏弹幕流共用 */}
+      {dmGestures.menuFor && (
+        <UserDanmakuMenu
+          item={dmGestures.menuFor}
+          onEdit={props.onEditUserDanmaku}
+          onDelete={props.onDeleteUserDanmaku}
+          onClose={() => dmGestures.setMenuFor(null)}
+        />
+      )}
+
+      {/* ==================== 导演台：本轮指令 + 待回应弹幕 ==================== */}
+      <Sheet
+        open={guidanceOpen}
+        title="导演台"
+        onClose={() => {
+          setGuidanceOpen(false);
+          setEditingGuidanceId(null);
+        }}
+      >
+        <div className="space-y-5 pb-1">
+          <section>
+            <div className="mb-2 flex items-center gap-1.5">
+              <h3 className="text-[12px] font-extrabold tracking-wide text-[#0f172a]">本轮指令</h3>
+              {props.pendingGuidance.length > 0 && (
+                <span className="min-w-[16px] h-4 px-1 rounded-sm bg-[#0080ff] text-white text-[10px] font-extrabold leading-4 text-center">
+                  {props.pendingGuidance.length}
+                </span>
+              )}
+            </div>
+            {props.pendingGuidance.length === 0 ? (
+              <p className="mb-2 text-[12px] leading-relaxed text-[#64748b]">
+                还没有指令。写一句想让直播往哪走，只给主播看，不会变成弹幕。
+              </p>
+            ) : (
+              <div className="mb-2 space-y-1.5">
+                {props.pendingGuidance.map(g => (
+                  <div
+                    key={g.id}
+                    className="rounded-sm border-l-[3px] border-[#0080ff] bg-[#f2f7ff] px-2.5 py-2"
+                  >
+                    {editingGuidanceId === g.id ? (
+                      <>
+                        <textarea
+                          rows={3}
+                          value={guidanceEditDraft}
+                          aria-label="修改这条指令"
+                          onChange={e => setGuidanceEditDraft(e.target.value)}
+                          className="w-full resize-y rounded-sm border border-[#dbe3ec] bg-white px-2 py-1.5 text-[12px] leading-relaxed text-[#0f172a] focus:outline-none"
+                        />
+                        <div className="mt-1.5 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingGuidanceId(null)}
+                            className="text-[11px] font-bold text-[#64748b]"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!guidanceEditDraft.trim()}
+                            onClick={() => {
+                              props.onEditGuidance(g.id, guidanceEditDraft.trim());
+                              setEditingGuidanceId(null);
+                            }}
+                            className="text-[11px] font-bold text-[#0066cc] disabled:opacity-40"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <p className="min-w-0 flex-1 break-words text-[12px] leading-relaxed text-[#0f172a]">
+                          {g.text}
+                        </p>
+                        <div className="flex shrink-0 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingGuidanceId(g.id);
+                              setGuidanceEditDraft(g.text);
+                            }}
+                            className="text-[11px] font-bold text-[#0066cc]"
+                          >
+                            改
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => props.onRemoveGuidance(g.id)}
+                            className="text-[11px] font-bold text-[#d93025]"
+                          >
+                            删
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-1.5">
+              <input
+                value={guidanceDraft}
+                onChange={e => setGuidanceDraft(e.target.value)}
+                placeholder="写一句接下来想让直播往哪走…"
+                className="h-9 min-w-0 flex-1 rounded-sm border border-[#dbe3ec] bg-[#f2f5f9] px-3 text-[12px] text-[#0f172a] focus:outline-none"
+              />
+              <button
+                type="button"
+                disabled={!guidanceDraft.trim()}
+                onClick={() => {
+                  props.onAddGuidance(guidanceDraft.trim());
+                  setGuidanceDraft('');
+                }}
+                className="h-9 shrink-0 rounded-sm bg-[#0080ff] px-3 text-xs font-bold text-white disabled:opacity-40"
+              >
+                加入
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-2 flex items-center gap-1.5">
+              <h3 className="text-[12px] font-extrabold tracking-wide text-[#0f172a]">待回应弹幕</h3>
+              {replyRequestedItems.length > 0 && (
+                <span className="min-w-[16px] h-4 px-1 rounded-sm bg-[#e0a000] text-white text-[10px] font-extrabold leading-4 text-center">
+                  {replyRequestedItems.length}
+                </span>
+              )}
+            </div>
+            {replyRequestedItems.length === 0 ? (
+              <p className="text-[12px] leading-relaxed text-[#64748b]">
+                在本轮公屏或全屏弹幕流上长按一条弹幕，就能圈进这里。
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {replyRequestedItems.map(dm => {
+                  const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
+                  const st = replyStateOf(dm);
+                  const done = st === 'done';
+                  return (
+                    <div
+                      key={dm.id}
+                      className={`flex items-start gap-2 rounded-sm border-l-[3px] px-2.5 py-2 ${
+                        done ? 'border-[#7b93b3] bg-[#eef2f7]' : 'border-[#e0a000] bg-[#fffaf0]'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-bold">
+                          <span
+                            className="mr-1.5 inline-flex items-center rounded-sm px-1 py-[1px] text-[9.5px] font-extrabold"
+                            style={
+                              done
+                                ? { background: '#e2e8f0', color: '#51617a' }
+                                : { background: '#fdefc8', color: '#8a5a00' }
+                            }
+                          >
+                            {done ? '已回应' : '下轮回应'}
+                          </span>
+                          <span style={{ color: done ? '#51617a' : '#8a5a00' }}>
+                            {dm.senderName}
+                          </span>
+                        </div>
+                        <div className="break-words text-[12px] leading-relaxed text-[#0f172a]">{dm.text}</div>
+                        {trans && trans !== dm.text && (
+                          <div className="text-[11px] text-[#0066cc]">{trans}</div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="取消圈选这条弹幕"
+                        onClick={() => props.onToggleDanmakuReply(dm.id)}
+                        className="shrink-0 text-[15px] font-bold text-[#b26b00]"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+                <p className="text-[11px] text-[#94a3b8]">最多 5 条；下一轮回应一次，重 Roll 还在。</p>
+              </div>
+            )}
+          </section>
+        </div>
+      </Sheet>
 
       {/* ==================== 设置抽屉：画面上不塞的功能都收在这里 ==================== */}
       <Sheet open={settingsOpen} title="直播间设置" onClose={() => setSettingsOpen(false)}>
@@ -1742,40 +1922,66 @@ function VoiceWaveBars({ active, color }: { active: boolean; color: string }) {
 // ==================== YouTube Live 标准公屏聊天列表 ====================
 
 /** 长按自己的弹幕弹出功能菜单：编辑 / 删除，不再在每条弹幕下面挂小按钮。 */
-function useDanmakuPressMenu() {
+/**
+ * 弹幕手势：长按任意一条 → 编辑/删除；向左滑 → 圈中/取消（只认路人普通弹幕）。
+ * 手指竖着动超过 10px 当成滚动，不触发长按。
+ */
+function useDanmakuPressMenu(options?: { onToggleReply?: (id: string) => void }) {
   const [menuFor, setMenuFor] = useState<LiveDanmakuItem | null>(null);
   const timerRef = useRef<number | null>(null);
   const itemRef = useRef<LiveDanmakuItem | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
   const clearTimer = () => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   };
-  const begin = (dm: LiveDanmakuItem) => {
-    if (!dm.id || !(dm.isUserMain || dm.isUserAlt)) return;
-    clearTimer();
-    itemRef.current = dm;
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      if (itemRef.current) setMenuFor(itemRef.current);
-    }, 420);
-  };
-  const end = () => {
+  const reset = () => {
     clearTimer();
     itemRef.current = null;
+    startRef.current = null;
   };
+  const canCircle = (dm: LiveDanmakuItem) =>
+    Boolean(dm.id) &&
+    !dm.isUserMain &&
+    !dm.isUserAlt &&
+    !(dm.scAmount && dm.scAmount > 0) &&
+    !dm.giftName;
   React.useEffect(() => () => clearTimer(), []);
   const pressHandlers = (dm: LiveDanmakuItem) => ({
-    onPointerDown: () => begin(dm),
-    onPointerUp: end,
-    onPointerLeave: end,
-    onPointerCancel: end,
-    onContextMenu: (event: React.MouseEvent) => {
-      if (dm.id && (dm.isUserMain || dm.isUserAlt)) {
-        event.preventDefault();
+    onPointerDown: (event: React.PointerEvent) => {
+      if (!dm.id) return;
+      clearTimer();
+      itemRef.current = dm;
+      startRef.current = { x: event.clientX, y: event.clientY };
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        startRef.current = null;
         setMenuFor(dm);
+      }, 420);
+    },
+    onPointerMove: (event: React.PointerEvent) => {
+      const start = startRef.current;
+      const item = itemRef.current;
+      if (!start || !item) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (dx < -34 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        clearTimer();
+        startRef.current = null;
+        if (canCircle(item)) options?.onToggleReply?.(item.id);
+        return;
       }
+      if (Math.abs(dy) > 10) clearTimer();
+    },
+    onPointerUp: reset,
+    onPointerLeave: reset,
+    onPointerCancel: reset,
+    onContextMenu: (event: React.MouseEvent) => {
+      if (!dm.id) return;
+      event.preventDefault();
+      setMenuFor(dm);
     },
   });
   return { menuFor, setMenuFor, pressHandlers };
@@ -1805,14 +2011,14 @@ function UserDanmakuMenu({
         className="w-full max-w-sm rounded-2xl bg-white p-3 space-y-2 shadow-2xl"
         onClick={event => event.stopPropagation()}
       >
-        <div className="px-1 text-[11px] font-bold text-slate-400">我发的弹幕</div>
+        <div className="px-1 text-[11px] font-bold text-slate-400">这条弹幕</div>
         {editing ? (
           <>
             <textarea
               value={draft}
               onChange={event => setDraft(event.target.value)}
               rows={2}
-              aria-label="编辑我的弹幕"
+              aria-label="编辑这条弹幕"
               className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
             <div className="flex gap-2">
@@ -1859,13 +2065,16 @@ function YtChatList({
   showTranslation,
   onEditUserDanmaku,
   onDeleteUserDanmaku,
+  pressHandlers,
+  replyStateOf,
 }: {
   items: LiveDanmakuItem[];
   showTranslation: boolean;
   onEditUserDanmaku: (id: string, text: string) => void;
   onDeleteUserDanmaku: (id: string) => void;
+  pressHandlers: (dm: LiveDanmakuItem) => React.HTMLAttributes<HTMLElement>;
+  replyStateOf: (dm: LiveDanmakuItem) => 'pending' | 'done' | null;
 }) {
-  const { menuFor, setMenuFor, pressHandlers } = useDanmakuPressMenu();
   if (items.length === 0) {
     return (
       <div className="px-4 py-10 text-center text-xs text-slate-400">
@@ -1882,7 +2091,8 @@ function YtChatList({
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
           const giftComment = getLiveDanmakuComment(dm);
           const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
-          const mineHint = isMine ? '长按可编辑或删除' : '';
+          const mineHint = '长按编辑或删除；左滑让主播下一轮回应';
+          const replyState = replyStateOf(dm);
 
           if (paid) {
             return (
@@ -1932,7 +2142,13 @@ function YtChatList({
               title={mineHint}
               {...pressHandlers(dm)}
               className={`py-1 px-2 rounded-lg flex items-start gap-2 text-[12.5px] leading-[18px] ${
-                isMine ? 'bg-[#f8fafc] border border-[#e2e8f0]' : ''
+                isMine
+                  ? 'bg-[#f8fafc] border border-[#e2e8f0]'
+                  : replyState === 'pending'
+                  ? 'bg-[#fff8e6] border border-[#f0c15c] border-l-[3px] border-l-[#f0a500]'
+                  : replyState === 'done'
+                  ? 'bg-[#eef2f7] border border-[#c3cedd] border-l-[3px] border-l-[#7b93b3]'
+                  : ''
               }`}
             >
               <Avatar src={undefined} name={dm.senderName} size={20} />
@@ -1966,6 +2182,17 @@ function YtChatList({
                   </span>
                 )}
                 <span className="text-[#0f0f0f]">{dm.text}</span>
+                {replyState && (
+                  <span
+                    className={`ml-1.5 rounded px-1 py-[1px] text-[9.5px] font-bold ${
+                      replyState === 'done'
+                        ? 'bg-[#e2e8f0] text-[#51617a]'
+                        : 'bg-[#fdefc8] text-[#8a5a00]'
+                    }`}
+                  >
+                    {replyState === 'done' ? '已回应' : '下轮回应'}
+                  </span>
+                )}
                 {showTranslation && trans && trans !== dm.text && (
                   <span className="ml-1.5 text-[11.5px] text-[#0369a1]">（{trans}）</span>
                 )}
@@ -1974,14 +2201,6 @@ function YtChatList({
           );
         })}
       </ul>
-      {menuFor && (
-        <UserDanmakuMenu
-          item={menuFor}
-          onEdit={onEditUserDanmaku}
-          onDelete={onDeleteUserDanmaku}
-          onClose={() => setMenuFor(null)}
-        />
-      )}
     </>
   );
 }
@@ -1991,13 +2210,16 @@ function NicoCommentTable({
   showTranslation,
   onEditUserDanmaku,
   onDeleteUserDanmaku,
+  pressHandlers,
+  replyStateOf,
 }: {
   items: LiveDanmakuItem[];
   showTranslation: boolean;
   onEditUserDanmaku: (id: string, text: string) => void;
   onDeleteUserDanmaku: (id: string) => void;
+  pressHandlers: (dm: LiveDanmakuItem) => React.HTMLAttributes<HTMLElement>;
+  replyStateOf: (dm: LiveDanmakuItem) => 'pending' | 'done' | null;
 }) {
-  const { menuFor, setMenuFor, pressHandlers } = useDanmakuPressMenu();
   if (items.length === 0) {
     return (
       <div className="px-4 py-10 text-center text-xs text-[#767676]">
@@ -2022,10 +2244,11 @@ function NicoCommentTable({
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
           const trans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
           const comment = isGift ? getLiveDanmakuComment(dm) : dm.text;
+          const replyState = replyStateOf(dm);
           return (
             <tr
               key={dm.id || i}
-              title={isMine ? '长按可编辑或删除' : ''}
+              title="长按编辑或删除；左滑让主播下一轮回应"
               {...pressHandlers(dm)}
               className={`border-b border-[#eceff3] align-top ${
                 isSc
@@ -2034,6 +2257,10 @@ function NicoCommentTable({
                   ? 'bg-[#fff8fb]'
                   : isMine
                   ? 'bg-[#eff6ff]'
+                  : replyState === 'pending'
+                  ? 'bg-[#fff4d6] border-l-[3px] border-l-[#e0a000]'
+                  : replyState === 'done'
+                  ? 'bg-[#eef2f7] border-l-[3px] border-l-[#7b93b3]'
                   : i % 2 === 1
                   ? 'bg-[#f8fafc]'
                   : 'bg-white'
@@ -2057,6 +2284,18 @@ function NicoCommentTable({
                   </span>
                 ) : null}
                 {comment && <span>{comment}</span>}
+                {replyState && (
+                  <span
+                    className="ml-1.5 inline-flex items-center rounded-sm px-1 py-[1px] text-[9.5px] font-extrabold"
+                    style={
+                      replyState === 'done'
+                        ? { background: '#e2e8f0', color: '#51617a' }
+                        : { background: '#fdefc8', color: '#8a5a00' }
+                    }
+                  >
+                    {replyState === 'done' ? '已回应' : '下轮回应'}
+                  </span>
+                )}
                 {showTranslation && trans && trans !== dm.text && (!isGift || comment) ? (
                   <span className="ml-1.5 text-[11px] text-[#0066cc]">（{trans}）</span>
                 ) : null}
@@ -2069,14 +2308,6 @@ function NicoCommentTable({
         })}
       </tbody>
     </table>
-    {menuFor && (
-      <UserDanmakuMenu
-        item={menuFor}
-        onEdit={onEditUserDanmaku}
-        onDelete={onDeleteUserDanmaku}
-        onClose={() => setMenuFor(null)}
-      />
-    )}
     </>
   );
 }

@@ -123,6 +123,13 @@ export interface LiveDanmakuItem {
   /** 礼物对应的打赏金额，和 Super Chat 金额完全分开 */
   giftAmount?: number;
   giftCurrency?: string;
+  /**
+   * Ann 在公屏上圈出来的「这一轮要让主播接住」的标记。
+   * 只会落在最新一轮生成的路人弹幕上；真正回应它的是下一轮（或重 Roll 那一轮）。
+   */
+  replyRequested?: boolean;
+  /** 该由第几轮来回应（0 开始的下标）。下一轮生成时才带上，之后失效。 */
+  replyTargetChunkIndex?: number;
   timestamp: number;
 }
 

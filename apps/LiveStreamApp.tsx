@@ -88,6 +88,7 @@ import {
   buildLiveStreamTurnPrompt,
   parseLiveBeatsResponse,
   callMainStreamerLlm,
+  callAuxOrMainLlm,
   generateLiveRoundSummary,
   generateVodVideoPost,
   generateStreamerVodReply,
@@ -1120,7 +1121,8 @@ const LiveStreamApp: React.FC = () => {
       const zh = beat.speechTranslated || '';
       if (!alignLiveSpeech(spoken, zh).needsRepair) continue;
       try {
-        const raw = await callMainStreamerLlm({
+        // 这是机械对齐（只重写中文，不改原话），走辅助模型；没配辅助模型时自动回退主模型
+        const raw = await callAuxOrMainLlm({
           apiConfig,
           char: currentChar,
           messages: [{ role: 'user', content: buildLiveTranslationRepairPrompt(spoken, zh) }],
@@ -1134,6 +1136,28 @@ const LiveStreamApp: React.FC = () => {
       }
     }
     return next;
+  };
+
+  // 圈出来的弹幕只由「下一轮」回应一次；这一轮重 Roll 时要继续带着，到再下一轮才失效。
+  // 例子：第 2 轮圈的 → 第 3 轮（含重 Roll）带上 → 第 4 轮生成时清掉。
+  const pruneReplyRequests = (chunks: LiveChunk[], targetChunkIndex: number): LiveChunk[] => {
+    const hasMark = chunks.some(chunk =>
+      chunk.beats.some(beat => (beat.danmaku || []).some(d => d.replyRequested)),
+    );
+    if (!hasMark) return chunks;
+    const keep = (d: LiveDanmakuItem) =>
+      Boolean(d.replyRequested) && d.replyTargetChunkIndex === targetChunkIndex;
+    return chunks.map(chunk => ({
+      ...chunk,
+      beats: chunk.beats.map(beat => ({
+        ...beat,
+        danmaku: (beat.danmaku || []).map(d =>
+          d.replyRequested && !keep(d)
+            ? { ...d, replyRequested: undefined, replyTargetChunkIndex: undefined }
+            : d,
+        ),
+      })),
+    }));
   };
 
   const runGenerateLiveChunk = async (
@@ -1309,13 +1333,15 @@ const LiveStreamApp: React.FC = () => {
 
       const updatedSession: LiveStreamSession = {
         ...latestSession,
-        chunks: nextChunks,
+        chunks: pruneReplyRequests(nextChunks, targetChunkIndex),
         viewerCount: currViewers,
         peakViewerCount: peak,
         totalScRevenue: scTotal,
         totalGiftRevenue: giftTotal,
         // 新建一轮才清空引导；重 Roll 只换同一轮内容，别把还没轮到的导演引导吃掉
-        pendingGuidance: options?.replaceChunkId ? latestSession.pendingGuidance || [] : [],
+        // Ann 2026-10-24：导演指令不再随「推进一轮」自动消失——重 Roll 同一轮时还要用它。
+        // 只有 Ann 在导演台手动删，才会没有。
+        pendingGuidance: latestSession.pendingGuidance || [],
       };
 
       setPendingUserInputs([]);
@@ -1529,17 +1555,21 @@ const LiveStreamApp: React.FC = () => {
     }
   };
 
+  // 改 / 删任意一条弹幕（Ann 2026-10-24：模型偶尔会把该回应的弹幕又发一遍，要能手动收拾）
   const mutateUserDanmaku = async (danmakuId: string, nextText: string | null) => {
     if (!activeLiveSession || !activeChannel || !currentChar) return;
     const chunkIndex = activeLiveSession.chunks.findIndex(chunk =>
-      chunk.beats.some(beat =>
-        (beat.danmaku || []).some(item =>
-          item.id === danmakuId && (item.isUserMain || item.isUserAlt),
-        ),
-      ),
+      chunk.beats.some(beat => (beat.danmaku || []).some(item => item.id === danmakuId)),
     );
     if (chunkIndex < 0) return;
     const sourceChunk = activeLiveSession.chunks[chunkIndex];
+    // 这一轮触发本轮生成时存下的「用户投喂」副本也要一起改 / 一起删，
+    // 否则重 Roll 会把删掉的那条 SC / 弹幕又塞回提示词里。
+    const nextUserInputs = (sourceChunk.userInputs || []).flatMap(item => {
+      if (item.id !== danmakuId) return [item];
+      if (nextText === null) return [];
+      return [{ ...item, text: nextText }];
+    });
     const beats = sourceChunk.beats.map(beat => ({
       ...beat,
       danmaku: (beat.danmaku || []).flatMap(item => {
@@ -1552,6 +1582,7 @@ const LiveStreamApp: React.FC = () => {
     const changedChunk: LiveChunk = {
       ...sourceChunk,
       beats,
+      userInputs: nextUserInputs,
       roundSummary: undefined,
       summaryUpdatedAt: undefined,
     };
@@ -1607,6 +1638,91 @@ const LiveStreamApp: React.FC = () => {
       pendingGuidance: (activeLiveSession.pendingGuidance || []).filter(g => g.id !== id),
     };
     void rememberLiveSession(next);
+  };
+
+  const handleEditGuidance = (id: string, text: string) => {
+    const trimmed = text.trim();
+    if (!activeLiveSession || !trimmed) return;
+    const next: LiveStreamSession = {
+      ...activeLiveSession,
+      pendingGuidance: (activeLiveSession.pendingGuidance || []).map(g =>
+        g.id === id ? { ...g, text: trimmed } : g,
+      ),
+    };
+    void rememberLiveSession(next);
+  };
+
+  // 圈弹幕：标记写在「被圈的那条弹幕」上，同时记住该由第几轮来回应。
+  // - 新增只认最新一轮生成的路人普通弹幕，最多 5 条；
+  // - 取消不限轮次（已经用过、还留在导演台里的旧标记也要能撤）；
+  // - 回应只做一次：第 3 轮生成时带上第 2 轮圈的，第 3 轮重 Roll 还带着，到第 4 轮才失效。
+  const handleToggleDanmakuReply = (danmakuId: string) => {
+    if (!activeLiveSession || !danmakuId) return;
+    const session = liveSessionsRef.current.find(s => s.id === activeLiveSession.id) || activeLiveSession;
+    const ownerIndex = session.chunks.findIndex(chunk =>
+      chunk.beats.some(beat => (beat.danmaku || []).some(d => d.id === danmakuId)),
+    );
+    if (ownerIndex < 0) return;
+    const found = session.chunks[ownerIndex].beats
+      .flatMap(beat => beat.danmaku || [])
+      .find(d => d.id === danmakuId);
+    if (!found) return;
+
+    const patch = (next: { replyRequested?: boolean; replyTargetChunkIndex?: number }) => {
+      const chunks = session.chunks.map((chunk, chunkIndex) =>
+        chunkIndex === ownerIndex
+          ? {
+              ...chunk,
+              beats: chunk.beats.map(beat => ({
+                ...beat,
+                danmaku: (beat.danmaku || []).map(d =>
+                  d.id === danmakuId ? { ...d, ...next } : d,
+                ),
+              })),
+            }
+          : chunk,
+      );
+      void rememberLiveSession({ ...session, chunks });
+    };
+
+    // 取消：任何已经圈过的都能撤
+    if (found.replyRequested) {
+      patch({ replyRequested: undefined, replyTargetChunkIndex: undefined });
+      return;
+    }
+
+    if (ownerIndex !== session.chunks.length - 1) {
+      addToast('只能圈本轮生成的弹幕', 'info');
+      return;
+    }
+    if (found.isUserMain || found.isUserAlt) {
+      addToast('自己发的弹幕不用圈，直接发就好', 'info');
+      return;
+    }
+    if ((found.scAmount && found.scAmount > 0) || found.giftName) {
+      addToast('打赏会按自己的节奏处理，不用圈', 'info');
+      return;
+    }
+    // 只数「还没被回应过」的（下一轮要接的那批）
+    const nextTarget = session.chunks.length;
+    const pendingCount = session.chunks.reduce(
+      (total, chunk) =>
+        total +
+        chunk.beats.reduce(
+          (n, beat) =>
+            n +
+            (beat.danmaku || []).filter(
+              d => d.replyRequested && d.replyTargetChunkIndex === nextTarget,
+            ).length,
+          0,
+        ),
+      0,
+    );
+    if (pendingCount >= 5) {
+      addToast('这一轮最多圈 5 条', 'info');
+      return;
+    }
+    patch({ replyRequested: true, replyTargetChunkIndex: ownerIndex + 1 });
   };
 
   // 重 Roll 某一段切片（传入旧台词防雷同 + 排除旧 DB 消息）
@@ -2036,6 +2152,8 @@ const LiveStreamApp: React.FC = () => {
           pendingGuidance={activeLiveSession.pendingGuidance || []}
           onAddGuidance={handleAddGuidance}
           onRemoveGuidance={handleRemoveGuidance}
+          onEditGuidance={handleEditGuidance}
+          onToggleDanmakuReply={handleToggleDanmakuReply}
           onUpdateCustomBackground={url => {
             void rememberLiveSession({ ...activeLiveSession, customBackgroundUrl: url });
             addToast('直播间背景已更新', 'success');

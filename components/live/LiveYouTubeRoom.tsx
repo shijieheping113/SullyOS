@@ -94,37 +94,71 @@ function pillToneFor(dm: LiveDanmakuItem) {
   return scTierFor(dm).color;
 }
 
-/** 长按自己的弹幕：编辑 / 删除（既有能力，位置随新列表重排）。 */
-function useOwnDanmakuMenu() {
+/**
+ * 弹幕手势（Ann 2026-10-24 定的）：
+ * - 长按任意一条 → 编辑 / 删除（模型偶尔会把该回应的话又发一遍，要能手动收拾）
+ * - 向左滑 → 圈中 / 取消（导演台里的「待回应弹幕」，只认路人普通弹幕）
+ * 手指竖着动超过 10px 当成在滚动列表，不算长按。
+ */
+function useDanmakuGestures(options?: {
+  onToggleReply?: (dm: LiveDanmakuItem) => void;
+}) {
   const [menuFor, setMenuFor] = useState<LiveDanmakuItem | null>(null);
   const timerRef = useRef<number | null>(null);
   const itemRef = useRef<LiveDanmakuItem | null>(null);
-  const clear = () => {
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const clearTimer = () => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   };
-  const begin = (dm: LiveDanmakuItem) => {
-    if (!dm.id || !(dm.isUserMain || dm.isUserAlt)) return;
-    clear();
-    itemRef.current = dm;
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      if (itemRef.current) setMenuFor(itemRef.current);
-    }, 420);
+  const reset = () => {
+    clearTimer();
+    itemRef.current = null;
+    startRef.current = null;
   };
-  useEffect(() => () => clear(), []);
+  const canCircle = (dm: LiveDanmakuItem) =>
+    Boolean(dm.id) &&
+    !dm.isUserMain &&
+    !dm.isUserAlt &&
+    !(dm.scAmount && dm.scAmount > 0) &&
+    !dm.giftName;
+  useEffect(() => () => clearTimer(), []);
   const handlers = (dm: LiveDanmakuItem) => ({
-    onPointerDown: () => begin(dm),
-    onPointerUp: clear,
-    onPointerLeave: clear,
-    onPointerCancel: clear,
-    onContextMenu: (event: React.MouseEvent) => {
-      if (dm.id && (dm.isUserMain || dm.isUserAlt)) {
-        event.preventDefault();
+    onPointerDown: (event: React.PointerEvent) => {
+      if (!dm.id) return;
+      clearTimer();
+      itemRef.current = dm;
+      startRef.current = { x: event.clientX, y: event.clientY };
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        startRef.current = null;
         setMenuFor(dm);
+      }, 420);
+    },
+    onPointerMove: (event: React.PointerEvent) => {
+      const start = startRef.current;
+      const item = itemRef.current;
+      if (!start || !item) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      // 向左滑：圈中 / 取消。一次滑动只算一次。
+      if (dx < -34 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        clearTimer();
+        startRef.current = null;
+        if (canCircle(item)) options?.onToggleReply?.(item);
+        return;
       }
+      if (Math.abs(dy) > 10) clearTimer();
+    },
+    onPointerUp: reset,
+    onPointerLeave: reset,
+    onPointerCancel: reset,
+    onContextMenu: (event: React.MouseEvent) => {
+      if (!dm.id) return;
+      event.preventDefault();
+      setMenuFor(dm);
     },
   });
   return { menuFor, setMenuFor, handlers };
@@ -147,14 +181,14 @@ function OwnDanmakuMenu({
     <div className="dyt-ov" onClick={onClose}>
       <div className="dyt-sheet" onClick={e => e.stopPropagation()}>
         <div className="dyt-grab" />
-        <h2 className="dyt-sheet__title">我发的弹幕</h2>
+        <h2 className="dyt-sheet__title">这条弹幕</h2>
         {editing ? (
           <>
             <label className="dyt-scnote">
               <textarea
                 rows={3}
                 value={draft}
-                aria-label="编辑我的弹幕"
+                aria-label="编辑这条弹幕"
                 onChange={e => setDraft(e.target.value)}
               />
             </label>
@@ -227,6 +261,26 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   const [customScText, setCustomScText] = useState('');
   const [guidanceOpen, setGuidanceOpen] = useState(false);
   const [guidanceDraft, setGuidanceDraft] = useState('');
+  const [editingGuidanceId, setEditingGuidanceId] = useState<string | null>(null);
+  const [guidanceEditDraft, setGuidanceEditDraft] = useState('');
+  // 圈出来的弹幕（只可能落在最新一轮）：弹窗里列清单，底栏按钮上挂数字
+  const replyRequestedItems = React.useMemo(
+    () =>
+      session.chunks.flatMap(chunk =>
+        chunk.beats.flatMap(beat => (beat.danmaku || []).filter(d => d.replyRequested)),
+      ),
+    [session.chunks],
+  );
+  const directorCount = props.pendingGuidance.length + replyRequestedItems.length;
+  // 圈出来的弹幕有两种状态：还没回应的（下轮接）、已经回应过的（本轮接完，重 Roll 还要用）
+  const nextReplyTarget = session.chunks.length;
+  const latestReplyTarget = session.chunks.length - 1;
+  const replyStateOf = (dm: LiveDanmakuItem): 'pending' | 'done' | null => {
+    if (!dm.replyRequested) return null;
+    if (dm.replyTargetChunkIndex === nextReplyTarget) return 'pending';
+    if (dm.replyTargetChunkIndex === latestReplyTarget) return 'done';
+    return null;
+  };
   const [pinDetail, setPinDetail] = useState<LiveDanmakuItem | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [composeFocus, setComposeFocus] = useState(false);
@@ -675,6 +729,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   const renderRailChip = (dm: LiveDanmakuItem, key: string, isFlow = false) => {
     const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
     const isGift = Boolean(dm.giftName);
+    const railReplyState = replyStateOf(dm);
     const comment = getLiveDanmakuComment(dm);
     const railTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
     const railBody = isGift ? `送出 ${dm.giftName}` : comment;
@@ -691,7 +746,15 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       <div
         key={key}
         data-rail-flow={isFlow ? '1' : undefined}
-        className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}`}
+        className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}${
+          railReplyState === 'pending'
+            ? ' dyt-chip--reply'
+            : railReplyState === 'done'
+            ? ' dyt-chip--reply-done'
+            : ''
+        }`}
+        title="长按编辑或删除；左滑让主播下一轮回应"
+        {...list.handlers(dm)}
       >
         <span className={`dyt-chip__user${railUserClass}`}>
           {dm.senderName}
@@ -714,30 +777,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     setLinesClipped(el.scrollHeight > el.clientHeight + 1);
   }, [zhLine, jaLine, props.isGenerating, props.isFullscreen]);
 
-  // 待生效导演引导：贴在输入框上方的窄条；本轮生成后 pendingGuidance 会被清空，自然消失
-  const pendingCue = props.pendingGuidance[0];
-  const renderGuidanceCue = () => {
-    if (!pendingCue) return null;
-    const more =
-      props.pendingGuidance.length > 1 ? `（另有 ${props.pendingGuidance.length - 1} 条）` : '';
-    return (
-      <div className="dyt-guidance-cue" role="status" aria-label="待生效的导演引导">
-        <span className="dyt-guidance-cue__label">导演引导</span>
-        <span className="dyt-guidance-cue__text">
-          {pendingCue.text}
-          {more}
-        </span>
-        <button
-          type="button"
-          className="dyt-guidance-cue__x"
-          aria-label="移除这条导演引导"
-          onClick={() => props.onRemoveGuidance(pendingCue.id)}
-        >
-          ×
-        </button>
-      </div>
-    );
-  };
+  // 导演台（本轮指令 + 待回应弹幕）收进底栏导演按钮，不再在画面里挂窄条
 
   const displayName = channel.channelName || props.charName;
 
@@ -854,7 +894,9 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   };
 
   // ============ 聊天列表（原型油管公屏 + 既有 SC / 礼物 / 长按能力）============
-  const list = useOwnDanmakuMenu();
+  const list = useDanmakuGestures({
+    onToggleReply: dm => props.onToggleDanmakuReply(dm.id),
+  });
   const renderChatList = () => {
     if (!visibleDanmakuFeed.length) {
       return <p className="dyt-empty">公屏还没有弹幕，在下方发一条弹幕或 Super Chat 互动吧！</p>;
@@ -865,6 +907,7 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           const paid = Boolean(dm.scAmount && dm.scAmount > 0);
           const isGift = Boolean(dm.giftName);
           const isMine = Boolean(dm.isUserMain || dm.isUserAlt);
+          const replyState = replyStateOf(dm);
           const giftComment = getLiveDanmakuComment(dm);
           const dmTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
 
@@ -942,8 +985,10 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           return (
             <article
               key={dm.id || idx}
-              className="dyt-msg"
-              title={isMine ? '长按可编辑或删除' : undefined}
+              className={`dyt-msg${replyState === 'pending' ? ' is-reply' : ''}${
+                replyState === 'done' ? ' is-reply-done' : ''
+              }`}
+              title="长按编辑或删除；左滑让主播下一轮回应"
               {...list.handlers(dm)}
             >
               <span className={`dyt-msg__av ${avClass}`}>{initial(dm.senderName)}</span>
@@ -953,6 +998,11 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                 {dm.isUserAlt && <span className="dyt-msg__badge dyt-msg__badge--alt">马甲</span>}
                 {dm.fanBadge && !isMine && <span className="dyt-msg__badge">{dm.fanBadge}</span>}
                 <span className="dyt-msg__text"> {dm.text}</span>
+                {replyState ? (
+                  <span className={`dyt-msg__replytag${replyState === 'done' ? ' is-done' : ''}`}>
+                    {replyState === 'pending' ? '下轮回应' : '已回应'}
+                  </span>
+                ) : null}
                 {props.showTranslation && dmTrans && dmTrans !== dm.text ? (
                   <span className="dyt-msg__trans">{dmTrans}</span>
                 ) : null}
@@ -960,14 +1010,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             </article>
           );
         })}
-        {list.menuFor && (
-          <OwnDanmakuMenu
-            item={list.menuFor}
-            onEdit={props.onEditUserDanmaku}
-            onDelete={props.onDeleteUserDanmaku}
-            onClose={() => list.setMenuFor(null)}
-          />
-        )}
       </>
     );
   };
@@ -1483,7 +1525,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       </section>
 
       <footer className="dyt-composer">
-        {renderGuidanceCue()}
         <form
           className="dyt-composer__row"
           onSubmit={e => {
@@ -1550,11 +1591,12 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
           </button>
           <button
             type="button"
-            className={`dyt-cico${props.pendingGuidance.length ? ' is-on' : ''}`}
-            aria-label="导演引导"
+            className="dyt-cico"
+            aria-label="导演台"
             onClick={() => setGuidanceOpen(true)}
           >
             <SVG d={Ico.director} size={22} />
+            {directorCount ? <span className="dyt-dirbadge">{directorCount}</span> : null}
           </button>
         </form>
       </footer>
@@ -1705,7 +1747,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                 tone="dock"
               />
             </div>
-            {renderGuidanceCue()}
             <div className="dyt-dock__row">
               <div className="dyt-skips" role="group" aria-label="切拍">
                 <button
@@ -1776,11 +1817,12 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               </button>
               <button
                 type="button"
-                className={`dyt-dock__btn${props.pendingGuidance.length ? ' is-on' : ''}`}
-                aria-label="导演引导"
+                className="dyt-dock__btn"
+                aria-label="导演台"
                 onClick={() => setGuidanceOpen(true)}
               >
                 <SVG d={Ico.director} size={22} />
+                {directorCount ? <span className="dyt-dirbadge">{directorCount}</span> : null}
               </button>
             </div>
           </div>
@@ -2164,50 +2206,158 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
       )}
 
       {guidanceOpen && (
-        <YtSheet title="导演引导" onClose={() => setGuidanceOpen(false)}>
-          {props.pendingGuidance.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              {props.pendingGuidance.map(g => (
-                <div key={g.id} className="dyt-menu" style={{ alignItems: 'flex-start', gap: 8 }}>
-                  <span className="dyt-menu__main">
-                    <strong>待生效</strong>
-                    <span style={{ display: 'block', marginTop: 2, color: '#0f0f0f', fontSize: 13 }}>
-                      {g.text}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="移除这条引导"
-                    style={{ color: '#d93025', fontWeight: 700, fontSize: 13 }}
-                    onClick={() => props.onRemoveGuidance(g.id)}
-                  >
-                    移除
-                  </button>
+        <YtSheet
+          title="导演台"
+          onClose={() => {
+            setGuidanceOpen(false);
+            setEditingGuidanceId(null);
+          }}
+        >
+          <section className="dyt-dirblock">
+            <h3 className="dyt-dirblock__title">
+              本轮指令
+              {props.pendingGuidance.length ? (
+                <span className="dyt-dirblock__n">{props.pendingGuidance.length}</span>
+              ) : null}
+            </h3>
+            {props.pendingGuidance.length === 0 ? (
+              <p className="dyt-dirblock__empty">
+                还没有指令。写一句想让直播往哪走，只给主播看，不会变成弹幕。
+              </p>
+            ) : (
+              props.pendingGuidance.map(g => (
+                <div key={g.id} className="dyt-dirow">
+                  {editingGuidanceId === g.id ? (
+                    <>
+                      <textarea
+                        className="dyt-dirow__edit"
+                        rows={3}
+                        value={guidanceEditDraft}
+                        aria-label="修改这条指令"
+                        onChange={e => setGuidanceEditDraft(e.target.value)}
+                      />
+                      <div className="dyt-dirow__acts">
+                        <button type="button" onClick={() => setEditingGuidanceId(null)}>
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!guidanceEditDraft.trim()}
+                          onClick={() => {
+                            props.onEditGuidance(g.id, guidanceEditDraft.trim());
+                            setEditingGuidanceId(null);
+                          }}
+                        >
+                          保存
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="dyt-dirow__text">{g.text}</p>
+                      <div className="dyt-dirow__acts">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingGuidanceId(g.id);
+                            setGuidanceEditDraft(g.text);
+                          }}
+                        >
+                          改
+                        </button>
+                        <button
+                          type="button"
+                          className="is-danger"
+                          onClick={() => props.onRemoveGuidance(g.id)}
+                        >
+                          删
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-          <label className="dyt-scnote">
-            <textarea
-              rows={3}
-              value={guidanceDraft}
-              onChange={e => setGuidanceDraft(e.target.value)}
-              placeholder="写下一段走向…"
-            />
-          </label>
-          <button
-            type="button"
-            className="dyt-submit"
-            disabled={!guidanceDraft.trim()}
-            onClick={() => {
-              props.onAddGuidance(guidanceDraft.trim());
-              setGuidanceDraft('');
-              setGuidanceOpen(false);
-            }}
-          >
-            加入引导
-          </button>
+              ))
+            )}
+            <label className="dyt-scnote">
+              <textarea
+                rows={3}
+                value={guidanceDraft}
+                onChange={e => setGuidanceDraft(e.target.value)}
+                placeholder="写一句接下来想让直播往哪走…"
+              />
+            </label>
+            <button
+              type="button"
+              className="dyt-submit"
+              disabled={!guidanceDraft.trim()}
+              onClick={() => {
+                props.onAddGuidance(guidanceDraft.trim());
+                setGuidanceDraft('');
+              }}
+            >
+              加入指令
+            </button>
+          </section>
+
+          <section className="dyt-dirblock">
+            <h3 className="dyt-dirblock__title">
+              待回应弹幕
+              {replyRequestedItems.length ? (
+                <span className="dyt-dirblock__n">{replyRequestedItems.length}</span>
+              ) : null}
+            </h3>
+            {replyRequestedItems.length === 0 ? (
+              <p className="dyt-dirblock__empty">
+                在本轮的公屏或全屏弹幕流上长按一条弹幕，就能圈进这里。
+              </p>
+            ) : (
+              replyRequestedItems.map(dm => {
+                const st = replyStateOf(dm);
+                const trans = dm.translation
+                  ? dm.translation.replace(/^译[：:]\s*/, '').trim()
+                  : '';
+                return (
+                  <div
+                    key={dm.id}
+                    className={`dyt-dmre${st === 'done' ? ' dyt-dmre--done' : ''}`}
+                  >
+                    <p className="dyt-dmre__line">
+                      <span className={`dyt-dmre__tag${st === 'done' ? ' is-done' : ''}`}>
+                        {st === 'done' ? '已回应' : '下轮回应'}
+                      </span>
+                      <span className="dyt-dmre__user">@{dm.senderName}</span>
+                      <span className="dyt-dmre__text">{dm.text}</span>
+                    </p>
+                    {trans && trans !== dm.text ? (
+                      <p className="dyt-dmre__trans">{trans}</p>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="dyt-dmre__x"
+                      aria-label="取消圈选这条弹幕"
+                      onClick={() => props.onToggleDanmakuReply(dm.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })
+            )}
+            {replyRequestedItems.length > 0 ? (
+              <p className="dyt-dirblock__hint">最多 5 条；下一轮回应一次，重 Roll 还在。</p>
+            ) : null}
+          </section>
         </YtSheet>
+      )}
+
+      {/* 长按弹幕的编辑 / 删除菜单：挂在这里，小窗公屏和全屏弹幕流共用 */}
+      {list.menuFor && (
+        <OwnDanmakuMenu
+          item={list.menuFor}
+          onEdit={props.onEditUserDanmaku}
+          onDelete={props.onDeleteUserDanmaku}
+          onClose={() => list.setMenuFor(null)}
+        />
       )}
 
       <input
