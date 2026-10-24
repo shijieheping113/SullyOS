@@ -659,6 +659,71 @@ export function readLegacyLiveLayer(): LegacyLiveLayer {
 
 // ==================== 语音音频下载辅助 ====================
 
+// ==================== 每一拍录音的本地存档（照聊天的 voice_msg_ 同款做法，Ann 2026-10-25） ====================
+
+/**
+ * 电波每一拍的录音**本体**存在这台设备的资料库里，钥匙按拍来（像聊天的 voice_msg_消息号）。
+ * 为什么要有这一层：以前只把「临时播放地址」挂在那一拍身上——浏览器一关就失效，
+ * 而「按文字存的缓存」分不清哪一版是当前版，于是重新合成的语音刷新后会变回旧的那条。
+ * 存了本体之后：刷新、关浏览器都在；重新合成 = 覆盖同一条，新版就是当前版。
+ * 换设备 / 清缓存会丢——这是正常的。
+ */
+export const LIVE_BEAT_VOICE_ASSET_PREFIX = 'live_beat_voice_';
+
+export type LiveBeatVoiceAsset = {
+  blob: Blob;
+  /** 鱼声逐字秒数（有就一起存，播放时字幕跟得上） */
+  timeline?: unknown;
+  savedAt: number;
+};
+
+export function liveBeatVoiceAssetKey(beatId: string): string {
+  return `${LIVE_BEAT_VOICE_ASSET_PREFIX}${beatId}`;
+}
+
+/** 存 / 覆盖这一拍的录音本体。存不上只影响刷新后的回放，本次播放照常。 */
+export async function saveLiveBeatVoiceAsset(
+  beatId: string,
+  blob: Blob,
+  timeline?: unknown,
+): Promise<void> {
+  if (!beatId || !blob) return;
+  try {
+    await DB.saveAssetRaw(liveBeatVoiceAssetKey(beatId), {
+      blob,
+      timeline: timeline ?? undefined,
+      savedAt: Date.now(),
+    } as LiveBeatVoiceAsset);
+  } catch (e) {
+    console.warn('[LiveStream] 这一拍的录音没能存进本机资料库', e);
+  }
+}
+
+/** 取这一拍存下来的录音本体；没有返回 null（老数据走原来的路子）。 */
+export async function loadLiveBeatVoiceAsset(
+  beatId: string,
+): Promise<LiveBeatVoiceAsset | null> {
+  if (!beatId) return null;
+  try {
+    const stored = (await DB.getAssetRaw(liveBeatVoiceAssetKey(beatId))) as LiveBeatVoiceAsset | null;
+    return stored && stored.blob instanceof Blob ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 清掉某些拍存下来的录音（删场次 / 重 Roll 换掉旧轮 / 改台词作废旧录音时用）。 */
+export async function forgetLiveBeatVoices(beatIds: Iterable<string>): Promise<void> {
+  for (const beatId of beatIds) {
+    if (!beatId) continue;
+    try {
+      await DB.deleteAsset(liveBeatVoiceAssetKey(beatId));
+    } catch {
+      /* 清不掉不影响使用，只是留一条垃圾 */
+    }
+  }
+}
+
 export async function downloadVoiceAudioUrl(audioUrl: string, filenamePrefix = 'voice'): Promise<void> {
   if (!audioUrl) return;
   try {

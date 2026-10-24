@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { readCachedSpeechUrl, synthesizeSpeech } from '../utils/ttsRouter';
+import { readCachedSpeechUrl, synthesizeSpeechDetailed } from '../utils/ttsRouter';
 import { resolveTtsProvider } from '../utils/ttsProvider';
 import { isSecondaryLlmReady } from '../utils/secondaryLlmApi';
 import { secondaryLlmCall } from '../utils/secondaryLlmCall';
@@ -88,6 +88,9 @@ import {
   applyRoundSummary,
   restoreMissingRoundSummaries,
   loadLiveSpeechPerformEnabled,
+  saveLiveBeatVoiceAsset,
+  loadLiveBeatVoiceAsset,
+  forgetLiveBeatVoices,
 } from '../utils/liveStreamStorage';
 import {
   buildLiveStreamTurnPrompt,
@@ -440,6 +443,11 @@ const LiveStreamApp: React.FC = () => {
   }, []);
 
   const forgetLiveSession = useCallback(async (sessionId: string): Promise<void> => {
+    // 删场次时把它每一拍存下来的录音一并清掉（不清就变成永远占地方的垃圾）
+    const target = liveSessionsRef.current.find(s => s.id === sessionId);
+    if (target) {
+      void forgetLiveBeatVoices(target.chunks.flatMap(chunk => chunk.beats.map(beat => beat.id)));
+    }
     setLiveSessions(prev => prev.filter(s => s.id !== sessionId));
     try {
       await deleteLiveSession(sessionId);
@@ -889,6 +897,9 @@ const LiveStreamApp: React.FC = () => {
    */
   const voiceBeatJobsRef = useRef<Map<string, Promise<{ url: string; timeline: SpeechTimeline | null }>>>(new Map());
 
+  /** 从本机资料库取出来播放时现生成的地址；同一拍再取就先把上一个放掉，别堆垃圾 */
+  const beatAssetUrlsRef = useRef<Map<string, string>>(new Map());
+
   const synthesizeLiveBeatAudio = useCallback(
     async (
       text: string,
@@ -934,11 +945,18 @@ const LiveStreamApp: React.FC = () => {
                 });
                 if (key) saveCachedTts(key, stamped.blob).catch(() => { /* 缓存失败仍可先播这一次 */ });
               }
+              // 录音本体存进本机资料库（照聊天同款）：刷新、关浏览器后还能取回来播
+              if (beatId && stamped.blob) {
+                void saveLiveBeatVoiceAsset(beatId, stamped.blob, stamped.timeline);
+              }
               return { url: stamped.url, timeline: stamped.timeline };
             }
           }
         }
-        const url = await synthesizeSpeech(text, tempChar, apiConfig, { skipCache });
+        const { url, blob } = await synthesizeSpeechDetailed(text, tempChar, apiConfig, { skipCache });
+        if (beatId && blob) {
+          void saveLiveBeatVoiceAsset(beatId, blob, null);
+        }
         return { url, timeline: null };
       })();
       liveSynthInflightRef.current.set(synthKey, job);
@@ -1041,9 +1059,29 @@ const LiveStreamApp: React.FC = () => {
           if (!stillThisJob()) return;
         }
 
+        // 这一拍存下来的录音本体（本机资料库，照聊天同款）：刷新、关浏览器后照样取回来播。
+        // 老数据没有这一层 → 返回 null，继续走下面的老路子，不影响旧语音播放。
+        let assetUrl: string | null = null;
+        if (!options?.skipCache && storedPlay !== 'played' && storedPlay !== 'blocked' && storedPlay !== 'superseded') {
+          const storedVoice = await loadLiveBeatVoiceAsset(id);
+          if (!stillThisJob()) return;
+          if (storedVoice?.blob) {
+            const previous = beatAssetUrlsRef.current.get(id);
+            if (previous) {
+              try { URL.revokeObjectURL(previous); } catch { /* ignore */ }
+            }
+            assetUrl = URL.createObjectURL(storedVoice.blob);
+            beatAssetUrlsRef.current.set(id, assetUrl);
+          }
+        }
+
         let timestampUrl: string | null = null;
         let speechUrl: string | null = null;
-        if (!options?.skipCache && storedPlay !== 'played' && storedPlay !== 'blocked' && storedPlay !== 'superseded') {
+        if (
+          !options?.skipCache
+          && storedPlay !== 'played' && storedPlay !== 'blocked' && storedPlay !== 'superseded'
+          && !assetUrl
+        ) {
           timestampUrl = await readLiveTimestampCache(synthText, ch);
           if (!stillThisJob()) return;
           speechUrl = await readCachedSpeechUrl(synthText, tempChar, apiConfig);
@@ -1062,6 +1100,11 @@ const LiveStreamApp: React.FC = () => {
           options?.onAudioUrlReady?.(url, timeline);
           return playVoiceUrl(url, id);
         };
+        // 本机资料库里存着这一拍的录音：直接播它（刷新/关浏览器后也在这条路上）
+        if (assetUrl) {
+          const played = await playSaved(assetUrl, undefined);
+          if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
+        }
         if (source === 'timestamp-cache' && timestampUrl) {
           const played = await playSaved(timestampUrl, undefined);
           if (!stillThisJob() || played === 'played' || played === 'blocked' || played === 'superseded') return;
@@ -1734,6 +1777,14 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
 
       await rememberLiveSession(updatedSession);
 
+      // 重 Roll：旧那一轮的拍已经换掉，把它们存下来的录音一并清掉（不清就是垃圾）
+      if (existingChunk) {
+        const keptIds = new Set(beats.map(beat => beat.id));
+        void forgetLiveBeatVoices(
+          existingChunk.beats.map(beat => beat.id).filter(id => !keptIds.has(id)),
+        );
+      }
+
       // 存库即出字；对齐中文、补标注从这里开始后台跑，谁也不挡出字
       runBackgroundLiveJobs(
         updatedSession.id,
@@ -1954,6 +2005,15 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
           void DB.deleteMessages(dropIds).catch(() => {
             /* 本地轮次已截断；删聊天卡失败不阻断即时接话 */
           });
+        }
+        // 被截掉的那些拍，把它们的录音一并清掉
+        {
+          const keptIds = new Set(truncatedTarget.beats.map(beat => beat.id));
+          const orphanIds = [
+            ...targetChunk.beats.map(beat => beat.id),
+            ...dropped.flatMap(chunk => chunk.beats.map(beat => beat.id)),
+          ].filter(id => !keptIds.has(id));
+          if (orphanIds.length) void forgetLiveBeatVoices(orphanIds);
         }
         void rememberLiveSession(baseSession);
         if (currentChar) {
@@ -2230,6 +2290,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       if ((b.speechOriginal || '') !== (nextSpeechOriginal || '')) {
         delete nextBeat.audioUrl;
         delete nextBeat.speechTimeline;
+        // 台词改了，旧录音作废：连本机资料库里那一段一起清掉
+        void forgetLiveBeatVoices([b.id]);
       }
       return nextBeat;
     });
@@ -2282,6 +2344,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       if (b.speechPerform) {
         delete nextBeat.audioUrl;
         delete nextBeat.speechTimeline;
+        // 连本机资料库里那一段一起清掉
+        void forgetLiveBeatVoices([b.id]);
       }
       return nextBeat;
     });
