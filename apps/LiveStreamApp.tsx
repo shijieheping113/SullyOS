@@ -798,7 +798,6 @@ const LiveStreamApp: React.FC = () => {
       categoryLabel?: string;
       identityMode?: string;
       direction?: string;
-      previous?: string;
     },
   ): Promise<Record<string, string>> => {
     if (!currentChar) return {};
@@ -814,7 +813,6 @@ const LiveStreamApp: React.FC = () => {
         categoryLabel: extra?.categoryLabel,
         identityMode: extra?.identityMode,
         direction: extra?.direction,
-        previous: extra?.previous,
         recentMsgs,
       });
       return res;
@@ -2656,13 +2654,9 @@ const LiveStreamApp: React.FC = () => {
             selectedPresetKey === 'custom'
               ? customCategoryName.trim() || undefined
               : preset?.label;
-          const previous = [customStreamTitle.trim(), customStreamTopic.trim()]
-            .filter(Boolean)
-            .join('\n');
           void handleRequestAiField('live_title', {
             categoryLabel: categoryLabelForAi,
             direction,
-            previous,
           }).then(res => {
             if (res.title) setCustomStreamTitle(res.title);
             if (res.topic) setCustomStreamTopic(res.topic);

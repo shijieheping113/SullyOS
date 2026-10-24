@@ -156,8 +156,6 @@ export async function generateAiFieldSuggestion(opts: {
   recentMsgs?: Message[];
   /** 换一批时想往哪个方向写（可不填） */
   direction?: string;
-  /** 上一版内容，用来提醒模型别重复 */
-  previous?: string;
 }): Promise<Record<string, string>> {
   const {
     apiConfig,
@@ -169,7 +167,6 @@ export async function generateAiFieldSuggestion(opts: {
     identityMode,
     recentMsgs = [],
     direction,
-    previous,
   } = opts;
   const userName = (userProfile?.name || '你').trim() || '你';
   const recentSnippet = recentMsgs
@@ -178,15 +175,10 @@ export async function generateAiFieldSuggestion(opts: {
     .map(m => `${m.role === 'user' ? userName : char.name}: ${(m.content || '').slice(0, 90)}`)
     .join('\n');
 
-  // 换一批时：有方向就照方向，没方向也要提醒别和上一版撞
-  const steerBlock = [
-    (direction || '').trim() ? `这次想要的方向：${(direction || '').trim()}` : '',
-    (previous || '').trim()
-      ? `上一版是：\n${(previous || '').trim().slice(0, 300)}\n这一版必须换一个完全不同的角度，不许和上一版雷同。`
-      : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  // 换一版只带方向，不带上一版生成的内容
+  const steerBlock = (direction || '').trim()
+    ? `这次想要的方向：${(direction || '').trim()}`
+    : '';
 
   const baseContext = `角色名：${char.name}
 角色核心人设：${(char.systemPrompt || char.description || '').slice(0, 700)}
@@ -195,17 +187,27 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
 
   let taskPrompt = '';
   if (fieldKind === 'live_title') {
-    taskPrompt = `请结合 ${char.name} 的人设、说话风格与近期生活状态，为TA在【${categoryLabel || '杂谈'}】分区设计一个极具真实感、像真人在 YouTube / NicoNico 开播会取的直播标题和今日走向！
-标题默认用中文；可以带一点符合人设的外语词当点缀，但主体必须是中文，不要整条都是日文或英文。
-「今天播什么」只写开场钩子和一段发展（40~70字）：开头留一个让人想留下来的悬念或小意外，中段把这件事往前推一步；不要写结局、不要收束、不要总结，也不要预告后面怎么收场。
+    taskPrompt = `现在你是「${char.name}」本人，正准备在【${categoryLabel || '杂谈'}】分区开播。请完全用你自己的说话习惯、自称、语气词和脾气，写下今天的直播标题和今日走向！
+
+1. 标题写法：
+   • 必须固定为「【前缀】+ 角色自己说的一句话」的样式。方括号里写 2~5 个字的时段、状态或分区主题（例如【深夜杂谈】【突击歌回】【做饭翻车中】）。
+   • 方括号后面那句话，必须是你对观众随口说的话——可以是抱怨突发状况、嘴硬、碎碎念或搞怪提问，带上平时爱用的自称、省略号或感叹号，一眼就听得出是你在说话。
+   • 默认用中文；可以夹一点符合人设的外语词或颜文字当点缀，但主体必须是中文。
+2. 今天播什么（40~75字）：
+   • 不要用第三人称写剧本大纲！要像主播本人在直播间简介栏里随手敲下的碎碎念和今日小状况。
+   • 先用自己的口吻说说眼下正在发生什么事、为什么突然开播，或者今晚打算干嘛；
+   • 可以自然露出一点角色的小心思、嘴硬或小算盘；
+   • 结尾可以留个让人想进直播间逗你的话头。不要写整场直播的结局。
+
 不要 JSON、不要 Markdown、不要解释。只写两行：
 标题：（一行）
 今天播什么：（一行）${steerBlock ? `\n\n${steerBlock}` : ''}`;
   } else if (fieldKind === 'live_topic') {
-    taskPrompt = `请结合 ${char.name} 的人设与近期记忆，为今日直播写「开场钩子 + 一段发展」（45~80字）：
-- 开头要有一个让人想留下来的悬念、小意外或没说完的话。
-- 中段把这件事往前推一小步，留一点没解决的尾巴。
-- 不要写结局、不要收束、不要总结，也不要预告后面怎么收场——写死就变成演剧本了。
+    taskPrompt = `现在你是「${char.name}」本人，正准备开播。请结合你的人设、说话习惯与近期记忆，完全用你自己的第一人称/日常自称口吻，写一段填在直播间简介里的「今天播什么」（45~80字）：
+• 不要用旁白视角写故事大纲！要像主播本人开播前随手敲在简介框里的碎碎念。
+• 开头用你平时的语气说说眼下发生了什么小状况、为什么开播，或者现在是什么状态（可以带颜文字、语气词或抱怨）。
+• 中间自然带出一点你的小心思、嘴硬或小算盘。
+• 末尾可以留个让人想进直播间互动的话头。不要把后面的经过和结局写死。
 不要 JSON、不要解释。只写一行，以「今天播什么：」开头。${steerBlock ? `\n\n${steerBlock}` : ''}`;
   } else if (fieldKind === 'channel_profile') {
     const modeDesc =
@@ -229,19 +231,42 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
 只输出 JSON：\`{"rule": "50字以内的NPC频道生成偏好描述"}\``;
   }
 
+  const roleSystem =
+    fieldKind === 'live_title'
+      ? '请直接代入主播本人的身份与口吻，写自己开播前亲手填进直播间后台的「直播标题」和「今日走向 / 直播间简介」。要充满活人感、网感和角色小性子，绝不要像旁观者写策划案或故事大纲。严格按要求的格式输出，不要解释，不要 Markdown，不要 JSON。'
+      : fieldKind === 'live_topic'
+      ? '请直接代入主播本人的身份与口吻，写自己开播前亲手填进直播间后台的「今日走向 / 直播间简介」。要充满活人感、网感和角色小性子，绝不要像旁观者写策划案或故事大纲。严格按要求的格式输出，不要解释，不要 Markdown，不要 JSON。'
+      : '你是一个敏锐、懂现代视频平台（YouTube / NicoNico）文化的创意策划助手。只输出合法 JSON。';
+
+  const isLiveTitleField = fieldKind === 'live_title' || fieldKind === 'live_topic';
+  const taskWithDirection = steerBlock ? `${taskPrompt}\n\n${steerBlock}` : taskPrompt;
+  const channelLine = channel
+    ? `当前频道：「${channel.channelName}」；简介：${channel.bio}\n`
+    : '';
+
+  // 标题 / 今天播什么：人设、世界书、记忆和正常聊天范围全部走直播同一条管网；
+  // 人设与聊天作为系统材料，最后的写作任务才是 user。
+  let messages: Array<{ role: string; content: string }>;
+  if (isLiveTitleField && userProfile) {
+    messages = await buildLiveGenerationPayload({
+      char,
+      userProfile,
+      rules: roleSystem,
+      task: `${channelLine}${taskWithDirection}`,
+      historyMessages: recentMsgs,
+      contextLimit: clampManualContextLimit(char.contextLimit),
+    });
+  } else {
+    messages = [
+      { role: 'system', content: roleSystem },
+      { role: 'user', content: `${baseContext}\n\n${taskWithDirection}` },
+    ];
+  }
+
   const raw = await callAuxOrMainLlm({
     apiConfig,
     char,
-    messages: [
-      {
-        role: 'system',
-        content:
-          fieldKind === 'live_title' || fieldKind === 'live_topic'
-            ? '你是一个敏锐、懂现代视频平台（YouTube / NicoNico）文化的创意策划助手。严格按用户要求的格式输出，不要解释，不要 Markdown，不要 JSON。'
-            : '你是一个敏锐、懂现代视频平台（YouTube / NicoNico）文化的创意策划助手。只输出合法 JSON。',
-      },
-      { role: 'user', content: `${baseContext}\n\n${taskPrompt}` },
-    ],
+    messages,
     temperature: 0.9,
     purpose: `live_custom_field_${fieldKind}`,
   });
