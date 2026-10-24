@@ -20,6 +20,7 @@ import {
   NpcWatchBeat,
   NpcStreamerChannelCard,
   DEFAULT_NPC_CHANNELS,
+  STREAM_PRESET_TEMPLATES,
 } from './liveStreamTypes';
 import type { APIConfig, CharacterProfile, Message, RealtimeConfig, UserProfile } from '../types';
 
@@ -194,11 +195,18 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
 
   let taskPrompt = '';
   if (fieldKind === 'live_title') {
-    taskPrompt = `请结合 ${char.name} 的人设、说话风格与近期生活状态，为TA在【${categoryLabel || '杂谈'}】分区设计一个极具真实感、像真人在 YouTube / NicoNico 开播会取的直播标题和今日看点脚本！
-只输出 JSON：\`{"title": "直播间标题（自然不死板，可带符合人设的外语/日文/英文点缀）", "topic": "今日直播具体内容与小插曲走向（40~70字）"}\`${steerBlock ? `\n${steerBlock}` : ''}`;
+    taskPrompt = `请结合 ${char.name} 的人设、说话风格与近期生活状态，为TA在【${categoryLabel || '杂谈'}】分区设计一个极具真实感、像真人在 YouTube / NicoNico 开播会取的直播标题和今日走向！
+标题默认用中文；可以带一点符合人设的外语词当点缀，但主体必须是中文，不要整条都是日文或英文。
+「今天播什么」只写开场钩子和一段发展（40~70字）：开头留一个让人想留下来的悬念或小意外，中段把这件事往前推一步；不要写结局、不要收束、不要总结，也不要预告后面怎么收场。
+不要 JSON、不要 Markdown、不要解释。只写两行：
+标题：（一行）
+今天播什么：（一行）${steerBlock ? `\n\n${steerBlock}` : ''}`;
   } else if (fieldKind === 'live_topic') {
-    taskPrompt = `请结合 ${char.name} 的人设与近期记忆，为今日直播构思一段具体的「直播脚本走向 / 意外小插曲 / 互动看点」（45~80字，自然生活化，不要套话）。
-只输出 JSON：\`{"topic": "..."}\`${steerBlock ? `\n${steerBlock}` : ''}`;
+    taskPrompt = `请结合 ${char.name} 的人设与近期记忆，为今日直播写「开场钩子 + 一段发展」（45~80字）：
+- 开头要有一个让人想留下来的悬念、小意外或没说完的话。
+- 中段把这件事往前推一小步，留一点没解决的尾巴。
+- 不要写结局、不要收束、不要总结，也不要预告后面怎么收场——写死就变成演剧本了。
+不要 JSON、不要解释。只写一行，以「今天播什么：」开头。${steerBlock ? `\n\n${steerBlock}` : ''}`;
   } else if (fieldKind === 'channel_profile') {
     const modeDesc =
       identityMode === 'secret_alt'
@@ -225,7 +233,13 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
     apiConfig,
     char,
     messages: [
-      { role: 'system', content: '你是一个敏锐、懂现代视频平台（YouTube / NicoNico）文化的创意策划助手。只输出合法 JSON。' },
+      {
+        role: 'system',
+        content:
+          fieldKind === 'live_title' || fieldKind === 'live_topic'
+            ? '你是一个敏锐、懂现代视频平台（YouTube / NicoNico）文化的创意策划助手。严格按用户要求的格式输出，不要解释，不要 Markdown，不要 JSON。'
+            : '你是一个敏锐、懂现代视频平台（YouTube / NicoNico）文化的创意策划助手。只输出合法 JSON。',
+      },
       { role: 'user', content: `${baseContext}\n\n${taskPrompt}` },
     ],
     temperature: 0.9,
@@ -244,12 +258,17 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
   }
   const lines = splitLooseLines(clean);
   if (fieldKind === 'live_title' || fieldKind === 'live_topic') {
-    const first = stripLabelPrefix(lines[0] || '');
-    const rest = stripLabelPrefix(lines.slice(1).join(' '));
-    return {
-      title: (first || clean).slice(0, 60),
-      topic: (rest || lines.join(' ') || clean).slice(0, 300),
-    };
+    const titleLine = lines.find(line => /^(?:直播)?标题\s*[:：]/.test(line)) || '';
+    const topicLine = lines.find(line => /^今天播什么\s*[:：]/.test(line)) || '';
+    if (fieldKind === 'live_topic') {
+      const topic = stripLabelPrefix(topicLine || lines[0] || clean);
+      return { topic: topic.slice(0, 300) };
+    }
+    const title = stripLabelPrefix(titleLine || lines[0] || clean);
+    const topic = stripLabelPrefix(
+      topicLine || lines.filter(line => line !== (titleLine || lines[0])).join(' '),
+    );
+    return { title: title.slice(0, 60), topic: topic.slice(0, 300) };
   }
   return { title: clean.slice(0, 40), topic: clean.slice(0, 300), rule: clean };
 }
@@ -261,6 +280,26 @@ export interface LiveCategorySuggestion {
   labelEn: string;
   hint: string;
 }
+
+/** 同一类的不同叫法算重复：绘画 / 数字绘画、编程 / 代码开发 这种只留一个 */
+const CATEGORY_FAMILIES: Array<[string, string[]]> = [
+  ['chat', ['杂谈', '闲聊', '聊天']],
+  ['game', ['游戏实况', '打游戏', '游戏']],
+  ['study', ['陪伴', '自习', '学习']],
+  ['radio', ['电台', '助眠', '晚安']],
+  ['cooking', ['料理', '做饭', '下厨', '厨房', '美食']],
+  ['sing', ['歌回', '唱歌', '翻唱', '歌杂']],
+  ['draw', ['绘画', '画画', '插画', '美术']],
+  ['code', ['编程', '写代码', '代码', '开发']],
+  ['musicprod', ['编曲', '音乐制作', '混音']],
+  ['read', ['读书', '阅读']],
+  ['vtuber', ['虚拟主播', 'vtuber', '管人']],
+  ['board', ['桌游', '卡牌', '棋盘']],
+  ['fit', ['健身', '运动', '锻炼']],
+  ['pet', ['宠物', '猫咖', '狗咖']],
+  ['outdoor', ['户外', '散步', '露营', '徒步']],
+  ['craft', ['手工', '手作', '编织', '陶艺']],
+];
 
 export async function generateLiveCategorySuggestions(opts: {
   apiConfig: APIConfig;
@@ -280,19 +319,43 @@ export async function generateLiveCategorySuggestions(opts: {
     .map(m => `${m.role === 'user' ? userName : char.name}: ${(m.content || '').slice(0, 70)}`)
     .join('\n');
 
+  // 已经有预设的分区、以及和出现过的分区同类的，都不再推荐
+  const presetZh = STREAM_PRESET_TEMPLATES.map(t => t.label.split(/\s+/)[0]).filter(Boolean);
+  const familyOf = (label: string) => {
+    const text = label.toLowerCase().replace(/\s+/g, '');
+    const hit = CATEGORY_FAMILIES.find(([, words]) => words.some(word => text.includes(word)));
+    return hit ? hit[0] : '';
+  };
+  const previousNames = (previous || '')
+    .split(/[、,，\s|]+/)
+    .map(name => name.trim())
+    .filter(Boolean);
+  const blockedFamilies = new Set(
+    [...presetZh, ...previousNames].map(name => familyOf(name)).filter(Boolean),
+  );
+  const isExistingCategory = (label: string) =>
+    presetZh.some(name => name === label || name.includes(label) || label.includes(name));
+  const isPreviousCategory = (label: string) =>
+    previousNames.some(name => name === label || name.includes(label) || label.includes(name));
+  const isBlockedCategory = (label: string) => {
+    const family = familyOf(label);
+    return isExistingCategory(label) || isPreviousCategory(label) || (!!family && blockedFamilies.has(family));
+  };
+
   const prompt = `你熟悉 YouTube / ニコニコ 的直播分区（Category）。
-请给主播「${char.name}」挑 3 个今天适合开的【直播分区】—— 先定分区类型，再看合不合适。
+请给主播「${char.name}」挑 4 个今天适合开的【直播分区】—— 先定分区类型，再看合不合适。
 ${channel ? `频道：${channel.channelName}；简介：${channel.bio}` : ''}
 ${persona ? `主播背景（只用来判断适合哪类分区，不要写进分区名）：${persona}` : ''}
 ${recentSnippet ? `最近生活片段（只用来判断今天适合哪类分区）：\n${recentSnippet}` : ''}
 什么算分区：杂谈、游戏实况、歌回、料理、手工绘画、读书、学习陪伴、助眠电台、户外散步、宠物、健身、桌游——平台上通用的直播类型。
 什么不算分区：这一场的节目名、视频标题、具体菜名、具体游戏或作品名、日期、数量，以及「整晚 / 挑战 / 计划 / 企划」这类节目词。
+不要推荐这些已经存在的预设分区：${presetZh.join('、')}。推荐要和它们不重复；也不要用同义词绕着说（不要用「闲聊」代替杂谈、用「游戏」代替游戏实况、用「唱歌」代替歌回），要换完全不同的类型。不够三个可以少给，绝不能拿预设凑数。
 要求：
-- 三个分区必须像平台分区一样简短通用，2~8 个汉字，类型互相拉开（不要三个都是吃的）。
+- 每个分区必须像平台分区一样简短通用，2~8 个汉字，类型互相拉开（不要三个都是吃的，也不要「绘画 / 数字绘画」这种同类重复）。
 - 英文用常见的分区英文名，2~4 个词（Just Chatting / Cooking / Karaoke / Study With Me 这种），不要自己造词。
 - 每个分区配一句 25~45 字的「分区介绍」：这一类直播一般是什么形式、画面和氛围，主播在里面通常做什么、观众来看什么。只介绍这一类，不要写这一场的具体事件，也不要写角色生平。
 ${(direction || '').trim() ? `方向：${(direction || '').trim()}` : ''}
-${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 200)}。这一批换完全不同的类型，不许重复。` : ''}
+${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 200)}。这一批不许再出现这些名字，也不许只换一个字或换个同义词。` : ''}
 格式：一行一个，用竖线隔开。不要 JSON、不要编号、不要解释：
 中文分区名 | English | 分区介绍
 例子（只示范格式和颗粒度，不要照抄）：
@@ -304,7 +367,7 @@ ${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 2
     messages: [
       {
         role: 'system',
-        content: '你只输出三行直播分区，一行一个，用竖线隔开。分区是平台类型，不是节目名或视频标题。',
+        content: '你只输出最多四行直播分区，一行一个，用竖线隔开。分区是平台类型，不是节目名或视频标题，也不要抄已有的预设分区。',
       },
       { role: 'user', content: prompt },
     ],
@@ -328,7 +391,7 @@ ${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 2
     try {
       const arr = JSON.parse(clean.slice(arrStart, arrEnd + 1));
       if (Array.isArray(arr)) {
-        arr.slice(0, 3).forEach((item: any) => {
+        arr.slice(0, 6).forEach((item: any) => {
           const label = String(item?.label ?? item?.name ?? '').trim().slice(0, 8);
           if (!label || !isCategoryLabel(label)) return;
           if (out.some(existing => existing.label === label)) return;
@@ -338,7 +401,11 @@ ${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 2
             hint: String(item?.hint ?? item?.description ?? item?.desc ?? '').trim(),
           });
         });
-        if (out.length) return out.slice(0, 3);
+        if (out.length) {
+          return out
+            .filter(item => !isBlockedCategory(item.label))
+            .slice(0, 3);
+        }
       }
     } catch {
       /* 落回行解析 */
@@ -360,9 +427,11 @@ ${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 2
       labelEn: stripLabelPrefix(cells[1] || ''),
       hint: cells.slice(2).join('，').trim(),
     });
-    if (out.length >= 3) break;
+    if (out.length >= 5) break;
   }
-  return out;
+  return out
+    .filter(item => !isBlockedCategory(item.label))
+    .slice(0, 3);
 }
 
 // ==================== 动态生成直播间专属礼物（随直播间/人设生成，拒绝死板预设） ====================

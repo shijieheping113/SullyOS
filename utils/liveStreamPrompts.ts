@@ -309,7 +309,7 @@ ${buildChannelPersonaBlock(char, channel, userName, allForbidden)}
 - 直播间标题：《${session.title}》
 - 分区类型：${session.categoryLabel}
 - 场景基调：${categoryHint}
-${session.customTopic ? `- 今日附加设定/脚本走向：${session.customTopic}` : ''}
+${session.customTopic ? `- 今天播什么（主题）：${session.customTopic}` : ''}
 
 ${REAL_STREAMER_VIBE_RULES}
 

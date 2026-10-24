@@ -171,6 +171,8 @@ export function LiveLobby({
 
   // 自定义分区推荐：候选和方向只在开播弹窗里用，不存频道
   const [categorySuggestions, setCategorySuggestions] = useState<LiveCategorySuggestion[]>([]);
+  // 这一次开播窗口里出现过的候选都记下来，换一批时全部避开
+  const [categorySeenLabels, setCategorySeenLabels] = useState<string[]>([]);
   const [categoryDirection, setCategoryDirection] = useState('');
   const [categoryBusy, setCategoryBusy] = useState(false);
   const [pickedCategoryLabel, setPickedCategoryLabel] = useState('');
@@ -182,12 +184,21 @@ export function LiveLobby({
     if (categoryBusy) return;
     setCategoryBusy(true);
     try {
-      const previous = categorySuggestions.map(item => item.label).join('、');
+      const previous = [
+        customCategoryName.trim(),
+        ...categorySeenLabels,
+        ...categorySuggestions.map(item => item.label),
+      ].filter(Boolean).join('、');
       const next = await onRecommendCategories(
         categoryDirection.trim() || undefined,
         previous || undefined,
       );
-      if (next.length) setCategorySuggestions(next);
+      if (next.length) {
+        setCategorySuggestions(next);
+        setCategorySeenLabels(seen =>
+          Array.from(new Set([...seen, ...next.map(item => item.label)])),
+        );
+      }
     } finally {
       setCategoryBusy(false);
     }
@@ -717,7 +728,7 @@ export function LiveLobby({
               rows={2}
               value={customStreamTopic}
               onChange={e => onChangeStreamTopic(e.target.value)}
-              placeholder="想聊的事、临时插曲。可以空着。"
+              placeholder="一句话：今天想聊什么、做什么。可以空着。"
               className="resize-none"
             />
           </>

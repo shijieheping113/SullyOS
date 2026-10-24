@@ -843,7 +843,7 @@ const LiveStreamApp: React.FC = () => {
         direction,
         previous,
       });
-      if (!list.length) addToast('这次没想出像分区的，再点一次', 'info');
+      if (!list.length) addToast('这次没想出新的分区，换个方向再点一次', 'info');
       return list;
     } catch (e: any) {
       addToast(e?.message || '分区没想出来，再点一次', 'error');
