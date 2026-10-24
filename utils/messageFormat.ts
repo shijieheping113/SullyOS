@@ -109,6 +109,30 @@ export function theaterWhenPhrase(dateStr?: string, slotTime?: string): string {
     return `${dayWord}${period}${time}`;
 }
 
+/**
+ * 电波卡片读给模型之前的身份清洗（Ann 2026-10-25 定，只改读出去的样子，不动卡上的数据）：
+ * - 摘掉小号的身份标记（熟人小号），只留名字；本尊的（熟人本尊）不动——角色知道本尊是用户，是对的；
+ * - 摘掉马甲两个字（匿名马甲频道 → 匿名频道、马甲留言 → 留言）；
+ * - 旧开播卡里的「你开始了直播 / 你结束了直播」换成角色名（主播是角色，不是用户）。
+ * 同号不动：没有熟人小号以后，它只是「同一个号」的意思。
+ * 已有的上百条旧卡片走这一步，读进记忆宫殿和角色聊天时也是干净的。
+ */
+export function stripLiveIdentityMarks(text: string, charName?: string): string {
+    let out = text || '';
+    out = out
+        .replace(/[（(]\s*熟人小号\s*[）)]/g, '')
+        .replace(/熟人小号/g, '')
+        .replace(/[（(]\s*马甲\s*[）)]/g, '')
+        .replace(/马甲/g, '')
+        .replace(/[（(]\s*[）)]/g, '');
+    if (charName) {
+        out = out
+            .replace(/你开始了直播/g, `${charName}开始了直播`)
+            .replace(/你结束了直播/g, `${charName}结束了直播`);
+    }
+    return out;
+}
+
 /** 仅返回内容体（不加 sender / timestamp）。调用方自行拼外层。 */
 export function normalizeMessageContent(
     msg: Message,
@@ -195,9 +219,12 @@ export function normalizeMessageContent(
                 const isRound = card.cardKind === 'live_round' || card.cardKind === 'npc_watch_round';
                 const chPart = card.channelName ? `频道《${card.channelName}》` : '';
                 const titlePart = card.title ? `本场《${card.title}》` : '';
-                const bodyText = isRound
+                const rawBodyText = isRound
                     ? (typeof card.body === 'string' ? card.body.trim() : '')
                     : (typeof card.summary === 'string' ? card.summary.trim() : '');
+                // 读给模型之前先过一遍身份清洗（Ann 2026-10-25 定）：小号不留身份标记、不写马甲两个字、
+                // 开播卡换成角色口吻。已有的旧卡片也一起干净，卡上的数据一个字不改。
+                const bodyText = stripLiveIdentityMarks(rawBodyText, charName);
 
                 // 开播/下播状态标记：单独一条，说明直播是否仍在进行
                 if (card.cardKind === 'live_session_marker') {

@@ -93,3 +93,50 @@ describe('normalizeMessageContent · webpage_card', () => {
     expect(out).not.toContain('网页正文');
   });
 });
+
+describe('normalizeMessageContent · 电波卡片读给模型前的身份清洗', () => {
+  const roundCard = (body: string) => ({
+    type: 'livestream_card',
+    cardKind: 'live_round',
+    channelName: '夜半三点的猫',
+    title: '标题',
+    body,
+    roundLabel: '第 3 轮',
+    isCompressed: false,
+  });
+
+  it('小号的身份标记摘掉只留名字；本尊的标记保留', () => {
+    const out = normalizeMessageContent(
+      mk('score_card', '{}', { scoreCard: roundCard('弹幕 Ann（熟人本尊）：加油；弹幕 momo_8921（熟人小号）：录像准备www') }),
+      'Sully', 'Ann',
+    );
+    expect(out).toContain('Ann（熟人本尊）');
+    expect(out).toContain('momo_8921：录像准备www');
+    expect(out).not.toContain('熟人小号');
+  });
+
+  it('半角括号写的也摘；马甲两个字摘掉；同号不动', () => {
+    const out = normalizeMessageContent(
+      mk('score_card', '{}', { scoreCard: roundCard('【匿名马甲频道「夜半三点的猫」】momo_8921(熟人小号)留言；SC ¥20（同号）') }),
+      'Sully', 'Ann',
+    );
+    expect(out).not.toContain('熟人小号');
+    expect(out).not.toContain('马甲');
+    expect(out).toContain('匿名频道');
+    expect(out).toContain('momo_8921留言');
+    expect(out).toContain('SC ¥20（同号）');
+  });
+
+  it('旧开播卡里的你开始了直播换成角色名', () => {
+    const body = '你开始了直播《夜间直播》（频道：Sully Official）。直播还没有结束，仍在进行中。';
+    const out = normalizeMessageContent(
+      mk('score_card', '{}', {
+        scoreCard: { type: 'livestream_card', cardKind: 'live_session_marker', sessionStatus: 'live', body, summary: body },
+      }),
+      'Sully', 'Ann',
+    );
+    expect(out).toContain('Sully开始了直播《夜间直播》');
+    expect(out).not.toContain('你开始了直播');
+    expect(out).toContain('直播还没有结束');
+  });
+});

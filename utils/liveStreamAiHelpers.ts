@@ -660,8 +660,15 @@ export async function generateLiveRoundSummary(opts: {
   channel: StreamerChannelProfile;
   session: LiveStreamSession;
   chunk: LiveChunk;
+  /** 用户的小号名单（观众马甲里非本尊的那些）；只给总结模型看，一个字都不许写进摘要 */
+  userAltNames?: string[];
 }): Promise<string> {
   const { apiConfig, char, channel, session, chunk } = opts;
+  // 这一轮里出现的小号：app 传的名单 + 这一轮弹幕里带小号标记的名字，合起来列全
+  const altNames = Array.from(new Set([
+    ...(opts.userAltNames || []),
+    ...chunk.beats.flatMap(b => (b.danmaku || []).filter(d => d.isUserAlt).map(d => d.senderName)),
+  ].map(name => (name || '').trim()).filter(Boolean)));
   const rawTranscript = chunk.beats
     .map((b, bi) => {
       const sp = b.speechTranslated ? `「${b.speechOriginal}」（同传：${b.speechTranslated}）` : b.speechOriginal ? `「${b.speechOriginal}」` : '（专注动作未开口）';
@@ -670,7 +677,9 @@ export async function generateLiveRoundSummary(opts: {
           const tag = [
             d.scAmount && d.scAmount > 0 ? `Super Chat 付费留言 ${d.scCurrency || '¥'}${d.scAmount}` : '',
             d.giftName ? `频道礼物打赏 ${d.giftEmoji || ''}${d.giftName}${d.giftAmount ? ` ${d.giftCurrency || '¥'}${d.giftAmount}` : ''}（数字贴纸，非实物）` : '',
-            d.isUserMain ? '熟人本尊' : d.isUserAlt ? '熟人小号' : '',
+            // 本尊保留：角色知道本尊是用户，是对的（Ann 2026-10-25）
+            // 小号不写身份标记，改用下面那段只给模型看的身份说明（Ann 2026-10-25 定）
+            d.isUserMain ? '熟人本尊' : '',
           ]
             .filter(Boolean)
             .join('·');
@@ -681,12 +690,22 @@ export async function generateLiveRoundSummary(opts: {
     })
     .join('\n');
 
-  const prompt = `请把「${char.name}」在频道「${channel.channelName}」直播《${session.title}》的**第 ${chunk.index + 1} 轮**压缩成供私聊续接时阅读的「你的直播记录」摘要，约 150~260 字。
+  // 只给模型看的身份说明：知道是谁才不会漏，但一个字都不许写进摘要（Ann 2026-10-25 定）
+  const altBlock = altNames.length
+    ? `
+### 身份说明（只给你看，一个字都不许写进摘要）
+这一轮里这些名字是用户的另一个号（小号）：${altNames.join('、')}。
+- TA 们的留言必须写进【公屏互动】，写名字和内容就行；
+- 严禁在摘要任何位置写出或暗示这是用户的小号：不许出现小号、马甲、另一个号这类说法，也不许把这段身份说明抄进去。
+`
+    : '';
 
+  const prompt = `请把「${char.name}」在频道「${channel.channelName}」直播《${session.title}》的**第 ${chunk.index + 1} 轮**压缩成供私聊续接时阅读的「你的直播记录」摘要，约 150~260 字。
+${altBlock}
 每次严格按下面四项、顺序和标题输出；标题不可改名、不可增删，不要写额外开头或结尾：
 【直播内容】按发生顺序写本轮主要画面、动作和台词。
 【关键细节】保留能区分本轮的场景变化和重要原话关键词。
-【公屏互动】记录值得记的观众名与弹幕；用户/马甲留言、Super Chat 内容与金额、礼物名与金额不能漏。
+【公屏互动】记录值得记的观众名与弹幕；用户留言、Super Chat 内容与金额、礼物名与金额不能漏。
 【本轮收尾】写明停在何处、留下什么话头；没有则写“无”。
 
 要求：

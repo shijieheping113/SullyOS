@@ -242,6 +242,57 @@ describe('本轮摘要的输入', () => {
     expect(prompt).not.toContain('台词 0');
     expect(prompt).not.toContain('台词 4');
   });
+
+  it('小号的身份只给模型看：名单列全、禁口令写死，弹幕行里不带熟人小号', async () => {
+    llmQueue = ['摘要'];
+    const chunk = makeChunk(0);
+    chunk.beats[0].danmaku = [
+      dm('Ann', '我来了', { isUserMain: true }),
+      dm('momo_8921', '录像准备www', { isUserAlt: true }),
+      dm('夜里跑的小号', '又来了', { isUserAlt: true }),
+      dm('路人甲', '只是路过'),
+    ];
+
+    await generateLiveRoundSummary({
+      apiConfig: { baseUrl: 'http://x', apiKey: 'k', model: 'm' } as any,
+      char: makeChar(),
+      channel: makeChannel(),
+      session: makeSession([chunk]),
+      chunk,
+      // app 传的名单（可能有好几个小号）
+      userAltNames: ['momo_8921', '夜里跑的小号', '第三个号'],
+    });
+
+    const prompt = llmCalls[0].messages[0].content;
+    // 身份说明只给模型看：名单列全（app 的名单 + 这一轮弹幕里带标记的名字）
+    expect(prompt).toContain('身份说明（只给你看，一个字都不许写进摘要）');
+    expect(prompt).toContain('momo_8921、夜里跑的小号、第三个号');
+    expect(prompt).toContain('TA 们的留言必须写进【公屏互动】');
+    expect(prompt).toContain('严禁在摘要任何位置写出或暗示这是用户的小号');
+    // 弹幕行里不再写身份标记；本尊的还留着
+    expect(prompt).toContain('Ann（熟人本尊）');
+    expect(prompt).not.toContain('熟人小号');
+    // 要求里不再提马甲
+    expect(prompt).not.toContain('用户/马甲留言');
+    expect(prompt).toContain('用户留言、Super Chat 内容与金额、礼物名与金额不能漏');
+    // 小号的弹幕本身照样在记录里（只是不带身份）
+    expect(prompt).toContain('momo_8921：录像准备www');
+  });
+
+  it('没有小号时不留身份说明那一段', async () => {
+    llmQueue = ['摘要'];
+    const chunk = makeChunk(0);
+    chunk.beats[0].danmaku = [dm('路人甲', '只是路过')];
+    await generateLiveRoundSummary({
+      apiConfig: { baseUrl: 'http://x', apiKey: 'k', model: 'm' } as any,
+      char: makeChar(),
+      channel: makeChannel(),
+      session: makeSession([chunk]),
+      chunk,
+    });
+    const prompt = llmCalls[0].messages[0].content;
+    expect(prompt).not.toContain('身份说明');
+  });
 });
 
 describe('直播切片请求的上下文范围', () => {

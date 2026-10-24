@@ -957,7 +957,9 @@ export function formatRoundBody(
       const tags = [
         d.scAmount && d.scAmount > 0 ? `Super Chat 付费留言 ¥${d.scAmount}` : '',
         d.giftName ? `频道礼物打赏 ${d.giftEmoji || ''}${d.giftName}${d.giftAmount ? ` ¥${d.giftAmount}` : ''}（数字贴纸、非实物）` : '',
-        d.isUserMain ? '熟人本尊' : d.isUserAlt ? '熟人小号' : '',
+        // 本尊保留：角色知道本尊是用户，是对的（Ann 2026-10-25）
+        // 小号不写身份：只留名字，跟普通观众一样（Ann 2026-10-25 定，别让小号被认出来）
+        d.isUserMain ? '熟人本尊' : '',
         d.translation ? `译：${d.translation}` : '',
       ].filter(Boolean);
       const who = tags.length > 0 ? `${d.senderName}（${tags.join('·')}）` : d.senderName;
@@ -1017,9 +1019,11 @@ export function buildLiveSessionMarkerCard(opts: {
   const { channel, session } = opts;
   const status = opts.status || session.status;
   const title = `《${session.title}》`;
+  // 角色口吻（Ann 2026-10-25 定）：主播是角色，不是用户，别写「你开始了直播」
+  const who = opts.charName || '主播';
   const body = status === 'live'
-    ? `你开始了直播${title}（频道：${channel.channelName}）。直播还没有结束，仍在进行中。`
-    : `你结束了直播${title}（频道：${channel.channelName}）。这场直播已经下播。`;
+    ? `${who}开始了直播${title}（频道：${channel.channelName}）。直播还没有结束，仍在进行中。`
+    : `${who}结束了直播${title}（频道：${channel.channelName}）。这场直播已经下播。`;
   return {
     type: 'livestream_card',
     cardKind: 'live_session_marker',

@@ -1281,6 +1281,8 @@ const LiveStreamApp: React.FC = () => {
         channel,
         session,
         chunk: target,
+        // 小号名单：总结模型要知道是谁才不会漏，但一个字都不许写进摘要（Ann 2026-10-25 定）
+        userAltNames: viewerPersonas.filter(persona => !persona.isMain).map(persona => persona.name),
       });
       // 拿最新的场次再写：请求期间可能有新轮、重 Roll 或编辑
       const latest = liveSessionsRef.current.find(s => s.id === session.id) || session;
