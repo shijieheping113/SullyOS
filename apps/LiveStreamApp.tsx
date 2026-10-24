@@ -87,6 +87,7 @@ import {
   pickRoundToFold,
   applyRoundSummary,
   restoreMissingRoundSummaries,
+  loadLiveSpeechPerformEnabled,
 } from '../utils/liveStreamStorage';
 import {
   buildLiveStreamTurnPrompt,
@@ -881,14 +882,27 @@ const LiveStreamApp: React.FC = () => {
    */
   const liveSynthInflightRef = useRef<Map<string, Promise<{ url: string; timeline: SpeechTimeline | null }>>>(new Map());
 
+  /**
+   * 同一拍只做一次声音（Ann 2026-10-25 定的）：这一拍无论谁先发起合成，
+   * 别处一律等那一趟或直接用它的结果，不再因为「文本不同」（原文 / 标注版）做第二遍。
+   * 手动「重新合成语音」放行：那是 Ann 要重做，允许换新的一趟。
+   */
+  const voiceBeatJobsRef = useRef<Map<string, Promise<{ url: string; timeline: SpeechTimeline | null }>>>(new Map());
+
   const synthesizeLiveBeatAudio = useCallback(
     async (
       text: string,
       channel: StreamerChannelProfile | undefined,
       skipCache?: boolean,
+      /** 哪一拍的录音；传了就受「同一拍只做一次」约束 */
+      beatId?: string,
     ): Promise<{ url: string; timeline: SpeechTimeline | null }> => {
       const tempChar = buildLiveVoiceChar(channel);
       if (!tempChar) throw new Error('没有角色');
+      if (beatId && !skipCache) {
+        const runningForBeat = voiceBeatJobsRef.current.get(beatId);
+        if (runningForBeat) return runningForBeat;
+      }
       const synthKey = [
         resolveTtsProvider(apiConfig),
         tempChar.id,
@@ -928,11 +942,15 @@ const LiveStreamApp: React.FC = () => {
         return { url, timeline: null };
       })();
       liveSynthInflightRef.current.set(synthKey, job);
+      if (beatId) voiceBeatJobsRef.current.set(beatId, job);
       try {
         return await job;
       } finally {
         if (liveSynthInflightRef.current.get(synthKey) === job) {
           liveSynthInflightRef.current.delete(synthKey);
+        }
+        if (beatId && voiceBeatJobsRef.current.get(beatId) === job) {
+          voiceBeatJobsRef.current.delete(beatId);
         }
       }
     },
@@ -995,7 +1013,7 @@ const LiveStreamApp: React.FC = () => {
             .flatMap(chunk => chunk.beats)
             .find(item => item.id === id);
         let latestBeat = findLatestBeat();
-        if (latestBeat && !latestBeat.speechPerform) {
+        if (loadLiveSpeechPerformEnabled() && latestBeat && !latestBeat.speechPerform) {
           const pendingPerform = performJobsRef.current.get(id);
           if (pendingPerform) {
             // 等的是在飞的那趟标注（不重发）；失败也会放行，回落干净原文
@@ -1007,7 +1025,7 @@ const LiveStreamApp: React.FC = () => {
         // 合成用念稿版（后台标注刚落地也算数）；没有标注回落干净原文
         let synthText = ((latestBeat?.speechPerform || latestBeat?.speechOriginal || text) || '').trim() || text;
         // 「重新合成语音」且这一拍还没有标注：先补一趟标注再合成（Ann 2026-10-25 定的）
-        if (options?.skipCache && latestBeat && !latestBeat.speechPerform) {
+        if (options?.skipCache && loadLiveSpeechPerformEnabled() && latestBeat && !latestBeat.speechPerform) {
           const freshPerform = await annotateSingleBeatForVoice(latestBeat, ch);
           if (!stillThisJob()) return;
           if (freshPerform) {
@@ -1066,7 +1084,7 @@ const LiveStreamApp: React.FC = () => {
           }
         }
         setTtsLoadingBeatId(id);
-        const made = await synthesizeLiveBeatAudio(synthText, ch, options?.skipCache);
+        const made = await synthesizeLiveBeatAudio(synthText, ch, options?.skipCache, id);
         options?.onAudioUrlReady?.(made.url, made.timeline);
         if (!stillThisJob()) {
           setTtsLoadingBeatId(prev => (prev === id ? null : prev));
@@ -1098,7 +1116,7 @@ const LiveStreamApp: React.FC = () => {
       // 等后台标注落地再合成：不然先合成干净版、标注到了又得合成一遍，白扣一次费
       const latestBefore = liveSessionsRef.current.find(session => session.id === sessionId);
       const beforeBeat = latestBefore?.chunks.flatMap(chunk => chunk.beats).find(item => item.id === beat.id);
-      if (beforeBeat && !beforeBeat.speechPerform) {
+      if (loadLiveSpeechPerformEnabled() && beforeBeat && !beforeBeat.speechPerform) {
         const pendingPerform = performJobsRef.current.get(beat.id);
         if (pendingPerform) {
           try { await pendingPerform; } catch { /* 失败回落干净原文 */ }
@@ -1111,7 +1129,7 @@ const LiveStreamApp: React.FC = () => {
       const performText = (latestBeat.speechPerform || latestBeat.speechOriginal || '').trim();
       if (!performText) return;
       try {
-        const made = await synthesizeLiveBeatAudio(performText, activeChannel);
+        const made = await synthesizeLiveBeatAudio(performText, activeChannel, undefined, beat.id);
         await persistBeatAudioUrl(sessionId, beat.id, made.url, made.timeline);
       } catch {
         // 静默预生成失败不打断直播；用户仍可点当前台词即时合成。
@@ -1243,6 +1261,13 @@ const LiveStreamApp: React.FC = () => {
   /** 等待点注册表：标注落地（含失败）之前，点台词让它发声会等这一趟，不重发不多扣钱 */
   const performJobsRef = useRef<Map<string, Promise<void>>>(new Map());
 
+  /** 一个「放行把手」：整轮共用一个，标注跑完（含失败）时放行所有等它的人 */
+  const createWaiter = () => {
+    let release!: () => void;
+    const promise = new Promise<void>(resolve => { release = resolve; });
+    return { promise, release };
+  };
+
   const repairLiveSpeechTranslationsInBackground = async (
     sessionId: string,
     savedBeats: LiveBeat[],
@@ -1362,6 +1387,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         featureOpts: { temperature: 0.3 },
         charId: channel.charId,
         timeoutMs: LIVE_SPEECH_PERFORM_TIMEOUT_MS,
+        // 共用请求层不设默认，只在这一处写 8000（Ann 定：其他都 8000）
+        maxTokens: 8000,
       });
       const cleaned = (raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();
       const start = cleaned.indexOf('[');
@@ -1389,22 +1416,22 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
   }, [apiConfig]);
 
   /**
-   * 补语音标注（后台件）：调用 + 落地 + 等待点注册。
-   * 等待点：出字后 Ann 随时能点台词让它发声——标注还没落地就等这一趟（在飞的那趟，
-   * 不重发）；失败也放行，回落干净原文。所以这一趟的结果永远有人接，不会白花。
+   * 补语音标注（后台件）：调用 + 落地 + 放行等它的人。
+   * 等待点在**存库之前**就登记好了（Ann 的规矩：只用最终文本做声音）——
+   * 所以任何播放（自动朗读 / 手点台词 / 静默提前合成）都会先等这一趟；
+   * 失败也放行，回落干净原文。结果永远有人接，不会白花。
    */
   const performLiveSpeechBeatsInBackground = async (
     sessionId: string,
     savedBeats: LiveBeat[],
     channel: StreamerChannelProfile,
+    waiter: { promise: Promise<void>; release: () => void },
   ): Promise<void> => {
-    if (!isSecondaryLlmReady(apiConfig.secondaryLlm)) return;
     const speaking = savedBeats.filter(beat => (beat.speechOriginal || '').trim());
-    if (speaking.length === 0) return;
-
-    let releaseWaiters!: () => void;
-    const waiters = new Promise<void>(resolve => { releaseWaiters = resolve; });
-    speaking.forEach(beat => performJobsRef.current.set(beat.id, waiters));
+    if (speaking.length === 0) {
+      waiter.release();
+      return;
+    }
     try {
       const annotated = await performLiveSpeechBeats(savedBeats, channel);
       // 落地：找最新场次逐拍核对（重 Roll / 改台词 / 手动标注之后，旧结果不许乱写）
@@ -1429,7 +1456,7 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       await rememberLiveSession({ ...latest, chunks: nextChunks });
     } finally {
       // 无论成败都放行等待者：失败的拍走干净原文，绝不让点台词无限等
-      releaseWaiters();
+      waiter.release();
       speaking.forEach(beat => performJobsRef.current.delete(beat.id));
     }
   };
@@ -1439,9 +1466,12 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
     sessionId: string,
     savedBeats: LiveBeat[],
     channel: StreamerChannelProfile,
+    performWaiter: { promise: Promise<void>; release: () => void } | null,
   ) => {
     void repairLiveSpeechTranslationsInBackground(sessionId, savedBeats, channel);
-    void performLiveSpeechBeatsInBackground(sessionId, savedBeats, channel);
+    if (performWaiter) {
+      void performLiveSpeechBeatsInBackground(sessionId, savedBeats, channel, performWaiter);
+    }
   };
 
   /**
@@ -1553,6 +1583,8 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         messages,
         temperature: options?.replaceChunkId ? 0.98 : 0.88,
         purpose: options?.replaceChunkId ? '重Roll直播切片' : '生成直播切片',
+        // 主内容放宽到 10000（Ann 定：主内容一万，其他 8000）
+        maxTokens: 10000,
       });
 
       // 物理过滤：严禁 AI 生成用户名或任何用户小号名字的弹幕
@@ -1688,10 +1720,27 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       };
 
       setPendingUserInputs([]);
+
+      // Ann 的规矩：只用最终文本做声音。存库之前先把「这一拍在等标注」记下来——
+      // 这样自动朗读 / 手点台词 / 静默提前合成，谁都得先等最终文本。
+      // 开关关着、或没配辅助模型：不记等待，直接念原文。
+      const performEnabled =
+        loadLiveSpeechPerformEnabled() && isSecondaryLlmReady(apiConfig.secondaryLlm);
+      const performWaiter = createWaiter();
+      const speakingBeats = beats.filter(beat => (beat.speechOriginal || '').trim());
+      if (performEnabled && speakingBeats.length > 0) {
+        speakingBeats.forEach(beat => performJobsRef.current.set(beat.id, performWaiter.promise));
+      }
+
       await rememberLiveSession(updatedSession);
 
       // 存库即出字；对齐中文、补标注从这里开始后台跑，谁也不挡出字
-      runBackgroundLiveJobs(updatedSession.id, beats, channel);
+      runBackgroundLiveJobs(
+        updatedSession.id,
+        beats,
+        channel,
+        performEnabled && speakingBeats.length > 0 ? performWaiter : null,
+      );
 
       // 重 Roll 会把这轮的旧摘要清掉（内容变了），统一交给压缩那一趟重新判断；
       // 不 await：压缩不该拖慢「推进」。

@@ -17,7 +17,7 @@ import {
   LiveVoiceClock,
   SC_TIER_OPTIONS,
 } from '../../utils/liveStreamTypes';
-import { downloadVoiceAudioUrl } from '../../utils/liveStreamStorage';
+import { downloadVoiceAudioUrl, loadLiveSpeechPerformEnabled, saveLiveSpeechPerformEnabled } from '../../utils/liveStreamStorage';
 import {
   getLatestChunkFirstBeatIndex,
   getCurrentBeatDanmakuFeed,
@@ -176,6 +176,15 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       return false;
     }
   });
+  // 「语音语气标注」开关（Ann 2026-10-25）：默认开；关掉 = 不找辅助模型、直接念原文
+  const [speechPerformEnabled, setSpeechPerformEnabled] = useState(() => loadLiveSpeechPerformEnabled());
+  const toggleSpeechPerformEnabled = () => {
+    setSpeechPerformEnabled(current => {
+      const next = !current;
+      saveLiveSpeechPerformEnabled(next);
+      return next;
+    });
+  };
   const [showDanmakuOverlay, setShowDanmakuOverlay] = useState(savedRoomSettings.showDanmakuOverlay ?? true);
   const [showTranslation, setShowTranslation] = useState(
     savedRoomSettings.showTranslation
@@ -528,6 +537,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       setAutoPlayStep={setAutoPlayStep}
       preGenerateVoice={preGenerateVoice}
       onTogglePreGenerateVoice={togglePreGenerateVoice}
+      speechPerformEnabled={speechPerformEnabled}
+      onToggleSpeechPerformEnabled={toggleSpeechPerformEnabled}
       showDanmakuOverlay={showDanmakuOverlay}
       setShowDanmakuOverlay={setShowDanmakuOverlay}
       showTranslation={showTranslation}

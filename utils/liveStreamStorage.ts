@@ -97,6 +97,28 @@ export function savePlatformTheme(theme: LivePlatformTheme): void {
   }
 }
 
+// ==================== 「语音语气标注」开关（Ann 2026-10-25） ====================
+
+/**
+ * 关掉 = 不找辅助模型补语气标注、播放直接用原文；不影响中文整理（各管各的）。
+ * 默认开。用 localStorage，跟房间里的其他开关同一套存法。
+ */
+export function loadLiveSpeechPerformEnabled(): boolean {
+  try {
+    return localStorage.getItem('live_speech_perform_enabled') !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function saveLiveSpeechPerformEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem('live_speech_perform_enabled', enabled ? '1' : '0');
+  } catch {
+    /* 忽略浏览器存储限制 */
+  }
+}
+
 /** 合并新旧两个 localStorage 键中的数组记录（按 id 去重，新记录优先，旧记录无损保留）。只读。 */
 export function readAndMergeDualKeys<T extends { id: string }>(
   primaryKey: string,

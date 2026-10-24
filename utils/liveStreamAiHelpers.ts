@@ -32,7 +32,7 @@ export async function callMainStreamerLlm(opts: {
   messages: Array<{ role: string; content: string }>;
   temperature?: number;
   purpose?: string;
-  /** 最大输出 token：摘要这类必须封顶的活用它，防止模型跑飞（Ann 2026-10-25） */
+  /** 最大输出 token；不传按电波默认 8000 封顶（Ann 2026-10-25：防跑飞烧钱） */
   maxTokens?: number;
 }): Promise<string> {
   const { apiConfig, char, messages, temperature, purpose = 'live_stream' } = opts;
@@ -40,6 +40,11 @@ export async function callMainStreamerLlm(opts: {
   if (!effective.baseUrl || !effective.apiKey) {
     throw new Error('请先在设置中配置有效的对话 API');
   }
+  // 电波专用入口：这两个函数全项目只有电波在用（LiveStreamApp + 本文件），
+  // 上限是「这一次请求随身带的参数」，不是全局设置，别的功能一点不受影响。
+  const maxTokens = typeof opts.maxTokens === 'number' && opts.maxTokens > 0
+    ? Math.round(opts.maxTokens)
+    : 8000;
   const url = `${effective.baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const data = await safeFetchJson(
     url,
@@ -54,9 +59,7 @@ export async function callMainStreamerLlm(opts: {
         messages,
         temperature: temperature ?? effective.temperature ?? 0.88,
         stream: true,
-        ...(typeof opts.maxTokens === 'number' && opts.maxTokens > 0
-          ? { max_tokens: Math.round(opts.maxTokens) }
-          : {}),
+        max_tokens: maxTokens,
       }),
     },
     1,
@@ -74,10 +77,13 @@ export async function callAuxOrMainLlm(opts: {
   purpose?: string;
   /** 传给辅助模型那趟的兜底超时（Ann 2026-10-25：卡流检测不要了——有的模型不支持流式输出，秒表会错杀；只留超时兜底） */
   timeoutMs?: number;
-  /** 最大输出 token：辅助模型和主模型回退都封顶，防止跑飞写巨型结果 */
+  /** 最大输出 token：辅助模型和主模型回退都封顶；不传按电波默认 8000（Ann 2026-10-25） */
   maxTokens?: number;
 }): Promise<string> {
   const { apiConfig, char, messages, temperature = 0.8, purpose = 'live_aux' } = opts;
+  const maxTokens = typeof opts.maxTokens === 'number' && opts.maxTokens > 0
+    ? Math.round(opts.maxTokens)
+    : 8000;
   if (isSecondaryLlmReady(apiConfig.secondaryLlm)) {
     try {
       const text = await secondaryLlmCall({
@@ -87,7 +93,7 @@ export async function callAuxOrMainLlm(opts: {
         featureOpts: { temperature },
         charId: char.id,
         timeoutMs: opts.timeoutMs,
-        maxTokens: opts.maxTokens,
+        maxTokens,
       });
       if (text && text.trim()) return text.trim();
     } catch (e) {
@@ -100,7 +106,7 @@ export async function callAuxOrMainLlm(opts: {
     messages,
     temperature,
     purpose,
-    maxTokens: opts.maxTokens,
+    maxTokens,
   });
 }
 

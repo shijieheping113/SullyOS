@@ -2008,6 +2008,11 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
               onToggle={props.onTogglePreGenerateVoice}
             />
             <ToggleRow
+              title="语音语气标注（带停顿和情绪）"
+              checked={props.speechPerformEnabled}
+              onToggle={props.onToggleSpeechPerformEnabled}
+            />
+            <ToggleRow
               title="画面中央显示主播圆盘头像（随语音起伏）"
               checked={showStageAvatar}
               onToggle={toggleStageAvatar}

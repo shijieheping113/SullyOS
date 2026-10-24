@@ -80,6 +80,9 @@ export interface LiveWatchScreenProps {
   setAutoPlayStep: React.Dispatch<React.SetStateAction<boolean>>;
   preGenerateVoice: boolean;
   onTogglePreGenerateVoice: () => void;
+  /** 「语音语气标注」开关（Ann 2026-10-25）：关掉 = 不找辅助模型补标注、直接念原文 */
+  speechPerformEnabled: boolean;
+  onToggleSpeechPerformEnabled: () => void;
   showDanmakuOverlay: boolean;
   setShowDanmakuOverlay: React.Dispatch<React.SetStateAction<boolean>>;
   showTranslation: boolean;
@@ -1718,6 +1721,11 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
               title="台词出现后静默预生成语音"
               checked={props.preGenerateVoice}
               onToggle={props.onTogglePreGenerateVoice}
+            />
+            <SettingToggleRow
+              title="语音语气标注（带停顿和情绪）"
+              checked={props.speechPerformEnabled}
+              onToggle={props.onToggleSpeechPerformEnabled}
             />
             <SettingToggleRow
               title="画面中央显示主播圆盘头像（随语音起伏）"
