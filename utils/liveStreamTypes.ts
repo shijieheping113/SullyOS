@@ -217,6 +217,12 @@ export interface LiveStreamSession {
   title: string;
   categoryKey: string;
   categoryLabel: string;
+  /** 自定义分区的一句话场景基调（进提示词；预设分区留空） */
+  categoryHint?: string;
+  /** 自定义分区的中文名（中途编辑回填用；显示统一读 categoryLabel） */
+  categoryNameZh?: string;
+  /** 自定义分区的英文尾巴（中途编辑回填用；显示统一读 categoryLabel） */
+  categoryNameEn?: string;
   customTopic?: string;
   /** 本场自定义背景图（优先于频道背景图） */
   customBackgroundUrl?: string;

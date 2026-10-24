@@ -96,9 +96,11 @@ import {
   rerollCharNpcReactionOnly,
   generateAiFieldSuggestion,
   generateStreamCustomGifts,
+  generateLiveCategorySuggestions,
   generateNpcChannelPoolWithAi,
   AiFieldKind,
 } from '../utils/liveStreamPrompts';
+import type { LiveCategorySuggestion } from '../utils/liveStreamAiHelpers';
 import {
   ChannelEditorModal,
   ViewerPersonaModal,
@@ -220,6 +222,10 @@ const LiveStreamApp: React.FC = () => {
   const [selectedPresetKey, setSelectedPresetKey] = useState<string>('just_chatting');
   const [customStreamTitle, setCustomStreamTitle] = useState<string>('');
   const [customStreamTopic, setCustomStreamTopic] = useState<string>('');
+  // 自定义分区只作用于当前这场，不写进频道
+  const [customCategoryName, setCustomCategoryName] = useState<string>('');
+  const [customCategoryEn, setCustomCategoryEn] = useState<string>('');
+  const [customCategoryHint, setCustomCategoryHint] = useState<string>('');
   const [customVodTitle, setCustomVodTitle] = useState<string>('');
   const [customVodCategory, setCustomVodCategory] = useState<string>('Vlog · 日常');
 
@@ -788,7 +794,12 @@ const LiveStreamApp: React.FC = () => {
 
   const handleRequestAiField = async (
     fieldKind: AiFieldKind,
-    extra?: { categoryLabel?: string; identityMode?: string },
+    extra?: {
+      categoryLabel?: string;
+      identityMode?: string;
+      direction?: string;
+      previous?: string;
+    },
   ): Promise<Record<string, string>> => {
     if (!currentChar) return {};
     setAiHelperBusy(true);
@@ -802,6 +813,8 @@ const LiveStreamApp: React.FC = () => {
         fieldKind,
         categoryLabel: extra?.categoryLabel,
         identityMode: extra?.identityMode,
+        direction: extra?.direction,
+        previous: extra?.previous,
         recentMsgs,
       });
       return res;
@@ -810,6 +823,31 @@ const LiveStreamApp: React.FC = () => {
       return {};
     } finally {
       setAiHelperBusy(false);
+    }
+  };
+
+  // 分区推荐：一次给三个候选，方向可选；上一批用来提醒别重复
+  const handleRecommendCategories = async (
+    direction?: string,
+    previous?: string,
+  ): Promise<LiveCategorySuggestion[]> => {
+    if (!currentChar) return [];
+    try {
+      const recentMsgs = await DB.getMessagesByCharId(currentChar.id);
+      const list = await generateLiveCategorySuggestions({
+        apiConfig,
+        char: currentChar,
+        userProfile,
+        channel: activeChannel,
+        recentMsgs,
+        direction,
+        previous,
+      });
+      if (!list.length) addToast('这次没想出像分区的，再点一次', 'info');
+      return list;
+    } catch (e: any) {
+      addToast(e?.message || '分区没想出来，再点一次', 'error');
+      return [];
     }
   };
 
@@ -1359,19 +1397,43 @@ const LiveStreamApp: React.FC = () => {
 
   const handleStartNewStream = async () => {
     if (!currentChar || !activeChannel) return;
-    const preset =
-      STREAM_PRESET_TEMPLATES.find(t => t.key === selectedPresetKey) ||
-      STREAM_PRESET_TEMPLATES[0];
-    const title = customStreamTitle.trim() || preset.defaultTitle;
-    const topicNote = customStreamTopic.trim() || preset.promptHint;
+    const isCustomCategory = selectedPresetKey === 'custom';
+    const preset = STREAM_PRESET_TEMPLATES.find(t => t.key === selectedPresetKey);
+    const customZh = customCategoryName.trim().slice(0, 8);
+    if (isCustomCategory && !customZh) {
+      addToast('先给分区起个名字（8 个字以内）', 'info');
+      return;
+    }
+    const customEn = customCategoryEn.trim();
+    const categoryKey = isCustomCategory
+      ? 'custom'
+      : preset?.key || STREAM_PRESET_TEMPLATES[0].key;
+    const categoryLabel = isCustomCategory
+      ? customEn
+        ? `${customZh} ${customEn}`
+        : customZh
+      : preset?.label || STREAM_PRESET_TEMPLATES[0].label;
+    const categoryHint = isCustomCategory ? customCategoryHint.trim() : '';
+    const title =
+      customStreamTitle.trim() ||
+      (isCustomCategory
+        ? customZh
+        : preset?.defaultTitle || STREAM_PRESET_TEMPLATES[0].defaultTitle);
+    const topicNote =
+      customStreamTopic.trim() ||
+      // 预设把说明当今日走向；自定义不要重复写一遍（说明已经进场景基调了）
+      (isCustomCategory ? '' : preset?.promptHint || '');
 
     const newSession: LiveStreamSession = {
       id: `live_${Date.now()}`,
       channelId: activeChannel.id,
       charId: currentChar.id,
       title,
-      categoryKey: preset.key,
-      categoryLabel: preset.label,
+      categoryKey,
+      categoryLabel,
+      categoryHint: categoryHint || undefined,
+      categoryNameZh: isCustomCategory ? customZh : undefined,
+      categoryNameEn: isCustomCategory && customEn ? customEn : undefined,
       // 生成提示词读的是 customTopic，这里和 topicNote 一起写，开播时填的走向才会生效
       customTopic: topicNote,
       topicNote,
@@ -1945,6 +2007,9 @@ const LiveStreamApp: React.FC = () => {
     title: string;
     categoryKey: string;
     categoryLabel: string;
+    categoryHint: string;
+    categoryNameZh: string;
+    categoryNameEn: string;
     topicNote: string;
   }) => {
     const target = liveSessions.find(s => s.id === editingLiveSessionId);
@@ -1957,6 +2022,9 @@ const LiveStreamApp: React.FC = () => {
       title: next.title,
       categoryKey: next.categoryKey,
       categoryLabel: next.categoryLabel,
+      categoryHint: next.categoryHint || undefined,
+      categoryNameZh: next.categoryNameZh || undefined,
+      categoryNameEn: next.categoryNameEn || undefined,
       customTopic: next.topicNote || undefined,
       topicNote: next.topicNote || undefined,
     };
@@ -2575,9 +2643,27 @@ const LiveStreamApp: React.FC = () => {
         onChangeStreamTitle={setCustomStreamTitle}
         customStreamTopic={customStreamTopic}
         onChangeStreamTopic={setCustomStreamTopic}
-        onAiStream={() => {
+        customCategoryName={customCategoryName}
+        onChangeCategoryName={setCustomCategoryName}
+        customCategoryEn={customCategoryEn}
+        onChangeCategoryEn={setCustomCategoryEn}
+        customCategoryHint={customCategoryHint}
+        onChangeCategoryHint={setCustomCategoryHint}
+        onRecommendCategories={handleRecommendCategories}
+        onAiStream={direction => {
           const preset = STREAM_PRESET_TEMPLATES.find(t => t.key === selectedPresetKey);
-          void handleRequestAiField('live_title', { categoryLabel: preset?.label }).then(res => {
+          const categoryLabelForAi =
+            selectedPresetKey === 'custom'
+              ? customCategoryName.trim() || undefined
+              : preset?.label;
+          const previous = [customStreamTitle.trim(), customStreamTopic.trim()]
+            .filter(Boolean)
+            .join('\n');
+          void handleRequestAiField('live_title', {
+            categoryLabel: categoryLabelForAi,
+            direction,
+            previous,
+          }).then(res => {
             if (res.title) setCustomStreamTitle(res.title);
             if (res.topic) setCustomStreamTopic(res.topic);
           });
@@ -2611,11 +2697,13 @@ const LiveStreamApp: React.FC = () => {
               onRequestAiFillChannel={mode =>
                 handleRequestAiField('channel_profile', { identityMode: mode })
               }
-              onRequestAiGenerateGifts={draft =>
+              onRequestAiGenerateGifts={(draft, direction, previousNames) =>
                 generateStreamCustomGifts({
                   apiConfig,
                   char: currentChar,
                   channel: draft,
+                  direction,
+                  previousNames,
                 })
               }
               onClose={() => setShowChannelModal(false)}
@@ -2658,6 +2746,15 @@ const LiveStreamApp: React.FC = () => {
         isOpen={Boolean(editingLiveSessionId)}
         initialTitle={liveSessions.find(s => s.id === editingLiveSessionId)?.title || ''}
         initialCategoryKey={liveSessions.find(s => s.id === editingLiveSessionId)?.categoryKey || ''}
+        initialCategoryHint={
+          liveSessions.find(s => s.id === editingLiveSessionId)?.categoryHint || ''
+        }
+        initialCategoryNameZh={
+          liveSessions.find(s => s.id === editingLiveSessionId)?.categoryNameZh || ''
+        }
+        initialCategoryNameEn={
+          liveSessions.find(s => s.id === editingLiveSessionId)?.categoryNameEn || ''
+        }
         initialTopicNote={
           liveSessions.find(s => s.id === editingLiveSessionId)?.customTopic
           || liveSessions.find(s => s.id === editingLiveSessionId)?.topicNote

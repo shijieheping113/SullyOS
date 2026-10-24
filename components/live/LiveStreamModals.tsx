@@ -28,7 +28,11 @@ interface ChannelEditorModalProps {
   initialChannel?: StreamerChannelProfile | null;
   aiGenerating?: boolean;
   onRequestAiFillChannel: (identityMode: ChannelIdentityMode) => Promise<Record<string, string>>;
-  onRequestAiGenerateGifts: (channelDraft: StreamerChannelProfile) => Promise<StreamGiftOption[]>;
+  onRequestAiGenerateGifts: (
+    channelDraft: StreamerChannelProfile,
+    direction?: string,
+    previousNames?: string[],
+  ) => Promise<StreamGiftOption[]>;
   onClose: () => void;
   onSave: (channel: StreamerChannelProfile) => void;
   onDelete?: (channelId: string) => void;
@@ -63,6 +67,7 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
   const [customGifts, setCustomGifts] = useState<StreamGiftOption[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
   const [giftAiBusy, setGiftAiBusy] = useState(false);
+  const [giftDirection, setGiftDirection] = useState('');
 
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const bgInputRef = useRef<HTMLInputElement | null>(null);
@@ -431,7 +436,11 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
               onClick={async () => {
                 setGiftAiBusy(true);
                 try {
-                  const generated = await onRequestAiGenerateGifts(buildCurrentChannelObject());
+                  const generated = await onRequestAiGenerateGifts(
+                    buildCurrentChannelObject(),
+                    giftDirection.trim() || undefined,
+                    customGifts.map(item => item.name),
+                  );
                   setCustomGifts(generated);
                 } finally {
                   setGiftAiBusy(false);
@@ -439,9 +448,21 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
               }}
               className="px-2.5 py-1 rounded-full bg-amber-500 text-white text-[11px] font-bold shadow-sm disabled:opacity-50"
             >
-              {giftAiBusy ? '✨ 设计中…' : '✨ AI 根据人设生成礼物'}
+              {giftAiBusy
+                ? '✨ 设计中…'
+                : customGifts.length
+                ? '✨ 换一批'
+                : '✨ AI 根据人设生成礼物'}
             </button>
           </div>
+          {customGifts.length > 0 ? (
+            <input
+              value={giftDirection}
+              onChange={e => setGiftDirection(e.target.value)}
+              placeholder="想加点什么梗？（可不填）"
+              className="w-full h-8 rounded-lg border border-amber-200 bg-white/80 px-2 text-[11px] text-slate-700 placeholder:text-slate-400 focus:outline-none"
+            />
+          ) : null}
           <div className="grid grid-cols-1 gap-1.5">
             {customGifts.map((g, idx) => (
               <div
@@ -1002,34 +1023,92 @@ interface LiveSessionInfoModalProps {
   isOpen: boolean;
   initialTitle: string;
   initialCategoryKey: string;
+  initialCategoryHint: string;
+  initialCategoryNameZh: string;
+  initialCategoryNameEn: string;
   initialTopicNote: string;
   onClose: () => void;
-  onSave: (next: { title: string; categoryKey: string; categoryLabel: string; topicNote: string }) => void;
+  onSave: (next: {
+    title: string;
+    categoryKey: string;
+    categoryLabel: string;
+    categoryHint: string;
+    categoryNameZh: string;
+    categoryNameEn: string;
+    topicNote: string;
+  }) => void;
 }
 
 export const LiveSessionInfoModal: React.FC<LiveSessionInfoModalProps> = ({
   isOpen,
   initialTitle,
   initialCategoryKey,
+  initialCategoryHint,
+  initialCategoryNameZh,
+  initialCategoryNameEn,
   initialTopicNote,
   onClose,
   onSave,
 }) => {
   const [title, setTitle] = useState(initialTitle);
   const [categoryKey, setCategoryKey] = useState(initialCategoryKey);
+  const [categoryNameZh, setCategoryNameZh] = useState(initialCategoryNameZh);
+  const [categoryNameEn, setCategoryNameEn] = useState(initialCategoryNameEn);
+  const [categoryHint, setCategoryHint] = useState(initialCategoryHint);
   const [topicNote, setTopicNote] = useState(initialTopicNote);
 
   useEffect(() => {
     if (!isOpen) return;
     setTitle(initialTitle);
     setCategoryKey(initialCategoryKey);
+    setCategoryNameZh(initialCategoryNameZh);
+    setCategoryNameEn(initialCategoryNameEn);
+    setCategoryHint(initialCategoryHint);
     setTopicNote(initialTopicNote);
-  }, [isOpen, initialTitle, initialCategoryKey, initialTopicNote]);
+  }, [
+    isOpen,
+    initialTitle,
+    initialCategoryKey,
+    initialCategoryHint,
+    initialCategoryNameZh,
+    initialCategoryNameEn,
+    initialTopicNote,
+  ]);
 
   if (!isOpen) return null;
 
-  const preset =
-    STREAM_PRESET_TEMPLATES.find(t => t.key === categoryKey) || STREAM_PRESET_TEMPLATES[0];
+  const preset = STREAM_PRESET_TEMPLATES.find(t => t.key === categoryKey);
+
+  const save = () => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    if (categoryKey === 'custom') {
+      const zh = categoryNameZh.trim().slice(0, 8);
+      if (!zh) return;
+      const en = categoryNameEn.trim();
+      onSave({
+        title: nextTitle,
+        categoryKey: 'custom',
+        categoryLabel: en ? `${zh} ${en}` : zh,
+        categoryHint: categoryHint.trim(),
+        categoryNameZh: zh,
+        categoryNameEn: en,
+        topicNote: topicNote.trim(),
+      });
+      return;
+    }
+    const chosen =
+      STREAM_PRESET_TEMPLATES.find(t => t.key === categoryKey) || STREAM_PRESET_TEMPLATES[0];
+    onSave({
+      title: nextTitle,
+      categoryKey: chosen.key,
+      categoryLabel: chosen.label,
+      categoryHint: '',
+      categoryNameZh: '',
+      categoryNameEn: '',
+      topicNote: topicNote.trim(),
+    });
+  };
 
   return (
     <div
@@ -1076,6 +1155,40 @@ export const LiveSessionInfoModal: React.FC<LiveSessionInfoModalProps> = ({
               );
             })}
           </div>
+          <button
+            type="button"
+            onClick={() => setCategoryKey('custom')}
+            className={`mt-2 w-full rounded-xl px-2.5 py-2 text-left text-xs font-bold transition ${
+              categoryKey === 'custom'
+                ? 'bg-slate-900 text-white'
+                : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            自定义分区
+          </button>
+          {categoryKey === 'custom' ? (
+            <div className="mt-2 space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  value={categoryNameZh}
+                  onChange={e => setCategoryNameZh(e.target.value.slice(0, 8))}
+                  maxLength={8}
+                  placeholder="分区名字，最多 8 个字"
+                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                />
+                {categoryNameEn ? (
+                  <span className="shrink-0 text-[11px] text-slate-400">{categoryNameEn}</span>
+                ) : null}
+              </div>
+              <textarea
+                value={categoryHint}
+                onChange={e => setCategoryHint(e.target.value)}
+                rows={2}
+                placeholder="一句分区介绍（可不填）：这一类直播的画面和氛围"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-1.5">
@@ -1099,15 +1212,8 @@ export const LiveSessionInfoModal: React.FC<LiveSessionInfoModalProps> = ({
           </button>
           <button
             type="button"
-            disabled={!title.trim()}
-            onClick={() =>
-              onSave({
-                title: title.trim(),
-                categoryKey: preset.key,
-                categoryLabel: preset.label,
-                topicNote: topicNote.trim(),
-              })
-            }
+            disabled={!title.trim() || (categoryKey === 'custom' && !categoryNameZh.trim())}
+            onClick={save}
             className="px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-sm disabled:opacity-40"
           >
             保存并用于后续直播

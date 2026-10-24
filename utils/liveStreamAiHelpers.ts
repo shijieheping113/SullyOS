@@ -95,6 +95,55 @@ export type AiFieldKind =
   | 'vod_topic'
   | 'npc_custom_rule';
 
+/** 去掉模型爱塞的代码块围栏与思考段，别让它们混进正文 */
+function stripModelNoise(raw: string): string {
+  return (raw || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/```[a-zA-Z]*\n?/g, '')
+    .replace(/```/g, '')
+    .trim();
+}
+
+/** 宽松拆行：空行、序号、项目符号都剥掉（模型掉格式时靠这个兜） */
+function splitLooseLines(raw: string): string[] {
+  return stripModelNoise(raw)
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*(?:[-*•·]|\d+[.、)]|（\d+）)\s*/, '').trim())
+    .filter(Boolean);
+}
+
+/** 一行里用竖线 / 逗号 / 制表符隔开；认不出分隔符就整行当一格 */
+function splitLooseCells(line: string): string[] {
+  const cells = line
+    .split(/\s*[|｜,，\t]\s*/)
+    .map(cell => cell.trim())
+    .filter(Boolean);
+  return cells.length ? cells : [line.trim()].filter(Boolean);
+}
+
+/** 去掉「标题：」「今天播什么：」这类前缀和包着的引号 */
+function stripLabelPrefix(text: string): string {
+  return (text || '')
+    .replace(/^(?:直播)?标题\s*[:：]\s*/i, '')
+    .replace(/^(?:今天播什么|直播主题|主题|看点)\s*[:：]\s*/i, '')
+    .replace(/^[「"'“”]+|[」"'“”]+$/g, '')
+    .trim();
+}
+
+function tryParseJsonObject(clean: string): Record<string, unknown> | null {
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(clean.slice(start, end + 1));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateAiFieldSuggestion(opts: {
   apiConfig: APIConfig;
   char: CharacterProfile;
@@ -104,13 +153,38 @@ export async function generateAiFieldSuggestion(opts: {
   categoryLabel?: string;
   identityMode?: string;
   recentMsgs?: Message[];
+  /** 换一批时想往哪个方向写（可不填） */
+  direction?: string;
+  /** 上一版内容，用来提醒模型别重复 */
+  previous?: string;
 }): Promise<Record<string, string>> {
-  const { apiConfig, char, userProfile, channel, fieldKind, categoryLabel, identityMode, recentMsgs = [] } = opts;
+  const {
+    apiConfig,
+    char,
+    userProfile,
+    channel,
+    fieldKind,
+    categoryLabel,
+    identityMode,
+    recentMsgs = [],
+    direction,
+    previous,
+  } = opts;
   const userName = (userProfile?.name || '你').trim() || '你';
   const recentSnippet = recentMsgs
     .filter(m => !m.metadata?.superseded && (m.role === 'user' || m.role === 'assistant'))
     .slice(-8)
     .map(m => `${m.role === 'user' ? userName : char.name}: ${(m.content || '').slice(0, 90)}`)
+    .join('\n');
+
+  // 换一批时：有方向就照方向，没方向也要提醒别和上一版撞
+  const steerBlock = [
+    (direction || '').trim() ? `这次想要的方向：${(direction || '').trim()}` : '',
+    (previous || '').trim()
+      ? `上一版是：\n${(previous || '').trim().slice(0, 300)}\n这一版必须换一个完全不同的角度，不许和上一版雷同。`
+      : '',
+  ]
+    .filter(Boolean)
     .join('\n');
 
   const baseContext = `角色名：${char.name}
@@ -121,10 +195,10 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
   let taskPrompt = '';
   if (fieldKind === 'live_title') {
     taskPrompt = `请结合 ${char.name} 的人设、说话风格与近期生活状态，为TA在【${categoryLabel || '杂谈'}】分区设计一个极具真实感、像真人在 YouTube / NicoNico 开播会取的直播标题和今日看点脚本！
-只输出 JSON：\`{"title": "直播间标题（自然不死板，可带符合人设的外语/日文/英文点缀）", "topic": "今日直播具体内容与小插曲走向（40~70字）"}\``;
+只输出 JSON：\`{"title": "直播间标题（自然不死板，可带符合人设的外语/日文/英文点缀）", "topic": "今日直播具体内容与小插曲走向（40~70字）"}\`${steerBlock ? `\n${steerBlock}` : ''}`;
   } else if (fieldKind === 'live_topic') {
     taskPrompt = `请结合 ${char.name} 的人设与近期记忆，为今日直播构思一段具体的「直播脚本走向 / 意外小插曲 / 互动看点」（45~80字，自然生活化，不要套话）。
-只输出 JSON：\`{"topic": "..."}\``;
+只输出 JSON：\`{"topic": "..."}\`${steerBlock ? `\n${steerBlock}` : ''}`;
   } else if (fieldKind === 'channel_profile') {
     const modeDesc =
       identityMode === 'secret_alt'
@@ -158,14 +232,137 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
     purpose: `live_custom_field_${fieldKind}`,
   });
 
-  const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-  try {
-    const s = clean.indexOf('{');
-    const e = clean.lastIndexOf('}');
-    return JSON.parse(s >= 0 && e > s ? clean.slice(s, e + 1) : clean);
-  } catch {
-    return { title: clean.slice(0, 40), topic: clean, rule: clean };
+  const clean = stripModelNoise(raw);
+  // 先按 JSON 捞；捞不出来再按行兜，别因为一个逗号把整段丢掉
+  const parsed = tryParseJsonObject(clean);
+  if (parsed) {
+    const tidy: Record<string, string> = {};
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (typeof value === 'string' && value.trim()) tidy[key] = value.trim();
+    });
+    if (Object.keys(tidy).length) return tidy;
   }
+  const lines = splitLooseLines(clean);
+  if (fieldKind === 'live_title' || fieldKind === 'live_topic') {
+    const first = stripLabelPrefix(lines[0] || '');
+    const rest = stripLabelPrefix(lines.slice(1).join(' '));
+    return {
+      title: (first || clean).slice(0, 60),
+      topic: (rest || lines.join(' ') || clean).slice(0, 300),
+    };
+  }
+  return { title: clean.slice(0, 40), topic: clean.slice(0, 300), rule: clean };
+}
+
+// ==================== 直播分区推荐（一次给三个候选，中文名 + 英文尾巴 + 一句基调） ====================
+
+export interface LiveCategorySuggestion {
+  label: string;
+  labelEn: string;
+  hint: string;
+}
+
+export async function generateLiveCategorySuggestions(opts: {
+  apiConfig: APIConfig;
+  char: CharacterProfile;
+  userProfile?: UserProfile;
+  channel?: StreamerChannelProfile;
+  recentMsgs?: Message[];
+  direction?: string;
+  previous?: string;
+}): Promise<LiveCategorySuggestion[]> {
+  const { apiConfig, char, userProfile, channel, recentMsgs = [], direction, previous } = opts;
+  const userName = (userProfile?.name || '你').trim() || '你';
+  const persona = (char.systemPrompt || char.description || '').slice(0, 300);
+  const recentSnippet = recentMsgs
+    .filter(m => !m.metadata?.superseded && (m.role === 'user' || m.role === 'assistant'))
+    .slice(-6)
+    .map(m => `${m.role === 'user' ? userName : char.name}: ${(m.content || '').slice(0, 70)}`)
+    .join('\n');
+
+  const prompt = `你熟悉 YouTube / ニコニコ 的直播分区（Category）。
+请给主播「${char.name}」挑 3 个今天适合开的【直播分区】—— 先定分区类型，再看合不合适。
+${channel ? `频道：${channel.channelName}；简介：${channel.bio}` : ''}
+${persona ? `主播背景（只用来判断适合哪类分区，不要写进分区名）：${persona}` : ''}
+${recentSnippet ? `最近生活片段（只用来判断今天适合哪类分区）：\n${recentSnippet}` : ''}
+什么算分区：杂谈、游戏实况、歌回、料理、手工绘画、读书、学习陪伴、助眠电台、户外散步、宠物、健身、桌游——平台上通用的直播类型。
+什么不算分区：这一场的节目名、视频标题、具体菜名、具体游戏或作品名、日期、数量，以及「整晚 / 挑战 / 计划 / 企划」这类节目词。
+要求：
+- 三个分区必须像平台分区一样简短通用，2~8 个汉字，类型互相拉开（不要三个都是吃的）。
+- 英文用常见的分区英文名，2~4 个词（Just Chatting / Cooking / Karaoke / Study With Me 这种），不要自己造词。
+- 每个分区配一句 25~45 字的「分区介绍」：这一类直播一般是什么形式、画面和氛围，主播在里面通常做什么、观众来看什么。只介绍这一类，不要写这一场的具体事件，也不要写角色生平。
+${(direction || '').trim() ? `方向：${(direction || '').trim()}` : ''}
+${(previous || '').trim() ? `上一批是：${(previous || '').trim().slice(0, 200)}。这一批换完全不同的类型，不许重复。` : ''}
+格式：一行一个，用竖线隔开。不要 JSON、不要编号、不要解释：
+中文分区名 | English | 分区介绍
+例子（只示范格式和颗粒度，不要照抄）：
+深夜厨房 | Late Night Cooking | 主播在厨房做夜宵边吃边聊，镜头偶尔晃，油锅声和说话声混在一起，看的是放松和烟火气。`;
+
+  const raw = await callAuxOrMainLlm({
+    apiConfig,
+    char,
+    messages: [
+      {
+        role: 'system',
+        content: '你只输出三行直播分区，一行一个，用竖线隔开。分区是平台类型，不是节目名或视频标题。',
+      },
+      { role: 'user', content: prompt },
+    ],
+    temperature: 0.9,
+    purpose: 'live_category_suggest',
+  });
+
+  // 像不像平台分区：一句话、带标点、带数字、带节目词的一律不收
+  const isCategoryLabel = (label: string) =>
+    label.length >= 2 &&
+    !/[，。！？、,.!?0-9]/.test(label) &&
+    !/(挑战|企划|计划|整晚|通宵)/.test(label);
+
+  const out: LiveCategorySuggestion[] = [];
+  const clean = stripModelNoise(raw);
+
+  // 模型偶尔还是塞 JSON 数组，照收
+  const arrStart = clean.indexOf('[');
+  const arrEnd = clean.lastIndexOf(']');
+  if (arrStart >= 0 && arrEnd > arrStart) {
+    try {
+      const arr = JSON.parse(clean.slice(arrStart, arrEnd + 1));
+      if (Array.isArray(arr)) {
+        arr.slice(0, 3).forEach((item: any) => {
+          const label = String(item?.label ?? item?.name ?? '').trim().slice(0, 8);
+          if (!label || !isCategoryLabel(label)) return;
+          if (out.some(existing => existing.label === label)) return;
+          out.push({
+            label,
+            labelEn: String(item?.labelEn ?? item?.en ?? item?.english ?? '').trim(),
+            hint: String(item?.hint ?? item?.description ?? item?.desc ?? '').trim(),
+          });
+        });
+        if (out.length) return out.slice(0, 3);
+      }
+    } catch {
+      /* 落回行解析 */
+    }
+  }
+
+  for (const line of splitLooseLines(raw)) {
+    const hasBar = /[|｜]/.test(line);
+    const hasDash = /\s[—–]\s/.test(line);
+    if (!hasBar && !hasDash) continue;
+    const cells = hasBar
+      ? splitLooseCells(line)
+      : line.split(/\s+[—–]\s+/).map(cell => cell.trim()).filter(Boolean);
+    const label = stripLabelPrefix(cells[0] || '').slice(0, 8);
+    if (!label || !/[\u4e00-\u9fa5]/.test(label) || !isCategoryLabel(label)) continue;
+    if (out.some(item => item.label === label)) continue;
+    out.push({
+      label,
+      labelEn: stripLabelPrefix(cells[1] || ''),
+      hint: cells.slice(2).join('，').trim(),
+    });
+    if (out.length >= 3) break;
+  }
+  return out;
 }
 
 // ==================== 动态生成直播间专属礼物（随直播间/人设生成，拒绝死板预设） ====================
@@ -175,48 +372,99 @@ export async function generateStreamCustomGifts(opts: {
   char: CharacterProfile;
   channel: StreamerChannelProfile;
   streamTitle?: string;
+  /** 换一批时想加的方向（可不填） */
+  direction?: string;
+  /** 上一批的礼物名，用来提醒别重复 */
+  previousNames?: string[];
 }): Promise<StreamGiftOption[]> {
-  const { apiConfig, char, channel, streamTitle } = opts;
+  const { apiConfig, char, channel, streamTitle, direction, previousNames = [] } = opts;
   const prompt = `请根据主播「${char.name}」（频道：${channel.channelName}，简介：${channel.bio}，人设：${(char.systemPrompt || '').slice(0, 400)}）${streamTitle ? `以及本场直播主题《${streamTitle}》` : ''}，专门为这个直播间设计 4 个极具人设梗和场景感的「频道专属数字礼物贴纸」！
 这些是观众打赏用的数字贴纸/小动画，不是现实中的实物。它们与 Super Chat 完全分开：Super Chat 是付费留言，频道礼物是纯打赏，不附带留言高亮。
 不要用俗套的“火箭/跑车/舰长”，要结合TA的国籍、喜好、职业或本场直播内容（例如：手冲冰美式、猫罐头、生锈的琴弦、深夜拉面、特定梗物品等）。
-只输出 JSON 数组：
-\`\`\`json
-[
-  {"name": "礼物名称(2~12字)", "emoji": "单个贴切emoji", "price": 20, "currencySymbol": "¥"},
-  {"name": "...", "emoji": "...", "price": 80, "currencySymbol": "¥"},
-  {"name": "...", "emoji": "...", "price": 200, "currencySymbol": "¥"},
-  {"name": "...", "emoji": "...", "price": 520, "currencySymbol": "¥"}
-]
-\`\`\``;
+${(direction || '').trim() ? `这次想要的方向：${(direction || '').trim()}` : ''}
+${previousNames.length ? `上一批是：${previousNames.join('、')}。这一批全部换掉，不许重复。` : ''}
+格式：一行一个，用竖线隔开。不要 JSON，不要编号，不要解释：
+emoji | 礼物名称(2~12字) | 价格(数字)`;
 
+  const fallbackGifts: StreamGiftOption[] = channel.customGifts || [
+    { id: 'g1', name: 'Coffee Boost', emoji: '☕', price: 20, currencySymbol: '¥' },
+    { id: 'g2', name: 'Glow Stick', emoji: '🪄', price: 50, currencySymbol: '¥' },
+    { id: 'g3', name: 'Midnight Snack', emoji: '🍰', price: 120, currencySymbol: '¥' },
+    { id: 'g4', name: 'Special Encore', emoji: '🌟', price: 500, currencySymbol: '¥' },
+  ];
+
+  let raw = '';
   try {
-    const raw = await callAuxOrMainLlm({
+    raw = await callAuxOrMainLlm({
       apiConfig,
       char,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.9,
       purpose: 'live_custom_gifts_gen',
     });
-    const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-    const arr = JSON.parse(clean.slice(clean.indexOf('['), clean.lastIndexOf(']') + 1));
-    if (Array.isArray(arr) && arr.length > 0) {
-      return arr.slice(0, 4).map((g: any, i: number) => ({
-        id: `gift_dyn_${Date.now()}_${i}`,
-        name: String(g?.name || `专属投喂 #${i + 1}`).trim(),
-        emoji: String(g?.emoji || '🎁').trim(),
-        price: Number(g?.price) || (i + 1) * 50,
-        currencySymbol: String(g?.currencySymbol || '¥').trim(),
-      }));
+  } catch {
+    return fallbackGifts;
+  }
+
+  const clean = stripModelNoise(raw);
+
+  // 模型非要给 JSON 也照收
+  const arrStart = clean.indexOf('[');
+  const arrEnd = clean.lastIndexOf(']');
+  if (arrStart >= 0 && arrEnd > arrStart) {
+    try {
+      const arr = JSON.parse(clean.slice(arrStart, arrEnd + 1));
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.slice(0, 4).map((g: any, i: number) => ({
+          id: `gift_dyn_${Date.now()}_${i}`,
+          name: String(g?.name || `专属投喂 #${i + 1}`).trim(),
+          emoji: String(g?.emoji || '🎁').trim(),
+          price: Number(g?.price) || (i + 1) * 50,
+          currencySymbol: String(g?.currencySymbol || '¥').trim(),
+        }));
+      }
+    } catch {
+      /* 落回行解析 */
     }
-  } catch {}
-  return channel.customGifts || [
-    { id: 'g1', name: 'Coffee Boost', emoji: '☕', price: 20, currencySymbol: '¥' },
-    { id: 'g2', name: 'Glow Stick', emoji: '🪄', price: 50, currencySymbol: '¥' },
-    { id: 'g3', name: 'Midnight Snack', emoji: '🍰', price: 120, currencySymbol: '¥' },
-    { id: 'g4', name: 'Special Encore', emoji: '🌟', price: 500, currencySymbol: '¥' },
-  ];
+  }
+
+  // 行格式：emoji | 名字 | 价格。缺什么补什么，不许整段作废
+  const parsed: StreamGiftOption[] = [];
+  for (const line of splitLooseLines(clean)) {
+    // 只认带竖线或破折号的行，客套话不参与
+    if (!/[|｜]/.test(line) && !/\s[—–]\s/.test(line)) continue;
+    const cells = /[|｜]/.test(line)
+      ? splitLooseCells(line)
+      : line.split(/\s+[—–]\s+/).map(cell => cell.trim()).filter(Boolean);
+    if (cells.length < 2) continue;
+    let emoji = '🎁';
+    if (
+      !/\d/.test(cells[0]) &&
+      !/[\u4e00-\u9fa5]/.test(cells[0]) &&
+      Array.from(cells[0]).length <= 4
+    ) {
+      emoji = cells[0];
+      cells.shift();
+    }
+    const priceIndex = cells.findIndex(cell => /^[¥$€]?\s*\d+(?:\.\d+)?$/.test(cell));
+    const price = priceIndex >= 0 ? Number(cells[priceIndex].replace(/[^\d.]/g, '')) : 0;
+    const name = cells
+      .find((cell, idx) => idx !== priceIndex && /[\u4e00-\u9fa5A-Za-z]/.test(cell))
+      ?.trim();
+    if (!name) continue;
+    parsed.push({
+      id: `gift_dyn_${Date.now()}_${parsed.length}`,
+      name: name.slice(0, 12),
+      emoji,
+      price: price > 0 ? price : (parsed.length + 1) * 50,
+      currencySymbol: '¥',
+    });
+    if (parsed.length >= 4) break;
+  }
+
+  return parsed.length ? parsed : fallbackGifts;
 }
+
 
 // ==================== NPC 频道池重 Roll 与自定义规则生成（去刻板化） ====================
 

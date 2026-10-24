@@ -214,7 +214,11 @@ export async function buildLiveChunkGenerationMessages(opts: {
   const allForbidden = Array.from(new Set([userName, ...forbiddenViewerNames].filter(Boolean)));
 
   const preset = STREAM_PRESET_TEMPLATES.find(t => t.key === session.categoryKey);
-  const categoryHint = preset ? preset.promptHint : '自由直播，展现真实自然的主播状态。';
+  // 自定义分区自己写的说明优先；预设分区还按原来的表；都没有才用中性兜底
+  const categoryHint =
+    (session.categoryHint || '').trim() ||
+    (preset ? preset.promptHint : '') ||
+    '自由直播，展现真实自然的主播状态。';
 
   // 1. 本场前情（逐轮摘要 + 最近 3 轮原文）
   // 即将生成的那一轮下标：新建一轮 = 现有轮数；重 Roll = 被替换那一轮的下标（传进来的 session 已经摘掉它）

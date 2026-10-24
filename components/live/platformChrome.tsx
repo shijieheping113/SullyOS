@@ -226,11 +226,14 @@ export function Sheet({
   title,
   onClose,
   children,
+  footer,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  /** 固定在弹窗底部、不跟着内容滚动的一条操作栏 */
+  footer?: React.ReactNode;
 }) {
   if (!open) return null;
   return (
@@ -254,7 +257,12 @@ export function Sheet({
             <Icon name="close" size={22} />
           </IconButton>
         </div>
-        <div className="overflow-y-auto px-4 py-3 pb-6">{children}</div>
+        <div className={`overflow-y-auto px-4 py-3 ${footer ? '' : 'pb-6'}`}>{children}</div>
+        {footer ? (
+          <div className="shrink-0 border-t border-[#ececec] bg-white px-4 pt-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );

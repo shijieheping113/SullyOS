@@ -16,6 +16,7 @@ import {
   OnAirRealtimeSettings,
   STREAM_PRESET_TEMPLATES,
 } from '../../utils/liveStreamTypes';
+import type { LiveCategorySuggestion } from '../../utils/liveStreamAiHelpers';
 import {
   Icon,
   IconButton,
@@ -75,6 +76,13 @@ export function LiveLobby({
   onChangeStreamTitle,
   customStreamTopic,
   onChangeStreamTopic,
+  customCategoryName,
+  onChangeCategoryName,
+  customCategoryEn,
+  onChangeCategoryEn,
+  customCategoryHint,
+  onChangeCategoryHint,
+  onRecommendCategories,
   onAiStream,
   onStartStream,
   customVodTitle,
@@ -129,7 +137,14 @@ export function LiveLobby({
   onChangeStreamTitle: (v: string) => void;
   customStreamTopic: string;
   onChangeStreamTopic: (v: string) => void;
-  onAiStream: () => void;
+  customCategoryName: string;
+  onChangeCategoryName: (v: string) => void;
+  customCategoryEn: string;
+  onChangeCategoryEn: (v: string) => void;
+  customCategoryHint: string;
+  onChangeCategoryHint: (v: string) => void;
+  onRecommendCategories: (direction?: string, previous?: string) => Promise<LiveCategorySuggestion[]>;
+  onAiStream: (direction?: string) => void;
   onStartStream: () => void;
   customVodTitle: string;
   onChangeVodTitle: (v: string) => void;
@@ -153,6 +168,36 @@ export function LiveLobby({
   const [sheet, setSheet] = useState<'none' | 'create' | 'goLive' | 'upload' | 'accounts' | 'settings'>('none');
   const [menu, setMenu] = useState<MenuTarget>(null);
   const [liveFilter, setLiveFilter] = useState<'all' | 'live' | 'replay'>('all');
+
+  // 自定义分区推荐：候选和方向只在开播弹窗里用，不存频道
+  const [categorySuggestions, setCategorySuggestions] = useState<LiveCategorySuggestion[]>([]);
+  const [categoryDirection, setCategoryDirection] = useState('');
+  const [categoryBusy, setCategoryBusy] = useState(false);
+  const [pickedCategoryLabel, setPickedCategoryLabel] = useState('');
+  const [streamAiDirection, setStreamAiDirection] = useState('');
+  // 「今天播什么」是可选项，默认收起，避免把分区挤到下面
+  const [topicOpen, setTopicOpen] = useState(false);
+
+  const recommendCategories = async () => {
+    if (categoryBusy) return;
+    setCategoryBusy(true);
+    try {
+      const previous = categorySuggestions.map(item => item.label).join('、');
+      const next = await onRecommendCategories(
+        categoryDirection.trim() || undefined,
+        previous || undefined,
+      );
+      if (next.length) setCategorySuggestions(next);
+    } finally {
+      setCategoryBusy(false);
+    }
+  };
+
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const openCategoryPicker = () => {
+    setCategoryPickerOpen(true);
+    if (!categorySuggestions.length) void recommendCategories();
+  };
 
   const persona = viewerPersonas.find(p => p.id === activePersonaId) || viewerPersonas[0];
   const q = query.trim().toLowerCase();
@@ -563,40 +608,147 @@ export function LiveLobby({
         <MenuRow label="发布视频" hint="做一条投稿" onClick={openUpload} />
       </Sheet>
 
-      <Sheet open={sheet === 'goLive'} title={isNico ? '番組を作る' : '开始直播'} onClose={() => setSheet('none')}>
-        <FieldLabel>标题</FieldLabel>
+      <Sheet
+        open={sheet === 'goLive'}
+        title={isNico ? '番組を作る' : '开始直播'}
+        onClose={() => setSheet('none')}
+        footer={
+          <button
+            type="button"
+            disabled={isGenerating || !activeChannel}
+            onClick={onStartStream}
+            className={`w-full h-12 text-white text-[15px] font-medium disabled:opacity-40 ${isNico ? 'bg-[#111]' : 'bg-[#ff0000] rounded-full'}`}
+          >
+            {isGenerating ? '正在接通…' : isNico ? '放送開始' : '开始直播'}
+          </button>
+        }
+      >
+        <FieldLabel>分区</FieldLabel>
+        <label className="flex h-11 items-center rounded-lg bg-[#f2f2f2] px-3">
+          <select
+            aria-label="分区"
+            value={selectedPresetKey}
+            onChange={e => onSelectPreset(e.target.value)}
+            className="min-w-0 flex-1 appearance-none bg-transparent text-[14px] text-[#0f0f0f] focus:outline-none"
+          >
+            {STREAM_PRESET_TEMPLATES.map(tpl => (
+              <option key={tpl.key} value={tpl.key}>
+                {tpl.label}
+              </option>
+            ))}
+            <option value="custom">自定义</option>
+          </select>
+          <span aria-hidden="true" className="ml-2 shrink-0 text-[10px] text-[#909090]">
+            ▾
+          </span>
+        </label>
+        {selectedPresetKey === 'custom' ? (
+          <div className="mt-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-medium text-[#0f0f0f]">自定义分区</span>
+              <button
+                type="button"
+                onClick={openCategoryPicker}
+                className="h-8 rounded-full bg-[#f2f2f2] px-3 text-[11px] font-medium text-[#0f0f0f]"
+              >
+                ✨ 推荐三个 ›
+              </button>
+            </div>
+            <div className="mt-2 text-[11px] text-[#606060]">分区名</div>
+            <div className="mt-1 flex h-11 items-center rounded-lg bg-[#f2f2f2] px-3">
+              <input
+                value={customCategoryName}
+                onChange={e => {
+                  const next = e.target.value;
+                  onChangeCategoryName(next);
+                  // 手打的字就不带英文尾巴；英文只跟着推荐走
+                  if (next !== pickedCategoryLabel) {
+                    setPickedCategoryLabel('');
+                    onChangeCategoryEn('');
+                  }
+                }}
+                maxLength={8}
+                placeholder="例如：深夜厨房"
+                className="min-w-0 flex-1 bg-transparent text-[14px] text-[#0f0f0f] placeholder:text-[#909090] focus:outline-none"
+              />
+              {customCategoryEn ? (
+                <span className="ml-2 max-w-[45%] shrink-0 truncate text-[11px] text-[#909090]">
+                  {customCategoryEn}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-3 text-[11px] text-[#606060]">分区介绍（可不填）</div>
+            <textarea
+              rows={2}
+              value={customCategoryHint}
+              onChange={e => onChangeCategoryHint(e.target.value)}
+              placeholder="这一类直播的画面和氛围"
+              className="mt-1 w-full resize-none rounded-lg bg-[#f2f2f2] px-3 py-2 text-[12px] leading-5 text-[#0f0f0f] placeholder:text-[#909090] focus:outline-none"
+            />
+          </div>
+        ) : null}
+        <div className="mt-5 flex items-end justify-between">
+          <FieldLabel>标题</FieldLabel>
+          {!(customStreamTitle.trim() || customStreamTopic.trim()) ? (
+            <button
+              type="button"
+              disabled={aiHelperBusy}
+              onClick={() => onAiStream(streamAiDirection)}
+              className="mb-1.5 h-8 rounded-full bg-[#f2f2f2] px-3 text-[11px] font-medium text-[#0f0f0f] disabled:opacity-40"
+            >
+              {aiHelperBusy ? '正在写…' : '让辅助模型写标题'}
+            </button>
+          ) : null}
+        </div>
         <TextInput
           value={customStreamTitle}
           onChange={e => onChangeStreamTitle(e.target.value)}
-          placeholder="不填就用这个分类的默认标题"
+          placeholder={
+            selectedPresetKey === 'custom'
+              ? '不填就用分区名当标题'
+              : '不填就用这个分类的默认标题'
+          }
         />
         <div className="h-3" />
-        <FieldLabel>今天播什么</FieldLabel>
-        <TextArea
-          rows={3}
-          value={customStreamTopic}
-          onChange={e => onChangeStreamTopic(e.target.value)}
-          placeholder="想聊的事、临时插曲。可以空着。"
-        />
-        <div className="mt-2">
-          <button type="button" disabled={aiHelperBusy} onClick={onAiStream} className="h-11 text-[14px] font-medium text-[#0f0f0f] underline disabled:opacity-40">
-            {aiHelperBusy ? '正在写…' : '让辅助模型写标题'}
+        {topicOpen || customStreamTopic.trim() ? (
+          <>
+            <FieldLabel>今天播什么</FieldLabel>
+            <TextArea
+              rows={2}
+              value={customStreamTopic}
+              onChange={e => onChangeStreamTopic(e.target.value)}
+              placeholder="想聊的事、临时插曲。可以空着。"
+              className="resize-none"
+            />
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTopicOpen(true)}
+            className="text-[11px] font-medium text-[#606060] underline underline-offset-2"
+          >
+            + 今天播什么（可选）
           </button>
-        </div>
-        <DropDown
-          label="分类"
-          value={selectedPresetKey}
-          onChange={onSelectPreset}
-          options={STREAM_PRESET_TEMPLATES.map(tpl => ({ id: tpl.key, label: tpl.label }))}
-        />
-        <button
-          type="button"
-          disabled={isGenerating || !activeChannel}
-          onClick={onStartStream}
-          className={`mt-4 w-full h-12 text-white text-[15px] font-medium disabled:opacity-40 ${isNico ? 'bg-[#111]' : 'bg-[#ff0000] rounded-full'}`}
-        >
-          {isGenerating ? '正在接通…' : isNico ? '放送開始' : '开始直播'}
-        </button>
+        )}
+        {customStreamTitle.trim() || customStreamTopic.trim() ? (
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              value={streamAiDirection}
+              onChange={e => setStreamAiDirection(e.target.value)}
+              aria-label="标题想往哪个方向写"
+              placeholder="标题想往哪个方向写？"
+              className="h-9 min-w-0 flex-1 rounded-lg bg-[#f2f2f2] px-3 text-[12px] text-[#0f0f0f] placeholder:text-[#909090] focus:outline-none"
+            />
+            <button
+              type="button"
+              disabled={aiHelperBusy}
+              onClick={() => onAiStream(streamAiDirection)}
+              className="h-8 shrink-0 rounded-full bg-[#f2f2f2] px-3 text-[11px] font-medium text-[#0f0f0f] disabled:opacity-40"
+            >
+              {aiHelperBusy ? '正在写…' : '换一版'}
+            </button>
+          </div>
+        ) : null}
       </Sheet>
 
       <Sheet open={sheet === 'upload'} title={isNico ? '動画を投稿' : '发布视频'} onClose={() => setSheet('none')}>
@@ -712,6 +864,81 @@ export function LiveLobby({
           }}
         />
       </Sheet>
+
+      {categoryPickerOpen ? (
+        <div className="absolute inset-0 z-[90] flex flex-col justify-end">
+          <button
+            type="button"
+            aria-label="关闭推荐"
+            className="absolute inset-0 bg-black/20"
+            onClick={() => setCategoryPickerOpen(false)}
+          />
+          <div className="relative max-h-[80%] rounded-t-2xl bg-[#f7f7f7] px-4 pt-4 pb-[max(32px,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(0,0,0,0.12)]">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[15px] font-medium text-[#0f0f0f]">推荐分区</h3>
+              <button
+                type="button"
+                aria-label="关闭"
+                onClick={() => setCategoryPickerOpen(false)}
+                className="h-9 w-9 text-[18px] leading-none text-[#606060]"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                value={categoryDirection}
+                onChange={e => setCategoryDirection(e.target.value)}
+                aria-label="分区想换个方向"
+                placeholder="分区想换个方向？可不填"
+                className="h-10 min-w-0 flex-1 rounded-lg bg-white px-3 text-[12px] text-[#0f0f0f] placeholder:text-[#909090] focus:outline-none"
+              />
+              <button
+                type="button"
+                disabled={categoryBusy}
+                onClick={() => void recommendCategories()}
+                className="h-10 shrink-0 rounded-full bg-[#ececec] px-4 text-[12px] font-medium text-[#0f0f0f] disabled:opacity-40"
+              >
+                {categoryBusy ? '正在想…' : '换一批'}
+              </button>
+            </div>
+            <div className="mt-5 max-h-[52vh] space-y-2.5 overflow-y-auto">
+              {categorySuggestions.map(item => (
+                <button
+                  key={`${item.label}-${item.labelEn}`}
+                  type="button"
+                  onClick={() => {
+                    onSelectPreset('custom');
+                    onChangeCategoryName(item.label);
+                    onChangeCategoryEn(item.labelEn);
+                    onChangeCategoryHint(item.hint);
+                    setPickedCategoryLabel(item.label);
+                    setCategoryPickerOpen(false);
+                  }}
+                  className="w-full rounded-xl bg-white px-3 py-3.5 text-left active:bg-[#fafafa]"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[14px] font-medium text-[#0f0f0f]">{item.label}</span>
+                    {item.labelEn ? (
+                      <span className="min-w-0 truncate text-[11px] text-[#909090]">
+                        {item.labelEn}
+                      </span>
+                    ) : null}
+                  </div>
+                  {item.hint ? (
+                    <p className="mt-1 text-[11.5px] leading-5 text-[#606060]">{item.hint}</p>
+                  ) : null}
+                </button>
+              ))}
+              {!categorySuggestions.length && !categoryBusy ? (
+                <p className="py-8 text-center text-[12px] text-[#909090]">
+                  这次没想出像分区的，点「换一批」再试
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {channelModal}
       {personaModal}
