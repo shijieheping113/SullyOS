@@ -17,6 +17,7 @@ import { readCachedSpeechUrl, synthesizeSpeech } from '../utils/ttsRouter';
 import { resolveTtsProvider } from '../utils/ttsProvider';
 import { isSecondaryLlmReady } from '../utils/secondaryLlmApi';
 import { secondaryLlmCall } from '../utils/secondaryLlmCall';
+import { withHardTimeout } from '../utils/liveStreamAiHelpers';
 import { resolveVoiceActingGuideFromApiConfig } from '../utils/voiceMessagePrompt';
 import { fishTimestampCacheKey, resolveFishCallRefs, synthesizeFishWithTimestamp } from '../utils/fishTimestampTts';
 import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
@@ -1195,6 +1196,9 @@ const LiveStreamApp: React.FC = () => {
 
   // ==================== 1. Char 直播间核心流程 ====================
 
+  /** 一拍中文对齐最多等 8 秒：辅助模型/主模型谁卡住都不许拖直播节奏 */
+  const REPAIR_TRANSLATION_TIMEOUT_MS = 8_000;
+
   const repairLiveSpeechTranslations = async (
     beats: LiveBeat[],
     channel: StreamerChannelProfile,
@@ -1202,26 +1206,37 @@ const LiveStreamApp: React.FC = () => {
     const lang = (channel.voiceConfig?.language || '').trim();
     if (!currentChar || !lang || lang === 'zh') return beats;
     const next = beats.slice();
+    // 并行修：几拍同时对不齐时一起发，等的最长的一趟就是总等待
+    const jobs: Array<Promise<void>> = [];
     for (let i = 0; i < next.length; i += 1) {
       const beat = next[i];
       const spoken = beat.speechOriginal || '';
       const zh = beat.speechTranslated || '';
       if (!alignLiveSpeech(spoken, zh).needsRepair) continue;
-      try {
-        // 这是机械对齐（只重写中文，不改原话），走辅助模型；没配辅助模型时自动回退主模型
-        const raw = await callAuxOrMainLlm({
-          apiConfig,
-          char: currentChar,
-          messages: [{ role: 'user', content: buildLiveTranslationRepairPrompt(spoken, zh) }],
-          temperature: 0.2,
-          purpose: '对齐直播台词中文',
-        });
-        const accepted = acceptRepairedTranslation(spoken, zh, raw);
-        if (accepted !== zh) next[i] = { ...beat, speechTranslated: accepted };
-      } catch {
-        // 这一拍中文对不齐就留原文。嘴里的话照常按秒换，中文整段跟着显示。
-      }
+      jobs.push((async () => {
+        try {
+          // 这是机械对齐（只重写中文，不改原话），走辅助模型；没配辅助模型时自动回退主模型。
+          // Ann 2026-10-25：后台看到这条跑了 80 秒——流式响应头回来后 safeFetchJson 的
+          // 超时就不再管了，卡住的流会把「推进一轮」拖成几分钟。套上 8 秒硬闸，
+          // 辅助模型和主模型回退都算在这 8 秒里，超了就留原文。
+          const raw = await withHardTimeout(
+            callAuxOrMainLlm({
+              apiConfig,
+              char: currentChar,
+              messages: [{ role: 'user', content: buildLiveTranslationRepairPrompt(spoken, zh) }],
+              temperature: 0.2,
+              purpose: '对齐直播台词中文',
+            }),
+            REPAIR_TRANSLATION_TIMEOUT_MS,
+          );
+          const accepted = acceptRepairedTranslation(spoken, zh, raw);
+          if (accepted !== zh) next[i] = { ...beat, speechTranslated: accepted };
+        } catch {
+          // 这一拍中文对不齐就留原文。嘴里的话照常按秒换，中文整段跟着显示。
+        }
+      })());
     }
+    if (jobs.length) await Promise.all(jobs);
     return next;
   };
 
@@ -1258,17 +1273,20 @@ ${guide}`;
 ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：${row.emotion}）` : ''}`).join('\n')}`;
 
     try {
-      const raw = await secondaryLlmCall({
-        config: apiConfig.secondaryLlm!,
-        purpose: '直播语音表演标注',
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        featureOpts: { temperature: 0.3 },
-        charId: channel.charId,
-        timeoutMs: LIVE_SPEECH_PERFORM_TIMEOUT_MS,
-      });
+      const raw = await withHardTimeout(
+        secondaryLlmCall({
+          config: apiConfig.secondaryLlm!,
+          purpose: '直播语音表演标注',
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+          featureOpts: { temperature: 0.3 },
+          charId: channel.charId,
+          timeoutMs: LIVE_SPEECH_PERFORM_TIMEOUT_MS,
+        }),
+        LIVE_SPEECH_PERFORM_TIMEOUT_MS,
+      );
       const cleaned = (raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();
       const start = cleaned.indexOf('[');
       const end = cleaned.lastIndexOf(']');
