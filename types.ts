@@ -4290,11 +4290,12 @@ export interface FullBackupData {
     forkLiveLocal?: Record<string, string>;
     /** Spark 发帖图片（assets 里 spark_img_*，作者备份故意排除） */
     forkSparkAssets?: { id: string; data: string }[];
-    /** 电波 OnAir（直播 / 录播 / 陪看）IndexedDB，字段见 utils/liveStreamTypes.ts */
+    /** 电波 OnAir（直播 / 录播）IndexedDB，字段见 utils/liveStreamTypes.ts */
     liveChannels?: import('./utils/liveStreamTypes').StreamerChannelProfile[];
     liveSessions?: import('./utils/liveStreamTypes').LiveStreamSession[];
     liveVods?: import('./utils/liveStreamTypes').VodVideoPost[];
-    liveNpcWatches?: import('./utils/liveStreamTypes').NpcWatchSession[];
+    /** 陪看记录表：整行原样备份，字段形状由陪看模块自己解释 */
+    liveNpcWatches?: Array<{ id: string; [key: string]: any }>;
     liveKv?: { id: string; value: unknown }[];
 }
 

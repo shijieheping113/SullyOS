@@ -10,7 +10,6 @@ import {
 import { __resetLiveMigrationCache } from './liveStreamMigration';
 import {
   applyRoundSummary,
-  buildNpcRoundCard,
   formatRoundBody,
   liveRoundSignature,
   loadOnAirRealtimeSettings,
@@ -18,7 +17,6 @@ import {
   saveOnAirRealtimeSettings,
   createLiveSessionMarkerInDb,
   syncLiveChunkToDb,
-  syncNpcBeatToDb,
   updateLiveSessionMarkerInDb,
   updateLiveRoundCardSummary,
   restoreMissingRoundSummaries,
@@ -33,8 +31,6 @@ import type {
   LiveDanmakuItem,
   LiveStreamSession,
   LivestreamChatCardPayload,
-  NpcWatchBeat,
-  NpcWatchSession,
   StreamerChannelProfile,
   ViewerPersona,
 } from './liveStreamTypes';
@@ -45,8 +41,7 @@ import { DEFAULT_ONAIR_REALTIME_SETTINGS } from './liveStreamTypes';
 //   2. 每一轮在聊天里就是一条卡，摘要/编辑/重 Roll 都只改这一条，ID 与时间戳不动；
 //   3. 卡被用户删了就是删了，后续再算摘要也不许把它重建出来；
 //   4. 摘要覆盖本轮全部公屏弹幕，普通路人也在，不是只留 SC 和熟人；
-//   5. 陪看每一拍一条卡，重 Roll 那拍原地改；
-//   6. 电波「实时背景」开关存在 live_kv 里，刷新后还在。
+//   5. 电波「实时背景」开关存在 live_kv 里，刷新后还在。
 
 const CHAR_ID = 'char_round_test';
 const CHANNEL_ID = 'ch_round_test';
@@ -128,34 +123,6 @@ function makeChunk(index: number, overrides: Partial<LiveChunk> = {}): LiveChunk
     beats: [makeBeat(index * 2, id), makeBeat(index * 2 + 1, id)],
     userInputs: [dm('你', `我发的弹幕 ${index}`, { isUserMain: true })],
     ...overrides,
-  };
-}
-
-function makeNpcSession(): NpcWatchSession {
-  return {
-    id: 'npc_sess_test',
-    charId: CHAR_ID,
-    npcStreamerName: '小海豹',
-    npcCategoryLabel: 'ゲーム',
-    npcRoomTitle: '海豹突击',
-    npcBio: '',
-    coverGradient: 'from-teal-300 to-cyan-400',
-    viewerCount: 88,
-    beats: [],
-    createdAt: 1,
-  };
-}
-
-function makeNpcBeat(index: number): NpcWatchBeat {
-  return {
-    id: `npc_beat_${index}`,
-    index,
-    npcScreen: `NPC 画面 ${index}`,
-    npcSpeech: `NPC 台词 ${index}`,
-    npcDanmaku: [dm('观众X', `NPC 弹幕 ${index}`)],
-    charReactionAction: '歪头',
-    charReactionSpeech: `反应 ${index}`,
-    userActionNote: index === 0 ? '丢了颗糖' : undefined,
   };
 }
 
@@ -595,56 +562,9 @@ describe('开播状态标记', () => {
   });
 });
 
-// ==================== 3. 陪看一拍一条 ====================
+// ==================== 3. 旧卡片正文归一化 ====================
 
-describe('陪看轮次卡', () => {
-  it('每一拍落一条卡，正文含 NPC 台词、弹幕与角色反应', async () => {
-    const session = makeNpcSession();
-    const beat = makeNpcBeat(0);
-    const id = await syncNpcBeatToDb({
-      charId: CHAR_ID,
-      charName: '苏栗',
-      session,
-      beat,
-    });
-
-    const msgs = await allMessages();
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].id).toBe(id);
-    expect(msgs[0].metadata?.source).toBe('live_npc_round');
-    expect(isVisibleChatMessage(msgs[0])).toBe(true);
-
-    const card = cardOf(msgs[0])!;
-    expect(card.cardKind).toBe('npc_watch_round');
-    expect(card.roundLabel).toBe('第 1 拍');
-    expect(card.body).toContain('NPC 台词 0');
-    expect(card.body).toContain('观众X');
-    expect(card.body).toContain('反应 0');
-  });
-
-  it('重 Roll 那一拍：原地改这一条，不新增', async () => {
-    const session = makeNpcSession();
-    const beat = makeNpcBeat(0);
-    const id = await syncNpcBeatToDb({ charId: CHAR_ID, charName: '苏栗', session, beat });
-    const before = await DB.getMessageById(id);
-
-    const rerolled: NpcWatchBeat = { ...beat, charReactionSpeech: '重 Roll 的反应' };
-    await syncNpcBeatToDb({
-      charId: CHAR_ID,
-      charName: '苏栗',
-      session,
-      beat: rerolled,
-      existingDbMsgId: id,
-    });
-
-    const msgs = await allMessages();
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].timestamp).toBe(before!.timestamp);
-    // 卡片本体在 metadata.scoreCard 里；正文只写给人看的文字（Ann 2026-10-25 定）
-    expect(cardOf(msgs[0])!.body).toContain('重 Roll 的反应');
-    expect(msgs[0].content).not.toContain('{');
-  });
-
+describe('旧卡片正文归一化', () => {
   it('旧卡片正文里那段 JSON，一次性换成文字（桌面小窗口只看正文）', async () => {
     await DB.saveCharacter({ id: CHAR_ID, name: '苏栗' } as any);
     // 造一条老样子的卡：正文是 JSON
@@ -679,24 +599,6 @@ describe('陪看轮次卡', () => {
     expect(cardOf((await DB.getMessageById(id))!)!.body).toContain('画面');
     // 记过记号就不再跑
     expect(await normalizeLiveCardContentsOnce()).toBe(0);
-  });
-
-  it('两拍就是两条，按拍次各占一行', async () => {
-    const session = makeNpcSession();
-    await syncNpcBeatToDb({ charId: CHAR_ID, charName: '苏栗', session, beat: makeNpcBeat(0) });
-    await syncNpcBeatToDb({ charId: CHAR_ID, charName: '苏栗', session, beat: makeNpcBeat(1) });
-
-    const cards = (await allMessages()).map(m => cardOf(m)!);
-    expect(cards).toHaveLength(2);
-    expect(cards.map(c => c.roundIndex)).toEqual([1, 2]);
-  });
-
-  it('buildNpcRoundCard 不写库，正文与卡片用的是同一份', () => {
-    const session = makeNpcSession();
-    const beat = makeNpcBeat(1);
-    const card = buildNpcRoundCard({ charId: CHAR_ID, charName: '苏栗', session, beat });
-    expect(card.isCompressed).toBe(false);
-    expect(card.body).toContain('第 2 拍');
   });
 });
 

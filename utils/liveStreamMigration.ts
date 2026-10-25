@@ -24,6 +24,7 @@ import {
   ensureDefaultChannelForChar,
   readLegacyLiveLayer,
 } from './liveStreamStorage';
+import type { LegacyWatchRow } from './liveStreamStorage';
 import {
   STORE_LIVE_CHANNELS,
   STORE_LIVE_KV,
@@ -38,8 +39,6 @@ import {
   LiveDanmakuItem,
   LiveRollingSummary,
   LiveStreamSession,
-  NpcStreamerChannelCard,
-  NpcWatchSession,
   STREAM_PRESET_TEMPLATES,
   StreamerChannelProfile,
   ViewerPersona,
@@ -107,7 +106,7 @@ interface MigrationPayload {
   channels: StreamerChannelProfile[];
   sessions: LiveStreamSession[];
   vods: VodVideoPost[];
-  npcWatches: NpcWatchSession[];
+  npcWatches: LegacyWatchRow[];
   kv: Array<{ id: string; value: unknown }>;
 }
 
@@ -615,19 +614,15 @@ async function runMigrationOnce(): Promise<LiveMigrationReport> {
       vods.push(next);
     }
 
-    // 旧陪看一律算「还在看」（旧记录根本没有状态字段）
-    const npcWatches: NpcWatchSession[] = legacy.npcWatches.map(raw => ({
-      ...raw,
-      status: 'watching' as const,
-    }));
+    // 旧陪看记录原样搬进表：字段形状交给陪看模块自己归一，迁移层不解读
+    const npcWatches: LegacyWatchRow[] = legacy.npcWatches;
 
     const kv: Array<{ id: string; value: unknown }> = [];
     if (Array.isArray(legacy.personas) && legacy.personas.length > 0) {
       kv.push({ id: LIVE_KV_IDS.VIEWER_PERSONAS, value: legacy.personas as ViewerPersona[] });
     }
     if (Array.isArray(legacy.npcPool) && legacy.npcPool.length > 0) {
-      const pool: NpcStreamerChannelCard[] = legacy.npcPool;
-      kv.push({ id: LEGACY_NPC_POOL_KEY_ID, value: pool });
+      kv.push({ id: LEGACY_NPC_POOL_KEY_ID, value: legacy.npcPool });
     }
     if (typeof legacy.npcCustomRule === 'string' && legacy.npcCustomRule.trim()) {
       kv.push({ id: LIVE_KV_IDS.NPC_CUSTOM_RULE, value: legacy.npcCustomRule });

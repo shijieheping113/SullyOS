@@ -1631,6 +1631,26 @@ function createStaticCache(deps) {
     }
     return void 0;
   };
+  const isBuildScript = (entry) => immutablePath(entry.url) && entry.url.endsWith(".js");
+  async function verifiedScript(response, entry) {
+    try {
+      if (response.status !== 200 || entry.bytes > MAX_FILE_BYTES) return;
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength !== entry.bytes || await deps.digest(bytes) !== entry.revision) return;
+      const headers = new Headers(response.headers);
+      headers.delete("Content-Encoding");
+      headers.set("Content-Length", String(bytes.byteLength));
+      return new Response(bytes, { headers });
+    } catch {
+    }
+  }
+  const discardDamaged = (key) => serial(async () => {
+    runtimeIndex = void 0;
+    for (const name of (await caches.keys()).filter((name2) => name2.startsWith(prefix))) {
+      await (await caches.open(name)).delete(key);
+    }
+  }).catch(() => {
+  });
   const sameBuildPage = (html) => {
     const references = [...html.matchAll(/assets\/build\/[^"'\s<>)]+/g)];
     return references.length > 0 && references.every((match) => entries.has(absolute(match[0])));
@@ -1740,15 +1760,26 @@ function createStaticCache(deps) {
       async function prepare(path) {
         const entry = entries.get(absolute(path));
         if (!entry) throw new Error(`Missing shell entry: ${path}`);
-        const old = await findOwned(keyFor(entry));
+        let old = await findOwned(keyFor(entry));
+        let damaged = false;
+        if (old && isBuildScript(entry)) {
+          old = await verifiedScript(old, entry);
+          if (!old) {
+            damaged = true;
+            await discardDamaged(keyFor(entry));
+          }
+        }
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 2e4);
         try {
           const request = new Request(
             path === "index.html" ? scope.href : absolute(path),
-            { cache: immutablePath(path) ? "default" : "no-cache", signal: controller.signal }
+            { cache: damaged ? "reload" : immutablePath(path) ? "default" : "no-cache", signal: controller.signal }
           );
-          const response = old || await cacheable(await deps.fetch(request), entry);
+          let response = old || await cacheable(await deps.fetch(request), entry).catch(() => void 0);
+          if (!response && isBuildScript(entry) && request.cache !== "reload") {
+            response = await cacheable(await deps.fetch(new Request(request, { cache: "reload" })), entry);
+          }
           if (!response) throw new Error(`Resource changed during deployment: ${path}`);
           await cache.put(keyFor(entry), response);
         } finally {
@@ -1816,6 +1847,14 @@ function createStaticCache(deps) {
       }
       const age = hit ? now() - Number(hit.headers.get(SAVED_HEADER)) : 0;
       if (hit && !shell && age > MAX_AGE) hit = void 0;
+      let damaged = false;
+      if (hit && entry && isBuildScript(entry)) {
+        hit = await verifiedScript(hit, entry);
+        if (!hit) {
+          damaged = true;
+          await discardDamaged(key);
+        }
+      }
       if (hit) {
         if (stored && !shell && age > REFRESH_MS && !refreshing.has(key)) {
           refreshing.add(key);
@@ -1824,12 +1863,32 @@ function createStaticCache(deps) {
         }
         return hit;
       }
-      let response = await deps.fetch(entry && !hashed ? new Request(request, { cache: "no-cache" }) : request);
+      let response = await deps.fetch(damaged ? new Request(request, { cache: "reload" }) : entry && !hashed ? new Request(request, { cache: "no-cache" }) : request);
+      let reloaded = damaged || request.cache === "reload";
       if (entry && hashed && missing(response)) {
-        void response.body?.cancel().catch(() => {
-        });
-        response = await deps.fetch(new Request(request, { cache: "reload" }));
+        if (!reloaded) {
+          void response.body?.cancel().catch(() => {
+          });
+          response = await deps.fetch(new Request(request, { cache: "reload" }));
+        }
+        reloaded = true;
         if (missing(response)) waitUntil(markShellStale());
+      }
+      if (entry && isBuildScript(entry) && response.ok && !missing(response)) {
+        let verified = await verifiedScript(response, entry);
+        if (!verified && !reloaded) {
+          response = await deps.fetch(new Request(request, { cache: "reload" }));
+          if (missing(response)) {
+            waitUntil(markShellStale());
+            return response;
+          }
+          verified = await verifiedScript(response, entry);
+        }
+        if (!verified) {
+          waitUntil(markShellStale());
+          return Response.error();
+        }
+        response = verified;
       }
       if (!isShell && (entry || external)) waitUntil(remember(key, response.clone(), entry));
       return response;

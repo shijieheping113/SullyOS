@@ -18,7 +18,6 @@ import {
   LIVE_KV_IDS,
   LIVE_LOCAL_KEYS,
   loadLiveSessions,
-  loadNpcWatchSessions,
   upsertLiveSession,
 } from './liveStreamStorage';
 import { isVisibleChatMessage } from './chatMessageVisibility';
@@ -406,8 +405,8 @@ describe('旧消息不再被藏起来、不再被跳过', () => {
   });
 });
 
-describe('旧陪看迁进 IDB 时算「还在看」', () => {
-  it('旧记录没有 status，迁移后一律是 watching，而且场次记录保留', async () => {
+describe('旧陪看记录迁进 IDB', () => {
+  it('旧记录原样搬进表，一条不丢，旧键清掉', async () => {
     localStorage.setItem(
       LIVE_LOCAL_KEYS.NPC_WATCHES,
       JSON.stringify([
@@ -419,13 +418,9 @@ describe('旧陪看迁进 IDB 时算「还在看」', () => {
     const report = await migrateLiveStorageToIdbOnce();
     expect(report.status).toBe('done');
 
+    // 迁移层不解读陪看记录的形状，只保证条数和 id 对得上；归一留给陪看模块
     const rows = await liveNpcWatchDb.getAll();
-    expect(rows.length).toBe(2);
-    rows.forEach(row => expect(row.status).toBe('watching'));
-
-    const loaded = await loadNpcWatchSessions();
-    expect(loaded.map(r => r.id).sort()).toEqual(['npcw_1792377315810', 'npcw_1792378820424']);
-    loaded.forEach(row => expect(row.status).toBe('watching'));
+    expect(rows.map(row => row.id).sort()).toEqual(['npcw_1792377315810', 'npcw_1792378820424']);
 
     // 旧键删掉了，但数据已经在 IDB 里
     expect(localStorage.getItem(LIVE_LOCAL_KEYS.NPC_WATCHES)).toBeNull();

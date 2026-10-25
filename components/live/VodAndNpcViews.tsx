@@ -1,2 +1,2 @@
-/** 视频页和陪看页的入口。画面在 WatchScreens。 */
-export { VodDetailView, NpcWatchRoomView } from './WatchScreens';
+/** 视频页入口。画面在 WatchScreens。 */
+export { VodDetailView } from './WatchScreens';

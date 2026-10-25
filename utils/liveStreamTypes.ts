@@ -330,58 +330,14 @@ export interface VodVideoPost {
   createdAt: number;
 }
 
-// ==================== 刷其他 NPC 配信/视频（双人陪看模式） ====================
-
-/** NPC 频道卡片模板（支持用户重 Roll 换一批、自定义生成规则、去刻板化） */
-export interface NpcStreamerChannelCard {
-  id: string;
-  npcName: string;
-  handle: string;
-  categoryLabel: string;
-  roomTitle: string;
-  npcBio: string;
-  styleTag: string;
-  coverGradient: string;
-  viewerCount: number;
-}
-
-export interface NpcWatchBeat {
-  id: string;
-  index: number;
-  npcScreen: string;
-  npcSpeech: string;
-  npcSpeechTranslated?: string;
-  npcDanmaku: LiveDanmakuItem[];
-  charReactionAction: string;
-  charReactionSpeech: string;
-  charEmotion?: string;
-  charAudioUrl?: string;
-  userActionNote?: string;
-  dbMessageId?: number;
-}
-
-export interface NpcWatchSession {
-  id: string;
-  /** 还在看 / 已结束。旧数据没有这个字段时按「还在看」处理 */
-  status?: 'watching' | 'ended';
-  endedAt?: number;
-  charId: string;
-  npcStreamerName: string;
-  npcHandle?: string;
-  npcCategoryLabel: string;
-  npcRoomTitle: string;
-  npcBio: string;
-  customRulePrompt?: string;
-  coverGradient: string;
-  viewerCount: number;
-  beats: NpcWatchBeat[];
-  createdAt: number;
-}
-
 // ==================== 主聊天卡片载荷 (type: 'livestream_card') ====================
 
 export interface LivestreamChatCardPayload {
   type: 'livestream_card';
+  /**
+   * `npc_watch`：陪看退房时写进主聊天的那一张整场汇总卡；
+   * `npc_watch_round`：旧版逐拍陪看卡，只留作历史消息的渲染兼容（新功能不再产生）。
+   */
   cardKind: 'live_summary' | 'live_clip' | 'vod_share' | 'npc_watch' | 'live_round' | 'npc_watch_round' | 'live_session_marker';
   sessionId: string;
   channelId?: string;
@@ -406,7 +362,7 @@ export interface LivestreamChatCardPayload {
   isCompressed?: boolean;
   /** 逐轮卡：最近一次原位更新的时间（压缩/编辑/重 Roll），不是消息时间 */
   updatedAt?: number;
-  /** 陪看逐拍卡：第三方主播名与房间名 */
+  /** 陪看卡：第三方主播名与房间名（旧逐拍卡也带这两个字段） */
   npcStreamerName?: string;
   npcRoomTitle?: string;
   /** 开播状态标记；下播时原位更新 */
@@ -509,54 +465,6 @@ export const STREAM_PRESET_TEMPLATES: StreamPresetTemplate[] = [
     defaultTitle: 'Unplugged Session · 随性歌回与点歌',
     promptHint: '抱着吉他或对着伴奏唱歌、试音、调混响，唱到一半可能会忘词笑场、喝口润喉茶，在两首歌之间跟观众聊这首歌的故事。',
     bannerGradient: 'linear-gradient(135deg, #fce7f3 0%, #e0e7ff 55%, #dbeafe 100%)',
-  },
-];
-
-/** 默认初始 NPC 频道池（自然生活化、国际化，不再夸张刻板；支持用户在界面一键 AI 换一批或按自定义规则生成） */
-export const DEFAULT_NPC_CHANNELS: NpcStreamerChannelCard[] = [
-  {
-    id: 'npc_tokyo_walk',
-    npcName: 'Kenji Walks',
-    handle: '@kenji_nightwalk',
-    categoryLabel: 'IRL 街头漫步',
-    roomTitle: '4K Tokyo Rainy Walk · 下北泽散步实况',
-    npcBio: '拿着手持云台在东京小巷子里安静散步的摄影师，偶尔进便利店买热饮，环境音很治愈。',
-    styleTag: '街头漫步 · 治愈',
-    coverGradient: 'linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%)',
-    viewerCount: 1420,
-  },
-  {
-    id: 'npc_retro_game',
-    npcName: 'PixelLeo',
-    handle: '@pixel_leo99',
-    categoryLabel: '怀旧速通',
-    roomTitle: 'Mario 64 Speedrun Attempt #42 · 怀旧速通挑战',
-    npcBio: '较真又带点冷幽默的速通玩家，每次在同一个悬崖掉下去就会沉默三秒然后深呼吸重开。',
-    styleTag: '硬核速通 · 冷幽默',
-    coverGradient: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)',
-    viewerCount: 2850,
-  },
-  {
-    id: 'npc_cat_cafe',
-    npcName: 'Momo & 7 Cats',
-    handle: '@momo_cat_cam',
-    categoryLabel: '萌宠慢直播',
-    roomTitle: '24/7 Kittens Cam · 看看哪只小猫先把饭碗踩翻',
-    npcBio: '架在猫窝前的固定机位，店主偶尔伸手进来添粮，聊天栏全在给几只小猫配音押注。',
-    styleTag: '治愈萌宠 · 轻松',
-    coverGradient: 'linear-gradient(135deg, #fef3c7 0%, #fce7f3 100%)',
-    viewerCount: 3610,
-  },
-  {
-    id: 'npc_indie_tarot',
-    npcName: 'Clara Tea & Sketch',
-    handle: '@clara_tealeaves',
-    categoryLabel: '插画茶话',
-    roomTitle: 'Afternoon Tea & Sketchbook · 泡壶伯爵茶边画边聊',
-    npcBio: '声音温和的独立插画师，桌面摆满手绘水彩和干花，一边画稿一边和观众聊日常。',
-    styleTag: '水彩电台 · 温和',
-    coverGradient: 'linear-gradient(135deg, #d1fae5 0%, #ccfbf1 100%)',
-    viewerCount: 890,
   },
 ];
 

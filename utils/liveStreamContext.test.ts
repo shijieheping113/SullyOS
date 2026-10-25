@@ -25,21 +25,19 @@ vi.mock('./liveStreamContext', () => ({
 }));
 
 import { buildSessionHistoryBlock, buildLiveChunkGenerationMessages } from './liveStreamPrompts';
-import { generateLiveRoundSummary, generateNpcWatchBeatDualEngine } from './liveStreamAiHelpers';
+import { generateLiveRoundSummary } from './liveStreamAiHelpers';
 import type {
   LiveBeat,
   LiveChunk,
   LiveDanmakuItem,
   LiveStreamSession,
-  NpcWatchSession,
   StreamerChannelProfile,
 } from './liveStreamTypes';
 
 // 这组钉住「上下文怎么拼」：
 //   1. 本场前情按轮展开，最新 3 轮原文、更早的逐轮摘要，不再有「最近 6 条 / 160 字」那种截断；
 //   2. 本轮摘要的输入是整轮公屏（普通路人、礼物、SC、用户弹幕全在）；
-//   3. 第三方 NPC 主播只拿频道资料 + 公开实时背景，角色那一侧才用完整上下文；
-//   4. 直播生成不带情绪 buff / 日程，但保留人设 + 记忆 + 实时背景。
+//   3. 直播生成不带情绪 buff / 日程，但保留人设 + 记忆 + 实时背景。
 
 const CHAR_ID = 'char_ctx_test';
 
@@ -365,46 +363,3 @@ describe('直播切片请求的上下文范围', () => {
   });
 });
 
-describe('第三方 NPC 主播的边界', () => {
-  it('NPC 那一侧只拿频道资料和公开背景，拿不到私聊', async () => {
-    llmQueue = [
-      JSON.stringify({ npcScreen: '海豹在打游戏', npcSpeech: '大家好', danmaku: [{ senderName: '网友A', text: '来了' }] }),
-      JSON.stringify({ charReactionAction: '歪头', charReactionSpeech: '这游戏好难' }),
-    ];
-    const npcSession: NpcWatchSession = {
-      id: 'npc1',
-      charId: CHAR_ID,
-      npcStreamerName: '小海豹',
-      npcCategoryLabel: 'ゲーム',
-      npcRoomTitle: '海豹突击',
-      npcBio: '爱打游戏的海豹',
-      coverGradient: '',
-      viewerCount: 5,
-      beats: [],
-      createdAt: 1,
-    };
-    const privateHistory = [
-      { id: 1, charId: CHAR_ID, role: 'user', type: 'text', content: '这句是私聊，别念出去', timestamp: 1 },
-    ] as any[];
-
-    await generateNpcWatchBeatDualEngine({
-      apiConfig: { baseUrl: 'http://x', apiKey: 'k', model: 'm' } as any,
-      char: makeChar(),
-      userProfile: makeUser(),
-      npcSession,
-      charHistoryMessages: privateHistory,
-      realtimeConfig: { weatherEnabled: true } as RealtimeConfig,
-      publicRealtimeText: '外面在下雨',
-    });
-
-    const npcPrompt = llmCalls[0].messages[0].content;
-    expect(npcPrompt).toContain('小海豹');
-    expect(npcPrompt).toContain('外面在下雨');
-    expect(npcPrompt).not.toContain('这句是私聊，别念出去');
-
-    // 角色这一侧才吃私聊历史
-    expect(buildPayloadCalls).toHaveLength(1);
-    expect(buildPayloadCalls[0].historyMessages).toEqual(privateHistory);
-    expect(buildPayloadCalls[0].rules).toContain('不要替对方主播说话');
-  });
-});

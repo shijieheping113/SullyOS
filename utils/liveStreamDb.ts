@@ -12,7 +12,6 @@ import type {
   LiveStreamSession,
   StreamerChannelProfile,
   VodVideoPost,
-  NpcWatchSession,
 } from './liveStreamTypes';
 
 export const STORE_LIVE_CHANNELS = 'live_channels';
@@ -129,9 +128,13 @@ export const liveVodDb = {
 
 // ==================== 陪看 ====================
 
+/**
+ * 表里存的是陪看自己的会话记录（也留着早年那些旧形状的记录）。
+ * 形状由陪看模块负责归一，这一层只做整表读写，不认识里面的字段。
+ */
 export const liveNpcWatchDb = {
-  getAll: () => getAllFrom<NpcWatchSession>(STORE_LIVE_NPC_WATCHES),
-  put: (row: NpcWatchSession) =>
+  getAll: () => getAllFrom<any>(STORE_LIVE_NPC_WATCHES),
+  put: (row: { id: string }) =>
     runWrite(STORE_LIVE_NPC_WATCHES, () => putOne(STORE_LIVE_NPC_WATCHES, row)),
   delete: (id: string) =>
     runWrite(STORE_LIVE_NPC_WATCHES, () => deleteOne(STORE_LIVE_NPC_WATCHES, id)),

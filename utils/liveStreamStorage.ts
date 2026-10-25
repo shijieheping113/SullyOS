@@ -8,23 +8,18 @@ import {
   LiveStreamSession,
   LiveChunk,
   VodVideoPost,
-  NpcWatchSession,
-  NpcWatchBeat,
-  NpcStreamerChannelCard,
   LivePlatformTheme,
   LiveBeat,
   LivestreamChatCardPayload,
   OnAirRealtimeSettings,
   DEFAULT_ONAIR_REALTIME_SETTINGS,
   STREAM_PRESET_TEMPLATES,
-  DEFAULT_NPC_CHANNELS,
 } from './liveStreamTypes';
 import type { CharacterProfile, UserProfile } from '../types';
 import {
   liveChannelDb,
   liveSessionDb,
   liveVodDb,
-  liveNpcWatchDb,
   liveKvDb,
 } from './liveStreamDb';
 
@@ -321,52 +316,6 @@ function normalizeVodPostRecord(raw: any, idx = 0): VodVideoPost {
   };
 }
 
-function normalizeNpcWatchSessionRecord(raw: any, idx = 0): NpcWatchSession {
-  const beats = Array.isArray(raw?.beats)
-    ? raw.beats.map((b: any, bIdx: number) => ({
-        ...b,
-        id: String(b?.id || `npcbeat_${raw?.id || 'n'}_${bIdx}`),
-        npcScreen: b?.npcScreen || '',
-        npcSpeech: b?.npcSpeech || '',
-        npcDanmaku: Array.isArray(b?.npcDanmaku)
-          ? b.npcDanmaku.map((dm: any, dIdx: number) =>
-              typeof dm === 'string'
-                ? { id: `npcdm_${bIdx}_${dIdx}`, senderName: '观众', text: dm }
-                : {
-                    id: String(dm?.id || `npcdm_${bIdx}_${dIdx}`),
-                    senderName: dm?.senderName || '观众',
-                    text: dm?.text || '',
-                    translation: dm?.translation,
-                  },
-            )
-          : [],
-        charReactionAction: b?.charReactionAction || '',
-        charReactionSpeech: b?.charReactionSpeech || '',
-        charReactionTranslated: b?.charReactionTranslated || '',
-        charEmotion: b?.charEmotion || 'calm',
-        userActionNote: b?.userActionNote,
-        audioUrl: b?.audioUrl || b?.ttsAudioUrl || undefined,
-        dbMessageId: b?.dbMessageId,
-      }))
-    : [];
-
-  return {
-    ...raw,
-    id: String(raw.id),
-    charId: String(raw.charId || ''),
-    npcStreamerName: raw.npcStreamerName || '路人主播',
-    npcHandle: raw.npcHandle || '@live_stream',
-    npcCategoryLabel: raw.npcCategoryLabel || '直播间',
-    npcRoomTitle: raw.npcRoomTitle || '直播间',
-    npcBio: raw.npcBio || '',
-    customRulePrompt: raw.customRulePrompt,
-    coverGradient: normalizeBrightGradient(raw.coverGradient, idx),
-    viewerCount: typeof raw.viewerCount === 'number' ? raw.viewerCount : 1000,
-    beats,
-    createdAt: raw.createdAt || Date.now(),
-  };
-}
-
 // ==================== 频道档案管理（支持一个 Char 多个频道） ====================
 
 export async function loadAllChannels(): Promise<StreamerChannelProfile[]> {
@@ -558,26 +507,6 @@ export async function deleteVodPost(postId: string): Promise<void> {
   await liveVodDb.delete(postId);
 }
 
-// ==================== NPC 陪看会话与可自定义 NPC 频道池 ====================
-
-export async function loadNpcChannelPool(): Promise<NpcStreamerChannelCard[]> {
-  const saved = (await liveKvDb.get<NpcStreamerChannelCard[]>(KV_NPC_POOL)) || [];
-  return Array.isArray(saved) && saved.length > 0 ? saved : DEFAULT_NPC_CHANNELS;
-}
-
-export async function saveNpcChannelPool(pool: NpcStreamerChannelCard[]): Promise<void> {
-  await liveKvDb.put(KV_NPC_POOL, pool);
-}
-
-export async function loadNpcCustomRule(): Promise<string> {
-  const saved = await liveKvDb.get<string>(KV_NPC_CUSTOM_RULE);
-  return typeof saved === 'string' ? saved : '';
-}
-
-export async function saveNpcCustomRule(rule: string): Promise<void> {
-  await liveKvDb.put(KV_NPC_CUSTOM_RULE, rule);
-}
-
 // ---- 电波总控 · 实时背景开关（存现有 live_kv，不新增表、不动 DB 版本）----
 
 export async function loadOnAirRealtimeSettings(): Promise<OnAirRealtimeSettings> {
@@ -598,22 +527,6 @@ export async function saveOnAirRealtimeSettings(settings: OnAirRealtimeSettings)
   await liveKvDb.put(KV_ONAIR_REALTIME, settings);
 }
 
-export async function loadNpcWatchSessions(): Promise<NpcWatchSession[]> {
-  const rows = await liveNpcWatchDb.getAll();
-  return rows
-    .map((row, idx) => normalizeNpcWatchSessionRecord(row, idx))
-    .map(row => ({ ...row, status: (row.status === 'ended' ? 'ended' : 'watching') as 'watching' | 'ended' }))
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-}
-
-export async function upsertNpcWatchSession(session: NpcWatchSession): Promise<void> {
-  await liveNpcWatchDb.put(session);
-}
-
-export async function deleteNpcWatchSession(sessionId: string): Promise<void> {
-  await liveNpcWatchDb.delete(sessionId);
-}
-
 // ==================== 旧 localStorage 层（只给一次性迁移读）====================
 
 export const LIVE_LOCAL_KEYS = STORAGE_KEYS;
@@ -622,16 +535,21 @@ export {
   normalizeChannelRecord,
   normalizeLiveSessionRecord,
   normalizeVodPostRecord,
-  normalizeNpcWatchSessionRecord,
 };
+
+/**
+ * 旧陪看记录按原样透传：表留在原处，形状交给陪看模块自己归一。
+ * 这里只负责把 localStorage 里的老数据搬进 IDB，不解读内容。
+ */
+export type LegacyWatchRow = { id: string; [key: string]: any };
 
 export interface LegacyLiveLayer {
   channels: StreamerChannelProfile[];
   sessions: LiveStreamSession[];
   vods: VodVideoPost[];
-  npcWatches: NpcWatchSession[];
+  npcWatches: LegacyWatchRow[];
   personas: ViewerPersona[];
-  npcPool: NpcStreamerChannelCard[] | null;
+  npcPool: LegacyWatchRow[] | null;
   npcCustomRule: string | null;
 }
 
@@ -646,13 +564,13 @@ export function readLegacyLiveLayer(): LegacyLiveLayer {
     channels: readAndMergeDualKeys(STORAGE_KEYS.CHANNELS, LEGACY_STORAGE_KEYS.CHANNELS, normalizeChannelRecord),
     sessions: readAndMergeDualKeys(STORAGE_KEYS.SESSIONS, LEGACY_STORAGE_KEYS.SESSIONS, normalizeLiveSessionRecord),
     vods: readAndMergeDualKeys(STORAGE_KEYS.VODS, LEGACY_STORAGE_KEYS.VODS, normalizeVodPostRecord),
-    npcWatches: readAndMergeDualKeys(
+    npcWatches: readAndMergeDualKeys<LegacyWatchRow>(
       STORAGE_KEYS.NPC_WATCHES,
       LEGACY_STORAGE_KEYS.NPC_WATCHES,
-      normalizeNpcWatchSessionRecord,
+      raw => ({ ...raw, id: String(raw.id) }),
     ),
     personas: rawPersonas,
-    npcPool: safeReadJson<NpcStreamerChannelCard[] | null>(STORAGE_KEYS.NPC_POOL, null),
+    npcPool: safeReadJson<LegacyWatchRow[] | null>(STORAGE_KEYS.NPC_POOL, null),
     npcCustomRule: localStorage.getItem(STORAGE_KEYS.NPC_CUSTOM_RULE),
   };
 }
@@ -1290,84 +1208,6 @@ export async function updateLiveRoundCardSummary(opts: {
     summary: opts.summary,
   });
   return writeRoundCardInPlace(opts.messageId, card);
-}
-
-/** 一轮陪看在这一拍里的正文：NPC 画面/台词/弹幕 + 角色反应 + 本轮用户互动 */
-export function formatNpcBeatBody(session: NpcWatchSession, beat: NpcWatchBeat, charName?: string): string {
-  const lines = [
-    `【陪看 · ${session.npcStreamerName}《${session.npcRoomTitle}》· 第 ${beat.index + 1} 拍】`,
-    `1. 直播画面：${beat.npcScreen}`,
-    `   主播说：「${beat.npcSpeech}」`,
-  ];
-  (beat.npcDanmaku || []).forEach(d => {
-    lines.push(`   弹幕 ${d.senderName}：${d.text}`);
-  });
-  const who = charName || '角色';
-  let no = 2;
-  if (beat.userActionNote) {
-    lines.push(`${no}. 这一拍你的互动：${beat.userActionNote}`);
-    no += 1;
-  }
-  lines.push(`${no}. ${who}的反应：${beat.charReactionAction}「${beat.charReactionSpeech}」`);
-  return lines.join('\n');
-}
-
-export function buildNpcRoundCard(opts: {
-  charId: string;
-  charName?: string;
-  session: NpcWatchSession;
-  beat: NpcWatchBeat;
-}): LivestreamChatCardPayload {
-  const { session, beat } = opts;
-  const body = formatNpcBeatBody(session, beat, opts.charName);
-  return {
-    type: 'livestream_card',
-    cardKind: 'npc_watch_round',
-    sessionId: session.id,
-    charId: opts.charId,
-    charName: opts.charName || '',
-    channelName: session.npcStreamerName,
-    title: session.npcRoomTitle,
-    categoryLabel: session.npcCategoryLabel,
-    npcStreamerName: session.npcStreamerName,
-    npcRoomTitle: session.npcRoomTitle,
-    body,
-    preview: buildRoundPreview(body),
-    roundIndex: beat.index + 1,
-    roundLabel: `第 ${beat.index + 1} 拍`,
-    isCompressed: false,
-    updatedAt: Date.now(),
-    viewerCount: session.viewerCount,
-    summary: body,
-    createdAt: Date.now(),
-  };
-}
-
-/** 一拍陪看写一张可见卡；已有 dbMessageId 时原位更新 */
-export async function syncNpcBeatToDb(opts: {
-  charId: string;
-  charName?: string;
-  session: NpcWatchSession;
-  beat: NpcWatchBeat;
-  existingDbMsgId?: number;
-}): Promise<number> {
-  const card = buildNpcRoundCard(opts);
-  if (opts.existingDbMsgId && opts.existingDbMsgId > 0) {
-    await writeRoundCardInPlace(opts.existingDbMsgId, card);
-    return opts.existingDbMsgId;
-  }
-  return DB.saveMessage({
-    charId: opts.charId,
-    role: 'assistant',
-    type: 'score_card',
-    content: cardMessageContent(card),
-    metadata: {
-      source: 'live_npc_round',
-      scoreCard: card,
-      npcSessionId: opts.session.id,
-      npcBeatIndex: opts.beat.index,
-    },
-  });
 }
 
 export async function supersedeLiveMessagesWithSummary(opts: {

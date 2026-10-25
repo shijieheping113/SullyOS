@@ -42,9 +42,6 @@ import {
   VodVideoPost,
   VodChapterBeat,
   VodCommentItem,
-  NpcWatchSession,
-  NpcWatchBeat,
-  NpcStreamerChannelCard,
   LivestreamChatCardPayload,
   OnAirRealtimeSettings,
   DEFAULT_ONAIR_REALTIME_SETTINGS,
@@ -69,16 +66,9 @@ import {
   deleteVodPost,
   loadVodPosts,
   upsertVodPost,
-  loadNpcWatchSessions,
-  upsertNpcWatchSession,
-  loadNpcChannelPool,
-  saveNpcChannelPool,
-  loadNpcCustomRule,
-  saveNpcCustomRule,
   normalizeBrightGradient,
   buildLiveRoundCard,
   syncLiveChunkToDb,
-  syncNpcBeatToDb,
   updateLiveRoundCardSummary,
   createLiveSessionMarkerInDb,
   updateLiveSessionMarkerInDb,
@@ -107,12 +97,9 @@ import {
   generateLiveRoundSummary,
   generateVodVideoPost,
   generateStreamerVodReply,
-  generateNpcWatchBeatDualEngine,
-  rerollCharNpcReactionOnly,
   generateAiFieldSuggestion,
   generateStreamCustomGifts,
   generateLiveCategorySuggestions,
-  generateNpcChannelPoolWithAi,
   AiFieldKind,
 } from '../utils/liveStreamPrompts';
 import type { LiveCategorySuggestion } from '../utils/liveStreamAiHelpers';
@@ -123,7 +110,7 @@ import {
 } from '../components/live/LiveStreamModals';
 import { LiveRoomView } from '../components/live/LiveRoomView';
 import { LiveLobby } from '../components/live/LiveLobby';
-import { VodDetailView, NpcWatchRoomView } from '../components/live/VodAndNpcViews';
+import { VodDetailView } from '../components/live/VodAndNpcViews';
 import { LiveFloatingPhone } from '../components/live/LiveSharedWidgets';
 import { migrateLiveStorageToIdbOnce } from '../utils/liveStreamMigration';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
@@ -136,7 +123,10 @@ import {
   truncateLiveChunkAfterBeat,
 } from '../utils/liveStreamTimeline';
 
-type MainTab = 'char_live' | 'char_vod' | 'npc_watch';
+type MainTab = 'char_live' | 'char_vod';
+
+/** 陪看单独一份界面，按需加载，不进电波首屏的包里 */
+const WatchAlongApp = React.lazy(() => import('./watchAlong/WatchAlongApp'));
 
 /** 旧场次回写时如果没带摘要，保留这边已经有的逐轮摘要 */
 function mergeLiveSessionSummaries(
@@ -203,13 +193,6 @@ const LiveStreamApp: React.FC = () => {
   const [activeLiveSessionId, setActiveLiveSessionId] = useState<string | null>(null);
   const [vodPosts, setVodPosts] = useState<VodVideoPost[]>([]);
   const [activeVodId, setActiveVodId] = useState<string | null>(null);
-  const [npcSessions, setNpcSessions] = useState<NpcWatchSession[]>([]);
-  const [activeNpcSessionId, setActiveNpcSessionId] = useState<string | null>(null);
-
-  // NPC 频道池与自定义规则
-  const [npcPool, setNpcPool] = useState<NpcStreamerChannelCard[]>([]);
-  const [npcCustomRule, setNpcCustomRule] = useState<string>('');
-  const [showNpcRuleBox, setShowNpcRuleBox] = useState(false);
 
   /** 数据都在 IndexedDB 里，读出来之前不能先摆一个「没有直播」的空大厅 */
   const [storeReady, setStoreReady] = useState(false);
@@ -250,6 +233,8 @@ const LiveStreamApp: React.FC = () => {
   const [editingChannel, setEditingChannel] = useState<StreamerChannelProfile | null>(null);
   const [showPersonaModal, setShowPersonaModal] = useState(false);
   const [showLobbyPhone, setShowLobbyPhone] = useState(false);
+  /** 陪看大厅（第三方路人直播 + 角色陪你看）开着没有 */
+  const [watchAlongOpen, setWatchAlongOpen] = useState(false);
   const [editingLiveSessionId, setEditingLiveSessionId] = useState<string | null>(null);
 
   // 生成与语音状态
@@ -264,7 +249,6 @@ const LiveStreamApp: React.FC = () => {
   const [memoryPalaceResult, setMemoryPalaceResult] = useState<PipelineResult | null>(null);
   const [aiHelperBusy, setAiHelperBusy] = useState(false);
   const [vodReplyGeneratingId, setVodReplyGeneratingId] = useState<string | null>(null);
-  const [npcRerollingBeatId, setNpcRerollingBeatId] = useState<string | null>(null);
   const [ttsPlayingBeatId, setTtsPlayingBeatId] = useState<string | null>(null);
   const [ttsLoadingBeatId, setTtsLoadingBeatId] = useState<string | null>(null);
   const [voiceEnd, setVoiceEnd] = useState<{ id: string; n: number } | null>(null);
@@ -494,20 +478,6 @@ const LiveStreamApp: React.FC = () => {
     }
   }, []);
 
-  const rememberNpcSession = useCallback(async (session: NpcWatchSession): Promise<boolean> => {
-    setNpcSessions(prev =>
-      prev.some(s => s.id === session.id)
-        ? prev.map(s => (s.id === session.id ? session : s))
-        : [session, ...prev],
-    );
-    try {
-      await upsertNpcWatchSession(session);
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-
   const rememberChannel = useCallback(
     async (channel: StreamerChannelProfile): Promise<boolean> => {
       setChannels(prev =>
@@ -570,24 +540,6 @@ const LiveStreamApp: React.FC = () => {
       addToast('观众身份已切换，但没能保存这个选择', 'error');
     });
   }, [viewerPersonas, addToast]);
-
-  const rememberNpcPool = useCallback(async (next: NpcStreamerChannelCard[]): Promise<void> => {
-    setNpcPool(next);
-    try {
-      await saveNpcChannelPool(next);
-    } catch {
-      /* toast 已由存储层弹出 */
-    }
-  }, []);
-
-  const rememberNpcRule = useCallback(async (next: string): Promise<void> => {
-    setNpcCustomRule(next);
-    try {
-      await saveNpcCustomRule(next);
-    } catch {
-      /* toast 已由存储层弹出 */
-    }
-  }, []);
 
   // 渲染落定后把 state 抄进 ref。ref 里若已经有更新的摘要或更多轮次，不要用旧 state 盖掉。
   useEffect(() => {
@@ -668,14 +620,11 @@ const LiveStreamApp: React.FC = () => {
       void normalizeLiveCardContentsOnce();
 
       try {
-        const [charChs, personas, sessions, vods, npcList, pool, rule] = await Promise.all([
+        const [charChs, personas, sessions, vods] = await Promise.all([
           ensureDefaultChannelForChar(currentChar),
           loadViewerPersonas(userProfile),
           loadLiveSessions(),
           loadVodPosts(),
-          loadNpcWatchSessions(),
-          loadNpcChannelPool(),
-          loadNpcCustomRule(),
         ]);
         if (cancelled) return;
         setChannels(charChs);
@@ -726,9 +675,6 @@ const LiveStreamApp: React.FC = () => {
           })
         ).catch(error => console.warn('[LiveStream] 下播标记位置修复失败', error));
         setVodPosts(vods);
-        setNpcSessions(npcList);
-        setNpcPool(pool);
-        setNpcCustomRule(rule);
       } catch (e: any) {
         addToast(e?.message || '直播数据读取失败，请刷新重试', 'error');
       } finally {
@@ -744,9 +690,7 @@ const LiveStreamApp: React.FC = () => {
   // 本地存储写不进去时立刻说一声：以前是静默丢弃，刷新后才发现整场没了
   useEffect(() => {
     setLiveStorageWriteErrorHandler((key, err) => {
-      const label = key.includes('npc_watches')
-        ? '陪看记录'
-        : key.includes('sessions')
+      const label = key.includes('sessions')
         ? '直播记录'
         : key.includes('vods')
         ? '视频投稿'
@@ -818,11 +762,6 @@ const LiveStreamApp: React.FC = () => {
   const activeVod = useMemo(
     () => vodPosts.find(v => v.id === activeVodId) || null,
     [vodPosts, activeVodId],
-  );
-
-  const activeNpcSession = useMemo(
-    () => npcSessions.find(s => s.id === activeNpcSessionId) || null,
-    [npcSessions, activeNpcSessionId],
   );
 
   const activeChannel = useMemo(() => {
@@ -2652,88 +2591,7 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
     }
   };
 
-  const handleStartNpcWatch = async (npcCard: NpcStreamerChannelCard) => {
-    if (!currentChar || isGenerating) return;
-    const newSession: NpcWatchSession = {
-      id: `npcw_${Date.now()}`,
-      charId: currentChar.id,
-      npcStreamerName: npcCard.npcName,
-      npcHandle: npcCard.handle,
-      npcCategoryLabel: npcCard.categoryLabel,
-      npcRoomTitle: npcCard.roomTitle,
-      npcBio: npcCard.npcBio,
-      customRulePrompt: npcCustomRule.trim() || undefined,
-      coverGradient: npcCard.coverGradient,
-      viewerCount: npcCard.viewerCount,
-      beats: [],
-      createdAt: Date.now(),
-    };
-    await rememberNpcSession(newSession);
-    setActiveNpcSessionId(newSession.id);
-    await handleAdvanceNpcBeat(newSession);
-  };
-
-  const handleAdvanceNpcBeat = async (
-    targetSession?: NpcWatchSession,
-    userText?: string,
-    mode?: 'whisper_char' | 'send_npc_danmaku',
-  ) => {
-    const sess = targetSession || activeNpcSession;
-    if (!sess || !currentChar || isGenerating) return;
-    setIsGenerating(true);
-    try {
-      // 角色这一侧用正常聊天范围 + 记忆召回；第三方主播那一侧只拿公开材料
-      const contextMsgs = await loadCharacterContextMessages(currentChar);
-      const rtConfig = resolveOnAirRealtimeConfig();
-      let publicRealtimeText = '';
-      if (onAirRealtime.enabled) {
-        try {
-          publicRealtimeText = await RealtimeContextManager.buildFullContext(
-            rtConfig,
-            resolveCharTimeZone(currentChar),
-            {
-              includeTime: onAirRealtime.time && currentChar.timeAwarenessEnabled !== false,
-              includeJp: Boolean(rtConfig.jpHotEnabled),
-            },
-          );
-        } catch {
-          publicRealtimeText = '';
-        }
-      }
-
-      const beat = await generateNpcWatchBeatDualEngine({
-        apiConfig,
-        char: currentChar,
-        userProfile,
-        npcSession: sess,
-        userInteractionText: userText,
-        interactionType: mode,
-        charHistoryMessages: contextMsgs,
-        realtimeConfig: rtConfig,
-        publicRealtimeText,
-      });
-
-      // 每一拍在聊天时间线上有一张可见卡，按发生顺序落位
-      beat.dbMessageId = await syncNpcBeatToDb({
-        charId: currentChar.id,
-        charName: currentChar.name,
-        session: sess,
-        beat,
-      });
-
-      const updated: NpcWatchSession = {
-        ...sess,
-        beats: [...sess.beats, beat],
-      };
-      await rememberNpcSession(updated);
-    } catch (e: any) {
-      addToast(e?.message || '生成陪看剧情失败', 'error');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // ==================== 子页面路由（进入直播间 / 视频详情页 / 陪看房） ====================
+  // ==================== 子页面路由（进入直播间 / 视频详情页） ====================
 
   /**
    * 记忆宫殿整理的露面（Ann 2026-10-25）：干活时一行小字 + 整理结果弹窗。
@@ -3168,93 +3026,6 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
     );
   }
 
-  if (activeNpcSession && currentChar) {
-    return (
-      <>
-        {memoryPalaceOverlays}
-        <NpcWatchRoomView
-        charId={currentChar.id}
-        charName={currentChar.name}
-        charAvatar={currentChar.avatar}
-        userName={userProfile?.name || '我'}
-        npcSession={activeNpcSession}
-        platformTheme={platformTheme}
-        isGenerating={isGenerating}
-        isRerollingBeatId={npcRerollingBeatId}
-        ttsPlayingId={ttsPlayingBeatId}
-        onBindBack={fn => {
-          screenBackRef.current = fn;
-        }}
-        onChangePlatformTheme={handleChangePlatformTheme}
-        onBack={() => setActiveNpcSessionId(null)}
-        onAdvanceBeat={(text, mode) =>
-          void handleAdvanceNpcBeat(activeNpcSession, text, mode)
-        }
-        onRerollCharReaction={async beat => {
-          setNpcRerollingBeatId(beat.id);
-          try {
-            // 和首拍一样走正常聊天范围，不在陪看这一侧另砍一刀
-            const charHistory = await loadCharacterContextMessages(currentChar);
-            const res = await rerollCharNpcReactionOnly({
-              apiConfig,
-              char: currentChar,
-              userProfile,
-              npcSession: activeNpcSession,
-              beat,
-              charHistoryMessages: charHistory,
-              realtimeConfig: resolveOnAirRealtimeConfig(),
-            });
-            const nextBeat = {
-              ...beat,
-              charReactionAction: res.charReactionAction,
-              charReactionSpeech: res.charReactionSpeech,
-              charEmotion: res.charEmotion,
-            };
-            const updated: NpcWatchSession = {
-              ...activeNpcSession,
-              beats: activeNpcSession.beats.map(b => (b.id === beat.id ? nextBeat : b)),
-            };
-            void rememberNpcSession(updated);
-            // 这一拍在聊天里还是原来那张卡：原位更新，不另发一张
-            void syncNpcBeatToDb({
-              charId: currentChar.id,
-              charName: currentChar.name,
-              session: updated,
-              beat: nextBeat,
-              existingDbMsgId: beat.dbMessageId,
-            }).catch(() => addToast('这一拍的聊天卡片没更新上', 'error'));
-            addToast(`已重新生成 ${currentChar.name} 的反应`, 'success');
-          } catch (e: any) {
-            addToast(e?.message || '重Roll失败', 'error');
-          } finally {
-            setNpcRerollingBeatId(null);
-          }
-        }}
-        onPlayCharVoice={(beat, opts) =>
-          void speakTextWithChannelConfig(beat.id, beat.charReactionSpeech, undefined, {
-            skipCache: opts?.skipCache,
-            cachedUrl: beat.charAudioUrl,
-            onAudioUrlReady: url => {
-              const updated: NpcWatchSession = {
-                ...activeNpcSession,
-                beats: activeNpcSession.beats.map(b =>
-                  b.id === beat.id ? { ...b, charAudioUrl: url } : b,
-                ),
-              };
-              void rememberNpcSession(updated);
-            },
-          })
-        }
-        onShareNpcWatchToChat={async () => {
-          // 陪看每一拍从这一版起本来就会自己落一张卡在聊天里，
-          // 再写一次就是同一拍两条记录，所以这里只提醒、不重复写。
-          addToast('这一拍已经自己进私聊了，往上翻就能看到', 'info');
-        }}
-        />
-      </>
-    );
-  }
-
   // 数据还在 IndexedDB 里往外取的时候，先别摆一个「还没有直播」的空大厅
   if (!storeReady) {
     return (
@@ -3278,7 +3049,6 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
 
   const charSessions = liveSessions.filter(s => s.charId === currentChar?.id);
   const charVods = vodPosts.filter(v => v.charId === currentChar?.id);
-  const charNpcSessions = npcSessions.filter(s => s.charId === currentChar?.id);
 
   return (
     <>
@@ -3314,37 +3084,6 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         vodPosts={charVods}
         onOpenVod={setActiveVodId}
         onDeleteVod={id => void forgetVodPost(id)}
-        npcPool={npcPool}
-        npcSessions={charNpcSessions}
-        onStartNpc={card => void handleStartNpcWatch(card)}
-        onOpenNpcSession={setActiveNpcSessionId}
-        npcCustomRule={npcCustomRule}
-        onChangeNpcRule={value => {
-          void rememberNpcRule(value);
-        }}
-        onAiNpcRule={() => {
-          void handleRequestAiField('npc_custom_rule').then(res => {
-            if (res.rule) {
-              void rememberNpcRule(res.rule);
-            }
-          });
-        }}
-        onRefreshNpcPool={() => {
-          if (!currentChar) return;
-          setAiHelperBusy(true);
-          void generateNpcChannelPoolWithAi({
-            apiConfig,
-            char: currentChar,
-            customRule: npcCustomRule,
-          })
-            .then(nextPool => {
-              void rememberNpcPool(nextPool);
-              addToast('已换了一批直播', 'success');
-            })
-            .finally(() => setAiHelperBusy(false));
-        }}
-        showNpcRule={showNpcRuleBox}
-        onToggleNpcRule={() => setShowNpcRuleBox(v => !v)}
         selectedPresetKey={selectedPresetKey}
         onSelectPreset={setSelectedPresetKey}
         customStreamTitle={customStreamTitle}
@@ -3387,6 +3126,7 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         isGenerating={isGenerating}
         aiHelperBusy={aiHelperBusy}
         onOpenPhone={() => setShowLobbyPhone(true)}
+        onOpenWatchAlong={() => setWatchAlongOpen(true)}
         onAirRealtime={onAirRealtime}
         onChangeOnAirRealtime={next => void updateOnAirRealtime(next)}
         channelModal={
@@ -3467,6 +3207,21 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         onClose={() => setEditingLiveSessionId(null)}
         onSave={next => void handleSaveLiveSessionInfo(next)}
       />
+
+      {/* 陪看：整屏盖在电波上面，自己一套页面（大厅 / 房间 / 私聊 / 历史 / 设置 / 总结） */}
+      {watchAlongOpen && currentChar ? (
+        <div className="fixed inset-0 z-[200] bg-white">
+          <React.Suspense
+            fallback={
+              <div className="flex h-full w-full items-center justify-center text-[13px] text-[#606060]">
+                正在进陪看…
+              </div>
+            }
+          >
+            <WatchAlongApp char={currentChar} onClose={() => setWatchAlongOpen(false)} />
+          </React.Suspense>
+        </div>
+      ) : null}
 
       {memoryPalaceOverlays}
     </>

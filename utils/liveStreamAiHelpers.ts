@@ -16,10 +16,6 @@ import {
   StreamGiftOption,
   VodVideoPost,
   VodCommentItem,
-  NpcWatchSession,
-  NpcWatchBeat,
-  NpcStreamerChannelCard,
-  DEFAULT_NPC_CHANNELS,
   STREAM_PRESET_TEMPLATES,
 } from './liveStreamTypes';
 import type { APIConfig, CharacterProfile, Message, RealtimeConfig, UserProfile } from '../types';
@@ -117,8 +113,7 @@ export type AiFieldKind =
   | 'live_topic'
   | 'channel_profile'
   | 'viewer_alt_persona'
-  | 'vod_topic'
-  | 'npc_custom_rule';
+  | 'vod_topic';
 
 /** 去掉模型爱塞的代码块围栏与思考段，别让它们混进正文 */
 function stripModelNoise(raw: string): string {
@@ -250,9 +245,6 @@ ${recentSnippet ? `最近与 ${userName} 的聊天记忆片段：\n${recentSnipp
   } else if (fieldKind === 'vod_topic') {
     taskPrompt = `请结合 ${char.name} 的人设与近期记忆，为TA构思一期极具吸引力的 YouTube / NicoNico 视频投稿主题（Vlog、实况剪辑、深夜电台或开箱企划）。
 只输出 JSON：\`{"title": "视频投稿标题", "categoryLabel": "分类标签(如 Vlog / Gaming / Music)"}\``;
-  } else {
-    taskPrompt = `请构思一段用于生成其他路人主播（NPC）的自定义规则描述，让刷到的直播间自然、有趣、贴合 ${char.name} 和 ${userName} 一起闲逛吐槽的口味（拒绝无脑夸张刻板）。
-只输出 JSON：\`{"rule": "50字以内的NPC频道生成偏好描述"}\``;
   }
 
   const roleSystem =
@@ -584,69 +576,6 @@ emoji | 礼物名称(2~12字) | 价格(数字)`;
 }
 
 
-// ==================== NPC 频道池重 Roll 与自定义规则生成（去刻板化） ====================
-
-const GRADIENTS = [
-  'linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%)',
-  'linear-gradient(135deg, #ede9fe 0%, #fce7f3 100%)',
-  'linear-gradient(135deg, #fef3c7 0%, #ffedd5 100%)',
-  'linear-gradient(135deg, #d1fae5 0%, #ccfbf1 100%)',
-];
-
-export async function generateNpcChannelPoolWithAi(opts: {
-  apiConfig: APIConfig;
-  char: CharacterProfile;
-  customRule?: string;
-}): Promise<NpcStreamerChannelCard[]> {
-  const { apiConfig, char, customRule } = opts;
-  const prompt = `请你为视频/直播平台（YouTube Live / NicoNico 风格）生成 4 个正在开播的第三方路人主播（NPC）频道卡片，供角色「${char.name}」和用户一起闲逛陪看。
-【重要原则】：
-1. **拒绝刻板夸张与土味脸谱化**：不要全是咆哮带货或低俗套路！要有真实世界里多元、鲜活、有细节的生活感或小众冷幽默（如：深夜街头雨夜漫步摄影、独立音乐人调合成器、硬核怀旧游戏挑战、手作陶艺翻车现场、天台天文望远镜看月亮、外国博主的蹩脚料理实验等）。
-2. ${customRule?.trim() ? `**必须严格遵循用户的自定义生成规则**：${customRule.trim()}` : '风格多元国际化，贴合现代年轻人的观看习惯。'}
-
-只输出包含 4 个对象的 JSON 数组：
-\`\`\`json
-[
-  {
-    "npcName": "主播频道名",
-    "handle": "@handle",
-    "categoryLabel": "分区标签",
-    "roomTitle": "当前直播间标题（自然真实，不要夸张营销号感）",
-    "npcBio": "直播间画面与主播状态简述（30~55字）",
-    "styleTag": "风格短标签",
-    "viewerCount": 1200
-  }
-]
-\`\`\``;
-
-  const raw = await callAuxOrMainLlm({
-    apiConfig,
-    char,
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.92,
-    purpose: 'live_npc_channel_pool_gen',
-  });
-
-  const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-  try {
-    const arr = JSON.parse(clean.slice(clean.indexOf('['), clean.lastIndexOf(']') + 1));
-    if (Array.isArray(arr) && arr.length > 0) {
-      return arr.slice(0, 4).map((item: any, idx: number) => ({
-        id: `npc_ai_${Date.now()}_${idx}`,
-        npcName: String(item?.npcName || `Channel_${idx + 1}`).trim(),
-        handle: String(item?.handle || `@creator_${idx + 1}`).trim(),
-        categoryLabel: String(item?.categoryLabel || 'Live').trim(),
-        roomTitle: String(item?.roomTitle || 'Live Stream').trim(),
-        npcBio: String(item?.npcBio || '').trim(),
-        styleTag: String(item?.styleTag || 'Live').trim(),
-        coverGradient: GRADIENTS[idx % GRADIENTS.length],
-        viewerCount: Number(item?.viewerCount) || Math.floor(Math.random() * 3500) + 200,
-      }));
-    }
-  } catch {}
-  return DEFAULT_NPC_CHANNELS;
-}
-
 // ==================== 阶段滚动总结 & 下播全貌总结（四栏保真） ====================
 
 /**
@@ -925,155 +854,3 @@ ${isForeign ? `请用【${voiceLanguagePromptLabel(lang)}】写 replyOriginal，
   }
 }
 
-export async function generateNpcWatchBeatDualEngine(opts: {
-  apiConfig: APIConfig;
-  char: CharacterProfile;
-  userProfile: UserProfile;
-  npcSession: NpcWatchSession;
-  userInteractionText?: string;
-  interactionType?: 'whisper_char' | 'send_npc_danmaku';
-  /** 兼容旧调用；这条路径不再用整库消息，改为下面两份 */
-  allMsgs?: Message[];
-  /** 角色反应阶段用的正常聊天范围原文 */
-  charHistoryMessages?: Message[];
-  /** 角色反应阶段的实时背景配置（已按电波总控过滤） */
-  realtimeConfig?: RealtimeConfig;
-  /** 第三方主播阶段可见的公开实时背景文本：不含定位、不含角色私聊与记忆 */
-  publicRealtimeText?: string;
-}): Promise<NpcWatchBeat> {
-  const {
-    apiConfig,
-    char,
-    userProfile,
-    npcSession,
-    userInteractionText,
-    interactionType,
-    charHistoryMessages = [],
-    realtimeConfig,
-    publicRealtimeText,
-  } = opts;
-  const userName = (userProfile?.name || '你').trim() || '你';
-  const prevBeat = npcSession.beats[npcSession.beats.length - 1];
-
-  // 第三方主播只拿到自己的频道资料、这一场的公开进度和用户明确投递的弹幕；
-  // 拿不到 Ann 与角色的私聊、记忆宫殿召回，也拿不到用户位置。
-  const npcPrompt = `你正在扮演直播平台上的第三方主播「${npcSession.npcStreamerName}」（分区：${npcSession.npcCategoryLabel}，标题：《${npcSession.npcRoomTitle}》，风格简介：${npcSession.npcBio}）。
-${npcSession.customRulePrompt ? `补充设定规则：${npcSession.customRulePrompt}\n` : ''}${prevBeat ? `上一拍画面：${prevBeat.npcScreen}\n上一拍台词：「${prevBeat.npcSpeech}」\n` : ''}${interactionType === 'send_npc_danmaku' && userInteractionText ? `观众刚发来弹幕：「${userInteractionText}」，请顺着做出反应！` : '请自然往下演新的一拍画面与台词（真实自然，拒绝浮夸套路）！'}${publicRealtimeText ? `\n（以下是此刻的现实背景，只在自然相关时顺口带一句，不要刻意播报：\n${publicRealtimeText}\n）\n` : ''}
-只输出 JSON：\`{"npcScreen": "镜头画面描写(40~80字)", "npcSpeech": "NPC主播台词", "danmaku": [{"senderName": "网友A", "text": "弹幕"}, {"senderName": "网友B", "text": "弹幕"}]}\``;
-
-  const npcRaw = await callAuxOrMainLlm({
-    apiConfig,
-    char,
-    messages: [{ role: 'user', content: npcPrompt }],
-    temperature: 0.9,
-  });
-
-  let npcScreen = '镜头前的直播继续进行着。';
-  let npcSpeech = 'Welcome to the stream!';
-  let npcDanmaku: any[] = [];
-  try {
-    const clean = npcRaw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-    const obj = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1));
-    if (obj.npcScreen) npcScreen = String(obj.npcScreen).trim();
-    if (obj.npcSpeech) npcSpeech = String(obj.npcSpeech).trim();
-    if (Array.isArray(obj.danmaku)) npcDanmaku = obj.danmaku;
-  } catch {}
-
-  const charPrompt = `此刻直播画面：${npcScreen}
-主播正说：「${npcSpeech}」
-${userInteractionText ? (interactionType === 'whisper_char' ? `${userName} 凑过来跟你说：「${userInteractionText}」` : `${userName} 刚在直播间发了条弹幕：「${userInteractionText}」`) : ''}
-请写出你（${char.name}）在旁边陪看时的真实反应动作与对 ${userName} 说的话！
-只输出 JSON：\`{"charReactionAction": "动作神态(25~50字)", "charReactionSpeech": "你对${userName}说的话", "charEmotion": "calm"}\``;
-
-  // 角色这一侧才用正常聊天范围 + 记忆召回 + 实时背景；情绪/日程不注入。
-  const charRules = `你现在和 ${userName} 坐在一起，用手机看第三方主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》。
-直播画面和主播的话由对方提供，你只负责写自己陪看时的反应。不要替对方主播说话，也不要复述 ${userName} 的私聊原文。`;
-  const charMessages = await buildLiveGenerationPayload({
-    char,
-    userProfile,
-    rules: charRules,
-    task: charPrompt,
-    historyMessages: charHistoryMessages,
-    realtimeConfig,
-    contextLimit: clampManualContextLimit(char.contextLimit),
-  });
-  const charRaw = await callMainStreamerLlm({ apiConfig, char, messages: charMessages, temperature: 0.88 });
-
-  let charReactionAction = `${char.name}看向屏幕。`;
-  let charReactionSpeech = '这直播间还挺有意思。';
-  let charEmotion = 'calm';
-  try {
-    const clean = charRaw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-    const obj = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1));
-    if (obj.charReactionAction) charReactionAction = String(obj.charReactionAction).trim();
-    if (obj.charReactionSpeech) charReactionSpeech = String(obj.charReactionSpeech).trim();
-    if (obj.charEmotion) charEmotion = String(obj.charEmotion).trim();
-  } catch {}
-
-  const beatIdx = npcSession.beats.length;
-  return {
-    id: `npcb_${npcSession.id}_${beatIdx}_${Date.now()}`,
-    index: beatIdx,
-    npcScreen,
-    npcSpeech,
-    npcDanmaku: npcDanmaku.map((d: any, i: number) => ({
-      id: `npcdm_${Date.now()}_${i}`,
-      senderName: String(d?.senderName || `Viewer_${i}`),
-      text: String(d?.text || 'lol'),
-      timestamp: Date.now() + i * 100,
-    })),
-    charReactionAction,
-    charReactionSpeech,
-    charEmotion,
-    userActionNote: userInteractionText
-      ? interactionType === 'whisper_char'
-        ? `对${char.name}说：「${userInteractionText}」`
-        : `发弹幕：「${userInteractionText}」`
-      : undefined,
-  };
-}
-
-export async function rerollCharNpcReactionOnly(opts: {
-  apiConfig: APIConfig;
-  char: CharacterProfile;
-  userProfile: UserProfile;
-  npcSession: NpcWatchSession;
-  beat: NpcWatchBeat;
-  /** 兼容旧调用 */
-  allMsgs?: Message[];
-  charHistoryMessages?: Message[];
-  realtimeConfig?: RealtimeConfig;
-}): Promise<{ charReactionAction: string; charReactionSpeech: string; charEmotion: string }> {
-  const { apiConfig, char, userProfile, npcSession, beat, charHistoryMessages = [], realtimeConfig } = opts;
-  const userName = (userProfile?.name || '你').trim() || '你';
-  const prompt = `当前画面：${beat.npcScreen} ｜ 台词：「${beat.npcSpeech}」
-【重Roll要求】：上一版你的反应（「${beat.charReactionSpeech}」）已被弃用，请彻底换一个角度、动作和吐槽台词，严禁雷同！
-只输出 JSON：\`{"charReactionAction": "...", "charReactionSpeech": "...", "charEmotion": "calm"}\``;
-
-  const rules = `你现在和 ${userName} 坐在一起，用手机看第三方主播「${npcSession.npcStreamerName}」的直播《${npcSession.npcRoomTitle}》。直播画面和主播的话由对方提供，你只写自己陪看时的反应；不要替对方主播说话，也不复述私聊原文。`;
-  const messages = await buildLiveGenerationPayload({
-    char,
-    userProfile,
-    rules,
-    task: prompt,
-    historyMessages: charHistoryMessages,
-    realtimeConfig,
-    contextLimit: clampManualContextLimit(char.contextLimit),
-  });
-  const raw = await callMainStreamerLlm({ apiConfig, char, messages, temperature: 0.96 });
-  try {
-    const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-    const obj = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1));
-    return {
-      charReactionAction: String(obj.charReactionAction || beat.charReactionAction).trim(),
-      charReactionSpeech: String(obj.charReactionSpeech || beat.charReactionSpeech).trim(),
-      charEmotion: String(obj.charEmotion || 'calm').trim(),
-    };
-  } catch {
-    return {
-      charReactionAction: beat.charReactionAction,
-      charReactionSpeech: raw.trim() || beat.charReactionSpeech,
-      charEmotion: 'calm',
-    };
-  }
-}

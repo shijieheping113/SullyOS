@@ -1,7 +1,7 @@
 /**
  * 电波大厅。
- * YouTube：顶栏标志 + 搜索，底栏 首页 / 视频 / 创建 / 陪看 / 你的。封面全宽，没有描边卡片。
- * ニコニコ：顶部分段（生放送 / 動画 / ミラー），双列节目表，底部一个方按钮开播。
+ * YouTube：顶栏标志 + 搜索，底栏 首页 / 视频 / 创建 / 你的。封面全宽，没有描边卡片。
+ * ニコニコ：顶部分段（生放送 / 動画），双列节目表，底部一个方按钮开播。
  */
 import React, { useMemo, useState } from 'react';
 import TokenImg from '../os/TokenImg';
@@ -10,8 +10,6 @@ import {
   ViewerPersona,
   LiveStreamSession,
   VodVideoPost,
-  NpcWatchSession,
-  NpcStreamerChannelCard,
   LivePlatformTheme,
   OnAirRealtimeSettings,
   STREAM_PRESET_TEMPLATES,
@@ -60,16 +58,6 @@ export function LiveLobby({
   vodPosts,
   onOpenVod,
   onDeleteVod,
-  npcPool,
-  npcSessions,
-  onStartNpc,
-  onOpenNpcSession,
-  npcCustomRule,
-  onChangeNpcRule,
-  onAiNpcRule,
-  onRefreshNpcPool,
-  showNpcRule,
-  onToggleNpcRule,
   selectedPresetKey,
   onSelectPreset,
   customStreamTitle,
@@ -94,6 +82,7 @@ export function LiveLobby({
   isGenerating,
   aiHelperBusy,
   onOpenPhone,
+  onOpenWatchAlong,
   onAirRealtime,
   onChangeOnAirRealtime,
   channelModal,
@@ -121,16 +110,6 @@ export function LiveLobby({
   vodPosts: VodVideoPost[];
   onOpenVod: (id: string) => void;
   onDeleteVod: (id: string) => void;
-  npcPool: NpcStreamerChannelCard[];
-  npcSessions: NpcWatchSession[];
-  onStartNpc: (card: NpcStreamerChannelCard) => void;
-  onOpenNpcSession: (id: string) => void;
-  npcCustomRule: string;
-  onChangeNpcRule: (v: string) => void;
-  onAiNpcRule: () => void;
-  onRefreshNpcPool: () => void;
-  showNpcRule: boolean;
-  onToggleNpcRule: () => void;
   selectedPresetKey: string;
   onSelectPreset: (key: string) => void;
   customStreamTitle: string;
@@ -155,6 +134,8 @@ export function LiveLobby({
   isGenerating: boolean;
   aiHelperBusy: boolean;
   onOpenPhone: () => void;
+  /** 进陪看大厅（第三方路人直播 + 角色陪你看） */
+  onOpenWatchAlong: () => void;
   /** 电波总控 · 实时背景开关（只影响电波生成请求） */
   onAirRealtime: OnAirRealtimeSettings;
   onChangeOnAirRealtime: (next: OnAirRealtimeSettings) => void;
@@ -162,7 +143,7 @@ export function LiveLobby({
   personaModal: React.ReactNode;
 }) {
   const isNico = platformTheme === 'niconico';
-  const [tab, setTab] = useState<'live' | 'vod' | 'together' | 'you'>('live');
+  const [tab, setTab] = useState<'live' | 'vod' | 'you'>('live');
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [sheet, setSheet] = useState<'none' | 'create' | 'goLive' | 'upload' | 'accounts' | 'settings'>('none');
@@ -224,8 +205,6 @@ export function LiveLobby({
   }, [liveSessions, q, liveFilter]);
 
   const vods = vodPosts.filter(v => match(v.title));
-  const npcs = npcPool.filter(c => match(`${c.roomTitle} ${c.npcName}`));
-  const history = npcSessions.filter(s => match(s.npcRoomTitle));
 
   /**
    * 大厅卡片的背景：这场自己换过就用它的，没换过退回所属频道的背景。
@@ -251,10 +230,6 @@ export function LiveLobby({
     if (searchOpen) {
       setSearchOpen(false);
       setQuery('');
-      return true;
-    }
-    if (showNpcRule) {
-      onToggleNpcRule();
       return true;
     }
     if (tab !== 'live') {
@@ -390,7 +365,7 @@ export function LiveLobby({
             ))
           )}
         </>
-      ) : tab === 'vod' ? (
+      ) : (
         vods.length === 0 ? (
           <Empty text={q ? '没有符合的视频' : '还没有视频'} action={q ? undefined : '发布视频'} onAction={q ? undefined : openUpload} />
         ) : (
@@ -409,22 +384,6 @@ export function LiveLobby({
             />
           ))
         )
-      ) : (
-        <TogetherList
-          charName={currentChar?.name || ''}
-          npcs={npcs}
-          history={history}
-          showRule={showNpcRule}
-          rule={npcCustomRule}
-          onToggleRule={onToggleNpcRule}
-          onChangeRule={onChangeNpcRule}
-          onAiRule={onAiNpcRule}
-          onRefresh={onRefreshNpcPool}
-          busy={aiHelperBusy}
-          onStart={onStartNpc}
-          onOpenHistory={onOpenNpcSession}
-          layout="yt"
-        />
       )}
     </div>
   );
@@ -452,7 +411,7 @@ export function LiveLobby({
             ))}
           </div>
         )
-      ) : tab === 'vod' ? (
+      ) : (
         vods.length === 0 ? (
           <Empty text={q ? '該当する動画がありません' : 'まだ動画がありません'} action={q ? undefined : '動画を投稿'} onAction={q ? undefined : openUpload} />
         ) : (
@@ -469,22 +428,6 @@ export function LiveLobby({
             ))}
           </div>
         )
-      ) : (
-        <TogetherList
-          charName={currentChar?.name || ''}
-          npcs={npcs}
-          history={history}
-          showRule={showNpcRule}
-          rule={npcCustomRule}
-          onToggleRule={onToggleNpcRule}
-          onChangeRule={onChangeNpcRule}
-          onAiRule={onAiNpcRule}
-          onRefresh={onRefreshNpcPool}
-          busy={aiHelperBusy}
-          onStart={onStartNpc}
-          onOpenHistory={onOpenNpcSession}
-          layout="nico"
-        />
       )}
     </div>
   );
@@ -504,6 +447,9 @@ export function LiveLobby({
           </IconButton>
           <IconButton label="私聊" onClick={onOpenPhone}>
             <Icon name="chat" />
+          </IconButton>
+          <IconButton label="陪看" onClick={onOpenWatchAlong}>
+            <Icon name="people" />
           </IconButton>
           <IconButton label="设置" onClick={() => setSheet('settings')}>
             <Icon name="gear" />
@@ -564,7 +510,6 @@ export function LiveLobby({
             [
               ['live', '生放送'],
               ['vod', '動画'],
-              ['together', 'ミラー'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -585,16 +530,7 @@ export function LiveLobby({
 
       {isNico ? (
         <div className="shrink-0 bg-white border-t border-[#e6e6e6] px-3 py-2 pb-[max(8px,env(safe-area-inset-bottom))]">
-          {tab === 'together' ? (
-            <div className="flex gap-2">
-              <button type="button" onClick={onToggleNpcRule} className="flex-1 h-12 border border-[#111] text-[14px] font-medium">
-                好み
-              </button>
-              <button type="button" disabled={aiHelperBusy} onClick={onRefreshNpcPool} className="flex-1 h-12 bg-[#111] text-white text-[14px] font-medium disabled:opacity-40">
-                {aiHelperBusy ? '入替中…' : '別の番組'}
-              </button>
-            </div>
-          ) : tab === 'you' ? null : (
+          {tab === 'you' ? null : (
             <button
               type="button"
               onClick={tab === 'vod' ? openUpload : openGoLive}
@@ -609,7 +545,7 @@ export function LiveLobby({
           <NavItem label="首页" icon="home" active={tab === 'live'} onClick={() => setTab('live')} />
           <NavItem label="视频" icon="video" active={tab === 'vod'} onClick={() => setTab('vod')} />
           <NavItem label="创建" icon="plus" active={false} onClick={() => setSheet('create')} />
-          <NavItem label="陪看" icon="people" active={tab === 'together'} onClick={() => setTab('together')} />
+          <NavItem label="陪看" icon="people" active={false} onClick={onOpenWatchAlong} />
           <NavItem label="你的" icon="person" active={tab === 'you'} onClick={() => setTab('you')} />
         </nav>
       )}
@@ -1160,103 +1096,6 @@ function NicoCell({
         <span className="block text-[11px] leading-4 text-[#767676] mt-0.5 break-words">{sub}</span>
       </button>
     </article>
-  );
-}
-
-function TogetherList(props: {
-  charName: string;
-  npcs: NpcStreamerChannelCard[];
-  history: NpcWatchSession[];
-  showRule: boolean;
-  rule: string;
-  onToggleRule: () => void;
-  onChangeRule: (v: string) => void;
-  onAiRule: () => void;
-  onRefresh: () => void;
-  busy: boolean;
-  onStart: (c: NpcStreamerChannelCard) => void;
-  onOpenHistory: (id: string) => void;
-  layout: 'yt' | 'nico';
-}) {
-  const yt = props.layout === 'yt';
-  return (
-    <div>
-      <div className={`px-3 pt-3 pb-1 ${yt ? '' : 'bg-white'}`}>
-        <div className="text-[16px] font-medium break-words">和 {props.charName} 一起看</div>
-        <div className="text-[12px] text-[#606060] mt-1 leading-5">路人主播在播，{props.charName} 坐在旁边跟你说话。</div>
-        {yt && (
-          <div className="flex gap-2 mt-3">
-            <button type="button" onClick={props.onToggleRule} className="h-11 px-4 rounded-full bg-[#f2f2f2] text-[14px] font-medium">
-              想看的类型
-            </button>
-            <button type="button" disabled={props.busy} onClick={props.onRefresh} className="h-11 px-4 rounded-full bg-[#0f0f0f] text-white text-[14px] font-medium disabled:opacity-40">
-              {props.busy ? '正在换…' : '换一批'}
-            </button>
-          </div>
-        )}
-        {props.showRule && (
-          <div className="mt-3">
-            <FieldLabel>想刷到什么样的直播</FieldLabel>
-            <TextInput
-              value={props.rule}
-              onChange={e => props.onChangeRule(e.target.value)}
-              placeholder="例如深夜散步、排练室、做饭翻车"
-            />
-            <button type="button" disabled={props.busy} onClick={props.onAiRule} className="h-11 text-[14px] underline disabled:opacity-40">
-              {props.busy ? '正在写…' : '让辅助模型写这条规则'}
-            </button>
-          </div>
-        )}
-      </div>
-      {props.npcs.length === 0 ? (
-        <Empty text="现在没有可看的直播" action="换一批" onAction={props.onRefresh} />
-      ) : yt ? (
-        props.npcs.map(card => (
-          <YtRow
-            key={card.id}
-            title={card.roomTitle}
-            meta={`${card.npcName} · ${card.categoryLabel} · ${formatCount(card.viewerCount)} 人正在看`}
-            badge="直播"
-            avatarName={card.npcName}
-            onOpen={() => props.onStart(card)}
-            onAvatar={() => props.onStart(card)}
-          />
-        ))
-      ) : (
-        <div className="grid grid-cols-2 gap-2 px-2 pt-2">
-          {props.npcs.map(card => (
-            <NicoCell
-              key={card.id}
-              title={card.roomTitle}
-              sub={`${card.npcName} · ${formatCount(card.viewerCount)}来場`}
-              live
-              onOpen={() => props.onStart(card)}
-            />
-          ))}
-        </div>
-      )}
-      {props.history.length > 0 && (
-        <div className="px-3 pt-4">
-          <div className="text-[12px] text-[#606060] mb-1">{yt ? '看过的' : '見た番組'}</div>
-          <ul>
-            {props.history.map(sess => (
-              <li key={sess.id}>
-                <button
-                  type="button"
-                  onClick={() => props.onOpenHistory(sess.id)}
-                  className="w-full min-h-11 py-2 text-left border-b border-[#eee]"
-                >
-                  <span className="block text-[14px] leading-5 break-words">{sess.npcRoomTitle}</span>
-                  <span className="block text-[12px] text-[#606060] mt-0.5">
-                    {sess.npcStreamerName} · {sess.beats.length} 拍
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
   );
 }
 
