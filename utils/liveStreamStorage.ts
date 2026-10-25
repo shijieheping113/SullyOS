@@ -927,6 +927,69 @@ function buildRoundPreview(body: string): string {
 }
 
 /**
+ * 一次性：把旧电波卡片的正文从 JSON 换成人话（Ann 2026-10-25 定）。
+ *
+ * 以前卡片正文写的是整段 JSON，桌面小窗口、通知预览这类只看正文的地方会把 JSON 摊出来。
+ * 新写的卡已经不这样了（见 cardMessageContent）；这一步把已经存下来的旧卡也顺手换掉。
+ * 只改正文这一个字段，卡片本体（metadata.scoreCard）和别的字段一个都不动；跑过就记个记号，不再跑。
+ */
+const LIVE_CARD_CONTENT_FIX_KEY = 'live_card_content_fixed_v1';
+
+export async function normalizeLiveCardContentsOnce(): Promise<number> {
+  try {
+    if (localStorage.getItem(LIVE_CARD_CONTENT_FIX_KEY) === 'done') return 0;
+  } catch {
+    /* 读不到记号就照跑一次，最多白跑 */
+  }
+  let fixed = 0;
+  try {
+    const characters = await DB.getAllCharacters();
+    for (const character of characters) {
+      const messages = await DB.getMessagesByCharId(character.id, true);
+      for (const message of messages) {
+        const source = String(message.metadata?.source || '');
+        if (!source.startsWith('live')) continue;
+        if (message.type !== 'score_card') continue;
+        const content = typeof message.content === 'string' ? message.content : '';
+        if (!content.startsWith('{')) continue;
+        let card: any = message.metadata?.scoreCard || null;
+        if (!card) {
+          try { card = JSON.parse(content); } catch { card = null; }
+        }
+        if (!card || typeof card !== 'object') continue;
+        try {
+          await DB.updateMessage(message.id, cardMessageContent(card));
+          fixed += 1;
+        } catch {
+          /* 单条改不动不影响别的卡 */
+        }
+      }
+    }
+    try { localStorage.setItem(LIVE_CARD_CONTENT_FIX_KEY, 'done'); } catch { /* 记不住就下次再跑一遍，无害 */ }
+  } catch (e) {
+    console.warn('[LiveStream] 旧卡片正文没能换成文字', e);
+  }
+  return fixed;
+}
+
+/**
+ * 电波卡片消息落库时，正文（content）写什么（Ann 2026-10-25 定）。
+ *
+ * 正文只写给人看、给模型读的文字；卡片本身（那段 JSON）躺在 metadata.scoreCard 里，
+ * 界面和模型都优先读 metadata 那份。桌面小窗口、通知预览这类地方只看正文——
+ * 正文要是写成 JSON，就会把整段 JSON 摊在桌面上（Ann 实测抓到过）。
+ */
+export function cardMessageContent(card: {
+  preview?: string;
+  summary?: string;
+  body?: string;
+  title?: string;
+} | null | undefined): string {
+  const text = String(card?.preview || card?.summary || card?.body || card?.title || '').trim();
+  return text || '电波直播';
+}
+
+/**
  * 一轮直播的原文正文（给聊天卡显示，也给摘要模型当输入）。
  * 与旧 formatChunkForDbMemory 的差别：这里**不筛弹幕**，普通路人、礼物、SC、用户弹幕全在，
  * 因为施工单要求这一轮摘要必须覆盖整轮公屏，而不是只留付费和熟人。
@@ -1055,7 +1118,7 @@ export async function createLiveSessionMarkerInDb(opts: {
     charId: opts.charId,
     role: 'system',
     type: 'score_card',
-    content: JSON.stringify(card),
+    content: cardMessageContent(card),
     timestamp: opts.session.startedAt,
     metadata: {
       source: 'live_session_marker',
@@ -1139,7 +1202,7 @@ async function writeRoundCardInPlace(
   timestamp?: number,
 ): Promise<boolean> {
   try {
-    await DB.updateMessage(messageId, JSON.stringify(card), timestamp);
+    await DB.updateMessage(messageId, cardMessageContent(card), timestamp);
   } catch (e: any) {
     if (String(e?.message || '').includes('not found')) return false;
     throw e;
@@ -1194,7 +1257,7 @@ export async function syncLiveChunkToDb(opts: {
     charId: opts.charId,
     role: 'assistant',
     type: 'score_card',
-    content: JSON.stringify(card),
+    content: cardMessageContent(card),
     metadata: {
       source: 'live_round',
       scoreCard: card,
@@ -1297,7 +1360,7 @@ export async function syncNpcBeatToDb(opts: {
     charId: opts.charId,
     role: 'assistant',
     type: 'score_card',
-    content: JSON.stringify(card),
+    content: cardMessageContent(card),
     metadata: {
       source: 'live_npc_round',
       scoreCard: card,

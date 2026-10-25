@@ -24,6 +24,7 @@ import {
   restoreMissingRoundSummaries,
   loadActiveViewerPersonaId,
   saveActiveViewerPersonaId,
+  normalizeLiveCardContentsOnce,
 } from './liveStreamStorage';
 import { isVisibleChatMessage } from './chatMessageVisibility';
 import type {
@@ -162,8 +163,13 @@ async function allMessages(charId = CHAR_ID) {
   return DB.getMessagesByCharId(charId, true);
 }
 
-/** 轮次卡的正文就是这条消息的 content（JSON），直接解出来看 */
-function cardOf(msg: { content: string }): LivestreamChatCardPayload | null {
+/**
+ * 轮次卡：卡片本体在 metadata.scoreCard 里（正文只写给人看的文字，Ann 2026-10-25 定）。
+ * 旧数据兜底才去解正文 JSON。
+ */
+function cardOf(msg: { content: string; metadata?: any }): LivestreamChatCardPayload | null {
+  const fromMeta = msg.metadata?.scoreCard;
+  if (fromMeta?.type === 'livestream_card') return fromMeta as LivestreamChatCardPayload;
   try {
     const parsed = JSON.parse(msg.content);
     return parsed?.type === 'livestream_card' ? (parsed as LivestreamChatCardPayload) : null;
@@ -318,7 +324,10 @@ describe('聊天时间线上的轮次卡', () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0].id).toBe(first);
     expect(msgs[0].timestamp).toBe(before!.timestamp);
-    expect(msgs[0].content).toContain('重 Roll 后的台词');
+    expect(cardOf(msgs[0])!.body).toContain('重 Roll 后的台词');
+    // 正文只写给人看的文字，绝不写 JSON（Ann 2026-10-25 定；桌面小窗口会把这行摊出来）
+    expect(msgs[0].content).not.toContain('{');
+    expect(msgs[0].content.length).toBeLessThanOrEqual(80);
   });
 
   it('压缩后仍只改这一条，并且不会另发一张总结卡', async () => {
@@ -631,7 +640,45 @@ describe('陪看轮次卡', () => {
     const msgs = await allMessages();
     expect(msgs).toHaveLength(1);
     expect(msgs[0].timestamp).toBe(before!.timestamp);
-    expect(msgs[0].content).toContain('重 Roll 的反应');
+    // 卡片本体在 metadata.scoreCard 里；正文只写给人看的文字（Ann 2026-10-25 定）
+    expect(cardOf(msgs[0])!.body).toContain('重 Roll 的反应');
+    expect(msgs[0].content).not.toContain('{');
+  });
+
+  it('旧卡片正文里那段 JSON，一次性换成文字（桌面小窗口只看正文）', async () => {
+    await DB.saveCharacter({ id: CHAR_ID, name: '苏栗' } as any);
+    // 造一条老样子的卡：正文是 JSON
+    const card = {
+      type: 'livestream_card',
+      cardKind: 'live_round',
+      sessionId: 'old-session',
+      roundLabel: '第 1 轮',
+      body: '【直播频道「夜半三点的猫」· 第 1 轮】\n1. 画面：…',
+      preview: '【直播频道「夜半三点的猫」· 第 1 轮】',
+    };
+    const id = await DB.saveMessage({
+      charId: CHAR_ID,
+      role: 'assistant',
+      type: 'score_card',
+      content: JSON.stringify(card),
+      metadata: { source: 'live_round', scoreCard: card },
+    });
+    // 别的功能的卡不许被碰
+    const otherId = await DB.saveMessage({
+      charId: CHAR_ID,
+      role: 'assistant',
+      type: 'score_card',
+      content: JSON.stringify({ type: 'diary_card', body: '日记' }),
+      metadata: { source: 'diary' },
+    });
+
+    expect(await normalizeLiveCardContentsOnce()).toBe(1);
+    expect((await DB.getMessageById(id))!.content).toBe('【直播频道「夜半三点的猫」· 第 1 轮】');
+    expect((await DB.getMessageById(otherId))!.content).toContain('{');
+    // 卡片本体没动
+    expect(cardOf((await DB.getMessageById(id))!)!.body).toContain('画面');
+    // 记过记号就不再跑
+    expect(await normalizeLiveCardContentsOnce()).toBe(0);
   });
 
   it('两拍就是两条，按拍次各占一行', async () => {
