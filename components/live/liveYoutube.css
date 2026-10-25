@@ -1002,6 +1002,35 @@
   font-size: 12px;
   opacity: 0.8;
 }
+/* SC 卡脚注：档位名 + 置顶时长。用卡片自己的文字色（以前用灰字，压在绿卡上几乎看不见）；
+   时长做成同色系的淡胶囊，两段一眼分得开。 */
+.dyt-sc__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: inherit;
+}
+.dyt-sc__meta-kind {
+  opacity: 0.8;
+}
+.dyt-sc__meta-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  /* 浅字卡（绿/红/橙/紫）用一层深底压住，白字才立得起来；深字卡（黄）反过来见下一条 */
+  background: rgba(0, 0, 0, 0.28);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.dyt-sc--yellow .dyt-sc__meta-pill {
+  background: rgba(255, 255, 255, 0.72);
+}
 .dyt-sc__foot {
   display: flex;
   gap: 8px;
@@ -1135,7 +1164,7 @@
 }
 .dyt-composer__row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 4px;
 }
 /* 身份钮：实名白底黑字；匿名黑底白字（带一圈头像框） */
@@ -1163,23 +1192,34 @@
 .dyt-field {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  min-height: 40px;
   border-radius: 20px;
   background: #f2f2f2;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   padding: 0 6px 0 14px;
   gap: 4px;
 }
-.dyt-field input {
+/* 输入区：单行时就是原来那根 40px 的胶囊；文字多了自己长高（上限跟组件里那根线一致），
+   发送钮始终贴在右下角，圆角、尺寸都不变。 */
+.dyt-field textarea {
   flex: 1;
   min-width: 0;
   background: transparent;
   border: 0;
+  outline: none;
+  resize: none;
+  font-family: inherit;
   font-size: 14px;
+  line-height: 20px;
   color: #0f0f0f;
+  padding: 10px 0;
+  min-height: 40px;
+  max-height: 100px;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
-.dyt-field input::placeholder {
+.dyt-field textarea::placeholder {
   color: #909090;
 }
 .dyt-send {

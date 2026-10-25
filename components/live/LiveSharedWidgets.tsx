@@ -322,7 +322,7 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
         </div>
 
         {editing ? (
-          <div className="p-4 space-y-3 max-h-[75vh] overflow-y-auto">
+          <div className="p-4 space-y-3 max-h-[82vh] overflow-y-auto">
             <div>
               <label className="text-xs font-bold text-slate-600 block mb-1">
                 🎥 镜头画面与动作描写
@@ -388,11 +388,13 @@ export const BeatLongPressSheet: React.FC<BeatLongPressSheetProps> = ({
               <label className="text-xs font-bold text-slate-600 block mb-1">
                 🌐 中文同传翻译（选填）
               </label>
-              <input
+              {/* 跟上面两栏同宽的多行框：同传译文常常比一行长，单行框只能横向挤着看 */}
+              <textarea
                 value={transDraft}
                 onChange={e => setTransDraft(e.target.value)}
+                rows={3}
                 placeholder="外语直播时的中文译文…"
-                className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-red-500"
+                className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 leading-relaxed focus:outline-none focus:border-red-500"
               />
             </div>
             <div className="flex gap-2.5 pt-2">

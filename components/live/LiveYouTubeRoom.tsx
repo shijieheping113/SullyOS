@@ -32,6 +32,9 @@ import './liveYoutube.css';
 
 type YtTab = 'chat' | 'script' | 'summary';
 
+/** 底栏输入框最多长到四行（一行 20px 加上下留白），再多就在框里滚，不把底栏一直顶上去 */
+const COMPOSER_MAX_HEIGHT = 100;
+
 // —— 原型图标（path 直接取自原型 index.html，别自己改形）——
 const Ico = {
   back: 'M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z',
@@ -285,6 +288,16 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   const [pinDetail, setPinDetail] = useState<LiveDanmakuItem | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [composeFocus, setComposeFocus] = useState(false);
+  const composerRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+  // 底栏输入框跟着文字行数长高，最多四行；再多就在框里滚。
+  // 长的是输入框自己，圆角和旁边的按钮都不动，所以不会把这一条拉变形。
+  React.useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  }, [props.danmakuInput]);
   const [fsBarH, setFsBarH] = useState(48);
   const [toast, setToast] = useState<{ key: number; html: string } | null>(null);
   const [giftEffect, setGiftEffect] = useState<{
@@ -1546,10 +1559,18 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             {activePersona.isMain ? '本' : '匿'}
           </button>
           <label className="dyt-field">
-            <input
-              type="text"
+            <textarea
+              ref={composerRef}
+              rows={1}
               value={props.danmakuInput}
               onChange={e => props.setDanmakuInput(e.target.value)}
+              onKeyDown={e => {
+                // 回车发出去，Shift + 回车换行；输入法选词那一下的回车不算发送
+                if (e.key !== 'Enter' || e.shiftKey) return;
+                if ((e.nativeEvent as KeyboardEvent).isComposing) return;
+                e.preventDefault();
+                props.handleSendSubmit();
+              }}
               placeholder="聊天…"
               aria-label="发送弹幕"
               maxLength={200}
@@ -2052,8 +2073,9 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
                         <span className="dyt-sc__trans">{dmTrans}</span>
                       ) : null}
                     </p>
-                    <p className="dyt-hint" style={{ marginTop: 10 }}>
-                      {tier.colorLabel}卡片 · {tier.pinDurationLabel}
+                    <p className="dyt-sc__meta">
+                      <span className="dyt-sc__meta-kind">Super Chat</span>
+                      <span className="dyt-sc__meta-pill">{tier.pinDurationLabel}</span>
                     </p>
                   </div>
                 </article>
