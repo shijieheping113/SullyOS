@@ -211,6 +211,19 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
   );
   const previousGiftEffectBeatIdxRef = useRef(props.currentGlobalBeatIdx);
 
+  // 底栏弹幕输入框跟着文字行数长高，最多四行（跟 YouTube 那套一个规矩）。
+  // 底栏在小窗和全屏各挂一份，所以两个 ref 一起管。
+  const DANMAKU_MAX_HEIGHT = 100;
+  const composerInputRefMain = useRef<HTMLTextAreaElement | null>(null);
+  const composerInputRefOverlay = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    for (const el of [composerInputRefMain.current, composerInputRefOverlay.current]) {
+      if (!el) continue;
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, DANMAKU_MAX_HEIGHT)}px`;
+    }
+  }, [props.danmakuInput]);
+
   useEffect(() => {
     if (props.currentGlobalBeatIdx < previousGiftEffectBeatIdxRef.current) {
       // 回放进度倒退后，后续拍里的礼物重新变成未播放，供再次回放时触发。
@@ -1152,7 +1165,7 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
         e.preventDefault();
         props.handleSendSubmit();
       }}
-      className="flex items-center gap-1.5 px-2 pt-2"
+      className="flex items-end gap-1.5 px-2 pt-2"
       style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}
     >
       <button
@@ -1172,12 +1185,21 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
         {activePersona.isMain ? '本' : '匿'}
       </button>
 
-      <input
+      <textarea
+        ref={overlay ? composerInputRefOverlay : composerInputRefMain}
+        rows={1}
         value={props.danmakuInput}
         onChange={e => props.setDanmakuInput(e.target.value)}
+        onKeyDown={e => {
+          // 回车发出去，Shift + 回车换行；输入法选词那一下的回车不算发送
+          if (e.key !== 'Enter' || e.shiftKey) return;
+          if ((e.nativeEvent as KeyboardEvent).isComposing) return;
+          e.preventDefault();
+          props.handleSendSubmit();
+        }}
         placeholder={isNico ? 'コメントを入力…' : '发一条弹幕…'}
         aria-label="发送弹幕"
-        className="flex-1 min-w-0 h-9 px-3 text-[12.5px] placeholder:text-[#a3a3a3] focus:outline-none transition"
+        className="flex-1 min-w-0 min-h-9 max-h-[100px] px-3 py-2 text-[12.5px] leading-[18px] resize-none overflow-y-auto placeholder:text-[#a3a3a3] focus:outline-none transition"
         style={{
           backgroundColor: overlay ? 'rgba(255,255,255,0.92)' : isNico ? '#ffffff' : '#f2f2f2',
           border: `1px solid ${overlay ? 'rgba(255,255,255,0.95)' : isNico ? '#d5dae2' : 'transparent'}`,
