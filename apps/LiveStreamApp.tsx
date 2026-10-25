@@ -94,6 +94,9 @@ import {
   loadLiveBeatVoiceAsset,
   forgetLiveBeatVoices,
 } from '../utils/liveStreamStorage';
+import { runLiveMemoryPostHook } from '../utils/liveMemoryPostHook';
+import { getRoomLabel } from '../utils/memoryPalace/types';
+import type { PipelineResult } from '../utils/memoryPalace/pipeline';
 import {
   buildLiveStreamTurnPrompt,
   parseLiveBeatsResponse,
@@ -171,6 +174,7 @@ const LiveStreamApp: React.FC = () => {
     userProfile,
     realtimeConfig,
     addToast,
+    memoryPalaceConfig,
     registerBackHandler,
   } = useOS();
 
@@ -249,6 +253,10 @@ const LiveStreamApp: React.FC = () => {
   // 生成与语音状态
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  /** 记忆宫殿整理的一行小字状态（每轮落库后叫一次；跑完自己清） */
+  const [memoryPalaceStatus, setMemoryPalaceStatus] = useState('');
+  /** 整理出新记忆时弹给用户看的弹窗内容 */
+  const [memoryPalaceResult, setMemoryPalaceResult] = useState<PipelineResult | null>(null);
   const [aiHelperBusy, setAiHelperBusy] = useState(false);
   const [vodReplyGeneratingId, setVodReplyGeneratingId] = useState<string | null>(null);
   const [npcRerollingBeatId, setNpcRerollingBeatId] = useState<string | null>(null);
@@ -1855,6 +1863,19 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
       // 重 Roll 会把这轮的旧摘要清掉（内容变了），统一交给压缩那一趟重新判断；
       // 不 await：压缩不该拖慢「推进」。
       void runCompressionPass(updatedSession.id);
+
+      // 每一轮落库之后叫一次记忆宫殿整理（Ann 2026-10-25 定：每轮一次、下播不补）。
+      // 不等它：整理是后台活，绝不挡出字。开关关着、配置没配，那一头自己会跳过。
+      void runLiveMemoryPostHook({
+        roundKey: `${updatedSession.id}:${targetChunkIndex}`,
+        charId: updatedSession.charId || currentChar.id,
+        config: memoryPalaceConfig,
+        api: apiConfig,
+        userName: userProfile?.name || '',
+        onStatus: setMemoryPalaceStatus,
+        onResult: setMemoryPalaceResult,
+        onError: () => addToast('记忆整理失败', 'error'),
+      }).finally(() => setMemoryPalaceStatus(''));
     } catch (err: any) {
       addToast(err?.message || '生成直播画面失败', 'error');
     } finally {
@@ -3300,6 +3321,125 @@ ${rows.map(row => `${row.i + 1}. ${row.text}${row.emotion ? `（参考情绪：$
         onClose={() => setEditingLiveSessionId(null)}
         onSave={next => void handleSaveLiveSessionInfo(next)}
       />
+
+      {/* 记忆宫殿整理：干活时露一行小字（跟主聊天一样，跑完自己消失） */}
+      {memoryPalaceStatus && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-[150] px-3 py-1.5 rounded-full bg-slate-900/85 text-white text-[11px] font-semibold shadow-lg pointer-events-none">
+          🗂️ 记忆整理 · {memoryPalaceStatus}
+        </div>
+      )}
+
+      {/* 记忆宫殿整理结果 — 弹窗（跟主聊天、见面同一套样子） */}
+      {memoryPalaceResult && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
+          style={{ pointerEvents: 'all', background: 'rgba(15,23,42,0.55)' }}
+          onClick={() => setMemoryPalaceResult(null)}
+        >
+          <div
+            className="w-full max-w-sm max-h-[82vh] overflow-hidden flex flex-col relative"
+            style={{
+              background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
+              borderRadius: 28,
+              border: '1px solid rgba(148,163,184,0.18)',
+              boxShadow: '0 20px 50px -20px rgba(15,23,42,0.35)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-7 pb-4 text-center">
+              <div
+                className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(129,140,248,0.06))',
+                  border: '1px solid rgba(99,102,241,0.15)',
+                }}
+              >
+                <span style={{ fontSize: 26 }}>🗂️</span>
+              </div>
+              <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#6366f1' }}>Memory Palace</div>
+              <p className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>记忆整理完成</p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
+                {memoryPalaceResult.batches.length > 1 && ` · ${memoryPalaceResult.batches.length} 批`}
+              </p>
+              {memoryPalaceResult.batches.some(b => !b.ok) && (
+                <p className="text-[10px] text-red-500 mt-1">
+                  {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `第 ${b.index} 批失败`).join(', ')}
+                </p>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2 no-scrollbar">
+              {memoryPalaceResult.memories.map((m, i) => {
+                const roomMeta: Record<string, { label: string; color: string }> = {
+                  living_room: { label: '客厅', color: '#f59e0b' },
+                  bedroom: { label: '卧室', color: '#8b5cf6' },
+                  study: { label: '书房', color: '#0ea5e9' },
+                  user_room: { label: '用户房间', color: '#ec4899' },
+                  self_room: { label: '自我房间', color: '#10b981' },
+                  attic: { label: '阁楼', color: '#6366f1' },
+                  windowsill: { label: '窗台', color: '#14b8a6' },
+                };
+                const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
+                const roomLabel = getRoomLabel(m.room as any, userProfile?.name) || meta.label;
+                return (
+                  <div
+                    key={i}
+                    className="p-3 rounded-2xl"
+                    style={{
+                      background: 'rgba(255,255,255,0.75)',
+                      border: `1px solid ${meta.color}22`,
+                      boxShadow: `0 2px 8px ${meta.color}14, inset 0 1px 0 rgba(255,255,255,0.8)`,
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                        style={{ background: `${meta.color}18`, color: meta.color }}
+                      >
+                        {roomLabel}
+                      </span>
+                      <span className="text-[10px] text-slate-400">{m.mood}</span>
+                      <span className="text-[10px] font-bold ml-auto" style={{ color: '#f59e0b' }}>
+                        {'★'.repeat(Math.min(m.importance, 5))}
+                      </span>
+                    </div>
+                    <p className="text-[12px] text-slate-700 leading-relaxed">{m.content}</p>
+                    {m.tags.length > 0 && (
+                      <div className="flex gap-1 mt-2 flex-wrap">
+                        {m.tags.map((t, j) => (
+                          <span
+                            key={j}
+                            className="text-[9px] px-1.5 py-0.5 rounded-full"
+                            style={{ background: 'rgba(148,163,184,0.15)', color: '#64748b' }}
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {memoryPalaceResult.memories.length === 0 && (
+                <p className="text-center text-xs text-slate-400 py-4">本次未提取到新记忆</p>
+              )}
+            </div>
+            <div className="px-6 pb-6 pt-2">
+              <button
+                type="button"
+                onClick={() => setMemoryPalaceResult(null)}
+                className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                  boxShadow: '0 6px 18px -6px rgba(79,70,229,0.5)',
+                }}
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
