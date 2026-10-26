@@ -262,15 +262,14 @@ export function WatchRoom({
     landAtEndRef.current = false;
   }, [viewBeat?.id]);
 
-  const shown = seq.slice(0, Math.min(step + 1, seq.length));
-  const curScene = [...shown].reverse().find(s => s.kind === 'scene')?.text || '';
-  const curLineItem = [...shown].reverse().find(s => s.kind === 'line');
-  const curLine = curLineItem?.text || '';
-  /**
-   * 这一条台词的中文同传：外语直播才有，中文台词留空。
-   * 2026-10-26 Ann 定的：字幕层中文大字在上（主体位置），外语原声小字跟在下面。
-   */
-  const curLineTranslated = curLineItem?.translated || '';
+  // Ann 2026-10-27（施工单第八节「六」）：字幕层改成线性显示——点一下切一段，只显示当前这一条，
+  // 画面条显示画面、台词条显示台词，不再分「画面区」和「台词区」两块，画面那行也不再常驻。
+  // 分条点播机制、翻页计数、上一句下一句按钮一个字节没动。
+  const curItem = seq.length ? seq[Math.min(step, seq.length - 1)] : undefined;
+  const curIsScene = curItem?.kind === 'scene';
+  const curText = curItem?.text || '';
+  /** 台词条的中文同传：外语直播才有；中文大字在上（主体位置），外语原声小字跟在下面 */
+  const curTranslated = curIsScene ? '' : curItem?.translated || '';
   const atEnd = seq.length === 0 || step >= seq.length - 1;
 
   const goBack = () => {
@@ -439,7 +438,7 @@ export function WatchRoom({
           </span>
         </div>
 
-        {/* 这一条的画面：这场直播正在播的那件事，此刻的样子 */}
+        {/* 当前这一条：线性显示，走到哪条显示哪条（画面条显示画面，台词条显示台词） */}
         <div
           className="pointer-events-none absolute inset-x-0 bottom-0 px-3.5 pb-3 pt-7"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,.86), rgba(0,0,0,.55) 55%, transparent)' }}
@@ -448,28 +447,31 @@ export function WatchRoom({
             <div className="text-[12px] text-white/70">正在接通下一段…</div>
           ) : (
             <>
-              {curScene ? (
+              {curIsScene ? (
                 <div
-                  className="mb-[5px] text-[10.5px] leading-[16px] text-white/60"
-                  style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                  className="text-[12.5px] leading-[18px] text-white/75"
+                  style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                 >
-                  {curScene}
+                  {curText || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
                 </div>
-              ) : null}
-              <div
-                className="text-[14px] font-medium leading-[20px] text-white"
-                style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-              >
-                {curLineTranslated || curLine || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
-              </div>
-              {curLineTranslated ? (
-                <div
-                  className="mt-[2px] text-[12px] leading-[17px] text-white/70"
-                  style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-                >
-                  {curLine}
-                </div>
-              ) : null}
+              ) : (
+                <>
+                  <div
+                    className="text-[14px] font-medium leading-[20px] text-white"
+                    style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                  >
+                    {curTranslated || curText || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
+                  </div>
+                  {curTranslated ? (
+                    <div
+                      className="mt-[2px] text-[12px] leading-[17px] text-white/70"
+                      style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                    >
+                      {curText}
+                    </div>
+                  ) : null}
+                </>
+              )}
               {!session.legacy ? (
                 <div className="mt-1 text-[9.5px] text-white/45">
                   {atEnd

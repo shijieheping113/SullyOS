@@ -120,9 +120,8 @@ export function normalizeSettings(raw: any): WatchSettings {
 function normalizeRoom(raw: any, idx: number): WatchRoom {
   const bio = text(raw.bio) || text(raw.npcBio, '');
   const profile = normalizeProfile(raw.profile);
-  // 旧记录只有一句话的 bio、没有档案：把 bio 原样塞进「本场正在推进的那件事」，
-  // bio 本身保留不动，界面照旧当简介显示。
-  if (!profile.mainline && bio) profile.mainline = bio;
+  // 旧记录里「本场正在推进的事」「观众能立刻参与的抓手」两个字段已经取消，
+  // 原来把 bio 塞进 mainline 的那段兼容逻辑一并去掉：bio 自己照旧当简介显示，旧记录照样能打开。
   return {
     streamerName: text(raw.streamerName) || text(raw.npcStreamerName, '路人主播'),
     streamerHandle: text(raw.streamerHandle) || text(raw.npcHandle, '@live_stream'),
@@ -158,8 +157,16 @@ function normalizeProfile(raw: any): WatchStreamerProfile {
     ? (raw.screenForm as WatchStreamerScreenForm)
     : base.screenForm;
   const tier: WatchStreamerTier = raw.tier === 'tiny' || raw.tier === 'big' ? raw.tier : base.tier;
+  // 年龄：新记录是数字；旧记录里是「二十出头」这种文字，原样留着照旧显示，不许变成空白
+  const rawAge = raw.ageBand;
+  const ageBand: number | string =
+    typeof rawAge === 'number' && Number.isFinite(rawAge)
+      ? Math.round(rawAge)
+      : typeof rawAge === 'string'
+        ? rawAge.trim()
+        : '';
   return {
-    ageBand: text(raw.ageBand),
+    ageBand,
     identity: text(raw.identity),
     language,
     screenForm,
@@ -167,8 +174,6 @@ function normalizeProfile(raw: any): WatchStreamerProfile {
     tier,
     speechStyle: text(raw.speechStyle),
     motive: text(raw.motive),
-    mainline: text(raw.mainline),
-    hook: text(raw.hook),
   };
 }
 

@@ -206,7 +206,7 @@ const DANMAKU_KEYS = ['公屏', '弹幕', '网友', '观众', '评论'];
 
 /**
  * 双语分隔符：主播说日语或英语时，「话」写成「原话 ▸ 中文同传」，弹幕写成「作者｜原话 ▸ 中文译文」。
- * STAGE_FORMAT 里写的就是这个记号。挑 ▸ 是因为模型自己几乎不会顺手打出来。
+ * STAGE_RULES 里写的就是这个记号。挑 ▸ 是因为模型自己几乎不会顺手打出来。
  */
 const BILINGUAL_SEP = '▸';
 
@@ -299,15 +299,58 @@ function splitLong(text: string, max: number, seps: string[]): string[] {
   return out.filter(Boolean);
 }
 
+/**
+ * 把「原话 ▸ 译文」里的译文按原话被切开的位置一起切开，每一片都带得上。
+ *
+ * 2026-10-26 深夜修的真 bug：一条长台词被按句切成几片时，译文原来只挂在第一片
+ * （`i === 0 ? item.translated : undefined`），日语房间点到第二片就只剩日语、没有中文。
+ * 现在按每片在原话里的位置比例，把译文也切到对应的位置（尽量落在句末标点上）；
+ * 切不动（译文太短、切出空片）时整段译文挂在每一片上，宁可重复，不许没有。
+ */
+const splitTranslation = (translated: string, text: string, pieces: string[]): string[] => {
+  const t = (translated || '').trim();
+  if (!t) return pieces.map(() => '');
+  if (pieces.length <= 1 || t.length < pieces.length) return pieces.map(() => t);
+  const seps = ['。', '！', '？', '…', '；', '，'];
+  const total = Math.max(1, text.length);
+  const out: string[] = [];
+  let start = 0;
+  let consumed = 0;
+  for (let i = 0; i < pieces.length - 1; i++) {
+    consumed += pieces[i].length;
+    const room = pieces.length - 1 - i; // 后面还剩几片，每片至少留一个字
+    let cut = Math.round((consumed / total) * t.length);
+    cut = Math.max(start + 1, Math.min(t.length - room, cut));
+    // 往前找最近的句读，切在句末更像人话；找不到就用比例位置硬切
+    for (let k = cut; k > Math.max(start + 1, cut - 10); k--) {
+      if (seps.includes(t[k - 1])) {
+        cut = k;
+        break;
+      }
+    }
+    out.push(t.slice(start, cut).trim());
+    start = cut;
+  }
+  out.push(t.slice(start).trim());
+  // 有任何一片切空就退回「整段挂在每一片」
+  if (out.some(p => !p)) return pieces.map(() => t);
+  return out;
+};
+
 const splitSeqItem = (item: WatchSeqItem): WatchSeqItem[] => {
   const max = item.kind === 'scene' ? SCENE_MAX : LINE_MAX;
   // 台词只在句末切：在逗号上切会把一句完整的话切成两口，念出来就断气了
   const seps = item.kind === 'scene' ? ['。', '！', '？', '…', '；'] : ['。', '！', '？', '…'];
-  // 切开之后中文同传只挂在第一片上：挂到每一片上会在屏幕上把同一段译文重复好几遍
-  return splitLong(item.text, max, seps).map((text, i) => ({
+  const pieces = splitLong(item.text, max, seps);
+  // 画面不做双语，只有台词要带译文；译文跟着原话一起切开，每一片都带得上
+  const translated =
+    item.kind === 'line' && item.translated
+      ? splitTranslation(item.translated, item.text, pieces)
+      : undefined;
+  return pieces.map((text, i) => ({
     kind: item.kind,
     text,
-    translated: i === 0 ? item.translated : undefined,
+    translated: translated ? translated[i] || undefined : undefined,
   }));
 };
 
@@ -1012,14 +1055,18 @@ const LANG_VALUES = ['zh', 'ja', 'en', 'other'];
 const FORM_VALUES = ['game', 'vtuber', 'workbench', 'live', 'outdoor', 'pet'];
 const TIER_VALUES = ['tiny', 'mid', 'big'];
 
-/** 把模型给的 profile 收成固定十字段；缺的填空，取值不在白名单就归默认 */
+/** 把模型给的 profile 收成固定八字段；缺的填空，取值不在白名单就归默认 */
 function toRoomProfile(raw: any): WatchStreamerProfile {
   const p = raw && typeof raw === 'object' ? raw : {};
   const language = roomStr(p.language);
   const screenForm = roomStr(p.screenForm);
   const tier = roomStr(p.tier);
+  // 年龄读成数字：模型按新提示词给的就是整数；给不出来（旧写法、写歪了）就原样留着显示
+  const ageNum = Number(p.ageBand);
+  const ageBand: number | string =
+    Number.isFinite(ageNum) && ageNum > 0 ? Math.round(ageNum) : roomStr(p.ageBand);
   return {
-    ageBand: roomStr(p.ageBand),
+    ageBand,
     identity: roomStr(p.identity),
     language: (LANG_VALUES.includes(language) ? language : 'zh') as WatchStreamerLanguage,
     screenForm: (FORM_VALUES.includes(screenForm) ? screenForm : 'live') as WatchStreamerScreenForm,
@@ -1027,8 +1074,6 @@ function toRoomProfile(raw: any): WatchStreamerProfile {
     tier: (TIER_VALUES.includes(tier) ? tier : 'mid') as WatchStreamerTier,
     speechStyle: roomStr(p.speechStyle),
     motive: roomStr(p.motive),
-    mainline: roomStr(p.mainline),
-    hook: roomStr(p.hook),
   };
 }
 
@@ -1164,7 +1209,7 @@ export async function generateRoomPool(opts: {
         {
           role: 'user',
           content: `上一条没照格式。现在回 ${count} 个房间的 JSON 数组，照下面这个骨架把每个字段填上，别的字都不要：
-[{"streamerName":"","streamerHandle":"","title":"","titleTranslated":"","bio":"","viewerCount":0,"styleTag":"","coverStart":"#000000","coverEnd":"#000000","profile":{"ageBand":"","identity":"","language":"","screenForm":"","category":"","tier":"","speechStyle":"","motive":"","mainline":"","hook":""}}]`,
+[{"streamerName":"","streamerHandle":"","title":"","titleTranslated":"","bio":"","viewerCount":0,"styleTag":"","coverStart":"#000000","coverEnd":"#000000","profile":{"ageBand":0,"identity":"","language":"","screenForm":"","category":"","tier":"","speechStyle":"","motive":""}}]`,
         },
       ],
     });

@@ -280,16 +280,14 @@ const makeStageSession = (opts: {
 
 describe('台上提示词：不抢话与主播档案', () => {
   const profile: WatchStreamerProfile = {
-    ageBand: '二十出头',
-    identity: '大学生',
+    ageBand: 23,
+    identity: '虚拟主播',
     language: 'ja',
     screenForm: 'vtuber',
     category: '虚拟主播',
     tier: 'mid',
-    speechStyle: '语速慢，句尾带ね',
+    speechStyle: '嘴硬心软，句尾带ね',
     motive: '睡前找人说话',
-    mainline: '连麦点歌，凑够十首就下播',
-    hook: '公屏扣歌名点唱',
   };
 
   it('历史里发过弹幕的号进禁止名单；从没出现过的号一个字都不提', () => {
@@ -324,7 +322,7 @@ describe('台上提示词：不抢话与主播档案', () => {
     expect(task).toContain('「阿猫」');
   });
 
-  it('有档案就逐项列出十个字段，不再只塞那一句 bio', () => {
+  it('有档案就逐项列出八个字段，不再只塞那一句 bio', () => {
     const s = makeStageSession({ profile, bio: '睡前唠两句' });
     const task = buildStageTask({ session: s, latest: '', micOn: false });
     for (const key of [
@@ -336,15 +334,16 @@ describe('台上提示词：不抢话与主播档案', () => {
       'tier',
       'speechStyle',
       'motive',
-      'mainline',
-      'hook',
     ]) {
       expect(task).toContain(key);
     }
-    expect(task).toContain('二十出头');
-    expect(task).toContain('连麦点歌，凑够十首就下播');
+    expect(task).toContain('23');
+    expect(task).toContain('睡前找人说话');
     expect(task).toContain('虚拟形象');
     expect(task).not.toContain('睡前唠两句');
+    // 取消的两个字段不许再出现在档案里
+    expect(task).not.toContain('mainline');
+    expect(task).not.toContain('hook');
   });
 
   it('没有档案（旧记录、按行兜底刷出来的房间）才退回那一句 bio', () => {
@@ -469,16 +468,14 @@ describe('大厅刷台的解析', () => {
     "coverStart": "#1a2028",
     "coverEnd": "#2b2438",
     "profile": {
-      "ageBand": "二十出头",
-      "identity": "大学生",
+      "ageBand": 23,
+      "identity": "虚拟主播",
       "language": "ja",
       "screenForm": "vtuber",
       "category": "虚拟主播",
       "tier": "mid",
-      "speechStyle": "语速慢，句尾带ね",
-      "motive": "睡前找人说话",
-      "mainline": "连麦点歌，凑够十首就下播",
-      "hook": "公屏扣歌名点唱"
+      "speechStyle": "嘴硬心软，句尾带ね",
+      "motive": "睡前找人说话"
     }
   }
 ]
@@ -492,8 +489,8 @@ describe('大厅刷台的解析', () => {
       language: 'ja',
       screenForm: 'vtuber',
       tier: 'mid',
-      ageBand: '二十出头',
-      hook: '公屏扣歌名点唱',
+      ageBand: 23,
+      speechStyle: '嘴硬心软，句尾带ね',
     });
   });
 

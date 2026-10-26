@@ -48,9 +48,9 @@ export type WatchStreamerTier = 'tiny' | 'mid' | 'big';
  * 不许退回成一句话的人设描述。所有字段在旧记录里可能没有，读的时候补空。
  */
 export interface WatchStreamerProfile {
-  /** 年龄段，例如「二十出头」 */
-  ageBand: string;
-  /** 身份定位：学生、刚工作、二次元、手作党、游戏党之类 */
+  /** 主播年龄：新记录是数字（如 23）；旧记录里是「二十出头」这种文字，读旧记录时原样保留 */
+  ageBand: number | string;
+  /** 身份定位：游戏主播、带货主播、萌宠主播、虚拟主播、普通人这类 */
   identity: string;
   /** 语言 */
   language: WatchStreamerLanguage;
@@ -60,14 +60,10 @@ export interface WatchStreamerProfile {
   category: string;
   /** 体量 */
   tier: WatchStreamerTier;
-  /** 说话风格与口癖（语速、填充词、口头禅、破防反应） */
+  /** 完整人设：身份性格与说话调性（名字用 streamerName 那个网名） */
   speechStyle: string;
-  /** 本场图什么（今晚开播的动机） */
+  /** 开播动机（今晚为什么开播） */
   motive: string;
-  /** 本场正在推进的那件事与立下的规矩 */
-  mainline: string;
-  /** 观众能立刻参与的抓手 */
-  hook: string;
 }
 
 /** 路人主播的房间底细 */
@@ -337,8 +333,6 @@ export const defaultStreamerProfile = (): WatchStreamerProfile => ({
   tier: 'mid',
   speechStyle: '',
   motive: '',
-  mainline: '',
-  hook: '',
 });
 
 export const defaultWatchSettings = (): WatchSettings => ({
@@ -348,7 +342,7 @@ export const defaultWatchSettings = (): WatchSettings => ({
   enterWithChar: false,
   // 语音默认不自动念：先问过一次再定，省得每句都花钱
   voiceAuto: false,
-  danmakuPerBeat: 4,
+  danmakuPerBeat: 6,
   summaryAuto: true,
   summaryBeatWaterline: WATCH_DIGEST_BEAT_WATERLINE,
   summaryKeepRecent: WATCH_KEEP_RECENT_BEATS,

@@ -1,10 +1,9 @@
 /**
  * 本场直播信息（可手改）。
  *
- * 房间里唯一能改「台上那一路底细」的地方：房间标题、主播人设，以及批次一定下的
- * 结构化主播档案十个字段（网名、账号标识、年龄段、身份定位、语言、画面形态、分区、
- * 体量、说话风格与口癖、本场图什么、本场正在推进的那件事与立下的规矩、观众能立刻
- * 参与的抓手），还有当前这一幕的画面和台词。改完就地生效——台上那一路下一轮读到的
+ * 房间里唯一能改「台上那一路底细」的地方：房间标题、主播网名与账号，以及
+ * 结构化主播档案八个字段（年龄、身份定位、语言、画面形态、分区、体量、完整人设、
+ * 开播动机），还有当前这一幕的画面和台词。改完就地生效——台上那一路下一轮读到的
  * 就是新的，已经生成的幕不重写，当前这一幕的文字立刻换掉。
  */
 import React, { useEffect, useState } from 'react';
@@ -27,6 +26,7 @@ const Field = ({
   rows = 3,
   placeholder,
   mono,
+  numeric,
   options,
 }: {
   label: string;
@@ -37,6 +37,8 @@ const Field = ({
   rows?: number;
   placeholder?: string;
   mono?: boolean;
+  /** 数字输入：手机上弹数字键盘（年龄这种） */
+  numeric?: boolean;
   /** 有它就渲染下拉，没有就按多行/单行输入框渲染 */
   options?: { value: string; label: string }[];
 }) => (
@@ -81,6 +83,7 @@ const Field = ({
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={label}
+        inputMode={numeric ? 'numeric' : undefined}
         className="h-[34px] w-full px-3 text-[12.5px] outline-none placeholder:text-[#ADADAD]"
         style={{
           borderRadius: 10,
@@ -133,15 +136,13 @@ export function WatchInfo({
   const [category, setCategory] = useState(session.room.category);
   const [title, setTitle] = useState(session.room.title);
   const [bio, setBio] = useState(session.room.bio);
-  const [ageBand, setAgeBand] = useState(p.ageBand);
+  const [ageBand, setAgeBand] = useState(String(p.ageBand ?? ''));
   const [identity, setIdentity] = useState(p.identity);
   const [language, setLanguage] = useState<WatchStreamerLanguage>(p.language);
   const [screenForm, setScreenForm] = useState<WatchStreamerScreenForm>(p.screenForm);
   const [tier, setTier] = useState<WatchStreamerTier>(p.tier);
   const [speechStyle, setSpeechStyle] = useState(p.speechStyle);
   const [motive, setMotive] = useState(p.motive);
-  const [mainline, setMainline] = useState(p.mainline);
-  const [hook, setHook] = useState(p.hook);
   const [scene, setScene] = useState(last?.scene || '');
   const [speech, setSpeech] = useState(last?.speech || '');
 
@@ -154,15 +155,13 @@ export function WatchInfo({
     setCategory(session.room.category);
     setTitle(session.room.title);
     setBio(session.room.bio);
-    setAgeBand(cur.ageBand);
+    setAgeBand(String(cur.ageBand ?? ''));
     setIdentity(cur.identity);
     setLanguage(cur.language);
     setScreenForm(cur.screenForm);
     setTier(cur.tier);
     setSpeechStyle(cur.speechStyle);
     setMotive(cur.motive);
-    setMainline(cur.mainline);
-    setHook(cur.hook);
     setScene(last?.scene || '');
     setSpeech(last?.speech || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +185,7 @@ export function WatchInfo({
                 title: title.trim().slice(0, 100),
                 bio: bio.trim().slice(0, 1000),
                 profile: {
-                  ageBand: ageBand.trim(),
+                  ageBand: Number(ageBand.trim()) || ageBand.trim(),
                   identity: identity.trim(),
                   language,
                   screenForm,
@@ -194,8 +193,6 @@ export function WatchInfo({
                   tier,
                   speechStyle: speechStyle.trim(),
                   motive: motive.trim(),
-                  mainline: mainline.trim(),
-                  hook: hook.trim(),
                 },
               },
               scene: scene.trim(),
@@ -215,8 +212,8 @@ export function WatchInfo({
         <Field label="主播网名" value={name} onChange={setName} placeholder="主播叫什么" />
         <Field label="账号标识" value={handle} onChange={setHandle} placeholder="@handle" />
         <Field label="房间标题" value={title} onChange={setTitle} placeholder="主播随口写的一句话" />
-        <Field label="年龄段" value={ageBand} onChange={setAgeBand} placeholder="比如 二十出头" />
-        <Field label="身份定位" value={identity} onChange={setIdentity} placeholder="比如 大学生、游戏党" />
+        <Field label="年龄" value={ageBand} onChange={setAgeBand} numeric placeholder="比如 23" />
+        <Field label="身份定位" value={identity} onChange={setIdentity} placeholder="比如 游戏主播、萌宠主播" />
         <Field
           label="语言"
           value={language}
@@ -237,36 +234,20 @@ export function WatchInfo({
           options={TIER_OPTIONS}
         />
         <Field
-          label="说话风格与口癖"
+          label="完整人设"
           value={speechStyle}
           onChange={setSpeechStyle}
           multiline
           rows={3}
-          placeholder="语速、口头禅、破防时的反应"
+          placeholder="身份性格与说话调性，比如 嘴硬心软、疯狂吐槽、社恐晚期"
         />
         <Field
-          label="本场图什么"
+          label="开播动机"
           value={motive}
           onChange={setMotive}
           multiline
           rows={3}
           placeholder="今晚为什么开播"
-        />
-        <Field
-          label="本场正在推进的事与立下的规矩"
-          value={mainline}
-          onChange={setMainline}
-          multiline
-          rows={3}
-          placeholder="这一场在推进什么、立了什么规矩"
-        />
-        <Field
-          label="观众能立刻参与的抓手"
-          value={hook}
-          onChange={setHook}
-          multiline
-          rows={3}
-          placeholder="观众马上能掺和的事"
         />
         <Field
           label="主播人设与玩法"

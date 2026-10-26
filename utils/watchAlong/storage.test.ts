@@ -27,16 +27,14 @@ function newSession(): WatchAlongSession {
     titleTranslated: '',
     bio: '抽牌只说实话',
     profile: {
-      ageBand: '二十出头',
-      identity: '大学生',
+      ageBand: 23,
+      identity: '普通人',
       language: 'zh',
       screenForm: 'live',
       category: '深夜塔罗',
       tier: 'mid',
-      speechStyle: '语速偏快，爱说「那个」',
+      speechStyle: '嘴硬心软，爱说「那个」',
       motive: '今晚把塔罗牌讲完',
-      mainline: '今晚抽满十张牌，抽到逆位就唱一首',
-      hook: '扣 1 让主播帮你抽一张',
     },
     viewerCount: 3210,
     customRule: '',
@@ -129,9 +127,9 @@ describe('旧版记录打开不崩', () => {
     expect(s.chat.map(c => c.from)).toEqual(['action', 'char', 'user']);
     expect(s.chat.some(c => c.text === '这套路太老了吧')).toBe(true);
     expect(s.cast.userAccount.nickname).toBeTruthy();
-    // 旧记录只有一句话 bio、没有档案：bio 塞进「本场正在推进的那件事」，bio 本身保留
+    // 旧记录只有一句话 bio、没有档案：bio 自己照旧当简介显示；档案给空值，不报错也不空白
     expect(s.room.bio).toBe('不收钱');
-    expect(s.room.profile?.mainline).toBe('不收钱');
+    expect(s.room.profile?.ageBand).toBe('');
     expect(s.room.profile?.language).toBe('zh');
     expect(s.room.profile?.screenForm).toBe('live');
     expect(s.room.profile?.tier).toBe('mid');
@@ -162,7 +160,8 @@ describe('新记录原样往返', () => {
     expect(s.legacy).toBe(false);
     // 新字段一起存回表里、读出来还在
     expect(s.room.profile?.tier).toBe('mid');
-    expect(s.room.profile?.mainline).toBe('今晚抽满十张牌，抽到逆位就唱一首');
+    expect(s.room.profile?.ageBand).toBe(23);
+    expect(s.room.profile?.speechStyle).toBe('嘴硬心软，爱说「那个」');
     expect(s.room.titleTranslated).toBe('');
     expect(s.beats[0].seq?.length).toBe(2);
     expect(s.beats[0].seq?.[0].kind).toBe('line');
@@ -175,16 +174,14 @@ describe('外语直播的新字段能存能取', () => {
   it('档案、译题、台词译文、弹幕译文往返不丢', async () => {
     const s = newSession();
     s.room.profile = {
-      ageBand: '二十出头',
+      ageBand: 28,
       identity: '虚拟主播',
       language: 'ja',
       screenForm: 'vtuber',
       category: '杂谈',
       tier: 'big',
-      speechStyle: '语速快，爱说「えっと」',
+      speechStyle: '社恐晚期，爱说「えっと」',
       motive: '今晚冲十万关注',
-      mainline: '今晚把歌单唱完，唱跑调就重来',
-      hook: '发「草」让主播念',
     };
     s.room.titleTranslated = '今晚把歌单唱完';
     s.beats[0].seq = [
