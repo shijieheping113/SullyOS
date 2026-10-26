@@ -9,7 +9,7 @@ import {
   saveWatchSession,
 } from './storage';
 import { defaultCast, defaultGlobals } from './types';
-import type { WatchAlongSession } from './types';
+import type { WatchAlongSession, WatchRoom } from './types';
 
 // 这组钉住期二骨架的三条生死线：
 //   1. 旧版陪看记录（没有房间结构、没有双人账号、没有私聊列表）点开不能崩，台词与角色吐槽还看得见；
@@ -19,12 +19,25 @@ import type { WatchAlongSession } from './types';
 const CHAR_ID = 'char_test';
 
 function newSession(): WatchAlongSession {
-  const room = {
+  const room: WatchRoom = {
     streamerName: '阿茶',
     streamerHandle: '@acha_live',
     category: '深夜塔罗',
     title: '半夜给你抽一张',
+    titleTranslated: '',
     bio: '抽牌只说实话',
+    profile: {
+      ageBand: '二十出头',
+      identity: '大学生',
+      language: 'zh',
+      screenForm: 'live',
+      category: '深夜塔罗',
+      tier: 'mid',
+      speechStyle: '语速偏快，爱说「那个」',
+      motive: '今晚把塔罗牌讲完',
+      mainline: '今晚抽满十张牌，抽到逆位就唱一首',
+      hook: '扣 1 让主播帮你抽一张',
+    },
     viewerCount: 3210,
     customRule: '',
     coverGradient: '#101820',
@@ -43,7 +56,11 @@ function newSession(): WatchAlongSession {
         index: 0,
         scene: '她把牌推到镜头前，桌角的水杯晃了一下',
         speech: '这位同学今晚心里有人',
-        danmaku: [{ id: 'd1', author: '夜猫', text: '准！' }],
+        seq: [
+          { kind: 'line', text: '这位同学今晚心里有人' },
+          { kind: 'scene', text: '她把牌推到镜头前' },
+        ],
+        danmaku: [{ id: 'd1', author: '夜猫', text: '准！', translated: '' }],
         hot: true,
         userActions: [{ id: 'ua1', kind: 'danmaku', text: '哈哈哈哈' }],
         charActions: [{ id: 'ca1', kind: 'gift', giftName: '小鱼干', giftAmount: 6 }],
@@ -112,6 +129,12 @@ describe('旧版记录打开不崩', () => {
     expect(s.chat.map(c => c.from)).toEqual(['action', 'char', 'user']);
     expect(s.chat.some(c => c.text === '这套路太老了吧')).toBe(true);
     expect(s.cast.userAccount.nickname).toBeTruthy();
+    // 旧记录只有一句话 bio、没有档案：bio 塞进「本场正在推进的那件事」，bio 本身保留
+    expect(s.room.bio).toBe('不收钱');
+    expect(s.room.profile?.mainline).toBe('不收钱');
+    expect(s.room.profile?.language).toBe('zh');
+    expect(s.room.profile?.screenForm).toBe('live');
+    expect(s.room.profile?.tier).toBe('mid');
 
     await saveWatchSession(s);
     const loaded = await loadWatchSessions('阿猫');
@@ -137,6 +160,49 @@ describe('新记录原样往返', () => {
     expect(s.digests[0].text).toBe('抽了一张牌');
     expect(s.director).toBe('让主播翻车');
     expect(s.legacy).toBe(false);
+    // 新字段一起存回表里、读出来还在
+    expect(s.room.profile?.tier).toBe('mid');
+    expect(s.room.profile?.mainline).toBe('今晚抽满十张牌，抽到逆位就唱一首');
+    expect(s.room.titleTranslated).toBe('');
+    expect(s.beats[0].seq?.length).toBe(2);
+    expect(s.beats[0].seq?.[0].kind).toBe('line');
+    expect(s.beats[0].seq?.[0].translated).toBe('');
+    expect(s.beats[0].danmaku[0].translated).toBe('');
+  });
+});
+
+describe('外语直播的新字段能存能取', () => {
+  it('档案、译题、台词译文、弹幕译文往返不丢', async () => {
+    const s = newSession();
+    s.room.profile = {
+      ageBand: '二十出头',
+      identity: '虚拟主播',
+      language: 'ja',
+      screenForm: 'vtuber',
+      category: '杂谈',
+      tier: 'big',
+      speechStyle: '语速快，爱说「えっと」',
+      motive: '今晚冲十万关注',
+      mainline: '今晚把歌单唱完，唱跑调就重来',
+      hook: '发「草」让主播念',
+    };
+    s.room.titleTranslated = '今晚把歌单唱完';
+    s.beats[0].seq = [
+      { kind: 'line', text: 'はい、次の曲いきます', translated: '好，下一首来了' },
+      { kind: 'scene', text: '皮套切到唱歌表情' },
+    ];
+    s.beats[0].danmaku = [{ id: 'd1', author: '通りすがり', text: 'うまい', translated: '好听' }];
+
+    await saveWatchSession(s);
+    const [loaded] = await loadWatchSessions('阿猫');
+
+    expect(loaded.room.profile?.language).toBe('ja');
+    expect(loaded.room.profile?.screenForm).toBe('vtuber');
+    expect(loaded.room.profile?.tier).toBe('big');
+    expect(loaded.room.titleTranslated).toBe('今晚把歌单唱完');
+    expect(loaded.beats[0].seq?.[0].translated).toBe('好，下一首来了');
+    expect(loaded.beats[0].seq?.[1].translated).toBe('');
+    expect(loaded.beats[0].danmaku[0].translated).toBe('好听');
   });
 });
 

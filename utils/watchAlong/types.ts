@@ -19,13 +19,67 @@ export interface WatchAccount {
   number: string;
 }
 
+/** 主播的语言：中文 / 日语 / 英语 / 其他 */
+export type WatchStreamerLanguage = 'zh' | 'ja' | 'en' | 'other';
+
+/**
+ * 画面形态：
+ * - game：纯游戏或软件画面，画面里只有游戏或软件窗口，没有真人
+ * - vtuber：虚拟形象（皮套），没有真人
+ * - workbench：桌面工作台，俯拍手部工序，不拍脸
+ * - live：真人出镜，有摄像头对着人
+ * - outdoor：户外移动，镜头跟着人走
+ */
+export type WatchStreamerScreenForm = 'game' | 'vtuber' | 'workbench' | 'live' | 'outdoor';
+
+/**
+ * 体量：
+ * - tiny：个位数小透明
+ * - mid：几十到几百
+ * - big：上万人大主播
+ */
+export type WatchStreamerTier = 'tiny' | 'mid' | 'big';
+
+/**
+ * 结构化的主播档案。
+ *
+ * 取代原来那一句话的 bio：字段固定，台上生成那一路照着这套字段读，
+ * 不许退回成一句话的人设描述。所有字段在旧记录里可能没有，读的时候补空。
+ */
+export interface WatchStreamerProfile {
+  /** 年龄段，例如「二十出头」 */
+  ageBand: string;
+  /** 身份定位：学生、刚工作、二次元、手作党、游戏党之类 */
+  identity: string;
+  /** 语言 */
+  language: WatchStreamerLanguage;
+  /** 画面形态 */
+  screenForm: WatchStreamerScreenForm;
+  /** 分区 */
+  category: string;
+  /** 体量 */
+  tier: WatchStreamerTier;
+  /** 说话风格与口癖（语速、填充词、口头禅、破防反应） */
+  speechStyle: string;
+  /** 本场图什么（今晚开播的动机） */
+  motive: string;
+  /** 本场正在推进的那件事与立下的规矩 */
+  mainline: string;
+  /** 观众能立刻参与的抓手 */
+  hook: string;
+}
+
 /** 路人主播的房间底细 */
 export interface WatchRoom {
   streamerName: string;
   streamerHandle: string;
   category: string;
   title: string;
+  /** 中文译题：外语直播才有，中文直播留空 */
+  titleTranslated?: string;
   bio: string;
+  /** 结构化的主播档案；旧记录没有，界面当简介显示的还是 bio */
+  profile?: WatchStreamerProfile;
   viewerCount: number;
   customRule: string;
   coverGradient: string;
@@ -53,6 +107,8 @@ export interface WatchDanmaku {
   id: string;
   author: string;
   text: string;
+  /** 中文译文：外语弹幕才有，中文弹幕留空 */
+  translated?: string;
 }
 
 /**
@@ -65,6 +121,8 @@ export interface WatchDanmaku {
 export interface WatchSeqItem {
   kind: 'scene' | 'line';
   text: string;
+  /** 主播台词的中文译文：外语台词才有，画面条目不填 */
+  translated?: string;
 }
 
 /** 主播与网友对「我和角色搞事」的即时接招，挂在同一幕后面 */
@@ -263,6 +321,23 @@ export const emptyModelSlot = (): WatchModelSlot => ({
   apiKey: '',
   model: '',
   temperature: 0.9,
+});
+
+/**
+ * 空的主播档案：旧记录没有 profile 时用它兜底。
+ * 语言默认中文、画面形态默认真人出镜、体量默认几十到几百（旧记录都是真人小主播）。
+ */
+export const defaultStreamerProfile = (): WatchStreamerProfile => ({
+  ageBand: '',
+  identity: '',
+  language: 'zh',
+  screenForm: 'live',
+  category: '',
+  tier: 'mid',
+  speechStyle: '',
+  motive: '',
+  mainline: '',
+  hook: '',
 });
 
 export const defaultWatchSettings = (): WatchSettings => ({

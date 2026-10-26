@@ -49,6 +49,10 @@ import type {
   WatchPublicAction,
   WatchRoomCard,
   WatchSeqItem,
+  WatchStreamerLanguage,
+  WatchStreamerProfile,
+  WatchStreamerScreenForm,
+  WatchStreamerTier,
 } from './types';
 import { watchId } from './types';
 
@@ -201,10 +205,45 @@ const exactHas = (lines: LabelLine[], labels: string[]): boolean =>
 const DANMAKU_KEYS = ['公屏', '弹幕', '网友', '观众', '评论'];
 
 /**
+ * 双语分隔符：主播说日语或英语时，「话」写成「原话 ▸ 中文同传」，弹幕写成「作者｜原话 ▸ 中文译文」。
+ * STAGE_FORMAT 里写的就是这个记号。挑 ▸ 是因为模型自己几乎不会顺手打出来。
+ */
+const BILINGUAL_SEP = '▸';
+
+/** 把「原话 ▸ 译文」拆成两半；没有分隔符就整条当原话 */
+const splitBilingual = (raw: string): { text: string; translated?: string } => {
+  const s = (raw || '').trim();
+  const at = s.indexOf(BILINGUAL_SEP);
+  if (at < 0) return { text: s };
+  const left = s.slice(0, at).trim();
+  const right = s.slice(at + 1).trim();
+  if (!left) return { text: right || left };
+  return right ? { text: left, translated: right } : { text: left };
+};
+
+/** 日语假名字符：平假名 U+3040–U+309F，片假名 U+30A0–U+30FF */
+const KANA_CHAR = /[\u3040-\u309F\u30A0-\u30FF]/g;
+/** 连续英文字母算一个英文词 */
+const LATIN_WORD = /[A-Za-z]+/g;
+const SCENE_KANA_MAX = 8;
+const SCENE_LATIN_WORDS_MAX = 4;
+
+/**
+ * 画面旁白必须是中文，代码这里兜一层。
+ * 2026-10-26 实测：日语直播间里画面飘成「ルーレットの盤が回り続けて…皮套の表情が固まる」，
+ * 中英日混排，观众看不懂的画面等于没有画面。
+ * 中文画面里偶尔夹一个 Live2D / FPS / C4 是正常的，所以只看密度，不按单个字符一刀切。
+ */
+const looksForeignScene = (text: string): boolean =>
+  (text.match(KANA_CHAR) || []).length > SCENE_KANA_MAX ||
+  (text.match(LATIN_WORD) || []).length > SCENE_LATIN_WORDS_MAX;
+
+/**
  * 把「画 / 话」交替的行按出现顺序收成一串。
  *
  * 一段直播的节奏是「手上做一件事 → 说一句 → 再做事 → 再说」，所以这里**只看先后**、不分组。
  * 模型偶尔还是照老习惯写「一整块画面 + 一整块台词」，那出来就是两条（一条画、一条话），也不会坏。
+ * 只有「话」没有「画」的一段照样收下：画面只在内容真有进展时才写，不逼它凑动作。
  */
 function stageSeqOf(lines: LabelLine[]): WatchSeqItem[] {
   const out: WatchSeqItem[] = [];
@@ -214,8 +253,15 @@ function stageSeqOf(lines: LabelLine[]): WatchSeqItem[] {
     if (/点名|高能|高光|热点|hot/i.test(l.label)) continue;
     const text = l.value.trim();
     if (!text) continue;
-    if (/画|镜头|场景|实况|视觉|动作|表演/.test(l.label)) out.push({ kind: 'scene', text });
-    else if (/话|台词|说|开口|喊|唱|聊/.test(l.label)) out.push({ kind: 'line', text });
+    if (/画|镜头|场景|实况|视觉|动作|表演/.test(l.label)) {
+      // 画面旁白一律中文，不做双语：这里不拆译文。
+      // 模型不听话写成外语（假名或英文过多）时整条丢掉，宁可不显示，也不给观众看不懂的画面。
+      if (looksForeignScene(text)) continue;
+      out.push({ kind: 'scene', text });
+    } else if (/话|台词|说|开口|喊|唱|聊/.test(l.label)) {
+      const { text: line, translated } = splitBilingual(text);
+      if (line) out.push({ kind: 'line', text: line, translated });
+    }
   }
   return out;
 }
@@ -224,9 +270,11 @@ function stageSeqOf(lines: LabelLine[]): WatchSeqItem[] {
  * 一条「画/话」在屏幕上要看得全。
  * 2026-10-26 Ann 实测：一条塞两百字就被容器截掉，后半截根本看不到。
  * 所以按句切开，一条一条点着看——切完拼回去必须还是原来那段话。
+ *
+ * 2026-10-26 批次二下半截：原来画面 80 / 台词 60，日语长句会被腰斩，放宽到都 120。
  */
-const SCENE_MAX = 80;
-const LINE_MAX = 60;
+const SCENE_MAX = 120;
+const LINE_MAX = 120;
 const PIECE_MIN = 12;
 
 function splitLong(text: string, max: number, seps: string[]): string[] {
@@ -255,7 +303,12 @@ const splitSeqItem = (item: WatchSeqItem): WatchSeqItem[] => {
   const max = item.kind === 'scene' ? SCENE_MAX : LINE_MAX;
   // 台词只在句末切：在逗号上切会把一句完整的话切成两口，念出来就断气了
   const seps = item.kind === 'scene' ? ['。', '！', '？', '…', '；'] : ['。', '！', '？', '…'];
-  return splitLong(item.text, max, seps).map(text => ({ kind: item.kind, text }));
+  // 切开之后中文同传只挂在第一片上：挂到每一片上会在屏幕上把同一段译文重复好几遍
+  return splitLong(item.text, max, seps).map((text, i) => ({
+    kind: item.kind,
+    text,
+    translated: i === 0 ? item.translated : undefined,
+  }));
 };
 
 /** 一段话里带引号：引号内当台词，引号外当画面。比整段塞进台词里让主播念旁白强 */
@@ -288,11 +341,24 @@ function splitByQuotes(text: string): WatchSeqItem[] {
 }
 
 /**
- * 昵称判据要偏严：认错一个昵称，前半句内容直接没了；宁可丢掉昵称记成「观众」，内容还在。
- * 2026-10-26 实测过的坏样本：`他刚才那句真的绝了：哈哈哈哈哈` —— 原来会把前半句当昵称吃掉。
+ * 昵称判据要偏严：认错一个昵称，前半句内容直接没了；认不出昵称的整行也不再收下。
+ * 2026-10-26 实测过的坏样本：`他刚才那句真的绝了：哈哈哈哈哈` —— 原来会把前半句当昵称吃掉，
+ * 剩下的整句再兜底成「路人」搬上公屏。现在这种整行直接丢掉。
+ *
+ * 前面那截是按字判（作者名里带这些字就不像人名）；后面 `^(?:作者|Names|name|作者名|昵称)$`
+ * 是**整名精确匹配**，只有整个作者名恰好等于其中一个才算，别用包含判断，否则「作者阿明」这种真昵称会被误伤。
  */
 const DM_AUTHOR = /^\s*([^\s：:，,。.！!？?、；;｜|「」『』"']{1,8})\s*[：:｜|]\s*([\s\S]+)$/;
-const DM_BAD_NAME = /[的是了吗呢吧啊嘛哦呀哈]|^[我你他她这那]/;
+const DM_BAD_NAME = /[的是了吗呢吧啊嘛哦呀哈]|^[我你他她这那]|^(?:作者|Names|name|作者名|昵称)$/i;
+
+/** 真弹幕没那么长；超过这个长度就是模型把正文挤进了这一行 */
+const DM_TEXT_MAX = 60;
+
+/**
+ * 模型把自己的思考、说明、条数统计当成弹幕吐出来（2026-10-26 实测事故：
+ * 公屏上出现「Hmm 弹幕需要反映投票结果。Let me」这种行），命中任一个就整条丢。
+ */
+const DM_SELF_TALK = /Let me|Hmm|wait|弹幕需要|需要反映|前两条|后面是|投票结果|我这就写|先写|接下来写|这一条是|这里应该|根据上面|按照要求|Original in|no English|原话中文译文|中文译文|译文如下|Names|格式应该|should be|以下格式|输出格式/i;
 
 /** 空格或标点后面紧跟「1~8 字 + 冒号」，认为是一条新弹幕 */
 const DM_BOUNDARY = /([\s，,。.！!？?])(?=[^\s：:，,。.！!？?、；;｜|]{1,8}\s*[：:｜|])/g;
@@ -304,19 +370,35 @@ const splitDanmakuChunks = (v: string): string[] =>
     .map(s => s.replace(/^[-–—\s]+/, '').trim())
     .filter(Boolean);
 
-/** 「昵称：内容」「昵称｜内容」都认，认不出昵称就把整句当弹幕 */
-function parseDanmaku(values: string[]): WatchDanmaku[] {
+/**
+ * 「昵称：内容」「昵称｜内容」都认；认不出昵称的整行默认丢掉（不能把模型的话搬上公屏）。
+ *
+ * fallbackAuthor 只有角色自己发公屏那一路才传：角色的提示词本来就写「公屏：一句话」，不带作者名，
+ * 认不出作者就用它兜底收下，不然角色在公屏说的话全没了。兜底名只用来让内容过得去，
+ * 所以**不拿 DM_BAD_NAME 去判它**。超长和自我说明这两道过滤对兜底收下的行照样生效。
+ */
+function parseDanmaku(values: string[], fallbackAuthor?: string): WatchDanmaku[] {
   const out: WatchDanmaku[] = [];
   values.forEach(v => {
     splitDanmakuChunks(v).forEach(c => {
       if (!c) return;
       const m = c.match(DM_AUTHOR);
+      // 模型自己写的作者名：认不出（没匹配上，或匹配上但名字是坏名字）才谈得上兜底
       const authorOk = Boolean(m) && !DM_BAD_NAME.test(m![1]);
+      if (!authorOk && !fallbackAuthor) return;
+      const author = authorOk ? m![1].trim() : fallbackAuthor!;
+      const body = authorOk ? m![2] : c;
+      // 外语弹幕写成「原话 ▸ 中文译文」，这里拆成原文与译文
+      const { text, translated } = splitBilingual(body.trim());
+      if (!text) return;
+      if (text.length > DM_TEXT_MAX) return;
+      if (DM_SELF_TALK.test(text)) return;
+      if (translated && DM_SELF_TALK.test(translated)) return;
       out.push({
         id: watchId('dm'),
-        // 模型没给昵称时用「路人」：写「观众」会像系统角色，不像看客
-        author: authorOk ? m![1].trim() : '路人',
-        text: (authorOk ? m![2] : c).trim(),
+        author,
+        text,
+        translated,
       });
     });
   });
@@ -335,18 +417,29 @@ function toStageOutput(raw: string): StageOutput {
           .map((s: any) => ({
             kind: s?.kind === 'line' ? ('line' as const) : ('scene' as const),
             text: String(s?.text || '').trim(),
+            translated: s?.translated ? String(s.translated).trim() : undefined,
           }))
           .filter((s: WatchSeqItem) => s.text)
       : [
           ...(asJson.scene ? [{ kind: 'scene' as const, text: String(asJson.scene) }] : []),
-          ...(asJson.speech ? [{ kind: 'line' as const, text: String(asJson.speech) }] : []),
+          ...(asJson.speech
+            ? [{
+                kind: 'line' as const,
+                text: String(asJson.speech),
+                translated: asJson.speechTranslated ? String(asJson.speechTranslated) : undefined,
+              }]
+            : []),
         ];
     return {
       scene: String(asJson.scene || ''),
       speech: String(asJson.speech || ''),
       seq,
       danmaku: parseDanmaku(
-        list.map((d: any) => (typeof d === 'string' ? d : `${d?.author || '观众'}｜${d?.text || ''}`)),
+        list.map((d: any) =>
+          typeof d === 'string'
+            ? d
+            : `${d?.author || '观众'}｜${d?.text || ''}${d?.translated ? ` ${BILINGUAL_SEP} ${d.translated}` : ''}`,
+        ),
       ),
       hot: asJson.hot === true,
     };
@@ -436,7 +529,8 @@ function toCharOutput(raw: string): CharOutput {
   });
 
   const publicActions: WatchPublicAction[] = [];
-  parseDanmaku(valuesOf(lines, DANMAKU_KEYS)).forEach(d => {
+  // 角色这一路只传兜底作者名：角色的公屏本来就不带作者，这里收下内容，作者名后面不用
+  parseDanmaku(valuesOf(lines, DANMAKU_KEYS), '我').forEach(d => {
     publicActions.push({ id: watchId('act'), kind: 'danmaku', text: d.text });
   });
 
@@ -635,17 +729,16 @@ export async function generateStageBeat(opts: {
     char: opts.char,
     slot: opts.model,
     purpose: 'watch_along_stage',
-    maxTokens: 1600,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: STAGE_RULES },
       { role: 'user', content: task },
     ],
     parse: toStageOutput,
     nudge: `上一条挤成一段了，没照格式。这次一行只放一样，每行都以标签开头，行与行之间必须换行：
-画：这场直播正在播的那件事，此刻的样子
-话：你这一句
-画：……
-话：……
+话：主播嘴里蹦出来的一句原话
+话：再一句（可以连着两三句）
+画：只在内容真有进展时写一条
 弹幕：昵称｜他发的那条
 弹幕：昵称｜他发的那条
 点名：否`,
@@ -667,6 +760,7 @@ export async function generateStageCounter(opts: {
     char: opts.char,
     slot: opts.model,
     purpose: 'watch_along_counter',
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: STAGE_RULES },
       {
@@ -789,7 +883,7 @@ export async function runCharTurn(opts: {
     messages,
     temperature: 0.9,
     purpose: 'watch_along_char',
-    maxTokens: 900,
+    maxTokens: 8000,
     parse: toCharOutput,
     nudge: `上一条没照格式。这次一行只放一样，每行都以标签开头：
 私聊：要说的话
@@ -880,7 +974,8 @@ function parseRoomLines(raw: string): WatchRoomCard[] {
   lines.forEach((line, idx) => {
     const cells = line
       .split(/[|｜]/)
-      .map(c => c.replace(/^[\s"'「」【】]+|[\s"'「」【】]+$/g, '').trim());
+      // 只清两端的空白和直双引号、单引号；方头括号【】是标题正文，原样保留
+      .map(c => c.replace(/^[\s"']+|[\s"']+$/g, '').trim());
     if (cells.length < 3) return;
     const [name, handle, category, title, bio, viewers, tag, colors] = cells;
     if (!name) return;
@@ -896,8 +991,8 @@ function parseRoomLines(raw: string): WatchRoomCard[] {
       streamerName: name.slice(0, 20),
       streamerHandle: handle || `@${name.slice(0, 12).toLowerCase()}`,
       category: category || '闲聊',
-      title: (title || bio || '随便播点什么').slice(0, 40),
-      bio: (bio || '').slice(0, 160),
+      title: (title || bio || '随便播点什么').slice(0, 100),
+      bio: (bio || '').slice(0, 200),
       viewerCount: viewerCount > 0 ? viewerCount : 320 + idx * 137,
       customRule: '',
       styleTag: (tag || '').slice(0, 6),
@@ -910,39 +1005,109 @@ function parseRoomLines(raw: string): WatchRoomCard[] {
   return rooms;
 }
 
-/** 万一模型还是回了 JSON（老提示词留下的习惯），照着捡一遍 */
+const roomStr = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
+
+const LANG_VALUES = ['zh', 'ja', 'en', 'other'];
+const FORM_VALUES = ['game', 'vtuber', 'workbench', 'live', 'outdoor'];
+const TIER_VALUES = ['tiny', 'mid', 'big'];
+
+/** 把模型给的 profile 收成固定十字段；缺的填空，取值不在白名单就归默认 */
+function toRoomProfile(raw: any): WatchStreamerProfile {
+  const p = raw && typeof raw === 'object' ? raw : {};
+  const language = roomStr(p.language);
+  const screenForm = roomStr(p.screenForm);
+  const tier = roomStr(p.tier);
+  return {
+    ageBand: roomStr(p.ageBand),
+    identity: roomStr(p.identity),
+    language: (LANG_VALUES.includes(language) ? language : 'zh') as WatchStreamerLanguage,
+    screenForm: (FORM_VALUES.includes(screenForm) ? screenForm : 'live') as WatchStreamerScreenForm,
+    category: roomStr(p.category),
+    tier: (TIER_VALUES.includes(tier) ? tier : 'mid') as WatchStreamerTier,
+    speechStyle: roomStr(p.speechStyle),
+    motive: roomStr(p.motive),
+    mainline: roomStr(p.mainline),
+    hook: roomStr(p.hook),
+  };
+}
+
+/** 一个房间对象收成卡片；名字或标题缺了就当这条读不出来 */
+function toRoomCard(r: any, idx: number): WatchRoomCard {
+  const name = roomStr(r?.streamerName);
+  const title = roomStr(r?.title);
+  const start = roomStr(r?.coverStart);
+  const end = roomStr(r?.coverEnd);
+  const hex = (c: string) => /^#[0-9a-fA-F]{6}$/.test(c);
+  const legacy = Array.isArray(r?.cover) ? r.cover.map((c: unknown) => roomStr(c)) : [];
+  const gradient =
+    hex(start) && hex(end)
+      ? `${start},${end}`
+      : legacy.length >= 2
+        ? `${legacy[0]},${legacy[1]}`
+        : GRADIENT_FALLBACK[idx % GRADIENT_FALLBACK.length];
+  const viewers = Number(r?.viewerCount);
+  return {
+    id: watchId('room'),
+    streamerName: name.slice(0, 20),
+    streamerHandle: roomStr(r?.streamerHandle) || `@${name.slice(0, 12).toLowerCase()}`,
+    category: roomStr(r?.category) || roomStr(r?.profile?.category) || '闲聊',
+    title: title.slice(0, 100),
+    titleTranslated: roomStr(r?.titleTranslated),
+    bio: roomStr(r?.bio).slice(0, 200),
+    profile: toRoomProfile(r?.profile),
+    viewerCount: viewers > 0 ? Math.round(viewers) : 320 + idx * 137,
+    customRule: '',
+    styleTag: roomStr(r?.styleTag).slice(0, 6),
+    coverGradient: gradient,
+  };
+}
+
+/** 从模型回复里抠出一个房间数组：整个数组、包在 rooms 里、单个对象、外面裹废话，都认 */
+function pickRoomArray(clean: string): any[] {
+  const tryJson = (text: string): any => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  };
+  const asList = (v: any): any[] | null => {
+    if (Array.isArray(v)) return v;
+    if (v && Array.isArray(v.rooms)) return v.rooms;
+    if (v && typeof v === 'object') return [v];
+    return null;
+  };
+
+  const whole = asList(tryJson(clean));
+  if (whole) return whole;
+
+  const a = clean.indexOf('[');
+  const b = clean.lastIndexOf(']');
+  if (a >= 0 && b > a) {
+    const arr = asList(tryJson(clean.slice(a, b + 1)));
+    if (arr) return arr;
+  }
+
+  const c = clean.indexOf('{');
+  const d = clean.lastIndexOf('}');
+  if (c >= 0 && d > c) {
+    const obj = asList(tryJson(clean.slice(c, d + 1)));
+    if (obj) return obj;
+  }
+  return [];
+}
+
+/** 优先读 JSON 数组；字段缺失、外面裹废话、单条坏数据都不许整批崩 */
 function parseRoomJson(raw: string): WatchRoomCard[] {
   const clean = stripNoise(raw);
-  const from = clean.indexOf('{');
-  const to = clean.lastIndexOf('}');
-  if (from < 0 || to <= from) return [];
-  let parsed: any;
-  try {
-    parsed = JSON.parse(clean.slice(from, to + 1));
-  } catch {
-    return [];
-  }
-  const list: any[] = Array.isArray(parsed?.rooms) ? parsed.rooms : Array.isArray(parsed) ? parsed : [];
-  return list.map((r, idx) => ({
-    id: watchId('room'),
-    streamerName: String(r?.streamerName || '').slice(0, 20),
-    streamerHandle: String(r?.streamerHandle || ''),
-    category: String(r?.category || '闲聊'),
-    title: String(r?.title || '').slice(0, 40),
-    bio: String(r?.bio || '').slice(0, 160),
-    viewerCount: Number(r?.viewerCount) > 0 ? Math.round(Number(r.viewerCount)) : 320 + idx * 137,
-    customRule: '',
-    styleTag: String(r?.styleTag || '').slice(0, 6),
-    coverGradient:
-      Array.isArray(r?.cover) && r.cover.length >= 2
-        ? `${r.cover[0]},${r.cover[1]}`
-        : GRADIENT_FALLBACK[idx % GRADIENT_FALLBACK.length],
-  })).filter(r => r.streamerName && r.title);
+  return pickRoomArray(clean)
+    .map((r, idx) => toRoomCard(r, idx))
+    .filter(r => r.streamerName && r.title);
 }
 
 function toRoomList(raw: string): WatchRoomCard[] {
-  const rooms = parseRoomLines(raw);
-  const list = rooms.length ? rooms : parseRoomJson(raw);
+  const jsonRooms = parseRoomJson(raw);
+  const list = jsonRooms.length ? jsonRooms : parseRoomLines(raw);
   if (!list.length) throw new Error('这批房间没认出来');
   return list;
 }
@@ -975,7 +1140,7 @@ export async function generateRoomPool(opts: {
     char: opts.char,
     purpose: 'watch_along_rooms',
     temperature: 1.0,
-    maxTokens: 2000,
+    maxTokens: 8000,
     messages,
   });
 
@@ -985,20 +1150,20 @@ export async function generateRoomPool(opts: {
   try {
     list = toRoomList(raw);
   } catch {
-    // 一行都没写对就硬再要一遍，只要 3 个，别再失手
+    // 一条都没写对就硬再要一遍：还是 JSON，房间数和第一次一样，别再失手
     const retry = await callSummaryModel({
       apiConfig: opts.apiConfig,
       char: opts.char,
       purpose: 'watch_along_rooms_retry',
       temperature: 0.9,
-      maxTokens: 1400,
+      maxTokens: 8000,
       messages: [
         ...messages,
         { role: 'assistant', content: raw.slice(0, 1500) },
         {
           role: 'user',
-          content: `上一条没照格式。现在只写 3 行，一行一个房间，用竖线隔开，别的字都不要：
-主播名 | @handle | 分区 | 房间标题 | 玩法与脾气 | 人数 | 风格 | #1b2430 #3a2a44`,
+          content: `上一条没照格式。现在回 ${count} 个房间的 JSON 数组，照下面这个骨架把每个字段填上，别的字都不要：
+[{"streamerName":"","streamerHandle":"","title":"","titleTranslated":"","bio":"","viewerCount":0,"styleTag":"","coverStart":"#000000","coverEnd":"#000000","profile":{"ageBand":"","identity":"","language":"","screenForm":"","category":"","tier":"","speechStyle":"","motive":"","mainline":"","hook":""}}]`,
         },
       ],
     });

@@ -1,13 +1,22 @@
 /**
  * 本场直播信息（可手改）。
  *
- * 手册里没有明写，但房间里必须有一个地方能改：主播名、分区、房间标题、主播人设，
- * 以及当前这一幕的画面和台词。改完就地生效——台上那一路下一轮读到的就是新的，
- * 当前这一幕的文字也立刻换掉，不用重 roll 一整幕。
+ * 房间里唯一能改「台上那一路底细」的地方：房间标题、主播人设，以及批次一定下的
+ * 结构化主播档案十个字段（网名、账号标识、年龄段、身份定位、语言、画面形态、分区、
+ * 体量、说话风格与口癖、本场图什么、本场正在推进的那件事与立下的规矩、观众能立刻
+ * 参与的抓手），还有当前这一幕的画面和台词。改完就地生效——台上那一路下一轮读到的
+ * 就是新的，已经生成的幕不重写，当前这一幕的文字立刻换掉。
  */
 import React, { useEffect, useState } from 'react';
 import { Sheet, SolidButton, W } from './chrome';
-import type { WatchAlongSession, WatchRoom } from '../../utils/watchAlong/types';
+import {
+  defaultStreamerProfile,
+  type WatchAlongSession,
+  type WatchRoom,
+  type WatchStreamerLanguage,
+  type WatchStreamerScreenForm,
+  type WatchStreamerTier,
+} from '../../utils/watchAlong/types';
 
 const Field = ({
   label,
@@ -18,6 +27,7 @@ const Field = ({
   rows = 3,
   placeholder,
   mono,
+  options,
 }: {
   label: string;
   hint?: string;
@@ -27,6 +37,8 @@ const Field = ({
   rows?: number;
   placeholder?: string;
   mono?: boolean;
+  /** 有它就渲染下拉，没有就按多行/单行输入框渲染 */
+  options?: { value: string; label: string }[];
 }) => (
   <div className="mt-3">
     <div className="mb-1 flex items-baseline gap-1.5">
@@ -39,7 +51,21 @@ const Field = ({
         </span>
       ) : null}
     </div>
-    {multiline ? (
+    {options ? (
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        aria-label={label}
+        className="h-[34px] w-full px-3 text-[12.5px] outline-none"
+        style={{ borderRadius: 10, background: W.fill, color: W.ink }}
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    ) : multiline ? (
       <textarea
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -67,6 +93,27 @@ const Field = ({
   </div>
 );
 
+const LANGUAGE_OPTIONS: { value: WatchStreamerLanguage; label: string }[] = [
+  { value: 'zh', label: '中文' },
+  { value: 'ja', label: '日语' },
+  { value: 'en', label: '英语' },
+  { value: 'other', label: '其他' },
+];
+
+const SCREEN_FORM_OPTIONS: { value: WatchStreamerScreenForm; label: string }[] = [
+  { value: 'game', label: '纯游戏或软件画面' },
+  { value: 'vtuber', label: '虚拟形象' },
+  { value: 'workbench', label: '桌面工作台' },
+  { value: 'live', label: '真人出镜' },
+  { value: 'outdoor', label: '户外移动' },
+];
+
+const TIER_OPTIONS: { value: WatchStreamerTier; label: string }[] = [
+  { value: 'tiny', label: '个位数' },
+  { value: 'mid', label: '几十到几百' },
+  { value: 'big', label: '上万人' },
+];
+
 export function WatchInfo({
   open,
   session,
@@ -79,22 +126,42 @@ export function WatchInfo({
   onSave: (next: { room: WatchRoom; scene: string; speech: string }) => void;
 }) {
   const last = session.beats[session.beats.length - 1];
+  const p = session.room.profile || defaultStreamerProfile();
   const [name, setName] = useState(session.room.streamerName);
   const [handle, setHandle] = useState(session.room.streamerHandle);
   const [category, setCategory] = useState(session.room.category);
   const [title, setTitle] = useState(session.room.title);
   const [bio, setBio] = useState(session.room.bio);
+  const [ageBand, setAgeBand] = useState(p.ageBand);
+  const [identity, setIdentity] = useState(p.identity);
+  const [language, setLanguage] = useState<WatchStreamerLanguage>(p.language);
+  const [screenForm, setScreenForm] = useState<WatchStreamerScreenForm>(p.screenForm);
+  const [tier, setTier] = useState<WatchStreamerTier>(p.tier);
+  const [speechStyle, setSpeechStyle] = useState(p.speechStyle);
+  const [motive, setMotive] = useState(p.motive);
+  const [mainline, setMainline] = useState(p.mainline);
+  const [hook, setHook] = useState(p.hook);
   const [scene, setScene] = useState(last?.scene || '');
   const [speech, setSpeech] = useState(last?.speech || '');
 
   // 每次打开 / 换一场，都把表单对齐到本场当前的值
   useEffect(() => {
     if (!open) return;
+    const cur = session.room.profile || defaultStreamerProfile();
     setName(session.room.streamerName);
     setHandle(session.room.streamerHandle);
     setCategory(session.room.category);
     setTitle(session.room.title);
     setBio(session.room.bio);
+    setAgeBand(cur.ageBand);
+    setIdentity(cur.identity);
+    setLanguage(cur.language);
+    setScreenForm(cur.screenForm);
+    setTier(cur.tier);
+    setSpeechStyle(cur.speechStyle);
+    setMotive(cur.motive);
+    setMainline(cur.mainline);
+    setHook(cur.hook);
     setScene(last?.scene || '');
     setSpeech(last?.speech || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -115,8 +182,20 @@ export function WatchInfo({
                 streamerName: name.trim().slice(0, 20),
                 streamerHandle: handle.trim().slice(0, 24) || session.room.streamerHandle,
                 category: category.trim().slice(0, 12) || '闲聊',
-                title: title.trim().slice(0, 40),
-                bio: bio.trim().slice(0, 200),
+                title: title.trim().slice(0, 100),
+                bio: bio.trim().slice(0, 1000),
+                profile: {
+                  ageBand: ageBand.trim(),
+                  identity: identity.trim(),
+                  language,
+                  screenForm,
+                  category: category.trim().slice(0, 12) || '闲聊',
+                  tier,
+                  speechStyle: speechStyle.trim(),
+                  motive: motive.trim(),
+                  mainline: mainline.trim(),
+                  hook: hook.trim(),
+                },
               },
               scene: scene.trim(),
               speech: speech.trim(),
@@ -132,12 +211,62 @@ export function WatchInfo({
           这些是台上那一路的底细，改完下一轮就按新的演。
         </div>
 
-        <div className="mt-1 grid grid-cols-2 gap-2">
-          <Field label="主播名" value={name} onChange={setName} placeholder="主播叫什么" />
-          <Field label="分区" value={category} onChange={setCategory} placeholder="比如 深夜塔罗" />
-        </div>
+        <Field label="主播网名" value={name} onChange={setName} placeholder="主播叫什么" />
         <Field label="账号标识" value={handle} onChange={setHandle} placeholder="@handle" />
         <Field label="房间标题" value={title} onChange={setTitle} placeholder="主播随口写的一句话" />
+        <Field label="年龄段" value={ageBand} onChange={setAgeBand} placeholder="比如 二十出头" />
+        <Field label="身份定位" value={identity} onChange={setIdentity} placeholder="比如 大学生、游戏党" />
+        <Field
+          label="语言"
+          value={language}
+          onChange={v => setLanguage(v as WatchStreamerLanguage)}
+          options={LANGUAGE_OPTIONS}
+        />
+        <Field
+          label="画面形态"
+          value={screenForm}
+          onChange={v => setScreenForm(v as WatchStreamerScreenForm)}
+          options={SCREEN_FORM_OPTIONS}
+        />
+        <Field label="分区" value={category} onChange={setCategory} placeholder="比如 深夜塔罗" />
+        <Field
+          label="体量"
+          value={tier}
+          onChange={v => setTier(v as WatchStreamerTier)}
+          options={TIER_OPTIONS}
+        />
+        <Field
+          label="说话风格与口癖"
+          value={speechStyle}
+          onChange={setSpeechStyle}
+          multiline
+          rows={3}
+          placeholder="语速、口头禅、破防时的反应"
+        />
+        <Field
+          label="本场图什么"
+          value={motive}
+          onChange={setMotive}
+          multiline
+          rows={3}
+          placeholder="今晚为什么开播"
+        />
+        <Field
+          label="本场正在推进的事与立下的规矩"
+          value={mainline}
+          onChange={setMainline}
+          multiline
+          rows={3}
+          placeholder="这一场在推进什么、立了什么规矩"
+        />
+        <Field
+          label="观众能立刻参与的抓手"
+          value={hook}
+          onChange={setHook}
+          multiline
+          rows={3}
+          placeholder="观众马上能掺和的事"
+        />
         <Field
           label="主播人设与玩法"
           hint="脾气、手艺、跟观众怎么互动"

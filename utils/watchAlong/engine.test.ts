@@ -6,6 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { __parseChar, __parseRooms, __parseStage } from './engine';
+import { buildStageTask } from './prompts';
+import type { WatchAlongSession, WatchStreamerProfile } from './types';
 
 describe('台上这一幕的解析', () => {
   it('标准写法', () => {
@@ -73,21 +75,90 @@ describe('台上这一幕的解析', () => {
     expect(r.seq.map(s => s.kind)).toEqual(['scene', 'line']);
   });
 
-  it('昵称认不准：宁可记成路人，也不许把前半句当昵称吃掉', () => {
+  it('整行认不出作者：直接丢掉，不许兜底成「路人」搬上公屏', () => {
+    // 2026-10-26 实测：模型把自己的话整行吐出来，旧逻辑兜底成「路人」直接上了公屏
     const r = __parseStage('画：他敲了敲外壳\n话：应该没事\n弹幕：他刚才那句真的绝了：哈哈哈哈哈');
-    expect(r.danmaku[0].author).toBe('路人');
-    expect(r.danmaku[0].text).toContain('真的绝了');
-    expect(r.danmaku[0].text).toContain('哈哈');
+    expect(r.danmaku).toHaveLength(0);
+  });
+
+  it('模型把英文思考和自我说明当弹幕吐出来：整批丢掉（2026-10-26 实测事故）', () => {
+    const r = __parseStage(`画：镜头对着桌上的模具
+话：这个色再调一下
+弹幕：路人｜Hmm 弹幕需要反映投票结果。Let me order
+弹幕：order｜前两条是投票的余波，后面是反应。
+点名：否`);
+    expect(r.danmaku).toHaveLength(0);
+  });
+
+  it('超过 60 字的弹幕不是弹幕，是模型把正文挤了进来：丢掉', () => {
+    const long = '3号'.repeat(35);
+    const r = __parseStage(`画：他把模具翻过来
+话：脱模了脱模了
+弹幕：阿吉不吃姜｜${long}
+点名：否`);
+    expect(r.danmaku).toHaveLength(0);
+  });
+
+  it('正常的「作者｜内容」弹幕照旧保留', () => {
+    const r = __parseStage(`画：他把模具翻过来
+话：脱模了脱模了
+弹幕：阿吉不吃姜｜3号3号3号
+点名：否`);
+    expect(r.danmaku).toHaveLength(1);
+    expect(r.danmaku[0]).toEqual({ id: expect.any(String), author: '阿吉不吃姜', text: '3号3号3号' });
+  });
+
+  it('画面飘成日语中英日混排：整条丢掉，不报错（2026-10-26 实测）', () => {
+    const r = __parseStage(`画：ルーレットの盤が回り続けて、数字のところでゆっくり止まる。皮套の表情が固まる。
+话：あーもう、もう一回！
+弹幕：みかん箱｜8きたああああ8来了啊啊啊啊
+点名：否`);
+    expect(r.seq.some(s => s.kind === 'scene')).toBe(false);
+    expect(r.seq.every(s => s.kind === 'line')).toBe(true);
+    expect(r.scene).toBe('');
+    expect(r.speech).toContain('もう一回');
+  });
+
+  it('中文画面里夹数字和工序词：照旧保留', () => {
+    const r = __parseStage('画：手把3号色精滴管伸进量杯，颜色发灰。');
+    expect(r.seq).toHaveLength(1);
+    expect(r.seq[0].kind).toBe('scene');
+    expect(r.seq[0].text).toContain('量杯');
+  });
+
+  it('中文画面里夹一个英文词：不算外语画面，照旧保留', () => {
+    const r = __parseStage('画：游戏窗口里血条掉到 5%，Boss 进了二阶段。');
+    expect(r.seq).toHaveLength(1);
+    expect(r.seq[0].kind).toBe('scene');
+    expect(r.seq[0].text).toContain('二阶段');
+  });
+
+  it('模型把「这条弹幕是什么」写进公屏：丢掉', () => {
+    const r = __parseStage(`画：他把转盘按住
+话：停停停
+弹幕：作者｜原话中文译文. Original in Japanese.
+弹幕：Names｜no English. OK.
+点名：否`);
+    expect(r.danmaku).toHaveLength(0);
+  });
+
+  it('正常日语弹幕照旧保留', () => {
+    const r = __parseStage(`话：はい、次いこ
+弹幕：みかん箱｜8きたああああ8来了啊啊啊啊
+点名：否`);
+    expect(r.danmaku).toHaveLength(1);
+    expect(r.danmaku[0]).toEqual({ id: expect.any(String), author: 'みかん箱', text: '8きたああああ8来了啊啊啊啊' });
   });
 
   it('一条太长：按句切开，拼回去一个字都不丢', () => {
     const body =
       '他把整箱零件倒在地上一件件分开，先按大小摆成一排，再把有锈的挑出来放右边，剩下的挨个用布擦干净。' +
       '旁边那台老机器已经拆到只剩骨架，螺丝按顺序摆在纸片上，一颗都没有混。' +
-      '他说这台得慢慢来，急不得，急一次就要重新排一遍，一晚上就过去了。';
+      '他说这台得慢慢来，急不得，急一次就要重新排一遍，一晚上就过去了。' +
+      '窗台上还摆着几颗刚换下来的螺丝，按大小排成一列。';
     const r = __parseStage(`画：${body}`);
     expect(r.seq.length).toBeGreaterThan(1);
-    for (const s of r.seq) expect(s.text.length).toBeLessThanOrEqual(80);
+    for (const s of r.seq) expect(s.text.length).toBeLessThanOrEqual(120);
     // 切开之后拼回来必须还是原来那段话（只允许丢空白）
     expect(r.seq.map(s => s.text).join('').replace(/\s/g, '')).toBe(body.replace(/\s/g, ''));
   });
@@ -96,7 +167,7 @@ describe('台上这一幕的解析', () => {
     const junk = '画：' + '他把镜头挪了挪又挪了挪。'.repeat(24);
     const r = __parseStage(junk);
     expect(r.seq.length).toBeGreaterThan(1);
-    expect(r.seq.every(s => s.text.length <= 80)).toBe(true);
+    expect(r.seq.every(s => s.text.length <= 120)).toBe(true);
     expect(r.danmaku).toHaveLength(0);
   });
 
@@ -129,6 +200,165 @@ describe('台上这一幕的解析', () => {
     expect(r.seq[1].kind).toBe('line');
     expect(r.seq[1].text).toContain('糊了');
   });
+
+  it('只有话、没有画的一段照样收下，scene 是空的', () => {
+    const r = __parseStage(`话：来了来了，今天还是这台。
+话：先看一下昨天那把。
+弹幕：啃瓜群众｜又来了
+点名：否`);
+    expect(r.seq.map(s => s.kind)).toEqual(['line', 'line']);
+    expect(r.scene).toBe('');
+    expect(r.speech).toContain('来了来了');
+    expect(r.speech).toContain('昨天那把');
+    expect(r.danmaku).toHaveLength(1);
+  });
+
+  it('外语双语：话和弹幕都按 ▸ 拆成原话 + 译文', () => {
+    const r = __parseStage(`话：あーもう、これ無理だって ▸ 啊——不行了这个真打不过
+弹幕：ゆき｜うぽつ ▸ 感谢开播
+点名：否`);
+    expect(r.seq[0]).toEqual({
+      kind: 'line',
+      text: 'あーもう、これ無理だって',
+      translated: '啊——不行了这个真打不过',
+    });
+    expect(r.danmaku[0]).toMatchObject({ author: 'ゆき', text: 'うぽつ', translated: '感谢开播' });
+  });
+});
+
+/** 台上提示词的材料：造一条最小可用的陪看记录 */
+const makeStageSession = (opts: {
+  user?: string;
+  char?: string;
+  profile?: WatchStreamerProfile;
+  bio?: string;
+  beatDanmaku?: Array<{ author: string; text: string }>;
+}): WatchAlongSession => ({
+  id: 's1',
+  charId: 'c1',
+  status: 'watching',
+  createdAt: 0,
+  updatedAt: 0,
+  room: {
+    streamerName: '阿七',
+    streamerHandle: '@aqi',
+    category: '游戏实况',
+    title: '今晚冲一波排位',
+    bio: opts.bio ?? '',
+    profile: opts.profile,
+    viewerCount: 120,
+    customRule: '',
+    coverGradient: '#000000,#111111',
+  },
+  cast: {
+    userAccount: { nickname: opts.user ?? '路过的人', number: 'N-0001' },
+    charAccount: { nickname: opts.char ?? '阿猫', number: 'N-0002' },
+    presence: 'side',
+    autoReact: true,
+    petVisible: true,
+    mic: 'off',
+  },
+  beats: opts.beatDanmaku
+    ? [
+        {
+          id: 'b1',
+          index: 0,
+          scene: '',
+          speech: '开了',
+          danmaku: opts.beatDanmaku.map((d, i) => ({ id: `d${i}`, author: d.author, text: d.text })),
+          hot: false,
+          userActions: [],
+          charActions: [],
+          at: 0,
+        },
+      ]
+    : [],
+  chat: [],
+  digests: [],
+  director: '',
+});
+
+describe('台上提示词：不抢话与主播档案', () => {
+  const profile: WatchStreamerProfile = {
+    ageBand: '二十出头',
+    identity: '大学生',
+    language: 'ja',
+    screenForm: 'vtuber',
+    category: '虚拟主播',
+    tier: 'mid',
+    speechStyle: '语速慢，句尾带ね',
+    motive: '睡前找人说话',
+    mainline: '连麦点歌，凑够十首就下播',
+    hook: '公屏扣歌名点唱',
+  };
+
+  it('历史里发过弹幕的号进禁止名单；从没出现过的号一个字都不提', () => {
+    const s = makeStageSession({
+      user: '夜班司机',
+      char: '阿猫',
+      beatDanmaku: [{ author: '夜班司机', text: '来了' }],
+    });
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    expect(task).toContain('「夜班司机」');
+    expect(task).toContain('不归你写');
+    // 阿猫从没在本场出现过：连禁止名单都不给，一个字都不许出现
+    expect(task).not.toContain('阿猫');
+  });
+
+  it('历史里有角色的公屏动作，也算这个号在本场出现过', () => {
+    const s = makeStageSession({ char: '阿猫' });
+    s.beats = [
+      {
+        id: 'b1',
+        index: 0,
+        scene: '',
+        speech: '开了',
+        danmaku: [],
+        hot: false,
+        userActions: [],
+        charActions: [{ id: 'a1', kind: 'danmaku', text: '这波稳' }],
+        at: 0,
+      },
+    ];
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    expect(task).toContain('「阿猫」');
+  });
+
+  it('有档案就逐项列出十个字段，不再只塞那一句 bio', () => {
+    const s = makeStageSession({ profile, bio: '睡前唠两句' });
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    for (const key of [
+      'ageBand',
+      'identity',
+      'language',
+      'screenForm',
+      'category',
+      'tier',
+      'speechStyle',
+      'motive',
+      'mainline',
+      'hook',
+    ]) {
+      expect(task).toContain(key);
+    }
+    expect(task).toContain('二十出头');
+    expect(task).toContain('连麦点歌，凑够十首就下播');
+    expect(task).toContain('虚拟形象');
+    expect(task).not.toContain('睡前唠两句');
+  });
+
+  it('没有档案（旧记录、按行兜底刷出来的房间）才退回那一句 bio', () => {
+    const s = makeStageSession({ bio: '睡前唠两句' });
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    expect(task).toContain('睡前唠两句');
+  });
+
+  it('提示词里不再有第二人称扮演指令', () => {
+    const s = makeStageSession({ profile });
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    expect(task).not.toContain('【你是谁】');
+    expect(task).not.toContain('你在开一场直播');
+  });
 });
 
 describe('角色这一轮的解析', () => {
@@ -142,6 +372,20 @@ describe('角色这一轮的解析', () => {
     expect(r.public[0]).toMatchObject({ kind: 'danmaku', text: '这修法我奶奶都会' });
     expect(r.transfer).toBe('accept');
     expect(r.wentPublic).toBe(true);
+  });
+
+  it('角色公屏不带作者：兜底收下，不许丢（陪看核心玩法）', () => {
+    // CHAR_FORMAT 写的就是「公屏：一句话」，没有作者名；这一路必须兜底，否则角色在公屏说的话全消失
+    const r = __parseChar('公屏：这修法我奶奶都会');
+    expect(r.public).toHaveLength(1);
+    expect(r.public[0]).toMatchObject({ kind: 'danmaku', text: '这修法我奶奶都会' });
+    expect(r.wentPublic).toBe(true);
+  });
+
+  it('角色公屏兜底作者不许成为脏数据后门：模型自我说明照样丢', () => {
+    const r = __parseChar('公屏：Hmm 弹幕需要反映投票结果');
+    expect(r.public).toHaveLength(0);
+    expect(r.wentPublic).toBe(false);
   });
 
   it('只发一个表情', () => {
@@ -187,20 +431,100 @@ describe('角色这一轮的解析', () => {
 
 describe('大厅刷台的解析', () => {
   it('一行一个房间', () => {
-    const rooms = __parseRooms(`老陈修收音机 | @laochen | 手工 | 凌晨三点修一台收音机 | 手上很稳，说话慢 | 1840 | 慢手 | #1b2430 #3a2a44
-1. 豆子打游戏 | @douzi | 游戏 | 手残挑战第 90 天 | 越菜越爱玩，卡关会自言自语 | 2.3万 | 手残 | #12232b #20404a`);
+    const rooms = __parseRooms(`kite.exe | @kite_exe | 游戏实况 | 今晚冲一波排位 | 越菜越爱玩，卡关会自言自语 | 1840 | 手残 | #1b2430 #3a2a44
+1. 捏捏不圆 | @nienienie | 手作潮玩 | 捏捏打包中 | 手上很稳，说话慢 | 2.3万 | 慢手 | #12232b #20404a`);
     expect(rooms).toHaveLength(2);
-    expect(rooms[0].streamerName).toBe('老陈修收音机');
+    expect(rooms[0].streamerName).toBe('kite.exe');
     expect(rooms[0].coverGradient).toBe('#1b2430,#3a2a44');
     expect(rooms[1].viewerCount).toBe(23000);
   });
 
   it('回成 JSON 也能捡回来', () => {
     const rooms = __parseRooms(
-      '{"rooms":[{"streamerName":"阿朱","title":"织毛衣","category":"手工","viewerCount":30}]}',
+      '{"rooms":[{"streamerName":"阿朱","title":"捏捏打包中","category":"手作潮玩","viewerCount":30}]}',
     );
     expect(rooms[0].streamerName).toBe('阿朱');
     expect(rooms[0].viewerCount).toBe(30);
+  });
+
+  it('分区只写在 profile 里：顶层 category 要取 profile.category，不是「闲聊」', () => {
+    const rooms = __parseRooms(
+      '[{"streamerName":"こむぎこ","title":"【歌枠】","viewerCount":900,"profile":{"category":"歌回点唱","language":"ja","screenForm":"vtuber","tier":"mid"}}]',
+    );
+    expect(rooms[0].category).toBe('歌回点唱');
+  });
+
+  it('代码块包着、前后带废话的 JSON 数组：读得出，profile 和译题都带进来', () => {
+    const rooms = __parseRooms(`好的，这是这批房间：
+\`\`\`json
+[
+  {
+    "streamerName": "ゆきの",
+    "streamerHandle": "@yukino_ch",
+    "title": "【雑談】おやすみ前にお話ししよ",
+    "titleTranslated": "【杂谈】睡前聊两句",
+    "bio": "睡前来唠两句",
+    "viewerCount": 512,
+    "styleTag": "软糯",
+    "coverStart": "#1a2028",
+    "coverEnd": "#2b2438",
+    "profile": {
+      "ageBand": "二十出头",
+      "identity": "大学生",
+      "language": "ja",
+      "screenForm": "vtuber",
+      "category": "虚拟主播",
+      "tier": "mid",
+      "speechStyle": "语速慢，句尾带ね",
+      "motive": "睡前找人说话",
+      "mainline": "连麦点歌，凑够十首就下播",
+      "hook": "公屏扣歌名点唱"
+    }
+  }
+]
+\`\`\`
+就这些。`);
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].streamerName).toBe('ゆきの');
+    expect(rooms[0].titleTranslated).toBe('【杂谈】睡前聊两句');
+    expect(rooms[0].coverGradient).toBe('#1a2028,#2b2438');
+    expect(rooms[0].profile).toMatchObject({
+      language: 'ja',
+      screenForm: 'vtuber',
+      tier: 'mid',
+      ageBand: '二十出头',
+      hook: '公屏扣歌名点唱',
+    });
+  });
+
+  it('单个对象而不是数组：也当一间房收下', () => {
+    const rooms = __parseRooms('{"streamerName":"豆子","title":"手残挑战第 90 天","viewerCount":8}');
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].streamerName).toBe('豆子');
+  });
+
+  it('缺字段和一条坏数据：缺的补空、坏数据跳过，整批不崩', () => {
+    const rooms = __parseRooms(`[
+      {"streamerName":"阿七","title":"上来就送","viewerCount":1200},
+      null,
+      "这条不是房间",
+      {"streamerName":"小满","title":"捏捏打包中","profile":{"language":"乱写","screenForm":"乱写","tier":"乱写"}}
+    ]`);
+    expect(rooms).toHaveLength(2);
+    expect(rooms[0].streamerName).toBe('阿七');
+    expect(rooms[0].profile).toMatchObject({ language: 'zh', screenForm: 'live', tier: 'mid', ageBand: '' });
+    expect(rooms[0].titleTranslated).toBe('');
+    expect(rooms[1].streamerName).toBe('小满');
+    // 缺人数给 320 起的兜底，跟老写法一致
+    expect(rooms[1].viewerCount).toBeGreaterThanOrEqual(320);
+  });
+
+  it('坏 JSON 读不出来：退回按行兜底，日语方头括号不许被吃掉', () => {
+    const rooms = __parseRooms(
+      'ゆきの | @yukino_ch | 虚拟主播 | 【雑談】おやすみ前にお話ししよ | 睡前来唠两句 | 512 | 软糯 | #1a2028 #2b2438',
+    );
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].title).toBe('【雑談】おやすみ前にお話ししよ');
   });
 
   it('什么都没认出来就抛错（界面会提示换一批）', () => {

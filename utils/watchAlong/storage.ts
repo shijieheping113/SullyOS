@@ -13,10 +13,16 @@ import type {
   WatchChatMessage,
   WatchClip,
   WatchDanmaku,
+  WatchFollowUp,
   WatchGlobals,
   WatchPublicAction,
   WatchRoom,
   WatchRoomCard,
+  WatchSeqItem,
+  WatchStreamerLanguage,
+  WatchStreamerProfile,
+  WatchStreamerScreenForm,
+  WatchStreamerTier,
   WatchModelSlot,
   WatchSettings,
 } from './types';
@@ -24,6 +30,7 @@ import {
   defaultCast,
   defaultCharAccount,
   defaultGlobals,
+  defaultStreamerProfile,
   defaultWatchSettings,
   emptyModelSlot,
   watchId,
@@ -111,29 +118,82 @@ export function normalizeSettings(raw: any): WatchSettings {
 }
 
 function normalizeRoom(raw: any, idx: number): WatchRoom {
+  const bio = text(raw.bio) || text(raw.npcBio, '');
+  const profile = normalizeProfile(raw.profile);
+  // 旧记录只有一句话的 bio、没有档案：把 bio 原样塞进「本场正在推进的那件事」，
+  // bio 本身保留不动，界面照旧当简介显示。
+  if (!profile.mainline && bio) profile.mainline = bio;
   return {
     streamerName: text(raw.streamerName) || text(raw.npcStreamerName, '路人主播'),
     streamerHandle: text(raw.streamerHandle) || text(raw.npcHandle, '@live_stream'),
     category: text(raw.category) || text(raw.npcCategoryLabel, '直播间'),
     title: text(raw.title) || text(raw.npcRoomTitle, '直播间'),
-    bio: text(raw.bio) || text(raw.npcBio, ''),
+    titleTranslated: text(raw.titleTranslated),
+    bio,
+    profile,
     viewerCount: num(raw.viewerCount, 1000),
     customRule: text(raw.customRule) || text(raw.customRulePrompt, ''),
     coverGradient: text(raw.coverGradient) || ['#243447', '#0e1621', '#3a2a44'][idx % 3],
   };
 }
 
+const WATCH_SCREEN_FORMS: WatchStreamerScreenForm[] = [
+  'game',
+  'vtuber',
+  'workbench',
+  'live',
+  'outdoor',
+];
+
+/** 结构化主播档案逐个兜底；旧记录没有 profile 时给一份空档案（真人小主播） */
+function normalizeProfile(raw: any): WatchStreamerProfile {
+  const base = defaultStreamerProfile();
+  if (!raw || typeof raw !== 'object') return base;
+  const language: WatchStreamerLanguage =
+    raw.language === 'ja' || raw.language === 'en' || raw.language === 'other'
+      ? raw.language
+      : base.language;
+  const screenForm: WatchStreamerScreenForm = WATCH_SCREEN_FORMS.includes(raw.screenForm)
+    ? (raw.screenForm as WatchStreamerScreenForm)
+    : base.screenForm;
+  const tier: WatchStreamerTier = raw.tier === 'tiny' || raw.tier === 'big' ? raw.tier : base.tier;
+  return {
+    ageBand: text(raw.ageBand),
+    identity: text(raw.identity),
+    language,
+    screenForm,
+    category: text(raw.category),
+    tier,
+    speechStyle: text(raw.speechStyle),
+    motive: text(raw.motive),
+    mainline: text(raw.mainline),
+    hook: text(raw.hook),
+  };
+}
+
 function normalizeDanmaku(list: unknown, beatId: string): WatchDanmaku[] {
   return arr<any>(list).map((dm, i) => {
     if (typeof dm === 'string') {
-      return { id: `${beatId}_dm${i}`, author: '观众', text: dm };
+      return { id: `${beatId}_dm${i}`, author: '观众', text: dm, translated: '' };
     }
     return {
       id: text(dm?.id, `${beatId}_dm${i}`),
       author: text(dm?.author) || text(dm?.senderName, '观众'),
       text: text(dm?.text),
+      translated: text(dm?.translated),
     };
   });
+}
+
+/** 一幕里的条目（画面和话交替）；老记录没有就留空 */
+function normalizeSeq(list: unknown): WatchSeqItem[] | undefined {
+  if (!Array.isArray(list)) return undefined;
+  const items: WatchSeqItem[] = list.map(it => ({
+    kind: it?.kind === 'scene' ? 'scene' : 'line',
+    text: text(it?.text),
+    translated: text(it?.translated),
+  }));
+  return items.length ? items : undefined;
 }
 
 function normalizeActions(list: unknown, beatId: string): WatchPublicAction[] {
@@ -161,6 +221,22 @@ function normalizeClip(raw: any): WatchClip | undefined {
 }
 
 /**
+ * 一幕里主播接招的那一小段。
+ *
+ * 2026-10-26 批次二下半截修的一个真 bug：存盘时读了 beat.followUp，读回来时一个字都不读，
+ * 接招那一段存进去再打开就没了。这里补上，旧记录没有就留空。
+ */
+function normalizeFollowUp(raw: any, beatId: string): WatchFollowUp | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const scene = text(raw.scene);
+  const speech = text(raw.speech);
+  const danmaku = normalizeDanmaku(raw.danmaku, `${beatId}_fu`);
+  const seq = normalizeSeq(raw.seq);
+  if (!scene && !speech && !danmaku.length && !seq) return undefined;
+  return { scene, speech, danmaku, seq };
+}
+
+/**
  * 把一幕归一。旧记录的字段名（npcScreen / npcSpeech / npcDanmaku）在这里翻译，
  * 旧记录里角色的吐槽与你的动作转成私聊消息，所以老场次点开还有内容可看。
  */
@@ -175,6 +251,7 @@ function normalizeBeat(raw: any, idx: number, sessionId: string): {
     index: num(raw?.index, idx),
     scene: text(raw?.scene) || text(raw?.npcScreen),
     speech: text(raw?.speech) || text(raw?.npcSpeech),
+    seq: normalizeSeq(raw?.seq),
     danmaku: normalizeDanmaku(raw?.danmaku ?? raw?.npcDanmaku, id),
     hot: Boolean(raw?.hot),
     userActions: normalizeActions(raw?.userActions, id),
@@ -182,6 +259,7 @@ function normalizeBeat(raw: any, idx: number, sessionId: string): {
     charMicLine: text(raw?.charMicLine) || undefined,
     charMicVoiceId: text(raw?.charMicVoiceId) || text(raw?.charAudioUrl) || undefined,
     userMicLine: text(raw?.userMicLine) || undefined,
+    followUp: normalizeFollowUp(raw?.followUp, id),
     at,
   };
 
@@ -351,7 +429,9 @@ export function createSession(opts: {
       streamerHandle: opts.room.streamerHandle,
       category: opts.room.category,
       title: opts.room.title,
+      titleTranslated: opts.room.titleTranslated,
       bio: opts.room.bio,
+      profile: opts.room.profile,
       viewerCount: opts.room.viewerCount,
       customRule: opts.room.customRule,
       coverGradient: opts.room.coverGradient,

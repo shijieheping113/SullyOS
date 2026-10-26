@@ -258,6 +258,11 @@ export function WatchLobby({
                     >
                       {room.title}
                     </div>
+                    {room.titleTranslated ? (
+                      <div className="mt-[2px] truncate text-[11.5px]" style={{ color: W.faint }}>
+                        {room.titleTranslated}
+                      </div>
+                    ) : null}
                     <div className="mt-[3px] truncate text-[11.5px]" style={{ color: W.sub }}>
                       {room.streamerName} · {room.category}
                     </div>

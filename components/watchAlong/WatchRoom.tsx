@@ -176,11 +176,11 @@ export function WatchRoom({
    * 翻旧段时只累加到那一段为止——看到哪儿就聊到哪儿。
    */
   const lines = useMemo(() => {
-    const out: Array<{ id: string; author: string; text: string; mine: boolean; char: boolean; gift: boolean }> = [];
+    const out: Array<{ id: string; author: string; text: string; translated?: string; mine: boolean; char: boolean; gift: boolean }> = [];
     const upTo = viewBeat ? viewBeat.index : -1;
     session.beats.slice(0, upTo + 1).forEach(beat => {
       (beat.danmaku ?? []).forEach(d => {
-        out.push({ id: d.id, author: d.author, text: d.text, mine: false, char: false, gift: false });
+        out.push({ id: d.id, author: d.author, text: d.text, translated: d.translated || '', mine: false, char: false, gift: false });
       });
       (beat.userActions ?? []).forEach(a => {
         if (a.kind === 'mic_line') return;
@@ -264,7 +264,10 @@ export function WatchRoom({
 
   const shown = seq.slice(0, Math.min(step + 1, seq.length));
   const curScene = [...shown].reverse().find(s => s.kind === 'scene')?.text || '';
-  const curLine = [...shown].reverse().find(s => s.kind === 'line')?.text || '';
+  const curLineItem = [...shown].reverse().find(s => s.kind === 'line');
+  const curLine = curLineItem?.text || '';
+  /** 这一条台词的中文同传：外语直播才有，中文台词留空 */
+  const curLineTranslated = curLineItem?.translated || '';
   const atEnd = seq.length === 0 || step >= seq.length - 1;
 
   const goBack = () => {
@@ -456,6 +459,14 @@ export function WatchRoom({
               >
                 {curLine || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
               </div>
+              {curLineTranslated ? (
+                <div
+                  className="mt-[2px] text-[12px] leading-[17px] text-white/70"
+                  style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                >
+                  {curLineTranslated}
+                </div>
+              ) : null}
               {!session.legacy ? (
                 <div className="mt-1 text-[9.5px] text-white/45">
                   {atEnd
@@ -666,6 +677,11 @@ export function WatchRoom({
                 ) : (
                   <span className="block break-words text-[12px] leading-[17px]" style={{ color: W.ink }}>
                     {l.text}
+                    {l.translated ? (
+                      <span className="ml-1.5 text-[11px] leading-[16px]" style={{ color: W.faint }}>
+                        {l.translated}
+                      </span>
+                    ) : null}
                   </span>
                 )}
               </div>
