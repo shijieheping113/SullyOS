@@ -493,7 +493,8 @@ function toStageOutput(raw: string): StageOutput {
   if (rawSeq.length) {
     const danmaku = parseDanmaku(valuesOf(lines, DANMAKU_KEYS));
 
-    // 3 到 5 个来回，切完最多十几条；再多就是模型写飞了
+    // 3 到 10 段，切完最多十几条；再多就是模型写飞了。
+    // 这里只是防止写飞的安全兜底，不按「十段」截断——多出来的照旧留着。
     // 注意：这里不抛错、不重问。模型的每一次调用都要花用户的钱，
     // 格式坏了只能就地切碎收拾，绝不能偷偷再问一遍。
     const seq = rawSeq.flatMap(splitSeqItem).slice(0, 16);
