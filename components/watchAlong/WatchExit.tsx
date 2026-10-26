@@ -12,6 +12,7 @@ import type { WatchAlongSession } from '../../utils/watchAlong/types';
 export function WatchExit({
   open,
   session,
+  charName,
   busy,
   onClose,
   onRewrite,
@@ -19,6 +20,8 @@ export function WatchExit({
 }: {
   open: boolean;
   session: WatchAlongSession | null;
+  /** 陪你看的那个角色 */
+  charName: string;
   /** 正在写回顾 */
   busy: boolean;
   onClose: () => void;
@@ -107,7 +110,7 @@ export function WatchExit({
           className="mt-2 h-[34px] w-full text-[12.5px]"
           style={{ borderRadius: R_PILL, color: W.sub }}
         >
-          再陪她看会儿
+          再陪{charName}看会儿
         </button>
       </div>
     </Sheet>

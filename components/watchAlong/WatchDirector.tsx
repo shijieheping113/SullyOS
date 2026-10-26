@@ -7,8 +7,8 @@
 import React, { useEffect, useState } from 'react';
 import { R_PILL, Sheet, SolidButton, W, WIco } from './chrome';
 
-const STAGE_CHIPS = ['让她当场翻车', '点名台下', '开个盘口', '准备下播', '加个突发状况'];
-const CHAR_CHIPS = ['评评这幕', '去公屏发条弹幕', '申请上麦', '让她下麦', '别理主播'];
+const STAGE_CHIPS = ['让主播当场翻车', '点名台下', '开个盘口', '准备下播', '加个突发状况'];
+const CHAR_CHIPS = ['评评这幕', '去公屏发条弹幕', '申请上麦', '下麦', '别理主播'];
 
 export function WatchDirector({
   open,
@@ -81,7 +81,7 @@ export function WatchDirector({
           onChange={e => setStage(e.target.value)}
           rows={2}
           aria-label="给台上的方向"
-          placeholder="比如：让她当场翻车，被台下揭穿之后不服气，开始乱猜。"
+          placeholder="比如：让主播当场翻车，被台下揭穿之后不服气，开始乱猜。"
           className="mt-2 w-full resize-none px-3 py-2.5 text-[13px] leading-[19px] outline-none placeholder:text-[#ADADAD]"
           style={{ borderRadius: 12, background: W.fill, color: W.ink }}
         />

@@ -1,20 +1,22 @@
 /**
  * 陪看设置（跨场次共用，存在 live_kv）。
  *
- * 四块：小号、功能、总结、模型。
- * 模型那两块默认关着——关着就用主模型，开了才整路换过去，两边互不影响。
+ * 五块：陪你看的是谁、小号、功能（含语音）、总结、模型。
+ * 模型那两块默认关着——关着就用主模型，开了才整路换过去，两边互不影响；
+ * 开的时候从「设置里的 API 预设」里挑一条，不用再手抄地址和密钥。
  */
 import React, { useState } from 'react';
 import {
+  Avatar,
   R_PILL,
   SectionLabel,
   SettingRow,
-  StatusBar,
   Switch,
   TopBar,
   W,
   WIco,
 } from './chrome';
+import type { ApiPreset, CharacterProfile } from '../../types';
 import type {
   WatchAccount,
   WatchModelSlot,
@@ -122,52 +124,111 @@ const ModelBlock = ({
   title,
   desc,
   slot,
+  presets,
   onChange,
 }: {
   title: string;
   desc: string;
   slot: WatchModelSlot;
+  presets: ApiPreset[];
   onChange: (next: WatchModelSlot) => void;
 }) => {
-  const [open, setOpen] = useState(false);
+  const [manual, setManual] = useState(false);
+  const picked = presets.find(p => p.config.baseUrl === slot.baseUrl && p.config.model === slot.model);
   const ready = Boolean(slot.baseUrl.trim() && slot.model.trim());
   return (
     <div className="mx-4 mt-2 overflow-hidden" style={{ borderRadius: 12, background: W.soft }}>
       <SettingRow
         title={title}
-        desc={slot.enabled ? (ready ? `用 ${slot.model}` : '还没填完整，暂时还是走主模型') : desc}
+        desc={slot.enabled ? (ready ? `用 ${slot.model}` : '还没选模型，暂时还走主模型') : desc}
         right={<Switch on={slot.enabled} onChange={v => onChange({ ...slot, enabled: v })} label={title} />}
       />
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="flex w-full items-center gap-1 px-4 pb-2.5 text-left text-[11px]"
-        style={{ color: W.sub }}
-      >
-        <WIco name={open ? 'next' : 'next'} size={12} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .16s ease' }} />
-        {open ? '收起这几栏' : '填接口地址和模型名'}
-      </button>
-      {open ? (
+
+      {slot.enabled ? (
         <div className="px-3 pb-3">
-          {[
-            { key: 'baseUrl' as const, label: '接口地址', placeholder: 'https://…/v1' },
-            { key: 'apiKey' as const, label: '密钥', placeholder: 'sk-…' },
-            { key: 'model' as const, label: '模型名', placeholder: '比如 gpt-4o-mini' },
-          ].map(field => (
-            <div key={field.key} className="mt-1.5">
-              <div className="mb-1 text-[10.5px]" style={{ color: W.sub }}>
-                {field.label}
-              </div>
-              <input
-                value={slot[field.key]}
-                onChange={e => onChange({ ...slot, [field.key]: e.target.value })}
-                placeholder={field.placeholder}
-                aria-label={`${title}${field.label}`}
-                className="h-[34px] w-full px-3 text-[12px] outline-none"
-                style={{ borderRadius: 9, background: '#fff', color: W.ink }}
-              />
+          <div className="mb-1.5 text-[10.5px]" style={{ color: W.sub }}>
+            用哪一条
+          </div>
+          {presets.length ? (
+            <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+              {presets.map(p => {
+                const on = picked?.id === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        ...slot,
+                        baseUrl: p.config.baseUrl,
+                        apiKey: p.config.apiKey,
+                        model: p.config.model,
+                        temperature:
+                          typeof p.config.temperature === 'number' ? p.config.temperature : slot.temperature,
+                      })
+                    }
+                    className="shrink-0 px-2.5 py-[7px] text-left"
+                    style={{
+                      borderRadius: 9,
+                      background: on ? W.ink : '#fff',
+                      color: on ? '#fff' : W.ink,
+                    }}
+                  >
+                    <span className="block text-[11.5px] font-medium leading-[14px]">{p.name}</span>
+                    <span
+                      className="mt-[1px] block max-w-[120px] truncate text-[9.5px] leading-[12px]"
+                      style={{ color: on ? 'rgba(255,255,255,.62)' : W.faint }}
+                    >
+                      {p.config.model || '没填模型'}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          ))}
+          ) : (
+            <div className="text-[10.5px] leading-[16px]" style={{ color: W.faint }}>
+              设置里还没有存过 API 预设，先手填一次。
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setManual(v => !v)}
+            className="mt-2 flex items-center gap-1 text-[10.5px]"
+            style={{ color: W.sub }}
+          >
+            <WIco
+              name="next"
+              size={11}
+              style={{ transform: manual ? 'rotate(90deg)' : 'none', transition: 'transform .16s ease' }}
+            />
+            {manual ? '收起手填' : '手填地址和模型'}
+          </button>
+
+          {manual ? (
+            <div className="mt-1.5">
+              {[
+                { key: 'baseUrl' as const, label: '接口地址', placeholder: 'https://…/v1' },
+                { key: 'apiKey' as const, label: '密钥', placeholder: 'sk-…' },
+                { key: 'model' as const, label: '模型名', placeholder: '比如 gpt-4o-mini' },
+              ].map(field => (
+                <div key={field.key} className="mt-1.5">
+                  <div className="mb-1 text-[10px]" style={{ color: W.sub }}>
+                    {field.label}
+                  </div>
+                  <input
+                    value={slot[field.key]}
+                    onChange={e => onChange({ ...slot, [field.key]: e.target.value })}
+                    placeholder={field.placeholder}
+                    aria-label={`${title}${field.label}`}
+                    className="h-[32px] w-full px-3 text-[11.5px] outline-none"
+                    style={{ borderRadius: 8, background: '#fff', color: W.ink }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className="mt-2 flex items-center justify-between">
             <span className="text-[10.5px]" style={{ color: W.sub }}>
               温度 {(slot.temperature ?? 0.9).toFixed(1)}
@@ -191,23 +252,33 @@ const ModelBlock = ({
 
 export function WatchSettings({
   settings,
+  companions,
+  companionId,
   userAccount,
   charAccount,
   charName,
+  presets,
   busyAccount,
   onBack,
+  onPickCompanion,
   onChangeSettings,
   onChangeUserAccount,
   onChangeCharAccount,
   onSuggestAccount,
 }: {
   settings: WatchSettings;
+  /** 可以一起看的角色 */
+  companions: CharacterProfile[];
+  companionId: string;
   userAccount: WatchAccount;
   charAccount: WatchAccount;
   charName: string;
+  /** 设置里存过的 API 预设 */
+  presets: ApiPreset[];
   /** 正在给哪个号起名 */
   busyAccount: 'user' | 'char' | null;
   onBack: () => void;
+  onPickCompanion: (id: string) => void;
   onChangeSettings: (next: WatchSettings) => void;
   onChangeUserAccount: (next: WatchAccount) => void;
   onChangeCharAccount: (next: WatchAccount) => void;
@@ -217,13 +288,39 @@ export function WatchSettings({
 
   return (
     <div className="flex h-full w-full flex-col" style={{ background: W.page, color: W.ink }}>
-      <StatusBar />
       <TopBar title="陪看设置" subtitle="这些设置所有场次一起用" onBack={onBack} />
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-8">
-        <SectionLabel>看直播用的小号</SectionLabel>
+        <SectionLabel>陪你看的是谁</SectionLabel>
+        <div className="no-scrollbar mt-1 flex gap-2 overflow-x-auto px-4">
+          {companions.map(c => {
+            const on = c.id === companionId;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onPickCompanion(c.id)}
+                className="inline-flex shrink-0 flex-col items-center gap-1.5 px-2 py-2"
+                style={{ borderRadius: 12, background: on ? W.ink : W.soft, minWidth: 68 }}
+              >
+                <Avatar src={c.avatar} name={c.name} size={34} />
+                <span
+                  className="max-w-[62px] truncate text-[11px]"
+                  style={{ color: on ? '#fff' : W.sub, fontWeight: on ? 600 : 400 }}
+                >
+                  {c.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="px-4 pt-1.5 text-[10.5px] leading-[16px]" style={{ color: W.sub }}>
+          换人相当于换一本陪看记录：新角色的历史、小号、场次都跟着换，不会串。
+        </div>
+
+        <SectionLabel>直播平台上的账号</SectionLabel>
         <AccountCard
-          title="我的陪看号"
+          title="我的账号"
           hint="公屏上就顶着这个名字，主播和网友只认它。"
           account={userAccount}
           canSuggest
@@ -232,8 +329,8 @@ export function WatchSettings({
           onSuggest={() => onSuggestAccount('user')}
         />
         <AccountCard
-          title={`${charName}的陪看号`}
-          hint="她自己起的名字，谁都不知道是本尊。"
+          title={`${charName}的账号`}
+          hint={`${charName}在直播平台的号。公屏说话、打赏、上麦都用它。`}
           account={charAccount}
           canSuggest
           busy={busyAccount === 'char'}
@@ -243,14 +340,24 @@ export function WatchSettings({
 
         <SectionLabel>功能</SectionLabel>
         <SettingRow
+          title="进房就带着一起看"
+          desc={`关着就自己先单看，进房后点右上角叫${charName}。`}
+          right={<Switch on={settings.enterWithChar} onChange={v => patch({ enterWithChar: v })} label="进房带角色" />}
+        />
+        <SettingRow
           title="进房就开着自主反应"
-          desc="关掉的话，她只在你去找她、或者场面够高能时才动。"
+          desc={`关掉的话，${charName}只在你去找、或者场面够高能时才动。`}
           right={<Switch on={settings.autoReact} onChange={v => patch({ autoReact: v })} label="自主反应" />}
         />
         <SettingRow
           title="进房就把小人放出来"
           desc="收起也能在房间里再叫出来。"
           right={<Switch on={settings.petVisible} onChange={v => patch({ petVisible: v })} label="桌宠" />}
+        />
+        <SettingRow
+          title="语音自动念出来"
+          desc={`开着的话，${charName}发语音条会自己合成并播放；关着就点一下才响。`}
+          right={<Switch on={settings.voiceAuto} onChange={v => patch({ voiceAuto: v })} label="语音自动播放" />}
         />
         <SettingRow
           title="每幕公屏几条弹幕"
@@ -305,18 +412,20 @@ export function WatchSettings({
 
         <SectionLabel>模型</SectionLabel>
         <div className="px-4 text-[10.5px] leading-[16px]" style={{ color: W.sub }}>
-          不打开就都走主模型。打开哪一路，就只换那一路。
+          不打开就都走主模型。打开哪一路，就只换那一路，从下面几条预设里挑。
         </div>
         <ModelBlock
           title="台上主播"
           desc="演直播的那一路"
           slot={settings.stageModel}
+          presets={presets}
           onChange={v => patch({ stageModel: v })}
         />
         <ModelBlock
-          title={`${charName}`}
+          title={charName}
           desc="陪你看的那一路"
           slot={settings.charModel}
+          presets={presets}
           onChange={v => patch({ charModel: v })}
         />
 

@@ -174,6 +174,15 @@ export const detectChatModeTransition = (messages: readonly Message[]): ChatMode
 export interface PromptBuildOptions {
     /** Other conversation surfaces replace only app rules; shared context and recency stay identical. */
     appRules?: string;
+    /**
+     * 追加在「聊天 App 行为规范」**之后**的一小段，不替换任何东西。
+     *
+     * 给「角色还是本人、但手上多了一件事」的界面用（电波陪看：人在看直播）。
+     * 和 appRules 的区别：appRules 会把整套 Chat App Rules 整段拿掉（对话质量那 20 条一起没了，
+     * 角色立刻变成谁都能说的客服腔），appendRules 是原样保留、只在后面补处境。
+     * 主聊天不传这个字段，行为一个字不变。
+     */
+    appendRules?: string;
     /** 已完成清洗的实际消息，由公共上下文管线统一处理世界书。 */
     history?: import('./context').ContextMessage[];
     forFirePack?: boolean;
@@ -1116,6 +1125,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // 家园小手机走 appRules，不加上面这段 Spark 关注发动态。
         let recencyTail = buildCharacterResponsePrinciples(char.name, userProfile.name);
         if (boxPlay) recencyTail = '';
+
+        // 「角色还是本人、手上多了一件事」的界面在这里补一小段处境（电波陪看）。
+        // 位置在稳定段最末：既不动前面任何一个字，又紧挨着聊天记录，模型不容易忽略。
+        if (promptOptions?.appendRules) {
+            baseSystemPrompt += `\n${promptOptions.appendRules}\n`;
+        }
 
         const perfTotal = Math.round(performance.now() - perfT0);
         const timingStr = Object.entries(timings)

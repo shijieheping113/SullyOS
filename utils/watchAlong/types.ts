@@ -8,12 +8,15 @@
 
 // ==================== 账号与房间 ====================
 
-/** 公屏身份：我 / 角色的陪看账号 */
+/**
+ * 直播平台上的账号。
+ *
+ * 不分「本尊」和「马甲」——这就是一个普通观众号，两人各有一个，
+ * 公屏发言、打赏、连麦都用它。主播和网友只认得这个号。
+ */
 export interface WatchAccount {
   nickname: string;
   number: string;
-  /** 匿名马甲：路人主播只看得见这串昵称编号，不知道本尊是谁 */
-  incognito: boolean;
 }
 
 /** 路人主播的房间底细 */
@@ -52,21 +55,37 @@ export interface WatchDanmaku {
   text: string;
 }
 
+/**
+ * 一段直播里的一条。
+ *
+ * 真直播里主播的「动作」和「说的话」是交替出来的：做一件事、说一句、再做事、再说。
+ * 一格里存一串这样的条目，屏幕上一条一条往外放，观众点一下看下一条。
+ * 2026-10-26 Ann 定的：不能是「一大块画面 + 一大段话」，那是剧本，不是直播。
+ */
+export interface WatchSeqItem {
+  kind: 'scene' | 'line';
+  text: string;
+}
+
 /** 主播与网友对「我和角色搞事」的即时接招，挂在同一幕后面 */
 export interface WatchFollowUp {
   scene: string;
   speech: string;
   danmaku: WatchDanmaku[];
+  /** 一段直播的条目（画面和话交替）；老记录没有 */
+  seq?: WatchSeqItem[];
 }
 
 /** 一幕直播 */
 export interface WatchBeat {
   id: string;
   index: number;
-  /** 镜头画面描写 */
+  /** 镜头画面描写（这一段里所有画面的合并，给摘要和材料用） */
   scene: string;
-  /** 主播台词 */
+  /** 主播台词（这一段里所有话的合并，给摘要和材料用） */
   speech: string;
+  /** 这一段直播的条目：画面和话交替，屏幕上按顺序一条一条放 */
+  seq?: WatchSeqItem[];
   danmaku: WatchDanmaku[];
   /** 高能节点：点名、开盘、翻车、连麦提问 */
   hot: boolean;
@@ -152,7 +171,7 @@ export interface WatchCast {
   autoReact: boolean;
   petVisible: boolean;
   mic: 'off' | 'on';
-  /** 私聊里让她用语音回（加号里那一个开关） */
+  /** 私聊里让角色用语音回（加号里那一个开关） */
   voiceReply?: boolean;
 }
 
@@ -201,6 +220,10 @@ export interface WatchSettings {
   /** 这一场的功能开关 */
   autoReact: boolean;
   petVisible: boolean;
+  /** 进房时角色在不在：true 同屏陪看，false 自己先单看（手册·默认进房方式） */
+  enterWithChar: boolean;
+  /** 角色的语音条自动合成并播放（不用一条条点） */
+  voiceAuto: boolean;
   /** 每幕生成几条公屏弹幕 */
   danmakuPerBeat: number;
   /** 滚动总结 */
@@ -245,6 +268,10 @@ export const emptyModelSlot = (): WatchModelSlot => ({
 export const defaultWatchSettings = (): WatchSettings => ({
   autoReact: true,
   petVisible: true,
+  // 进房默认自己先单看，角色要手动叫（Ann 2026-10-26 拍板）
+  enterWithChar: false,
+  // 语音默认不自动念：先问过一次再定，省得每句都花钱
+  voiceAuto: false,
   danmakuPerBeat: 4,
   summaryAuto: true,
   summaryBeatWaterline: WATCH_DIGEST_BEAT_WATERLINE,
@@ -257,13 +284,11 @@ export const defaultWatchSettings = (): WatchSettings => ({
 export const defaultUserAccount = (): WatchAccount => ({
   nickname: '路过的人',
   number: 'N-0000',
-  incognito: false,
 });
 
 export const defaultCharAccount = (charName: string): WatchAccount => ({
-  nickname: charName || '潜水员',
+  nickname: charName || '看客',
   number: 'N-0001',
-  incognito: true,
 });
 
 export const defaultCast = (charName: string): WatchCast => ({

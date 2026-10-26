@@ -2,7 +2,7 @@
  * 陪看大厅。
  *
  * 一屏只做一件事：挑一个房间进去。
- * 历史与设置收在右上角两个图标里，不跟房间挤一屏。
+ * 顶栏：返回电波 / 标题 / 历史 / 设置（三个都常驻，不会被挤掉）。
  */
 import React, { useMemo, useState } from 'react';
 import {
@@ -11,7 +11,6 @@ import {
   R_COVER,
   R_PILL,
   RoundIconButton,
-  StatusBar,
   TopBar,
   W,
   WIco,
@@ -40,6 +39,7 @@ export function WatchLobby({
   onOpenSession,
   onOpenHistory,
   onOpenSettings,
+  onBack,
 }: {
   userName: string;
   pool: WatchRoomCard[];
@@ -54,9 +54,10 @@ export function WatchLobby({
   onOpenSession: (id: string) => void;
   onOpenHistory: () => void;
   onOpenSettings: () => void;
+  /** 退回电波 */
+  onBack: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState('全部');
 
   const categories = useMemo(() => {
@@ -85,49 +86,45 @@ export function WatchLobby({
 
   return (
     <div className="flex h-full w-full flex-col" style={{ background: W.page, color: W.ink }}>
-      <StatusBar />
+      <TopBar
+        title="陪看"
+        subtitle={customRule ? `按你的口味在刷：${customRule.slice(0, 14)}` : '刷几个路人直播，一起看'}
+        onBack={onBack}
+        right={
+          <>
+            <RoundIconButton
+              name="clock"
+              label="历史陪看"
+              onClick={onOpenHistory}
+              badge={sessions.length > 0}
+            />
+            <RoundIconButton name="gear" label="陪看设置" onClick={onOpenSettings} />
+          </>
+        }
+      />
 
-      {searchOpen ? (
-        <div className="flex h-[52px] shrink-0 items-center gap-2 px-2">
+      {/* 搜一条：常驻在这儿，不藏在顶栏图标里 */}
+      <div className="shrink-0 px-3 pb-2">
+        <div
+          className="flex h-[36px] items-center gap-2 px-3"
+          style={{ borderRadius: R_PILL, background: W.fill }}
+        >
+          <WIco name="search" size={15} style={{ color: W.sub }} />
           <input
-            autoFocus
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="搜直播间、主播、分区"
             aria-label="搜索直播间"
-            className="h-[36px] min-w-0 flex-1 px-4 text-[13px] outline-none"
-            style={{ borderRadius: R_PILL, background: W.fill, color: W.ink }}
+            className="w-full bg-transparent text-[12.5px] outline-none placeholder:text-[#909090]"
+            style={{ color: W.ink }}
           />
-          <button
-            type="button"
-            onClick={() => {
-              setSearchOpen(false);
-              setQuery('');
-            }}
-            className="h-[36px] shrink-0 px-3 text-[12.5px]"
-            style={{ color: W.sub }}
-          >
-            取消
-          </button>
+          {q ? (
+            <button type="button" aria-label="清空搜索" onClick={() => setQuery('')} className="shrink-0">
+              <WIco name="close" size={14} style={{ color: W.sub }} />
+            </button>
+          ) : null}
         </div>
-      ) : (
-        <TopBar
-          title="陪看"
-          subtitle={customRule ? `按你的口味在刷：${customRule.slice(0, 14)}` : '刷几个路人直播，一起看'}
-          right={
-            <>
-              <RoundIconButton name="search" label="搜索" onClick={() => setSearchOpen(true)} />
-              <RoundIconButton
-                name="clock"
-                label="历史陪看"
-                onClick={onOpenHistory}
-                badge={sessions.length > 0}
-              />
-              <RoundIconButton name="gear" label="陪看设置" onClick={onOpenSettings} />
-            </>
-          }
-        />
-      )}
+      </div>
 
       {/* 还在看的那场：刷新回来直接从这儿接着看 */}
       {watching && !q ? (

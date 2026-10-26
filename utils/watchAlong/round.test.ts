@@ -53,8 +53,8 @@ function makeSession(presence: 'solo' | 'side' | 'backstage' = 'side') {
       coverGradient: '#000',
     },
     cast: {
-      userAccount: { nickname: '我', number: 'N-1', incognito: false },
-      charAccount: { nickname: '阿猫', number: 'N-2', incognito: true },
+      userAccount: { nickname: '我', number: 'N-1' },
+      charAccount: { nickname: '阿猫', number: 'N-2' },
       presence,
       autoReact: true,
       petVisible: true,
@@ -118,6 +118,30 @@ describe('角色不下场，画面不跳幕', () => {
     // 角色的动作记在上一幕，行动记录也进了私聊
     expect(r.session.beats[0].charActions[0].kind).toBe('danmaku');
     expect(r.session.chat.some(c => c.from === 'action')).toBe(true);
+  });
+
+  it('我发的话在等回复前就先交出去存（模型挂了也不会凭空消失）', async () => {
+    const logged: string[][] = [];
+    charSpy.mockResolvedValue(charOut({ text: '嗯' }));
+    await chatRound({
+      ...ctx,
+      session: makeSession(),
+      text: '这主播有点意思',
+      onLogged: s => {
+        logged.push(s.chat.map(c => c.text || ''));
+      },
+    });
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain('这主播有点意思');
+  });
+
+  it('模型这一轮没接上：我的话留着，只标一个失败', async () => {
+    charSpy.mockRejectedValue(new Error('格式又歪了'));
+    const r = await chatRound({ ...ctx, session: makeSession(), text: '在吗' });
+
+    expect(r.failed).toBe(true);
+    expect(r.session.chat.map(c => c.from)).toEqual(['user']);
+    expect(r.session.chat[0].text).toBe('在吗');
   });
 });
 

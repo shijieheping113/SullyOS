@@ -30,10 +30,12 @@ import { WatchHistory } from '../../components/watchAlong/WatchHistory';
 import { WatchSummary } from '../../components/watchAlong/WatchSummary';
 import { WatchSettings } from '../../components/watchAlong/WatchSettings';
 import { WatchExit } from '../../components/watchAlong/WatchExit';
+import { WatchInfo } from '../../components/watchAlong/WatchInfo';
 import {
   Sheet,
   SolidButton,
   W,
+  WIco,
 } from '../../components/watchAlong/chrome';
 import {
   advanceRound,
@@ -48,6 +50,7 @@ import {
 import {
   generateRoomPool,
   suggestAccountName,
+  suggestTaste,
   translateWatchText,
 } from '../../utils/watchAlong/engine';
 import {
@@ -93,14 +96,26 @@ type Busy =
   | 'account';
 
 export default function WatchAlongApp({
-  char,
+  char: charProp,
   onClose,
 }: {
+  /** 从电波带进来的角色，只当默认值；大厅里可以换成别的角色 */
   char: CharacterProfile;
   /** 退出陪看，回到电波大厅 */
   onClose: () => void;
 }) {
-  const { apiConfig, userProfile, addToast, registerBackHandler } = useOS();
+  const { apiConfig, apiPresets, userProfile, characters, addToast, registerBackHandler } = useOS();
+
+  // 陪你看的是谁：先按电波带进来的这个，大厅里能换
+  const [companionId, setCompanionId] = useState(charProp.id);
+  const char = useMemo(
+    () => characters.find(c => c.id === companionId) || charProp,
+    [characters, companionId, charProp],
+  );
+  const companions = useMemo(
+    () => (characters.length ? characters : [charProp]),
+    [characters, charProp],
+  );
 
   const [globals, setGlobals] = useState<WatchGlobals>(() => defaultGlobals(char.name));
   const [sessions, setSessions] = useState<WatchAlongSession[]>([]);
@@ -113,6 +128,8 @@ export default function WatchAlongApp({
   const [emojis, setEmojis] = useState<Emoji[]>([]);
   const [categories, setCategories] = useState<EmojiCategory[]>([]);
   const [directorOpen, setDirectorOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [tasteBusy, setTasteBusy] = useState(false);
   const [exitOpen, setExitOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
   const [ruleDraft, setRuleDraft] = useState('');
@@ -128,6 +145,9 @@ export default function WatchAlongApp({
   const settings = globals.settings;
   const voiceReady = useMemo(() => canSynthesizeSpeech(char, apiConfig), [char, apiConfig]);
 
+  // 刷台闸门：同一批不重复刷，换角色时放开
+  const refreshPoolRef = useRef(false);
+
   // ==================== 启动 ====================
 
   useEffect(() => {
@@ -139,8 +159,11 @@ export default function WatchAlongApp({
           loadWatchSessions(char.name),
         ]);
         if (!alive) return;
+        if (!alive) return;
         setGlobals(g);
-        setSessions(list.filter(s => !s.charId || s.charId === char.id));
+        setSessions(list.filter(s => s.charId === char.id));
+        // 换了个角色就把「刷台闸门」放开，新角色这边也刷一批
+        refreshPoolRef.current = false;
       } catch {
         /* 读不到就走出厂值 */
       } finally {
@@ -181,8 +204,6 @@ export default function WatchAlongApp({
     };
   }, []);
 
-  // 第一次进来还没有房间就刷一批（只在本地池空着时跑）
-  const refreshPoolRef = useRef(false);
   useEffect(() => {
     if (!ready || refreshPoolRef.current) return;
     if (globals.pool.length > 0) return;
@@ -195,6 +216,10 @@ export default function WatchAlongApp({
   useEffect(
     () =>
       registerBackHandler(() => {
+        if (infoOpen) {
+          setInfoOpen(false);
+          return true;
+        }
         if (directorOpen) {
           setDirectorOpen(false);
           return true;
@@ -213,7 +238,7 @@ export default function WatchAlongApp({
         }
         return false;
       }),
-    [directorOpen, exitOpen, ruleOpen, page, session, registerBackHandler],
+    [infoOpen, directorOpen, exitOpen, ruleOpen, page, session, registerBackHandler],
   );
 
   // ==================== 底座 ====================
@@ -287,7 +312,7 @@ export default function WatchAlongApp({
         char,
         userName: userProfile?.name || '你',
         customRule: globals.customRule,
-        count: 6,
+        count: 4,
         exclude: globals.pool.map(r => r.streamerName),
       });
       if (!rooms.length) throw new Error('这次一个房间都没刷出来，再点一次试试');
@@ -357,6 +382,7 @@ export default function WatchAlongApp({
           /* 压不动不影响这一轮 */
         }
         await persist(next);
+        if (r.failed) addToast('这一幕没接通，再点一次「下一幕」', 'error');
         if (r.bubble) {
           setBubble(r.bubble);
           if (page !== 'chat') setUnread(u => u + 1);
@@ -401,6 +427,13 @@ export default function WatchAlongApp({
     await persist({ ...cur, cast: { ...cur.cast, petVisible: false }, updatedAt: Date.now() });
   }, [persist]);
 
+  /** 收起之后再放出来（人一直还在，只是刚才藏了） */
+  const showPet = useCallback(async () => {
+    const cur = sessionRef.current;
+    if (!cur) return;
+    await persist({ ...cur, cast: { ...cur.cast, petVisible: true }, updatedAt: Date.now() });
+  }, [persist]);
+
   // ==================== 私聊 ====================
 
   const sendChat = useCallback(
@@ -416,29 +449,134 @@ export default function WatchAlongApp({
       setBusy('chat');
       try {
         const ctx = await buildCtx();
-        const r = await chatRound({ ...ctx, session: cur, ...payload });
-        let next = r.session;
-        try {
-          next = await maybeDigest({ ...ctx, session: next });
-        } catch {
-          /* 同上 */
-        }
-        await persist(next);
-        if (r.bubble) setBubble(r.bubble);
+        const r = await chatRound({
+          ...ctx,
+          session: cur,
+          ...payload,
+          // 私聊是手动触发的：发出去只落记录，等点「触发」才让角色回（跟主聊天一个节奏）
+          logOnly: true,
+          onLogged: next => persist(next),
+        });
+        await persist(r.session);
       } catch (e: any) {
-        addToast(e?.message || '她这条没回上来', 'error');
+        addToast(e?.message || '这条没回上来', 'error');
       } finally {
         setBusy(null);
       }
     },
-    [busy, buildCtx, persist, addToast],
+    [busy, buildCtx, persist, addToast, char.name],
   );
 
-  /** 把当前这一幕作为片段转发进私聊，并让她接一句 */
-  const forwardBeat = useCallback(async () => {
+  /** 手动触发：不新加我的消息，只让角色接着往下说 */
+  const triggerReaction = useCallback(
+    async (assign?: string) => {
+      const cur = sessionRef.current;
+      if (!cur || busy) return;
+      if (cur.legacy) {
+        addToast('这是旧版记录，只能翻看', 'info');
+        return;
+      }
+      if (cur.cast.presence === 'solo') {
+        addToast(`先把${char.name}叫进来，ta 才接得上话`, 'info');
+        return;
+      }
+      setBusy('chat');
+      try {
+        const ctx = await buildCtx();
+        const r = await chatRound({ ...ctx, session: cur, manual: !assign, assign });
+        let next = r.session;
+        try {
+          next = await maybeDigest({ ...ctx, session: next });
+        } catch {
+          /* 压不动不影响这一轮 */
+        }
+        await persist(next);
+        if (r.failed) addToast(`${char.name}这条没接上，再触发一次`, 'error');
+        if (r.bubble) setBubble(r.bubble);
+      } catch (e: any) {
+        addToast(e?.message || '这条没回上来', 'error');
+      } finally {
+        setBusy(null);
+      }
+    },
+    [busy, buildCtx, persist, addToast, char.name],
+  );
+
+  /** 公屏送个小礼物 */
+  const sendGift = useCallback(
+    (giftName: string, amount: number) => {
+      const cur = sessionRef.current;
+      if (!cur) return;
+      void runAdvance([{ id: watchId('act'), kind: 'gift', giftName, giftAmount: amount }]);
+    },
+    [runAdvance],
+  );
+
+  /** 同屏陪看 ↔ 仅后台私聊 */
+  const togglePresence = useCallback(async () => {
     const cur = sessionRef.current;
     if (!cur) return;
-    const beat = cur.beats[cur.beats.length - 1];
+    const side = cur.cast.presence === 'side';
+    await persist({
+      ...cur,
+      cast: { ...cur.cast, presence: side ? 'backstage' : 'side', petVisible: side ? false : true },
+      updatedAt: Date.now(),
+    });
+    addToast(side ? `${char.name}退回后台，只在私聊里跟你说话` : `${char.name}凑过来了`, 'success');
+  }, [persist, char.name, addToast]);
+
+  /** 本场自己开 / 关自主反应 */
+  const toggleAutoReact = useCallback(async () => {
+    const cur = sessionRef.current;
+    if (!cur) return;
+    const on = !cur.cast.autoReact;
+    await persist({ ...cur, cast: { ...cur.cast, autoReact: on }, updatedAt: Date.now() });
+    addToast(on ? '开了自主反应，ta 会自己开口' : '关了自主反应，只看你叫不叫 ta', 'success');
+  }, [persist, addToast]);
+
+  /** 手改本场直播信息与当前这一幕 */
+  const saveInfo = useCallback(
+    async (next: { room: WatchAlongSession['room']; scene: string; speech: string }) => {
+      const cur = sessionRef.current;
+      if (!cur) return;
+      const beats = cur.beats.map((b, i) =>
+        i === cur.beats.length - 1 ? { ...b, scene: next.scene || b.scene, speech: next.speech } : b,
+      );
+      await persist({ ...cur, room: next.room, beats, updatedAt: Date.now() });
+      setInfoOpen(false);
+      addToast('本场信息改好了', 'success');
+    },
+    [persist, addToast],
+  );
+
+  /** 大厅里让辅助模型代笔一句口味 */
+  const suggestTasteNow = useCallback(async () => {
+    if (tasteBusy) return;
+    setTasteBusy(true);
+    try {
+      const text = await suggestTaste({
+        apiConfig,
+        char,
+        userName: userProfile?.name || '你',
+        current: ruleDraft,
+      });
+      if (text) setRuleDraft(text);
+    } catch (e: any) {
+      addToast(e?.message || '没想出来，自己写一句也行', 'error');
+    } finally {
+      setTasteBusy(false);
+    }
+  }, [tasteBusy, apiConfig, char, userProfile?.name, ruleDraft, addToast]);
+
+  /** 把当前这一幕作为片段转发进私聊，并让角色接一句 */
+  const forwardBeat = useCallback(async (beatIndex?: number) => {
+    const cur = sessionRef.current;
+    if (!cur) return;
+    // 翻到哪一幕就转哪一幕；没指定就转最新
+    const beat =
+      typeof beatIndex === 'number'
+        ? cur.beats.find(b => b.index === beatIndex) || cur.beats[cur.beats.length - 1]
+        : cur.beats[cur.beats.length - 1];
     if (!beat) {
       addToast('还没有画面可以转', 'info');
       return;
@@ -457,17 +595,12 @@ export default function WatchAlongApp({
           speech: beat.speech,
           danmaku: beat.danmaku.map(d => `${d.author}：${d.text}`),
         },
+        logOnly: true,
+        onLogged: next => persist(next),
       });
-      let next = r.session;
-      try {
-        next = await maybeDigest({ ...ctx, session: next });
-      } catch {
-        /* 转发不因为总结失败而失败 */
-      }
-      await persist(next);
-      if (r.bubble) setBubble(r.bubble);
+      await persist(r.session);
       if (page !== 'chat') setUnread(u => u + 1);
-      addToast('转进私聊了', 'success');
+      addToast('转进私聊了，点「触发」让 ta 接一句', 'success');
     } catch (e: any) {
       addToast(e?.message || '没转过去', 'error');
     } finally {
@@ -508,6 +641,50 @@ export default function WatchAlongApp({
     },
     [voiceReady, playingKey, char, apiConfig, patchChat, playUrl, addToast],
   );
+
+  // 桌宠气泡：默认是最新一条角色消息。文字气泡点一下往前翻一条，语音气泡点一下播放。
+  const charBubbleMsgs = useMemo(
+    () =>
+      (session?.chat ?? [])
+        .filter(m => m.from === 'char' && (m.text || m.voiceId || m.wantVoice))
+        .slice(-8)
+        .reverse(),
+    [session?.chat],
+  );
+  const [bubblePick, setBubblePick] = useState(0);
+  const [bubbleSeq, setBubbleSeq] = useState(0);
+  // 有新消息进来就回到最新那条
+  useEffect(() => {
+    setBubblePick(0);
+    setBubbleSeq(n => n + 1);
+  }, [session?.chat.length]);
+
+  const bubbleMsg = charBubbleMsgs[bubblePick] ?? null;
+  const bubbleIsVoice = Boolean(bubbleMsg && (bubbleMsg.voiceId || bubbleMsg.wantVoice));
+  const petBubbleText = bubblePick === 0 ? bubble || bubbleMsg?.text || null : bubbleMsg?.text || null;
+
+  const playBubbleVoice = useCallback(() => {
+    if (!bubbleMsg) return;
+    void playMessageVoice(bubbleMsg);
+  }, [bubbleMsg, playMessageVoice]);
+
+  const tapBubble = useCallback(() => {
+    if (charBubbleMsgs.length < 2) return;
+    setBubblePick(i => (i + 1) % charBubbleMsgs.length);
+    setBubbleSeq(n => n + 1);
+  }, [charBubbleMsgs.length]);
+
+  // 设置里开了「语音自动念」：角色发来语音条就自己合成并播放（同一条只合成一次）
+  const autoVoiceRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const cur = session;
+    if (!cur || !settings.voiceAuto || !voiceReady) return;
+    const msg = [...cur.chat].reverse().find(m => m.from === 'char' && m.wantVoice && m.text);
+    if (!msg || msg.voiceId || autoVoiceRef.current.has(msg.id)) return;
+    autoVoiceRef.current.add(msg.id);
+    void playMessageVoice(msg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.chat.length, settings.voiceAuto, voiceReady]);
 
   const resendAsVoice = useCallback(
     async (msg: WatchChatMessage) => {
@@ -791,6 +968,18 @@ export default function WatchAlongApp({
     [addToast],
   );
 
+  /** 大厅里换个人陪你看：换这一册，退回大厅重来 */
+  const switchCompanion = useCallback(
+    (id: string) => {
+      if (id === companionId) return;
+      setCompanionId(id);
+      setSession(null);
+      setUnread(0);
+      setPage('lobby');
+    },
+    [companionId],
+  );
+
   const saveSettings = useCallback(
     async (next: WatchSettingsType) => {
       await saveGlobals({ ...globals, settings: next });
@@ -853,6 +1042,14 @@ export default function WatchAlongApp({
   );
 
   const charAvatar = char.avatar;
+  // 桌宠形象：彼方捏的小人 → 小小窝 Q 版 → 圆头像（手册·雷点四）
+  const petSrc = useMemo(() => {
+    const chibi = (char as CharacterProfile & { vrState?: { chibi?: { img?: string } } }).vrState?.chibi?.img;
+    if (chibi) return chibi;
+    const sprite = char.sprites?.chibi;
+    if (sprite) return sprite;
+    return char.avatar;
+  }, [char]);
   const chatBusy = busy === 'chat' || busy === 'translate';
   const listeningMic = playingKey?.startsWith('mic:') === true;
   const listeningMsgId = playingKey?.startsWith('msg:') ? playingKey.slice(4) : null;
@@ -868,6 +1065,40 @@ export default function WatchAlongApp({
     );
   }
 
+  // 设置 / 历史不依赖「有没有开着的场次」，必须排在大厅前面
+  if (page === 'settings') {
+    return (
+      <WatchSettings
+        settings={settings}
+        companions={companions}
+        companionId={char.id}
+        userAccount={globals.userAccount}
+        charAccount={globals.charAccount}
+        charName={char.name}
+        presets={apiPresets}
+        busyAccount={accountBusy}
+        onBack={() => setPage('lobby')}
+        onPickCompanion={switchCompanion}
+        onChangeSettings={next => void saveSettings(next)}
+        onChangeUserAccount={next => void changeUserAccount(next)}
+        onChangeCharAccount={next => void changeCharAccount(next)}
+        onSuggestAccount={target => void suggestAccount(target)}
+      />
+    );
+  }
+
+  if (page === 'history') {
+    return (
+      <WatchHistory
+        sessions={sessions}
+        onBack={() => setPage(session ? 'room' : 'lobby')}
+        onOpen={target => void openSession(target)}
+        onOpenRecap={target => void openSession(target)}
+        onDelete={target => void removeSession(target)}
+      />
+    );
+  }
+
   if (page === 'lobby' || !session) {
     return (
       <>
@@ -877,6 +1108,7 @@ export default function WatchAlongApp({
           customRule={globals.customRule}
           busy={busy === 'pool'}
           sessions={sessions}
+          onBack={onClose}
           onRefresh={() => void refreshPool()}
           onEditRule={() => {
             setRuleDraft(globals.customRule);
@@ -907,8 +1139,20 @@ export default function WatchAlongApp({
           }
         >
           <div className="px-4 pb-3">
-            <div className="pt-1 text-[11.5px] leading-[17px]" style={{ color: W.sub }}>
-              写一句就行，比如「深夜看相、情感连线，越离谱越好」。
+            <div className="flex items-start justify-between gap-2 pt-1">
+              <div className="text-[11.5px] leading-[17px]" style={{ color: W.sub }}>
+                写一句就行，比如「深夜看相、情感连线，越离谱越好」。
+              </div>
+              <button
+                type="button"
+                disabled={tasteBusy}
+                onClick={() => void suggestTasteNow()}
+                className="inline-flex h-[26px] shrink-0 items-center gap-1 px-2.5 text-[11px] disabled:opacity-40"
+                style={{ borderRadius: 999, background: W.fill, color: W.ink }}
+              >
+                <WIco name="rewrite" size={11} />
+                {tasteBusy ? '想着…' : '帮我想'}
+              </button>
             </div>
             <textarea
               value={ruleDraft}
@@ -922,35 +1166,6 @@ export default function WatchAlongApp({
           </div>
         </Sheet>
       </>
-    );
-  }
-
-  if (page === 'history') {
-    return (
-      <WatchHistory
-        sessions={sessions}
-        onBack={() => setPage(session ? 'room' : 'lobby')}
-        onOpen={target => void openSession(target)}
-        onOpenRecap={target => void openSession(target)}
-        onDelete={target => void removeSession(target)}
-      />
-    );
-  }
-
-  if (page === 'settings') {
-    return (
-      <WatchSettings
-        settings={settings}
-        userAccount={globals.userAccount}
-        charAccount={globals.charAccount}
-        charName={char.name}
-        busyAccount={accountBusy}
-        onBack={() => setPage(session ? 'room' : 'lobby')}
-        onChangeSettings={next => void saveSettings(next)}
-        onChangeUserAccount={next => void changeUserAccount(next)}
-        onChangeCharAccount={next => void changeCharAccount(next)}
-        onSuggestAccount={target => void suggestAccount(target)}
-      />
     );
   }
 
@@ -987,6 +1202,9 @@ export default function WatchAlongApp({
           onBack={() => setPage('room')}
           onOpenRoom={() => setPage('room')}
           onOpenDirector={() => setDirectorOpen(true)}
+          onTrigger={() => void triggerReaction()}
+          onTogglePresence={() => void togglePresence()}
+          onToggleAutoReact={() => void toggleAutoReact()}
           onSend={payload => void sendChat(payload)}
           onPlayVoice={msg => void playMessageVoice(msg)}
           onDownloadVoice={msg => void downloadVoice(msg)}
@@ -1006,6 +1224,12 @@ export default function WatchAlongApp({
           onClose={() => setDirectorOpen(false)}
           onApply={next => void applyDirector(next)}
         />
+        <WatchInfo
+          open={infoOpen}
+          session={session}
+          onClose={() => setInfoOpen(false)}
+          onSave={next => void saveInfo(next)}
+        />
       </>
     );
   }
@@ -1016,19 +1240,26 @@ export default function WatchAlongApp({
         session={session}
         charName={char.name}
         charAvatar={charAvatar}
+        petSrc={petSrc}
         busy={busy === 'advance'}
-        bubble={bubble}
+        bubble={petBubbleText}
+        bubbleSeq={bubbleSeq}
+        bubbleIsVoice={bubbleIsVoice}
+        onTapBubble={tapBubble}
         chatUnread={unread}
         micPlaying={listeningMic}
         micLoading={loadingKey?.startsWith('mic:') === true}
         onPlayMic={() => void playMicLine()}
+        onPlayBubble={playBubbleVoice}
+        bubblePlaying={Boolean(bubbleMsg && playingKey === `msg:${bubbleMsg.id}`)}
         onBack={() => {
           setSession(null);
           setPage('lobby');
         }}
         onAdvance={() => void runAdvance()}
-        onForward={() => void forwardBeat()}
+        onForward={idx => void forwardBeat(idx)}
         onSendDanmaku={sendPublic}
+        onSendGift={sendGift}
         onMicToggle={toggleMic}
         onOpenChat={() => {
           setUnread(0);
@@ -1037,9 +1268,11 @@ export default function WatchAlongApp({
         onOpenDirector={() => setDirectorOpen(true)}
         onOpenSummary={() => setPage('summary')}
         onOpenSettings={() => setPage('settings')}
+        onOpenInfo={() => setInfoOpen(true)}
         onExit={() => void openExit()}
         onSummon={() => void summon()}
         onHidePet={() => void hidePet()}
+        onShowPet={() => void showPet()}
       />
 
       <WatchDirector
@@ -1052,9 +1285,17 @@ export default function WatchAlongApp({
         onApply={next => void applyDirector(next)}
       />
 
+      <WatchInfo
+        open={infoOpen}
+        session={session}
+        onClose={() => setInfoOpen(false)}
+        onSave={next => void saveInfo(next)}
+      />
+
       <WatchExit
         open={exitOpen}
         session={session}
+        charName={char.name}
         busy={busy === 'recap'}
         onClose={() => setExitOpen(false)}
         onRewrite={() => void rewriteSummary()}

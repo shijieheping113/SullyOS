@@ -55,7 +55,8 @@ export type WIcoName =
   | 'clap'
   | 'eye'
   | 'drag'
-  | 'chat';
+  | 'chat'
+  | 'coin';
 
 const PATHS: Record<WIcoName, React.ReactNode> = {
   back: <path d="M15 5 L8 12 L15 19" />,
@@ -178,6 +179,12 @@ const PATHS: Record<WIcoName, React.ReactNode> = {
       <path d="M20.4 11.6c0 3.7-3.8 6.7-8.4 6.7-1 0-2-.14-2.9-.4L4.6 19.4l1.3-3.4c-1.1-1.2-1.8-2.7-1.8-4.4 0-3.7 3.8-6.7 8.4-6.7s7.9 3 7.9 6.7Z" />
     </>
   ),
+  coin: (
+    <>
+      <circle cx="12" cy="12" r="8.4" />
+      <path d="M12 7.4v9.2M14.9 9.6H10.8a2.1 2.1 0 0 0 0 4.2h2.4a2.1 2.1 0 0 1 0 4.2H9.1" />
+    </>
+  ),
 };
 
 export function WIco({
@@ -212,40 +219,9 @@ export function WIco({
   );
 }
 
-// ==================== 状态栏与返回栏 ====================
+// ==================== 返回栏 ====================
 
-/** 电波里每个页面顶部都有这一条，缺了会显得比其他页面少一截 */
-export function StatusBar() {
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
-  return (
-    <div
-      className="flex h-[34px] shrink-0 items-center justify-between px-5 text-[12px] font-semibold"
-      style={{ color: W.ink }}
-    >
-      <span>{`${hh}:${mm}`}</span>
-      <span className="flex items-center gap-[5px]">
-        <span className="flex items-end gap-[2px]">
-          {[3, 5, 7, 9].map((h, i) => (
-            <i key={i} className="block w-[2px] rounded-sm" style={{ height: h, background: W.ink }} />
-          ))}
-        </span>
-        <span
-          className="relative inline-block h-[10px] w-[20px] rounded-[3px]"
-          style={{ border: `1px solid ${W.ink}` }}
-        >
-          <i
-            className="absolute inset-[1.5px] block rounded-[1px]"
-            style={{ background: W.ink, width: '70%' }}
-          />
-        </span>
-      </span>
-    </div>
-  );
-}
-
-/** 一级页的顶栏：左边返回（可选），中间标题，右边动作 */
+/** 一级页的顶栏：左边返回，中间标题，右边动作 */
 export function TopBar({
   title,
   subtitle,
@@ -258,7 +234,10 @@ export function TopBar({
   right?: React.ReactNode;
 }) {
   return (
-    <div className="flex h-[52px] shrink-0 items-center gap-1 px-2" style={{ background: W.page }}>
+    <div
+      className="flex min-h-[54px] shrink-0 items-center gap-1 px-2 pb-1"
+      style={{ background: W.page, paddingTop: 'max(6px, env(safe-area-inset-top))' }}
+    >
       {onBack ? (
         <button
           type="button"

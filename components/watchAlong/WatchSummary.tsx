@@ -5,7 +5,7 @@
  * 每一段都能改、能重写、能删；删掉的会被后续滚动总结重新压一遍。
  */
 import React, { useEffect, useState } from 'react';
-import { R_PILL, SolidButton, StatusBar, TopBar, W, WIco } from './chrome';
+import { R_PILL, SolidButton, TopBar, W, WIco } from './chrome';
 import type { WatchAlongSession } from '../../utils/watchAlong/types';
 
 export function WatchSummary({
@@ -43,7 +43,6 @@ export function WatchSummary({
 
   return (
     <div className="flex h-full w-full flex-col" style={{ background: W.page, color: W.ink }}>
-      <StatusBar />
       <TopBar title="看总结" subtitle={`${session.room.streamerName} · 第 ${Math.max(1, session.beats.length)} 幕`} onBack={onBack} />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">

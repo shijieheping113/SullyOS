@@ -60,7 +60,7 @@ export interface BuildChatPayloadInput {
     /** Local phase timings only; no request content or telemetry. */
     onPreparationStage?: (event:ChatPreparationEvent)=>void;
     /** Replace ChatApp output/tool rules, retaining the same context pipeline and ordering. */
-    appPrompt?: { rules: string; scene: string };
+    appPrompt?: { rules?: string; scene?: string; appendRules?: string };
     /** Present only while ChatApp is embedded in the home phone; never persisted. */
     homePhoneContext?: string;
     char: CharacterProfile;
@@ -391,6 +391,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             returningFromMode: returningFromMode || undefined,
             miaomiaoBoxPrompt: input.miaomiaoBoxPrompt,
             appRules: input.appPrompt?.rules,
+            appendRules: input.appPrompt?.appendRules,
             liveGenerator: input.liveGenerator === true,
         },
     ));
@@ -535,7 +536,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 
     // 「关于对方的表达」+「回到你自己」必须是易变尾段的最后内容：修复旧版把双语/HTML/
     // 思考链/点单块拼在钢印之后、模型开口前最后读到的是格式说明书的问题。
-    if (input.appPrompt) volatileTail += input.appPrompt.scene;
+    if (input.appPrompt?.scene) volatileTail += input.appPrompt.scene;
     volatileTail += parts.recencyTail;
     if (sarModuleBlock) volatileTail += sarModuleBlock;
     // 仍在拉黑时，拒收钢印要比「回到你自己」更靠后，否则开口前最后一眼是人设、会忘了被拒收。

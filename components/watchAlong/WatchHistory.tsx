@@ -5,7 +5,7 @@
  * 删除不弹二次确认——长按本身已经是确认动作了。
  */
 import React, { useRef, useState } from 'react';
-import { EmptyState, R_COVER, StatusBar, TopBar, W } from './chrome';
+import { EmptyState, R_COVER, TopBar, W } from './chrome';
 import { coverBackground } from './WatchLobby';
 import type { WatchAlongSession } from '../../utils/watchAlong/types';
 
@@ -53,7 +53,6 @@ export function WatchHistory({
 
   return (
     <div className="relative flex h-full w-full flex-col" style={{ background: W.page, color: W.ink }}>
-      <StatusBar />
       <TopBar title="陪看历史" subtitle={sessions.length ? `${sessions.length} 场` : '还没看过'} onBack={onBack} />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">

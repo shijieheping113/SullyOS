@@ -39,7 +39,6 @@ function normalizeAccount(raw: any, fallback: WatchAccount): WatchAccount {
   return {
     nickname: text(raw.nickname, fallback.nickname),
     number: text(raw.number, fallback.number),
-    incognito: typeof raw.incognito === 'boolean' ? raw.incognito : fallback.incognito,
   };
 }
 
@@ -85,6 +84,8 @@ export function normalizeSettings(raw: any): WatchSettings {
   return {
     autoReact: typeof raw.autoReact === 'boolean' ? raw.autoReact : base.autoReact,
     petVisible: typeof raw.petVisible === 'boolean' ? raw.petVisible : base.petVisible,
+    enterWithChar: typeof raw.enterWithChar === 'boolean' ? raw.enterWithChar : base.enterWithChar,
+    voiceAuto: typeof raw.voiceAuto === 'boolean' ? raw.voiceAuto : base.voiceAuto,
     danmakuPerBeat: clamp(raw.danmakuPerBeat, base.danmakuPerBeat, 2, 6),
     summaryAuto: typeof raw.summaryAuto === 'boolean' ? raw.summaryAuto : base.summaryAuto,
     summaryBeatWaterline: clamp(raw.summaryBeatWaterline, base.summaryBeatWaterline, 3, 20),
@@ -322,6 +323,8 @@ export function createSession(opts: {
   if (opts.charAccount) cast.charAccount = { ...opts.charAccount };
   cast.autoReact = opts.settings.autoReact;
   cast.petVisible = opts.settings.petVisible;
+  // 手册·默认进房方式：开了就带角色同屏进房，没开就自己先单看
+  cast.presence = opts.settings.enterWithChar ? 'side' : 'solo';
 
   return {
     id: watchId('watch'),

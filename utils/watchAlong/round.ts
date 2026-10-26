@@ -59,6 +59,8 @@ export interface RoundResult {
   advanced: boolean;
   /** 桌宠要冒的一句气泡 */
   bubble?: string;
+  /** 模型这一轮没接上：我的消息照常留着，只是没回音 */
+  failed?: boolean;
 }
 
 const clone = (session: WatchAlongSession): WatchAlongSession =>
@@ -218,20 +220,41 @@ export async function advanceRound(
   const myActions = opts.myActions ?? [];
   applyMicChanges(session, myActions);
 
-  const stage = await generateStageBeat({
-    apiConfig: opts.apiConfig,
-    char: opts.char,
-    session,
-    latest: myActions.length ? describeActions('观众', myActions) : '',
-    model: cfg.stageModel,
-    danmakuPerBeat: cfg.danmakuPerBeat,
-  });
+  let stage: StageOutput;
+  try {
+    stage = await generateStageBeat({
+      apiConfig: opts.apiConfig,
+      char: opts.char,
+      session,
+      latest: myActions.length ? describeActions('观众', myActions) : '',
+      model: cfg.stageModel,
+      danmakuPerBeat: cfg.danmakuPerBeat,
+    });
+  } catch (e) {
+    // 台上没接上：我在公屏说的话照样留在这一幕里，只是主播没反应
+    if (!myActions.length) throw e;
+    session.beats.push({
+      id: watchId('beat'),
+      index: session.beats.length,
+      scene: '这一幕没接通，主播那边静了一下。',
+      speech: '',
+      seq: [{ kind: 'scene', text: '这一幕没接通，主播那边静了一下。' }],
+      danmaku: [],
+      hot: false,
+      userActions: [...myActions],
+      charActions: [],
+      userMicLine: [...myActions].reverse().find(a => a.kind === 'mic_line' && a.text)?.text,
+      at: Date.now(),
+    });
+    return { session, advanced: true, failed: true };
+  }
 
   const beat: WatchBeat = {
     id: watchId('beat'),
     index: session.beats.length,
     scene: stage.scene,
     speech: stage.speech,
+    seq: stage.seq,
     danmaku: stage.danmaku,
     hot: stage.hot,
     userActions: [...myActions],
@@ -265,7 +288,7 @@ export async function advanceRound(
     model: cfg.stageModel,
     danmakuPerBeat: cfg.danmakuPerBeat,
   });
-  beat.followUp = { scene: counter.scene, speech: counter.speech, danmaku: counter.danmaku };
+  beat.followUp = { scene: counter.scene, speech: counter.speech, danmaku: counter.danmaku, seq: counter.seq };
   if (counter.hot) beat.hot = true;
 
   return { session, advanced: true, bubble };
@@ -292,6 +315,12 @@ export async function chatRound(
     sticker?: string;
     /** 我转的钱 */
     transfer?: WatchChatMessage['transfer'];
+    /** 只把这条消息落进记录，不去叫角色：私聊要手动触发（跟主聊天一样的节奏） */
+    logOnly?: boolean;
+    /** 我按了「触发」：不新加消息，就让角色接着往下说 */
+    manual?: boolean;
+    /** 我的消息刚落好、还没等回复，先叫界面存一次（模型挂了字也不会消失） */
+    onLogged?: (session: WatchAlongSession) => void | Promise<void>;
   },
 ): Promise<RoundResult> {
   const session = clone(opts.session);
@@ -338,16 +367,34 @@ export async function chatRound(
     });
   }
 
-  const out = await runCharTurn({
-    ...opts,
-    session,
-    trigger: opts.assign ? 'assign' : 'chat',
-    userLine: opts.text,
-    clip: opts.clip,
-    assign: opts.assign,
-    model: cfg.charModel,
-  });
-  // 加号里开了「语音回你」：这一轮她第一句就是语音条（内容还是她自己写的）
+  // 先把我说的话落库再等回复：模型那边失手也不会把我这句吃掉
+  if (opts.onLogged) {
+    try {
+      await opts.onLogged(clone(session));
+    } catch {
+      /* 存不下也不拦这一轮 */
+    }
+  }
+
+  // 只落消息不叫人：私聊是手动触发的（Ann 2026-10-26 拍板，跟主聊天一个节奏）
+  if (opts.logOnly) return { session, advanced: false };
+
+  let out: CharOutput;
+  try {
+    out = await runCharTurn({
+      ...opts,
+      session,
+      trigger: opts.assign ? 'assign' : opts.manual ? 'manual' : 'chat',
+      userLine: opts.text,
+      clip: opts.clip,
+      assign: opts.assign,
+      model: cfg.charModel,
+    });
+  } catch {
+    // 这一轮没接上：我的消息留在记录里，界面上提示一下就行
+    return { session, advanced: false, failed: true };
+  }
+  // 加号里开了「语音回你」：这一轮角色第一句就是语音条（内容还是它自己写的）
   if (session.cast.voiceReply && out.chat.length) {
     out.chat[0] = { ...out.chat[0], voice: true };
   }
@@ -375,6 +422,7 @@ export async function chatRound(
     index: session.beats.length,
     scene: stage.scene,
     speech: stage.speech,
+    seq: stage.seq,
     danmaku: stage.danmaku,
     hot: stage.hot,
     userActions: [],
