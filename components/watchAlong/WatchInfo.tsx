@@ -151,7 +151,7 @@ export function WatchInfo({
         <div className="mt-4 text-[11px] font-medium" style={{ color: W.ink }}>
           当前这一幕（第 {Math.max(1, last ? last.index + 1 : 1)} 幕）
         </div>
-        <Field label="画面" value={scene} onChange={setScene} multiline rows={3} placeholder="镜头里发生了什么" />
+        <Field label="画面" value={scene} onChange={setScene} multiline rows={3} placeholder="画面里发生了什么" />
         <Field label="主播台词" value={speech} onChange={setSpeech} multiline rows={3} placeholder="主播说的这一句" />
 
         <div className="mt-3 rounded-[10px] px-3 py-2 text-[10.5px] leading-[16px]" style={{ background: W.soft, color: W.sub }}>

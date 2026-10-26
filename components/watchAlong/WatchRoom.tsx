@@ -48,6 +48,7 @@ export function WatchRoom({
   bubblePlaying,
   onBack,
   onAdvance,
+  onRegenerate,
   onForward,
   onSendDanmaku,
   onSendGift,
@@ -85,6 +86,8 @@ export function WatchRoom({
   bubblePlaying?: boolean;
   onBack: () => void;
   onAdvance: () => void;
+  /** 长按画面：把这一段重新生成一遍（只有最新那一段能重来） */
+  onRegenerate: (beatIndex?: number) => void;
   /** 把当前看着的这一幕转发进私聊 */
   onForward: (beatIndex?: number) => void;
   onSendDanmaku: (text: string) => void;
@@ -106,6 +109,8 @@ export function WatchRoom({
   const danmakuRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
   const [moreOpen, setMoreOpen] = useState(false);
+  /** 长按画面出的小菜单：改这一幕 / 本场信息 / 重来 / 转给角色 */
+  const [pressMenuOpen, setPressMenuOpen] = useState(false);
   const [giftOpen, setGiftOpen] = useState(false);
   const [giftName, setGiftName] = useState(WATCH_GIFTS[0]);
   const [giftCount, setGiftCount] = useState(1);
@@ -165,46 +170,62 @@ export function WatchRoom({
     if (el) el.scrollTop = el.scrollHeight;
   }, [viewBeat?.id, session.beats.length]);
 
+  /**
+   * 公屏是累加的：上一轮的弹幕留在下面，新的一轮接在后面继续往上飘。
+   * 2026-10-26 Ann 打回：原来每一段只有四条，看着不像直播间。
+   * 翻旧段时只累加到那一段为止——看到哪儿就聊到哪儿。
+   */
   const lines = useMemo(() => {
     const out: Array<{ id: string; author: string; text: string; mine: boolean; char: boolean; gift: boolean }> = [];
-    (viewBeat?.danmaku ?? []).forEach(d => {
-      out.push({ id: d.id, author: d.author, text: d.text, mine: false, char: false, gift: false });
-    });
-    (viewBeat?.userActions ?? []).forEach(a => {
-      if (a.kind === 'mic_line') return;
-      if (a.kind === 'danmaku' && a.text) {
-        out.push({ id: a.id, author: session.cast.userAccount.nickname, text: a.text, mine: true, char: false, gift: false });
-      } else {
+    const upTo = viewBeat ? viewBeat.index : -1;
+    session.beats.slice(0, upTo + 1).forEach(beat => {
+      (beat.danmaku ?? []).forEach(d => {
+        out.push({ id: d.id, author: d.author, text: d.text, mine: false, char: false, gift: false });
+      });
+      (beat.userActions ?? []).forEach(a => {
+        if (a.kind === 'mic_line') return;
+        if (a.kind === 'danmaku' && a.text) {
+          out.push({ id: a.id, author: session.cast.userAccount.nickname, text: a.text, mine: true, char: false, gift: false });
+        } else {
+          out.push({
+            id: a.id,
+            author: session.cast.userAccount.nickname,
+            text:
+              a.kind === 'gift'
+                ? `${a.giftName || '礼物'} ×${a.giftAmount || 1}`
+                : a.kind === 'mic_on'
+                  ? '申请上麦，接通了'
+                  : a.kind === 'mic_off'
+                    ? '下麦了'
+                    : a.text || '',
+            mine: true,
+            char: false,
+            gift: a.kind === 'gift',
+          });
+        }
+      });
+      (beat.charActions ?? []).forEach(a => {
+        if (a.kind === 'mic_line') return;
         out.push({
           id: a.id,
-          author: session.cast.userAccount.nickname,
-          text: a.kind === 'gift' ? `${a.giftName || '礼物'} ×${a.giftAmount || 1}` : a.kind === 'mic_on' ? '申请上麦，接通了' : a.kind === 'mic_off' ? '下麦了' : a.text || '',
-          mine: true,
-          char: false,
+          author: session.cast.charAccount.nickname,
+          text:
+            a.kind === 'gift'
+              ? `${a.giftName || '礼物'} ×${a.giftAmount || 1}`
+              : a.kind === 'mic_on'
+                ? '上麦了'
+                : a.kind === 'mic_off'
+                  ? '下麦了'
+                  : a.text || '',
+          mine: false,
+          char: true,
           gift: a.kind === 'gift',
         });
-      }
-    });
-    (viewBeat?.charActions ?? []).forEach(a => {
-      if (a.kind === 'mic_line') return;
-      out.push({
-        id: a.id,
-        author: session.cast.charAccount.nickname,
-        text:
-          a.kind === 'gift'
-            ? `${a.giftName || '礼物'} ×${a.giftAmount || 1}`
-            : a.kind === 'mic_on'
-              ? '上麦了'
-              : a.kind === 'mic_off'
-                ? '下麦了'
-                : a.text || '',
-        mine: false,
-        char: true,
-        gift: a.kind === 'gift',
       });
     });
-    return out.filter(l => l.text);
-  }, [viewBeat, session.cast.charAccount.nickname, session.cast.userAccount.nickname]);
+    // 看一晚上会攒出很多条，只留最近的，界面上不会越滚越卡
+    return out.filter(l => l.text).slice(-150);
+  }, [viewBeat, session.beats, session.cast.charAccount.nickname, session.cast.userAccount.nickname]);
 
   const send = () => {
     const text = draft.trim();
@@ -234,9 +255,11 @@ export function WatchRoom({
   }, [viewBeat]);
 
   const [step, setStep] = useState(0);
-  // 换了一格就从头放
+  /** 从段首往回翻时要停在上一段的最后一条（默认进新一段是从头放） */
+  const landAtEndRef = useRef(false);
   useEffect(() => {
-    setStep(0);
+    setStep(landAtEndRef.current ? Number.MAX_SAFE_INTEGER : 0);
+    landAtEndRef.current = false;
   }, [viewBeat?.id]);
 
   const shown = seq.slice(0, Math.min(step + 1, seq.length));
@@ -244,22 +267,10 @@ export function WatchRoom({
   const curLine = [...shown].reverse().find(s => s.kind === 'line')?.text || '';
   const atEnd = seq.length === 0 || step >= seq.length - 1;
 
-  /** 点画面：出下一句；这一段的都放完了，就接着生成新的一段 */
-  const stepOnce = () => {
-    if (!viewBeat || session.legacy) return;
-    if (!atEnd) {
-      setStep(s => s + 1);
-      return;
-    }
-    if (isLatest && !busy) onAdvance();
-  };
-
-  const progress = seq.length
-    ? Math.max(4, Math.round(((Math.min(step, seq.length - 1) + 1) / seq.length) * 100))
-    : 0;
-
   const goBack = () => {
     if (!canBack) return;
+    // 往回退要落在上一段的最后一条，接得上刚才看到哪儿
+    landAtEndRef.current = true;
     setViewIdx((viewBeat?.index ?? 1) - 1);
   };
   const goForward = () => {
@@ -267,7 +278,70 @@ export function WatchRoom({
     const next = (viewIdx ?? lastIndex) + 1;
     setViewIdx(next >= lastIndex ? null : next);
   };
+  /** 回最新：跟回这一场当前正在播的那一段 */
   const goLatest = () => setViewIdx(null);
+
+  /**
+   * 往下一句：段内一条一条走；看的是旧段就翻到下一段（这是翻看，不要钱）。
+   * 最新一段走到最后一条就停住——生成新的一段必须按画面右下角那个明确的按钮，
+   * 不能让「点屏幕看字幕」顺手触发一次模型调用（每一次都花 Ann 的钱）。
+   */
+  const stepNext = () => {
+    if (!viewBeat || session.legacy) return;
+    if (!atEnd) {
+      setStep(s => s + 1);
+      return;
+    }
+    if (!isLatest) goForward();
+  };
+
+  /** 往上一句：段内往回退；退到段首就翻回上一段的最后一条 */
+  const stepPrev = () => {
+    if (!viewBeat || session.legacy) return;
+    if (step > 0) {
+      setStep(s => s - 1);
+      return;
+    }
+    goBack();
+  };
+
+  // 长按画面 = 出操作菜单（和原来直播 App 的长按菜单一个习惯：改这一幕、本场信息、重来、转发）
+  const pressTimer = useRef<number | null>(null);
+  const longPressed = useRef(false);
+  const clearPress = () => {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+  const pressStart = () => {
+    if (session.legacy) return;
+    longPressed.current = false;
+    clearPress();
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      longPressed.current = true;
+      setPressMenuOpen(true);
+    }, 480);
+  };
+  const pressEnd = () => clearPress();
+
+  /** 点画面：左边三分之一退回上一句，其余往下走一句（想找上一句就往左边点） */
+  const stageTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (longPressed.current) {
+      longPressed.current = false;
+      return;
+    }
+    const box = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - box.left) / Math.max(1, box.width);
+    if (x < 0.32) stepPrev();
+    else stepNext();
+  };
+
+  // 底边这条线说的是「整场看到哪儿了」，不是这一段的第几句——
+  // 只有整场进度才看得出是不是已经到最后一段（Ann 2026-10-26）。
+  // 段内走到第几句写在字幕下面那行小字里。
+  const progress = totalBeats > 1 ? Math.round((beatNo / totalBeats) * 100) : 100;
 
   return (
     <div ref={rootRef} className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: W.page, color: W.ink }}>
@@ -317,11 +391,23 @@ export function WatchRoom({
         ) : null}
       </div>
 
-      {/* 直播画面：一整段切成一条一条，点一下出下一条；底部字幕只放主播说的话 */}
+      {/* 直播画面：一整段切成一条一条，点一下出下一条；左边三分之一是回上一条，长按这一段重来 */}
       <div
-        className="relative shrink-0 overflow-hidden"
-        style={{ height: 180, background: '#0C0D10', cursor: session.legacy ? 'default' : 'pointer' }}
-        onClick={stepOnce}
+        className="relative shrink-0 select-none overflow-hidden"
+        style={{
+          // 画面 : 弹幕 = 4 : 6（Ann 2026-10-26：弹幕跟直播画面是 6:4，画面不能窄成一条，
+          // 也不能压过弹幕），两边都随屏幕伸缩
+          flex: '4 1 0',
+          minHeight: 170,
+          background: '#0C0D10',
+          cursor: session.legacy ? 'default' : 'pointer',
+          touchAction: 'manipulation',
+        }}
+        onClick={stageTap}
+        onPointerDown={pressStart}
+        onPointerUp={pressEnd}
+        onPointerCancel={pressEnd}
+        onPointerLeave={pressEnd}
       >
         <span
           className="pointer-events-none absolute"
@@ -347,91 +433,36 @@ export function WatchRoom({
           </span>
         </div>
 
-        {/* 右上：翻看上一幕／下一幕，以及「回到最新」 */}
-        <div className="absolute right-2 flex items-center gap-1" style={{ top: 8 }}>
-          {!isLatest ? (
-            <button
-              type="button"
-              onClick={e => {
-                e.stopPropagation();
-                goLatest();
-              }}
-              className="inline-flex h-[21px] items-center gap-1 px-2 text-[10px] text-white"
-              style={{ borderRadius: R_PILL, background: 'rgba(0,0,0,.5)' }}
-            >
-              回到最新
-              <WIco name="next" size={10} />
-            </button>
-          ) : null}
-          {session.beats.length > 1 ? (
-            <span
-              className="inline-flex h-[21px] items-center text-white"
-              style={{ borderRadius: R_PILL, background: 'rgba(0,0,0,.5)' }}
-            >
-              <button
-                type="button"
-                aria-label="上一幕"
-                disabled={!canBack}
-                onClick={e => {
-                  e.stopPropagation();
-                  goBack();
-                }}
-                className="inline-flex h-full w-[21px] items-center justify-center disabled:opacity-30"
-              >
-                <WIco name="back" size={10} />
-              </button>
-              <span className="tabular-nums text-[10px] opacity-90">
-                {beatNo}/{totalBeats}
-              </span>
-              <button
-                type="button"
-                aria-label="下一幕（翻看已看过的）"
-                disabled={!canForward}
-                onClick={e => {
-                  e.stopPropagation();
-                  goForward();
-                }}
-                className="inline-flex h-full w-[21px] items-center justify-center disabled:opacity-30"
-              >
-                <WIco name="next" size={10} />
-              </button>
-            </span>
-          ) : null}
-        </div>
-
-        {/* 这一条的画面：手在做什么、人往哪动，写在画面里 */}
-        {curScene ? (
-          <div
-            className="pointer-events-none absolute inset-x-4 top-[46px] text-center text-[11.5px] leading-[17px] text-white/75"
-            style={{
-              display: '-webkit-box',
-              WebkitLineClamp: 3,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-              textShadow: '0 1px 6px rgba(0,0,0,.7)',
-            }}
-          >
-            {curScene}
-          </div>
-        ) : null}
-
+        {/* 这一条的画面：这场直播正在播的那件事，此刻的样子 */}
         <div
-          className="absolute inset-x-0 bottom-0 px-3.5 pb-3 pt-7"
+          className="pointer-events-none absolute inset-x-0 bottom-0 px-3.5 pb-3 pt-7"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,.86), rgba(0,0,0,.55) 55%, transparent)' }}
         >
           {busy && isLatest ? (
             <div className="text-[12px] text-white/70">正在接通下一段…</div>
           ) : (
             <>
+              {curScene ? (
+                <div
+                  className="mb-[5px] text-[10.5px] leading-[16px] text-white/60"
+                  style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                >
+                  {curScene}
+                </div>
+              ) : null}
               <div
                 className="text-[14px] font-medium leading-[20px] text-white"
                 style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
               >
-                {curLine || (viewBeat ? '……' : '画面还没接通，点「下一段」开始看。')}
+                {curLine || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
               </div>
               {!session.legacy ? (
                 <div className="mt-1 text-[9.5px] text-white/45">
-                  {atEnd ? (isLatest ? '点一下 → 接着看下一段' : '这段看完了') : `点一下继续 · ${Math.min(step + 1, seq.length)}/${seq.length}`}
+                  {atEnd
+                    ? isLatest
+                      ? '这一段播完了 · 按「下一段」接着看'
+                      : '这段看完了 · 点右边往下翻'
+                    : `点右边下一句 · 点左边上一句 · ${Math.min(step + 1, seq.length)}/${seq.length}`}
                 </div>
               ) : null}
             </>
@@ -443,14 +474,45 @@ export function WatchRoom({
         </span>
       </div>
 
-      {/* 主播行：名字 + 第几段 + 标题 + 转发 + 下一段 */}
-      <div className="flex shrink-0 items-start gap-2 px-4 pb-2.5 pt-2.5">
+      {/* 主播行：名字 + 第几段 + 标题 + 转发 + 下一段（原型 .rmeta：11px 16px 10px） */}
+      <div className="flex shrink-0 items-start gap-2 px-4 pb-[10px] pt-[11px]">
         <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="truncate text-[13.5px] font-semibold">{session.room.streamerName}</span>
-            <span className="shrink-0 text-[11px] tabular-nums" style={{ color: W.sub }}>
-              第 {beatNo} 段 · 今晚第 {beatNo + 14} 段
+          <div className="flex items-center gap-1.5">
+            <span className="min-w-0 truncate text-[13.5px] font-semibold">{session.room.streamerName}</span>
+            {/* 翻段：这是明面上的入口，不能只靠点画面猜 */}
+            <span className="inline-flex shrink-0 items-center" style={{ color: W.sub }}>
+              <button
+                type="button"
+                aria-label="上一段"
+                disabled={!canBack}
+                onClick={goBack}
+                className="inline-flex h-6 w-6 items-center justify-center disabled:opacity-25"
+              >
+                <WIco name="back" size={13} />
+              </button>
+              <span className="tabular-nums text-[11px]">
+                {beatNo}/{totalBeats}
+              </span>
+              <button
+                type="button"
+                aria-label="下一段"
+                disabled={!canForward}
+                onClick={goForward}
+                className="inline-flex h-6 w-6 items-center justify-center disabled:opacity-25"
+              >
+                <WIco name="next" size={13} />
+              </button>
             </span>
+            {!isLatest ? (
+              <button
+                type="button"
+                onClick={goLatest}
+                className="shrink-0 px-1.5 py-0.5 text-[10.5px]"
+                style={{ borderRadius: R_PILL, background: W.fill, color: W.ink }}
+              >
+                回最新
+              </button>
+            ) : null}
           </div>
           <div className="mt-1 truncate text-[12.5px]" style={{ color: W.sub }}>
             {session.room.title}
@@ -466,16 +528,20 @@ export function WatchRoom({
         >
           <WIco name="send" size={15} />
         </button>
-        <button
-          type="button"
-          disabled={busy || session.legacy}
-          onClick={canForward ? goForward : onAdvance}
-          className="mt-[1px] inline-flex h-[32px] shrink-0 items-center gap-[3px] pl-[13px] pr-[10px] text-[12px] font-medium text-white disabled:opacity-40"
-          style={{ borderRadius: R_PILL, background: W.ink }}
-        >
-          {busy && isLatest ? '生成中' : '下一段'}
-          <WIco name="next" size={13} />
-        </button>
+
+        {/* 唯一会让模型干活（也就是花钱）的按钮：这一段播完才亮，点它才开新的一段 */}
+        {isLatest && !session.legacy ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => (atEnd ? onAdvance() : stepNext())}
+            className="mt-[1px] inline-flex h-[32px] shrink-0 items-center gap-[3px] pl-[11px] pr-[9px] text-[11.5px] font-medium text-white disabled:opacity-30"
+            style={{ borderRadius: R_PILL, background: W.ink }}
+          >
+            {busy ? '接通中' : atEnd ? '下一段' : '下一句'}
+            <WIco name="next" size={12} />
+          </button>
+        ) : null}
       </div>
 
       {/* 连麦席：麦上只有角色出声，我说的话是文字 */}
@@ -555,12 +621,13 @@ export function WatchRoom({
       {/* 公屏 */}
       <div
         ref={danmakuRef}
-        className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-1 pt-1.5"
+        className="no-scrollbar min-h-0 overflow-y-auto px-4 pb-[6px] pt-[4px]"
         style={{
+          flex: '6 1 0',
           borderTop: `1px solid ${W.line}`,
           marginTop: micLine ? 8 : 0,
-          maskImage: 'linear-gradient(to bottom, transparent 0, #000 16%)',
-          WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 16%)',
+          maskImage: 'linear-gradient(to bottom, transparent 0, #000 18%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 18%)',
         }}
       >
         <div className="flex min-h-full flex-col justify-end">
@@ -608,8 +675,8 @@ export function WatchRoom({
         </div>
       </div>
 
-      {/* 底栏：私聊 / 弹幕 / 上麦 / 更多 */}
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-3 pt-2" style={{ borderTop: `1px solid ${W.line}` }}>
+      {/* 底栏：私聊 / 弹幕 / 上麦 / 更多（原型 .bar：9px 12px 12px） */}
+      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-3 pt-[9px]" style={{ borderTop: `1px solid ${W.line}` }}>
         <button
           type="button"
           aria-label="私聊"
@@ -680,6 +747,43 @@ export function WatchRoom({
         onPlayVoice={onPlayBubble}
         voicePlaying={bubblePlaying}
       />
+
+      {/* 长按画面出的小菜单 */}
+      <Sheet open={pressMenuOpen} onClose={() => setPressMenuOpen(false)} title={`第 ${beatNo} / ${totalBeats} 段`}>
+        <div className="pb-2">
+          {[
+            { label: '改这一幕', desc: '画面和台词，就地改', run: onOpenInfo },
+            { label: '本场信息', desc: '主播名、人设、房间标题、分区', run: onOpenInfo },
+            {
+              label: '这一段重来',
+              desc: isLatest ? '换一种走向，重新写这一段' : '只有最新那一段能重来',
+              run: () => {
+                if (isLatest && !busy) onRegenerate(viewBeat?.index);
+              },
+            },
+            { label: `转给${charName}`, desc: '把这一幕发进私聊', run: () => onForward(viewBeat?.index) },
+          ].map(item => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => {
+                setPressMenuOpen(false);
+                item.run();
+              }}
+              className="flex w-full items-center gap-3 px-4 py-[12px] text-left active:bg-[#F8F8F8]"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13.5px]" style={{ color: W.ink }}>
+                  {item.label}
+                </span>
+                <span className="mt-[1px] block text-[11px]" style={{ color: W.sub }}>
+                  {item.desc}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </Sheet>
 
       {/* 更多 */}
       <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title={session.room.title}>

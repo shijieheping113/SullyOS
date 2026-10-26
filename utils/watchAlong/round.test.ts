@@ -189,8 +189,24 @@ describe('路线 A：推进台上', () => {
   });
 });
 
-describe('后台总结与退房', () => {
-  it('没到水位不压摘要', async () => {
+describe('主播不许替台下的人说话（设计单禁令）', () => {
+  it('网友弹幕里出现你或角色的号，一律丢掉', async () => {
+    stageSpy.mockResolvedValue({
+      scene: '画面动了一下',
+      speech: '主播开口',
+      danmaku: [
+        { id: 'd1', author: '我', text: '主播好' },
+        { id: 'd2', author: '阿猫', text: '哈哈哈' },
+        { id: 'd3', author: '路人甲', text: '真的假的' },
+      ],
+      hot: false,
+    });
+    const r = await advanceRound({ ...ctx, session: makeSession('solo') });
+    expect(r.session.beats[1].danmaku.map(d => d.author)).toEqual(['路人甲']);
+  });
+});
+
+describe('后台总结与退房', () => {  it('没到水位不压摘要', async () => {
     const r = await maybeDigest({ ...ctx, session: makeSession() });
     expect(r.digests.length).toBe(0);
   });

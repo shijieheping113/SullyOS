@@ -20,9 +20,23 @@ import type {
   WatchModelSlot,
   WatchSettings,
 } from './types';
-import { defaultCast, defaultGlobals, defaultWatchSettings, emptyModelSlot, watchId } from './types';
+import {
+  defaultCast,
+  defaultCharAccount,
+  defaultGlobals,
+  defaultWatchSettings,
+  emptyModelSlot,
+  watchId,
+} from './types';
 
 const KV_GLOBALS = 'watch_along_globals_v1';
+/**
+ * 角色的陪看号按角色分开存：换角色就换成他自己那一份，不会顶着上一个角色的号。
+ * 你自己的陪看号还是只有一份（你是同一个人，不用跟着角色换）。
+ */
+const KV_CHAR_ACCOUNT = (charId: string): string => `watch_along_char_account_v1::${charId}`;
+/** 老存档里只有一份公共的角色号，第一个打开的角色认领它（免得把她手动改过的马甲丢了） */
+const KV_CHAR_ACCOUNT_CLAIMED = 'watch_along_char_account_v1_claimed';
 
 // ==================== 归一化 ====================
 
@@ -400,4 +414,40 @@ export async function loadWatchGlobals(charName = ''): Promise<WatchGlobals> {
 
 export async function saveWatchGlobals(globals: WatchGlobals): Promise<void> {
   await liveKvDb.put(KV_GLOBALS, globals);
+}
+
+/**
+ * 取这个角色的陪看号。
+ *
+ * 以前只有一个公共的角色号，谁最后改谁算，换角色照样顶着上一个角色的号；
+ * 现在一个角色一份。老存档里那一份由第一个打开的角色认领——她手动改过的马甲不会丢，
+ * 之后再开别的角色，各自拿自己的名字当默认。
+ */
+export async function loadCharWatchAccount(
+  charId: string,
+  charName: string,
+  legacy?: WatchAccount,
+): Promise<WatchAccount> {
+  const base = defaultCharAccount(charName);
+  if (!charId) return legacy ? normalizeAccount(legacy, base) : base;
+
+  const saved = await liveKvDb.get<WatchAccount>(KV_CHAR_ACCOUNT(charId));
+  if (saved) return normalizeAccount(saved, base);
+
+  const claimed = await liveKvDb.get<boolean>(KV_CHAR_ACCOUNT_CLAIMED);
+  // 老存档那份号如果名字就是这个角色，那本来就是他自己的，直接用
+  const own = Boolean(legacy) && (legacy!.nickname || '').trim() === (charName || '').trim();
+  if (legacy && (own || !claimed)) {
+    const adopted = normalizeAccount(legacy, base);
+    await saveCharWatchAccount(charId, adopted);
+    if (!claimed) await liveKvDb.put(KV_CHAR_ACCOUNT_CLAIMED, true);
+    return adopted;
+  }
+  return base;
+}
+
+/** 存这个角色的陪看号：只动他自己那一份，不碰别人的 */
+export async function saveCharWatchAccount(charId: string, account: WatchAccount): Promise<void> {
+  if (!charId) return;
+  await liveKvDb.put(KV_CHAR_ACCOUNT(charId), account);
 }

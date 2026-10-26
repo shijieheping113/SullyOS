@@ -33,9 +33,70 @@ describe('台上这一幕的解析', () => {
     expect(r.danmaku[0].text).toBe('猫比你会播');
   });
 
-  it('完全没按格式写：整段当台词，不吞这一幕', () => {
+  it('完全没按格式写：整段当画面，不让主播念旁白', () => {
     const r = __parseStage('他把手在裤子上擦了擦，说这台机器今天不听话。');
-    expect(r.speech).toContain('擦');
+    expect(r.scene).toContain('擦');
+    expect(r.speech).toBe('');
+    expect(r.danmaku).toHaveLength(0);
+  });
+
+  it('整段里带引号：引号内当台词，引号外当画面', () => {
+    const r = __parseStage('他凑近主机听了一下，说「这台是不是风扇卡住了」，然后又敲了两下外壳。');
+    expect(r.seq.map(s => s.kind)).toEqual(['scene', 'line', 'scene']);
+    expect(r.speech).toContain('风扇卡住');
+    expect(r.scene).toContain('凑近主机');
+  });
+
+  it('挤成一整行：行内标签要能切开，弹幕不许丢', () => {
+    // 2026-10-26 真实故障：模型把整段写在一行里，屏幕上只显示半截、弹幕一条都没有
+    const r = __parseStage(
+      '画：伸手拨了一下头发 话：今天还是老样子 弹幕：小明：哈哈哈哈；阿七：这也行 点名：是',
+    );
+    expect(r.seq.map(s => s.kind)).toEqual(['scene', 'line']);
+    expect(r.seq[0].text).toContain('拨了一下头发');
+    expect(r.seq[1].text).toContain('老样子');
+    expect(r.danmaku).toHaveLength(2);
+    expect(r.danmaku[0].author).toBe('小明');
+    expect(r.hot).toBe(true);
+  });
+
+  it('弹幕写在标签下一行：要吸上来，不能整批丢', () => {
+    const r = __parseStage(`画：锅里油热了
+话：下锅下锅
+弹幕：
+小明：哈哈哈哈
+阿七：这也行
+点名：否`);
+    expect(r.danmaku).toHaveLength(2);
+    expect(r.danmaku.map(d => d.author)).toEqual(['小明', '阿七']);
+    // 画和话还在，不能被弹幕吞掉
+    expect(r.seq.map(s => s.kind)).toEqual(['scene', 'line']);
+  });
+
+  it('昵称认不准：宁可记成路人，也不许把前半句当昵称吃掉', () => {
+    const r = __parseStage('画：他敲了敲外壳\n话：应该没事\n弹幕：他刚才那句真的绝了：哈哈哈哈哈');
+    expect(r.danmaku[0].author).toBe('路人');
+    expect(r.danmaku[0].text).toContain('真的绝了');
+    expect(r.danmaku[0].text).toContain('哈哈');
+  });
+
+  it('一条太长：按句切开，拼回去一个字都不丢', () => {
+    const body =
+      '他把整箱零件倒在地上一件件分开，先按大小摆成一排，再把有锈的挑出来放右边，剩下的挨个用布擦干净。' +
+      '旁边那台老机器已经拆到只剩骨架，螺丝按顺序摆在纸片上，一颗都没有混。' +
+      '他说这台得慢慢来，急不得，急一次就要重新排一遍，一晚上就过去了。';
+    const r = __parseStage(`画：${body}`);
+    expect(r.seq.length).toBeGreaterThan(1);
+    for (const s of r.seq) expect(s.text.length).toBeLessThanOrEqual(80);
+    // 切开之后拼回来必须还是原来那段话（只允许丢空白）
+    expect(r.seq.map(s => s.text).join('').replace(/\s/g, '')).toBe(body.replace(/\s/g, ''));
+  });
+
+  it('塌成一整段又没有弹幕：就地切碎收下，绝不偷偷再问一遍（一次调用就是一次钱）', () => {
+    const junk = '画：' + '他把镜头挪了挪又挪了挪。'.repeat(24);
+    const r = __parseStage(junk);
+    expect(r.seq.length).toBeGreaterThan(1);
+    expect(r.seq.every(s => s.text.length <= 80)).toBe(true);
     expect(r.danmaku).toHaveLength(0);
   });
 

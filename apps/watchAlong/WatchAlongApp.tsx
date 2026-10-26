@@ -59,9 +59,11 @@ import {
   collectVoiceIds,
   createSession,
   deleteWatchSession,
+  loadCharWatchAccount,
   loadWatchGlobals,
   loadWatchSessions,
   removeDigest,
+  saveCharWatchAccount,
   saveWatchGlobals,
   saveWatchSession,
 } from '../../utils/watchAlong/storage';
@@ -135,6 +137,16 @@ export default function WatchAlongApp({
   const [ruleDraft, setRuleDraft] = useState('');
   const [accountBusy, setAccountBusy] = useState<'user' | 'char' | null>(null);
 
+  // 大厅长按卡片：就地改这一场的直播信息
+  const [editingRoom, setEditingRoom] = useState<WatchRoomCard | null>(null);
+  const [roomDraft, setRoomDraft] = useState({
+    streamerName: '',
+    streamerHandle: '',
+    category: '',
+    title: '',
+    bio: '',
+  });
+
   // 声音：一条通道，key 是「谁的哪一条」，播新的先把旧的停掉
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
@@ -159,9 +171,16 @@ export default function WatchAlongApp({
           loadWatchSessions(char.name),
         ]);
         if (!alive) return;
+        // 角色的陪看号跟着角色走：换个角色就换成他自己那一份
+        const charAccount = await loadCharWatchAccount(char.id, char.name, g.charAccount);
         if (!alive) return;
-        setGlobals(g);
-        setSessions(list.filter(s => s.charId === char.id));
+        setGlobals({ ...g, charAccount });
+        const mine = list.filter(s => s.charId === char.id);
+        setSessions(mine);
+        // 进陪看先落在大厅（Ann 2026-10-26：点陪看进的是陪看主页）。
+        // 没退房的那场接回来，等在大厅「还在看」横条里，点它才进房间。
+        const live = mine.find(s => s.status === 'watching');
+        if (live) setSession(live);
         // 换了个角色就把「刷台闸门」放开，新角色这边也刷一批
         refreshPoolRef.current = false;
       } catch {
@@ -332,9 +351,70 @@ export default function WatchAlongApp({
     await saveWatchGlobals(next);
   }, []);
 
+  // ==================== 大厅长按卡片 ====================
+
+  /** 点「编辑本场信息」：把卡片现在的值填进草稿 */
+  const openPoolEdit = useCallback((room: WatchRoomCard) => {
+    setEditingRoom(room);
+    setRoomDraft({
+      streamerName: room.streamerName,
+      streamerHandle: room.streamerHandle,
+      category: room.category,
+      title: room.title,
+      bio: room.bio,
+    });
+  }, []);
+
+  /** 草稿存回去：大厅卡片改掉，这一场要是正开着，房间里那份也跟着改 */
+  const savePoolRoom = useCallback(
+    async (room: WatchRoomCard, draft: typeof roomDraft) => {
+      const patch = {
+        streamerName: draft.streamerName.trim().slice(0, 20) || '主播',
+        streamerHandle: draft.streamerHandle.trim().slice(0, 24),
+        category: draft.category.trim().slice(0, 12),
+        title: draft.title.trim().slice(0, 40),
+        bio: draft.bio.trim().slice(0, 160),
+      };
+      await saveGlobals({
+        ...globals,
+        pool: globals.pool.map(r => (r.id === room.id ? { ...r, ...patch } : r)),
+      });
+      // 会话里的 room 没有 id，按改之前的账号对上
+      const live = sessions.find(
+        s => s.status === 'watching' && !s.legacy && s.room.streamerHandle === room.streamerHandle,
+      );
+      if (live) {
+        await persist({ ...live, room: { ...live.room, ...patch }, updatedAt: Date.now() });
+      }
+    },
+    [globals, saveGlobals, sessions, persist],
+  );
+
+  /** 点「从列表里删掉」：只是不在大厅出现，看过的那场还在历史里 */
+  const removeRoomFromPool = useCallback(
+    async (roomId: string) => {
+      await saveGlobals({
+        ...globals,
+        pool: globals.pool.filter(r => r.id !== roomId),
+      });
+    },
+    [globals, saveGlobals],
+  );
+
   const startRoom = useCallback(
     async (room: WatchRoomCard) => {
       if (busy) return;
+      // 这个房间本来就有一场还在看的：直接接着看，不重开一场、不重刷第一幕。
+      // 只认「还在看」的那场——已经结束的和老记录都不算，否则点一个新房间会把旧场接回来。
+      const live = sessions.find(
+        s => s.status === 'watching' && !s.legacy && s.room.streamerHandle === room.streamerHandle,
+      );
+      if (live) {
+        setSession(live);
+        setPage('room');
+        setUnread(0);
+        return;
+      }
       const fresh = createSession({
         charId: char.id,
         charName: char.name,
@@ -358,7 +438,18 @@ export default function WatchAlongApp({
         setBusy(null);
       }
     },
-    [busy, char.id, char.name, settings, globals.userAccount, globals.charAccount, persist, buildCtx, addToast],
+    [
+      busy,
+      char.id,
+      char.name,
+      settings,
+      globals.userAccount,
+      globals.charAccount,
+      sessions,
+      persist,
+      buildCtx,
+      addToast,
+    ],
   );
 
   // ==================== 房间 ====================
@@ -396,8 +487,50 @@ export default function WatchAlongApp({
     [busy, buildCtx, persist, addToast, page],
   );
 
-  /** 公屏输入：连麦中就当麦上说话（文字），没连麦就是弹幕 */
-  const sendPublic = useCallback(
+  /**
+   * 长按画面：把最新这一段重新生成一遍。
+   * 只允许最新那一段——旧段重来会让它后面所有段的内容对不上。
+   */
+  const runRegenerate = useCallback(
+    async (beatIndex?: number) => {
+      const cur = sessionRef.current;
+      if (!cur || busy) return;
+      if (cur.legacy) {
+        addToast('这是旧版记录，只能翻看', 'info');
+        return;
+      }
+      const lastIdx = cur.beats.length - 1;
+      if (lastIdx < 0) return;
+      if (typeof beatIndex === 'number' && beatIndex !== lastIdx) {
+        addToast('只能重来最新那一段，往右点回到最新再长按', 'info');
+        return;
+      }
+      // 把这一段拿掉重新播一遍；这一段里我在公屏做的事留着，不然我刚才说的话就没了
+      const lastBeat = cur.beats[lastIdx];
+      const trimmed: WatchAlongSession = { ...cur, beats: cur.beats.slice(0, lastIdx) };
+      setBusy('advance');
+      try {
+        const ctx = await buildCtx();
+        const r = await advanceRound({ ...ctx, session: trimmed, myActions: lastBeat.userActions });
+        let next = r.session;
+        try {
+          next = await maybeDigest({ ...ctx, session: next });
+        } catch {
+          /* 压不动不影响这一轮 */
+        }
+        await persist(next);
+        if (r.failed) addToast('这一段没接通，再长按一次', 'error');
+        if (r.bubble) setBubble(r.bubble);
+      } catch (e: any) {
+        addToast(e?.message || '这一段没接通', 'error');
+      } finally {
+        setBusy(null);
+      }
+    },
+    [busy, buildCtx, persist, addToast],
+  );
+
+  /** 公屏输入：连麦中就当麦上说话（文字），没连麦就是弹幕 */  const sendPublic = useCallback(
     (text: string) => {
       const cur = sessionRef.current;
       if (!cur) return;
@@ -998,11 +1131,13 @@ export default function WatchAlongApp({
 
   const changeCharAccount = useCallback(
     async (next: WatchAccount) => {
+      // 这个角色的号只写他自己那一份，换角色不会串
+      await saveCharWatchAccount(char.id, next);
       await saveGlobals({ ...globals, charAccount: next });
       const cur = sessionRef.current;
       if (cur) await persist({ ...cur, cast: { ...cur.cast, charAccount: next }, updatedAt: Date.now() });
     },
-    [globals, saveGlobals, persist],
+    [char.id, globals, saveGlobals, persist],
   );
 
   const suggestAccount = useCallback(
@@ -1115,6 +1250,8 @@ export default function WatchAlongApp({
             setRuleOpen(true);
           }}
           onStart={room => void startRoom(room)}
+          onEditRoom={openPoolEdit}
+          onRemoveRoom={roomId => void removeRoomFromPool(roomId)}
           onOpenSession={id => {
             const target = sessions.find(s => s.id === id);
             if (target) void openSession(target);
@@ -1163,6 +1300,76 @@ export default function WatchAlongApp({
               className="mt-2 w-full resize-none px-3 py-2.5 text-[13px] leading-[19px] outline-none placeholder:text-[#ADADAD]"
               style={{ borderRadius: 12, background: W.fill, color: W.ink }}
             />
+          </div>
+        </Sheet>
+
+        <Sheet
+          open={Boolean(editingRoom)}
+          title="改这一场"
+          onClose={() => setEditingRoom(null)}
+          footer={
+            <SolidButton
+              onClick={() => {
+                const target = editingRoom;
+                setEditingRoom(null);
+                if (target) void savePoolRoom(target, roomDraft);
+              }}
+            >
+              记住
+            </SolidButton>
+          }
+        >
+          <div className="px-4 pb-3">
+            {/* 人设排在最前面：主播每一句话都是从这一段长出来的，空着它就只会说场面话 */}
+            <label className="mb-4 block">
+              <span className="mb-1 block text-[11.5px]" style={{ color: W.sub }}>
+                主播人设
+              </span>
+              <textarea
+                value={roomDraft.bio}
+                maxLength={160}
+                rows={5}
+                placeholder="他是谁、说话什么调、播多久了、这一场图什么、自己立的规矩、怕什么——六样用「；」隔开，90 到 140 字。"
+                onChange={e => setRoomDraft(prev => ({ ...prev, bio: e.target.value }))}
+                className="w-full resize-none px-3 py-2.5 text-[13px] leading-[19px] outline-none placeholder:text-[#ADADAD]"
+                style={{ borderRadius: 12, background: W.fill, color: W.ink }}
+              />
+              <span className="mt-1 block text-[10.5px] leading-[15px]" style={{ color: W.faint }}>
+                刷台时这一段就是「人设」那一格；空着，主播只会说场面话。
+              </span>
+            </label>
+            {(
+              [
+                { key: 'streamerName', label: '主播名', max: 20 },
+                { key: 'streamerHandle', label: '账号', max: 24 },
+                { key: 'category', label: '分区', max: 12 },
+              ] as const
+            ).map(f => (
+              <label key={f.key} className="mb-3 block">
+                <span className="mb-1 block text-[11.5px]" style={{ color: W.sub }}>
+                  {f.label}
+                </span>
+                <input
+                  value={roomDraft[f.key]}
+                  maxLength={f.max}
+                  onChange={e => setRoomDraft(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  className="w-full px-3 py-2 text-[13px] outline-none"
+                  style={{ borderRadius: 12, background: W.fill, color: W.ink }}
+                />
+              </label>
+            ))}
+            <label className="block">
+              <span className="mb-1 block text-[11.5px]" style={{ color: W.sub }}>
+                房间标题
+              </span>
+              <input
+                value={roomDraft.title}
+                maxLength={40}
+                onChange={e => setRoomDraft(prev => ({ ...prev, title: e.target.value }))}
+                className="w-full px-3 py-2 text-[13px] outline-none"
+                style={{ borderRadius: 12, background: W.fill, color: W.ink }}
+              />
+            </label>
           </div>
         </Sheet>
       </>
@@ -1257,6 +1464,7 @@ export default function WatchAlongApp({
           setPage('lobby');
         }}
         onAdvance={() => void runAdvance()}
+        onRegenerate={idx => void runRegenerate(idx)}
         onForward={idx => void forwardBeat(idx)}
         onSendDanmaku={sendPublic}
         onSendGift={sendGift}

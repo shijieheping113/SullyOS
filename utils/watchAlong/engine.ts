@@ -106,6 +106,31 @@ export const stripVoiceMarkup = (raw: string): string =>
     .replace(/\s{2,}/g, ' ')
     .trim();
 
+/**
+ * 模型会把整段话挤成一行：只有一个「画：」标签，后面「话」「弹幕」全部内联在同一行里。
+ * 2026-10-26 Ann 实测：出现这种情况时整段被当成一条巨型画面，屏幕上显示不全，弹幕一条都没有。
+ *
+ * 这里在切行之前先把行内的结构标签顶到行首。左边的字符必须是空白或句读——
+ * 这样「动画：」「他的话：」这种正文里的冒号不会被切坏。
+ */
+const STRUCT_LABELS = [
+  '画面', '画', '镜头', '场景', '实况', '视觉', '表演', '动作',
+  '台词', '话', '弹幕', '公屏', '网友', '观众', '评论', '点名', '高能', '高光', '热点',
+];
+
+const INLINE_LABEL_SPLIT = new RegExp(
+  `([\\s\\u3000，,。.；;！!？?、｜|…~～」』】）)])(?=(?:【)?(?:${STRUCT_LABELS.join('|')})(?:】)?\\s*[：:])`,
+  'g',
+);
+
+const explodeInlineLabels = (text: string): string =>
+  (text || '')
+    // 模型偶尔把换行写成字面量 \n，症状跟挤成一团一模一样
+    .replace(/\\n/g, '\n')
+    // markdown 加粗会把标签包起来：**画：**xxx
+    .replace(/\*\*/g, '')
+    .replace(INLINE_LABEL_SPLIT, '$1\n');
+
 interface LabelLine {
   /** 认出来的标签（画面、台词…）；没认出来就是空串 */
   label: string;
@@ -114,7 +139,7 @@ interface LabelLine {
 
 function labelLines(raw: string): LabelLine[] {
   const out: LabelLine[] = [];
-  stripNoise(raw)
+  stripNoise(explodeInlineLabels(raw))
     .split(/\r?\n/)
     .forEach(rawLine => {
       const line = rawLine
@@ -123,9 +148,40 @@ function labelLines(raw: string): LabelLine[] {
         .trim();
       if (!line) return;
       const m = line.match(/^(?:【)?([^：:]{1,8}?)(?:】)?\s*[：:]\s*([\s\S]*)$/);
-      if (m) out.push({ label: m[1].replace(/[【】\[\]\s]/g, ''), value: m[2].trim() });
+      if (m) out.push({ label: m[1].replace(/[【】\[\]\s*`]/g, ''), value: m[2].trim() });
       else out.push({ label: '', value: line });
     });
+  return out;
+}
+
+/**
+ * 「弹幕：」写在上一行、内容另起几行——模型很爱这么写。
+ * 空值的标签要把它后面连续的行吸成自己的内容，否则那几行全被扔掉（且不报错）。
+ * 注意「小明：哈哈哈」本身会被认成一个叫「小明」的标签，所以这里只认白名单里的标签才算真标签。
+ */
+const KNOWN_LABELS = [
+  ...STRUCT_LABELS,
+  '私聊', '说', '聊', '回', '表情', '打赏', '礼物', '投喂', '刷个',
+  '上麦', '麦上', '下麦', '转账', '安静', '理由', '动作',
+];
+
+const isKnownLabel = (label: string): boolean =>
+  Boolean(label) && KNOWN_LABELS.some(k => label === k || label.includes(k));
+
+function absorbContinuation(lines: LabelLine[], max = 10): LabelLine[] {
+  const out: LabelLine[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cur = { ...lines[i] };
+    if (cur.label && !cur.value) {
+      const buf: string[] = [];
+      while (i + 1 < lines.length && !isKnownLabel(lines[i + 1].label) && buf.length < max) {
+        const next = lines[++i];
+        buf.push(next.label ? `${next.label}：${next.value}` : next.value);
+      }
+      cur.value = buf.join('\n');
+    }
+    out.push(cur);
+  }
   return out;
 }
 
@@ -164,8 +220,62 @@ function stageSeqOf(lines: LabelLine[]): WatchSeqItem[] {
   return out;
 }
 
-/** 模型偶尔还是照老习惯写 JSON：能读出来就读，读不出来当没这回事 */
-function tryJson(raw: string): any | null {
+/**
+ * 一条「画/话」在屏幕上要看得全。
+ * 2026-10-26 Ann 实测：一条塞两百字就被容器截掉，后半截根本看不到。
+ * 所以按句切开，一条一条点着看——切完拼回去必须还是原来那段话。
+ */
+const SCENE_MAX = 80;
+const LINE_MAX = 60;
+const PIECE_MIN = 12;
+
+function splitLong(text: string, max: number, seps: string[]): string[] {
+  if (text.length <= max) return [text];
+  const out: string[] = [];
+  let rest = text;
+  let guard = 0;
+  while (rest.length > max && guard++ < 16) {
+    const win = rest.slice(0, max);
+    let idx = -1;
+    for (const s of seps) idx = Math.max(idx, win.lastIndexOf(s));
+    // 附近找不到句末标点就硬切，别为了凑整句把一条拖到屏幕上放不下
+    const cut = idx >= PIECE_MIN ? idx + 1 : max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  if (out.length > 1 && out[out.length - 1].length < PIECE_MIN) {
+    const tail = out.pop() as string;
+    out[out.length - 1] = `${out[out.length - 1]}${tail}`;
+  }
+  return out.filter(Boolean);
+}
+
+const splitSeqItem = (item: WatchSeqItem): WatchSeqItem[] => {
+  const max = item.kind === 'scene' ? SCENE_MAX : LINE_MAX;
+  // 台词只在句末切：在逗号上切会把一句完整的话切成两口，念出来就断气了
+  const seps = item.kind === 'scene' ? ['。', '！', '？', '…', '；'] : ['。', '！', '？', '…'];
+  return splitLong(item.text, max, seps).map(text => ({ kind: item.kind, text }));
+};
+
+/** 一段话里带引号：引号内当台词，引号外当画面。比整段塞进台词里让主播念旁白强 */
+const QUOTED = /[「『“]([^」』”]{1,200})[」』”]/g;
+
+function splitByQuotes(text: string): WatchSeqItem[] {
+  const out: WatchSeqItem[] = [];
+  let last = 0;
+  for (const m of text.matchAll(QUOTED)) {
+    const before = text.slice(last, m.index ?? 0).trim();
+    if (before) out.push({ kind: 'scene', text: before });
+    if (m[1].trim()) out.push({ kind: 'line', text: m[1].trim() });
+    last = (m.index ?? 0) + m[0].length;
+  }
+  const tail = text.slice(last).trim();
+  if (tail) out.push({ kind: 'scene', text: tail });
+  return out;
+}
+
+/** 模型偶尔还是照老习惯写 JSON：能读出来就读，读不出来当没这回事 */function tryJson(raw: string): any | null {
   const clean = stripNoise(raw);
   const from = clean.indexOf('{');
   const to = clean.lastIndexOf('}');
@@ -177,23 +287,43 @@ function tryJson(raw: string): any | null {
   }
 }
 
+/**
+ * 昵称判据要偏严：认错一个昵称，前半句内容直接没了；宁可丢掉昵称记成「观众」，内容还在。
+ * 2026-10-26 实测过的坏样本：`他刚才那句真的绝了：哈哈哈哈哈` —— 原来会把前半句当昵称吃掉。
+ */
+const DM_AUTHOR = /^\s*([^\s：:，,。.！!？?、；;｜|「」『』"']{1,8})\s*[：:｜|]\s*([\s\S]+)$/;
+const DM_BAD_NAME = /[的是了吗呢吧啊嘛哦呀哈]|^[我你他她这那]/;
+
+/** 空格或标点后面紧跟「1~8 字 + 冒号」，认为是一条新弹幕 */
+const DM_BOUNDARY = /([\s，,。.！!？?])(?=[^\s：:，,。.！!？?、；;｜|]{1,8}\s*[：:｜|])/g;
+
+const splitDanmakuChunks = (v: string): string[] =>
+  v
+    .replace(DM_BOUNDARY, '$1\u0000')
+    .split(/[；;\n\u0000]+/)
+    .map(s => s.replace(/^[-–—\s]+/, '').trim())
+    .filter(Boolean);
+
 /** 「昵称：内容」「昵称｜内容」都认，认不出昵称就把整句当弹幕 */
 function parseDanmaku(values: string[]): WatchDanmaku[] {
   const out: WatchDanmaku[] = [];
   values.forEach(v => {
-    v.split(/[；;]/).forEach(chunk => {
-      const c = chunk.replace(/^[-–—\s]+/, '').trim();
+    splitDanmakuChunks(v).forEach(c => {
       if (!c) return;
-      const m = c.match(/^(.{1,14}?)\s*[：:｜|]\s*(.+)$/);
-      const authorOk = Boolean(m) && !/[，。！？、]/.test(m![1]);
+      const m = c.match(DM_AUTHOR);
+      const authorOk = Boolean(m) && !DM_BAD_NAME.test(m![1]);
       out.push({
         id: watchId('dm'),
-        author: authorOk ? m![1].trim() : '观众',
+        // 模型没给昵称时用「路人」：写「观众」会像系统角色，不像看客
+        author: authorOk ? m![1].trim() : '路人',
         text: (authorOk ? m![2] : c).trim(),
       });
     });
   });
-  return out.filter(d => d.text).slice(0, 6);
+  return out
+    .filter(d => d.text)
+    .filter((d, i, a) => a.findIndex(x => x.author === d.author && x.text === d.text) === i)
+    .slice(0, 8);
 }
 
 function toStageOutput(raw: string): StageOutput {
@@ -216,42 +346,45 @@ function toStageOutput(raw: string): StageOutput {
       speech: String(asJson.speech || ''),
       seq,
       danmaku: parseDanmaku(
-        list.map((d: any) => (typeof d === 'string' ? d : `${d?.author || '观众'}：${d?.text || ''}`)),
+        list.map((d: any) => (typeof d === 'string' ? d : `${d?.author || '观众'}｜${d?.text || ''}`)),
       ),
       hot: asJson.hot === true,
     };
   }
 
-  const lines = labelLines(raw);
-  const seq = stageSeqOf(lines);
-  const scene =
-    seq.filter(s => s.kind === 'scene').map(s => s.text).join('\n') ||
-    firstOf(lines, ['画面', '镜头', '场景', '实况', '视觉', '表演']);
-  const speech =
-    seq.filter(s => s.kind === 'line').map(s => s.text).join('\n') ||
-    firstOf(lines, ['台词', '主播', '说话', '开口', '喊', '唱']);
-  const danmaku = parseDanmaku(valuesOf(lines, DANMAKU_KEYS));
-  const hotRaw = firstOf(lines, ['点名', '高能', '高光', '热点', 'hot']);
+  const lines = absorbContinuation(labelLines(raw));
+  const rawSeq = stageSeqOf(lines);
+  if (rawSeq.length) {
+    const danmaku = parseDanmaku(valuesOf(lines, DANMAKU_KEYS));
 
-  // 一行标签都没认出来：整段当台词接住，不许把这一幕吞掉
-  if (!scene && !speech) {
-    const plain = lines.map(l => l.value).join('\n').trim();
-    if (!plain) throw new Error('模型这次一个字都没回');
-    return {
-      scene: '',
-      speech: plain.slice(0, 300),
-      seq: [{ kind: 'line', text: plain.slice(0, 300) }],
-      danmaku,
-      hot: false,
-    };
+    // 3 到 5 个来回，切完最多十几条；再多就是模型写飞了
+    // 注意：这里不抛错、不重问。模型的每一次调用都要花用户的钱，
+    // 格式坏了只能就地切碎收拾，绝不能偷偷再问一遍。
+    const seq = rawSeq.flatMap(splitSeqItem).slice(0, 16);
+    const scene = seq.filter(s => s.kind === 'scene').map(s => s.text).join('\n');
+    const speech = seq.filter(s => s.kind === 'line').map(s => s.text).join('\n');
+    const hotRaw = firstOf(lines, ['点名', '高能', '高光', '热点', 'hot']);
+
+    return { scene, speech, seq, danmaku, hot: /^(是|对|有|yes|true|1)/i.test(hotRaw || '') };
   }
 
+  const danmaku = parseDanmaku(valuesOf(lines, DANMAKU_KEYS));
+
+  // 一行标签都没认出来：先看引号把话说和画面分开，实在没有就整段当画面。
+  // 不要整段塞进台词——观众会看到主播在念旁白。
+  const plain = lines.map(l => l.value).join('\n').trim();
+  if (!plain) throw new Error('模型这次一个字都没回');
+  const byQuote = splitByQuotes(plain);
+  const seq = (byQuote.length > 1
+    ? byQuote
+    : [{ kind: 'scene' as const, text: plain.slice(0, 150) }]
+  ).flatMap(splitSeqItem);
   return {
-    scene,
-    speech,
+    scene: seq.filter(s => s.kind === 'scene').map(s => s.text).join('\n'),
+    speech: seq.filter(s => s.kind === 'line').map(s => s.text).join('\n'),
     seq,
     danmaku,
-    hot: /^(是|对|有|yes|true|1)/i.test(hotRaw || ''),
+    hot: false,
   };
 }
 
@@ -289,7 +422,7 @@ function toCharOutput(raw: string): CharOutput {
     }
   }
 
-  const lines = labelLines(raw);
+  const lines = absorbContinuation(labelLines(raw));
 
   const chat: CharChatLine[] = valuesOf(lines, ['私聊', '说', '聊', '回'])
     .map(text => ({ text: stripVoiceMarkup(text), sticker: '', voice: false }))
@@ -508,11 +641,14 @@ export async function generateStageBeat(opts: {
       { role: 'user', content: task },
     ],
     parse: toStageOutput,
-    nudge: `上一条没照格式。现在只写这四样，一行一条，别的字一个都不要：
-画面：一句话的镜头
-台词：主播这一句
-公屏：网友昵称：他发的弹幕
-高能：否`,
+    nudge: `上一条挤成一段了，没照格式。这次一行只放一样，每行都以标签开头，行与行之间必须换行：
+画：这场直播正在播的那件事，此刻的样子
+话：你这一句
+画：……
+话：……
+弹幕：昵称｜他发的那条
+弹幕：昵称｜他发的那条
+点名：否`,
   });
 }
 
@@ -549,9 +685,9 @@ export async function generateStageCounter(opts: {
   } catch {
     // 接招这一句不成功不值得再花一次钱，直接按「主播愣了下」收场
     return {
-      scene: '主播愣了一下，镜头晃了晃。',
+      scene: '主播愣了一下，画面停了停。',
       speech: '',
-      seq: [{ kind: 'scene', text: '主播愣了一下，镜头晃了晃。' }],
+      seq: [{ kind: 'scene', text: '主播愣了一下，画面停了停。' }],
       danmaku: [],
       hot: false,
     };
@@ -655,9 +791,10 @@ export async function runCharTurn(opts: {
     purpose: 'watch_along_char',
     maxTokens: 900,
     parse: toCharOutput,
-    nudge: `上一条没照格式。现在只按下面这样一行一条重写，别的字一个都不要：
+    nudge: `上一条没照格式。这次一行只放一样，每行都以标签开头：
 私聊：要说的话
-公众地方想搞事就加一行 公屏：弹幕；什么都不想做就只写 安静：理由`,
+公屏：想在直播间说的一句（不想就算了）
+安静：什么都不想做的理由`,
   });
 }
 

@@ -28,6 +28,7 @@ import type {
   WatchBeat,
   WatchChatMessage,
   WatchClip,
+  WatchDanmaku,
   WatchPublicAction,
   WatchSettings,
 } from './types';
@@ -37,8 +38,23 @@ import {
   watchId,
 } from './types';
 
-/** 一轮跑起来需要的外部材料（界面层给，引擎层不知道它们从哪来） */
-export interface RoundContext {
+/**
+ * 设计单禁令：台上的网友弹幕只能来自台下围观的陌生人。
+ *
+ * 主播那一路偶尔会顺手拿「我」或角色的号替他们发弹幕（等于冒充），
+ * 这里直接丢掉这类弹幕——不靠模型自觉，也不为这个再问一遍（每一次调用都花用户的钱）。
+ */
+function stripImpersonated(list: WatchDanmaku[], session: WatchAlongSession): WatchDanmaku[] {
+  const taken = new Set(
+    [session.cast.userAccount.nickname, session.cast.charAccount.nickname]
+      .map(n => (n || '').trim())
+      .filter(Boolean),
+  );
+  if (!taken.size) return list;
+  return list.filter(d => !taken.has((d.author || '').trim()));
+}
+
+/** 一轮跑起来需要的外部材料（界面层给，引擎层不知道它们从哪来） */export interface RoundContext {
   apiConfig: APIConfig;
   char: CharacterProfile;
   userProfile: UserProfile;
@@ -226,7 +242,9 @@ export async function advanceRound(
       apiConfig: opts.apiConfig,
       char: opts.char,
       session,
-      latest: myActions.length ? describeActions('观众', myActions) : '',
+      // 这里必须用真实昵称，不能写「观众」：
+      // 「观众」会被模型当成一个网名照抄进弹幕栏，变成替人发言。
+      latest: myActions.length ? describeActions(session.cast.userAccount.nickname, myActions) : '',
       model: cfg.stageModel,
       danmakuPerBeat: cfg.danmakuPerBeat,
     });
@@ -255,7 +273,7 @@ export async function advanceRound(
     scene: stage.scene,
     speech: stage.speech,
     seq: stage.seq,
-    danmaku: stage.danmaku,
+    danmaku: stripImpersonated(stage.danmaku, session),
     hot: stage.hot,
     userActions: [...myActions],
     charActions: [],
@@ -423,7 +441,7 @@ export async function chatRound(
     scene: stage.scene,
     speech: stage.speech,
     seq: stage.seq,
-    danmaku: stage.danmaku,
+    danmaku: stripImpersonated(stage.danmaku, session),
     hot: stage.hot,
     userActions: [],
     charActions: [],

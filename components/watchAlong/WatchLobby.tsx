@@ -4,13 +4,14 @@
  * 一屏只做一件事：挑一个房间进去。
  * 顶栏：返回电波 / 标题 / 历史 / 设置（三个都常驻，不会被挤掉）。
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   EmptyState,
   Pill,
   R_COVER,
   R_PILL,
   RoundIconButton,
+  Sheet,
   TopBar,
   W,
   WIco,
@@ -39,6 +40,8 @@ export function WatchLobby({
   onOpenSession,
   onOpenHistory,
   onOpenSettings,
+  onEditRoom,
+  onRemoveRoom,
   onBack,
 }: {
   userName: string;
@@ -54,11 +57,36 @@ export function WatchLobby({
   onOpenSession: (id: string) => void;
   onOpenHistory: () => void;
   onOpenSettings: () => void;
+  /** 长按卡片：改这一场的直播信息 */
+  onEditRoom: (room: WatchRoomCard) => void;
+  /** 长按卡片：把它从列表里删掉 */
+  onRemoveRoom: (roomId: string) => void;
   /** 退回电波 */
   onBack: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('全部');
+  const [menuRoom, setMenuRoom] = useState<WatchRoomCard | null>(null);
+
+  // 长按 480ms 出菜单；长按触发后那一下 click 要吞掉，不然会顺手进场
+  const pressRef = useRef<{ timer: number | null; fired: boolean }>({ timer: null, fired: false });
+
+  const clearPress = () => {
+    if (pressRef.current.timer !== null) {
+      window.clearTimeout(pressRef.current.timer);
+      pressRef.current.timer = null;
+    }
+  };
+
+  const startPress = (room: WatchRoomCard) => {
+    clearPress();
+    pressRef.current.fired = false;
+    pressRef.current.timer = window.setTimeout(() => {
+      pressRef.current.timer = null;
+      pressRef.current.fired = true;
+      setMenuRoom(room);
+    }, 480);
+  };
 
   const categories = useMemo(() => {
     const seen: string[] = [];
@@ -85,7 +113,7 @@ export function WatchLobby({
   );
 
   return (
-    <div className="flex h-full w-full flex-col" style={{ background: W.page, color: W.ink }}>
+    <div className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: W.page, color: W.ink }}>
       <TopBar
         title="陪看"
         subtitle={customRule ? `按你的口味在刷：${customRule.slice(0, 14)}` : '刷几个路人直播，一起看'}
@@ -176,7 +204,19 @@ export function WatchLobby({
               <button
                 key={room.id}
                 type="button"
-                onClick={() => onStart(room)}
+                onPointerDown={() => startPress(room)}
+                onPointerUp={clearPress}
+                onPointerCancel={clearPress}
+                onPointerLeave={clearPress}
+                onContextMenu={e => e.preventDefault()}
+                onClick={() => {
+                  // 长按已经出过菜单，这一下 click 不进场
+                  if (pressRef.current.fired) {
+                    pressRef.current.fired = false;
+                    return;
+                  }
+                  onStart(room);
+                }}
                 className="mb-4 block w-full text-left active:opacity-90"
               >
                 <div
@@ -251,6 +291,55 @@ export function WatchLobby({
           口味
         </button>
       </div>
+
+      {/* 长按卡片出的小菜单 */}
+      <Sheet open={Boolean(menuRoom)} onClose={() => setMenuRoom(null)} title={menuRoom?.streamerName}>
+        <div className="pb-2">
+          {[
+            {
+              label: '编辑本场信息',
+              desc: '主播名、人设、房间标题、分区，就地改',
+              icon: 'edit' as const,
+              run: () => {
+                if (menuRoom) onEditRoom(menuRoom);
+              },
+            },
+            {
+              label: '从列表里删掉',
+              desc: '只是不在大厅里出现，看过的那场还在历史里',
+              icon: 'close' as const,
+              run: () => {
+                if (menuRoom) onRemoveRoom(menuRoom.id);
+              },
+            },
+          ].map(item => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => {
+                setMenuRoom(null);
+                item.run();
+              }}
+              className="flex w-full items-center gap-3 px-4 py-[12px] text-left active:bg-[#F8F8F8]"
+            >
+              <span
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                style={{ background: W.fill, color: W.ink }}
+              >
+                <WIco name={item.icon} size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13.5px]" style={{ color: W.ink }}>
+                  {item.label}
+                </span>
+                <span className="mt-[1px] block text-[11px]" style={{ color: W.sub }}>
+                  {item.desc}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </Sheet>
     </div>
   );
 }
