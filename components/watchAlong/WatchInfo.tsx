@@ -106,6 +106,7 @@ const SCREEN_FORM_OPTIONS: { value: WatchStreamerScreenForm; label: string }[] =
   { value: 'workbench', label: '桌面工作台' },
   { value: 'live', label: '真人出镜' },
   { value: 'outdoor', label: '户外移动' },
+  { value: 'pet', label: '宠物' },
 ];
 
 const TIER_OPTIONS: { value: WatchStreamerTier; label: string }[] = [

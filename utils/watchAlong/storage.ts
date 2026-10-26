@@ -143,6 +143,7 @@ const WATCH_SCREEN_FORMS: WatchStreamerScreenForm[] = [
   'workbench',
   'live',
   'outdoor',
+  'pet',
 ];
 
 /** 结构化主播档案逐个兜底；旧记录没有 profile 时给一份空档案（真人小主播） */

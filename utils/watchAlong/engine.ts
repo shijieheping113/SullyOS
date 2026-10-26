@@ -690,6 +690,7 @@ async function callSummaryModel(opts: {
         purpose: opts.purpose,
         messages: opts.messages,
         featureOpts: { temperature: opts.temperature ?? 0.95 },
+        maxTokens: opts.maxTokens,
         charId: opts.char.id,
       });
     } catch {
@@ -903,7 +904,7 @@ export async function translateWatchText(opts: {
     char: opts.char,
     purpose: 'watch_along_translate',
     temperature: 0.4,
-    maxTokens: 400,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: TRANSLATE_RULES },
       { role: 'user', content: buildTranslateTask(opts.text, opts.char.name) },
@@ -924,7 +925,7 @@ export async function digestSessionBeats(opts: {
     char: opts.char,
     purpose: 'watch_along_digest',
     temperature: 0.6,
-    maxTokens: 600,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: DIGEST_RULES },
       { role: 'user', content: buildDigestTask(opts.session, opts.beats) },
@@ -944,7 +945,7 @@ export async function buildSessionRecap(opts: {
     char: opts.char,
     purpose: 'watch_along_recap',
     temperature: 0.7,
-    maxTokens: 800,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: RECAP_RULES },
       { role: 'user', content: buildRecapTask(opts.session) },
@@ -1008,7 +1009,7 @@ function parseRoomLines(raw: string): WatchRoomCard[] {
 const roomStr = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
 const LANG_VALUES = ['zh', 'ja', 'en', 'other'];
-const FORM_VALUES = ['game', 'vtuber', 'workbench', 'live', 'outdoor'];
+const FORM_VALUES = ['game', 'vtuber', 'workbench', 'live', 'outdoor', 'pet'];
 const TIER_VALUES = ['tiny', 'mid', 'big'];
 
 /** 把模型给的 profile 收成固定十字段；缺的填空，取值不在白名单就归默认 */
@@ -1194,7 +1195,7 @@ export async function suggestTaste(opts: {
     char: opts.char,
     purpose: 'watch_along_taste',
     temperature: 1.0,
-    maxTokens: 200,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: TASTE_RULES },
       { role: 'user', content: buildTasteTask({ userName: opts.userName, current: opts.current }) },
@@ -1224,7 +1225,7 @@ export async function suggestAccountName(opts: {
     char: opts.char,
     purpose: 'watch_along_account',
     temperature: 1.0,
-    maxTokens: 300,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: ACCOUNT_NAME_RULES },
       {

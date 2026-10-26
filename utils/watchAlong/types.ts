@@ -29,8 +29,9 @@ export type WatchStreamerLanguage = 'zh' | 'ja' | 'en' | 'other';
  * - workbench：桌面工作台，俯拍手部工序，不拍脸
  * - live：真人出镜，有摄像头对着人
  * - outdoor：户外移动，镜头跟着人走
+ * - pet：宠物，画面里只有动物和它正在干的事，没有人
  */
-export type WatchStreamerScreenForm = 'game' | 'vtuber' | 'workbench' | 'live' | 'outdoor';
+export type WatchStreamerScreenForm = 'game' | 'vtuber' | 'workbench' | 'live' | 'outdoor' | 'pet';
 
 /**
  * 体量：

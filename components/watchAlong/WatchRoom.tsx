@@ -266,7 +266,10 @@ export function WatchRoom({
   const curScene = [...shown].reverse().find(s => s.kind === 'scene')?.text || '';
   const curLineItem = [...shown].reverse().find(s => s.kind === 'line');
   const curLine = curLineItem?.text || '';
-  /** 这一条台词的中文同传：外语直播才有，中文台词留空 */
+  /**
+   * 这一条台词的中文同传：外语直播才有，中文台词留空。
+   * 2026-10-26 Ann 定的：字幕层中文大字在上（主体位置），外语原声小字跟在下面。
+   */
   const curLineTranslated = curLineItem?.translated || '';
   const atEnd = seq.length === 0 || step >= seq.length - 1;
 
@@ -457,14 +460,14 @@ export function WatchRoom({
                 className="text-[14px] font-medium leading-[20px] text-white"
                 style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
               >
-                {curLine || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
+                {curLineTranslated || curLine || (viewBeat ? '……' : '还没开始，点一下右侧开始看。')}
               </div>
               {curLineTranslated ? (
                 <div
                   className="mt-[2px] text-[12px] leading-[17px] text-white/70"
                   style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                 >
-                  {curLineTranslated}
+                  {curLine}
                 </div>
               ) : null}
               {!session.legacy ? (

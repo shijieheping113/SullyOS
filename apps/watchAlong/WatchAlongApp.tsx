@@ -322,7 +322,7 @@ export default function WatchAlongApp({
 
   // ==================== 大厅 ====================
 
-  const refreshPool = useCallback(async () => {
+  const refreshPool = useCallback(async (ruleOverride?: string) => {
     if (busy) return;
     setBusy('pool');
     try {
@@ -330,8 +330,10 @@ export default function WatchAlongApp({
         apiConfig,
         char,
         userName: userProfile?.name || '你',
-        customRule: globals.customRule,
-        count: 4,
+        // 刚在口味面板里保存的新口味要立刻用上：保存和刷新是两个先后动作，
+        // 刷新拿不到刚存进 state 的新值，所以由调用方把新口味直接传进来。
+        customRule: ruleOverride ?? globals.customRule,
+        count: 6,
         exclude: globals.pool.map(r => r.streamerName),
       });
       if (!rooms.length) throw new Error('这次一个房间都没刷出来，再点一次试试');
@@ -1268,7 +1270,8 @@ export default function WatchAlongApp({
             <SolidButton
               onClick={() => {
                 setRuleOpen(false);
-                void saveGlobals({ ...globals, customRule: ruleDraft.trim() }).then(() => refreshPool());
+                const nextRule = ruleDraft.trim();
+                void saveGlobals({ ...globals, customRule: nextRule }).then(() => refreshPool(nextRule));
               }}
             >
               照这个换一批
