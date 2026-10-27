@@ -1,16 +1,29 @@
 /**
  * 陪看的语音。
  *
- * 照喵喵盒那套：默认**只留一条语音，点一下才去合成、合成完直接响**，
- * 不是收到就自动念。合成出来的录音本体存进本机资料库（钥匙就是这条消息 id /
- * 这一拍 id），所以刷新、关浏览器回来还点得响；换设备会丢，这是正常的。
+ * 语言、演出标记、合成，走主聊天同一套：
+ * `chatVoiceLang` → `translateVoiceLangText` + `languageBoost`，
+ * 显示用 `stripTtsMarkupForDisplay` / `stripFishCuesForDisplay` 把标记从字上拿掉，
+ * 交给合成的仍是清洗后、带演出标记的那一版。
  *
- * 两条会出声的地方：
- * 1. 私聊里角色发的语音条 / 长按「转语音」把一条文字变成语音；
- * 2. 连麦席上角色在麦上说的那句——**只有角色出声**，我在麦上说的是纯文字。
+ * 没开角色上的「收到就自动播放」时，只留语音条，点一下才合成。
+ * 开了就自己合成并念出来。录音存在本机，刷新还在；换设备会丢。
  */
 
-import { cleanTextForTtsProvider, synthesizeSpeechDetailed } from '../ttsRouter';
+import { inferChatVoiceEmotionFromSpoken } from '../chatVoiceTagFormat';
+import { stripFishCuesForDisplay } from '../fishAudioTts';
+import { parseVoiceOutput } from '../minimaxTts';
+import {
+  cleanTextForTtsProvider,
+  providerUsesRawVoiceMarkup,
+  stripTtsMarkupForDisplay,
+  synthesizeSpeechDetailed,
+} from '../ttsRouter';
+import {
+  applyLongpressTranslateResult,
+  buildVoiceLangTranslateSystemPrompt,
+  translateVoiceLangText,
+} from '../voiceLangTranslate';
 import {
   downloadVoiceAudioUrl,
   forgetLiveBeatVoices,
@@ -18,6 +31,26 @@ import {
   saveLiveBeatVoiceAsset,
 } from '../liveStreamStorage';
 import type { APIConfig, CharacterProfile } from '../../types';
+
+/** 这条是不是语音条：加号里开了语音、已经合成过，或正文里带着主聊天的 <语音> */
+export function watchLineIsVoice(text: string | undefined, flags: { wantVoice?: boolean; voiceId?: string }): boolean {
+  if (flags.wantVoice || flags.voiceId) return true;
+  return parseVoiceOutput(text || '').hasVoiceTag;
+}
+
+/** 给界面看的字：演出标记拿掉，跟主聊天气泡 / 转文字同一套清洗 */
+export function shownWatchText(text: string | undefined, apiConfig: APIConfig): string {
+  const raw = text || '';
+  const parsed = parseVoiceOutput(raw);
+  const base = parsed.hasVoiceTag
+    ? [parsed.display, parsed.subtitle].filter(Boolean).join('\n') || parsed.speech
+    : raw;
+  return stripFishCuesForDisplay(stripTtsMarkupForDisplay(base, apiConfig))
+    .replace(/<\s*\/?\s*[^<>\s]{1,12}\s*>/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    .trim();
+}
 
 /** 这条语音现在能不能播：本机存过就直接播，没存过才去合成 */
 export async function loadWatchVoiceUrl(key: string): Promise<string | null> {
@@ -30,7 +63,11 @@ export async function loadWatchVoiceUrl(key: string): Promise<string | null> {
   }
 }
 
-/** 现合成一条，并把录音本体存起来（同一条重合成会覆盖旧的那版） */
+/**
+ * 现合成一条。语种跟主聊天一样读角色的 `chatVoiceLang`：
+ * 有语种就先用主聊天那条翻译路把要念的字翻过去，再交给 `synthesizeSpeechDetailed`，
+ * `languageBoost` 用同一个值。
+ */
 export async function synthesizeWatchVoice(opts: {
   key: string;
   text: string;
@@ -38,12 +75,47 @@ export async function synthesizeWatchVoice(opts: {
   apiConfig: APIConfig;
   emotion?: string;
 }): Promise<string> {
-  const spoken =
-    cleanTextForTtsProvider(opts.text, opts.apiConfig).trim() || opts.text.trim();
-  if (!spoken) throw new Error('这条没内容可念');
-  const { url, blob } = await synthesizeSpeechDetailed(spoken, opts.char, opts.apiConfig, {
-    emotion: opts.emotion,
-    languageBoost: opts.char.chatVoiceLang || undefined,
+  const voiceLang = (opts.char.chatVoiceLang || '').trim();
+  const preserveRawMarkup = providerUsesRawVoiceMarkup(opts.apiConfig);
+  const parsed = parseVoiceOutput(opts.text || '');
+  let spokenText = '';
+  let emotion = opts.emotion;
+
+  if (parsed.hasVoiceTag) {
+    spokenText = preserveRawMarkup ? parsed.rawSpeech : parsed.speech;
+    if (!emotion && parsed.emotion) emotion = parsed.emotion;
+  } else {
+    spokenText = cleanTextForTtsProvider(opts.text || '', opts.apiConfig);
+    if (voiceLang && spokenText.trim()) {
+      const originalText = stripTtsMarkupForDisplay(spokenText, opts.apiConfig) || spokenText;
+      try {
+        const translated = await translateVoiceLangText({
+          apiConfig: opts.apiConfig,
+          systemPrompt: buildVoiceLangTranslateSystemPrompt(voiceLang, { apiConfig: opts.apiConfig }),
+          text: originalText,
+          purpose: 'chat-manual-voice-translate',
+          charId: opts.char.id,
+          retryMainOnce: true,
+        });
+        if (translated) {
+          const applied = applyLongpressTranslateResult(translated, { preserveRawMarkup });
+          if (applied.spokenText) {
+            spokenText = applied.spokenText;
+            const tagEmotion = applied.voiceEmotion || inferChatVoiceEmotionFromSpoken(spokenText);
+            if (tagEmotion) emotion = tagEmotion;
+          }
+        }
+      } catch {
+        /* 翻译没成就按原文念，语种提示仍走 languageBoost */
+      }
+    }
+  }
+
+  spokenText = spokenText.trim();
+  if (!spokenText) throw new Error('这条没内容可念');
+  const { url, blob } = await synthesizeSpeechDetailed(spokenText, opts.char, opts.apiConfig, {
+    emotion,
+    languageBoost: voiceLang || undefined,
     groupId: opts.apiConfig.minimaxGroupId || undefined,
     skipCache: true,
   });

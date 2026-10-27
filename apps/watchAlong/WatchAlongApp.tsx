@@ -13,7 +13,7 @@ import { DB } from '../../utils/db';
 import { ChatPrompts } from '../../utils/chatPrompts';
 import { loadCharacterContextMessages } from '../../utils/chatContextRange';
 import { canSynthesizeSpeech } from '../../utils/ttsRouter';
-import { playVoiceAudio, stopVoiceAudio, voicePlaybackErrorMessage } from '../../utils/voicePlayback';
+import { playVoiceAudio, shouldAutoGenerateVoice, stopVoiceAudio, voicePlaybackErrorMessage } from '../../utils/voicePlayback';
 import { cardMessageContent } from '../../utils/liveStreamStorage';
 import type { LivestreamChatCardPayload } from '../../utils/liveStreamTypes';
 import type {
@@ -51,7 +51,6 @@ import {
   generateRoomPool,
   suggestAccountName,
   suggestTaste,
-  translateWatchText,
 } from '../../utils/watchAlong/engine';
 import {
   applyDigestEdit,
@@ -71,7 +70,9 @@ import {
   downloadWatchVoice,
   forgetWatchVoices,
   loadWatchVoiceUrl,
+  shownWatchText,
   synthesizeWatchVoice,
+  watchLineIsVoice,
 } from '../../utils/watchAlong/voice';
 import type {
   WatchAccount,
@@ -94,8 +95,27 @@ type Busy =
   | 'pool'
   | 'recap'
   | 'digest'
-  | 'translate'
   | 'account';
+
+/**
+ * 最近一次角色回复：上一条用户消息或片段之后，到下一条用户消息或片段之前。
+ * 没有角色消息时返回空。
+ */
+function lastCharReplySpan(chat: WatchChatMessage[]): { start: number; end: number } | null {
+  let lastChar = -1;
+  for (let i = chat.length - 1; i >= 0; i -= 1) {
+    if (chat[i].from === 'char') {
+      lastChar = i;
+      break;
+    }
+  }
+  if (lastChar < 0) return null;
+  let start = lastChar;
+  while (start > 0 && chat[start - 1].from !== 'user' && chat[start - 1].from !== 'clip') start -= 1;
+  let end = lastChar;
+  while (end + 1 < chat.length && chat[end + 1].from !== 'user' && chat[end + 1].from !== 'clip') end += 1;
+  return { start, end };
+}
 
 export default function WatchAlongApp({
   char: charProp,
@@ -587,6 +607,7 @@ export default function WatchAlongApp({
 
   // ==================== 私聊 ====================
 
+  const sendingRef = useRef(false);
   const sendChat = useCallback(
     async (payload: {
       text?: string;
@@ -595,27 +616,27 @@ export default function WatchAlongApp({
       transfer?: WatchChatMessage['transfer'];
     }) => {
       const cur = sessionRef.current;
-      if (!cur || busy) return;
+      if (!cur || busy || sendingRef.current) return;
       if (cur.legacy) return;
-      setBusy('chat');
+      // 只把这句落进记录。不要亮「正在回复」的头像，角色等用户点「触发」才回。
+      sendingRef.current = true;
       try {
         const ctx = await buildCtx();
         const r = await chatRound({
           ...ctx,
           session: cur,
           ...payload,
-          // 私聊是手动触发的：发出去只落记录，等点「触发」才让角色回（跟主聊天一个节奏）
           logOnly: true,
           onLogged: next => persist(next),
         });
         await persist(r.session);
       } catch (e: any) {
-        addToast(e?.message || '这条没回上来', 'error');
+        addToast(e?.message || '这条没发出去', 'error');
       } finally {
-        setBusy(null);
+        sendingRef.current = false;
       }
     },
-    [busy, buildCtx, persist, addToast, char.name],
+    [busy, buildCtx, persist, addToast],
   );
 
   /** 手动触发：不新加我的消息，只让角色接着往下说 */
@@ -652,6 +673,53 @@ export default function WatchAlongApp({
     },
     [busy, buildCtx, persist, addToast, char.name],
   );
+
+  /** 拿掉角色最近一次回复，再按「触发」那条路重写一次 */
+  const regenerateLastReply = useCallback(async () => {
+    const cur = sessionRef.current;
+    if (!cur || busy) return;
+    if (cur.legacy) {
+      addToast('这是旧版记录，只能翻看', 'info');
+      return;
+    }
+    if (cur.cast.presence === 'solo') {
+      addToast(`先把${char.name}叫进来，ta 才接得上话`, 'info');
+      return;
+    }
+    const span = lastCharReplySpan(cur.chat);
+    if (!span) return;
+    const removed = cur.chat.slice(span.start, span.end + 1);
+    const keptBefore = cur.chat.slice(0, span.start);
+    const keptAfter = cur.chat.slice(span.end + 1);
+    const base: WatchAlongSession = { ...cur, chat: keptBefore, updatedAt: Date.now() };
+    setBusy('chat');
+    try {
+      const ctx = await buildCtx();
+      const r = await chatRound({ ...ctx, session: base, manual: true });
+      if (r.failed) {
+        addToast(`${char.name}这条没接上，再重来一次`, 'error');
+        return;
+      }
+      let next: WatchAlongSession = {
+        ...r.session,
+        chat: [...r.session.chat, ...keptAfter],
+        updatedAt: Date.now(),
+      };
+      try {
+        next = await maybeDigest({ ...ctx, session: next });
+      } catch {
+        /* 压不动不影响这一轮 */
+      }
+      await persist(next);
+      const voiceIds = removed.map(m => m.voiceId).filter((id): id is string => Boolean(id));
+      if (voiceIds.length) void forgetWatchVoices(voiceIds);
+      if (r.bubble) setBubble(r.bubble);
+    } catch (e: any) {
+      addToast(e?.message || '没重写出来', 'error');
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, buildCtx, persist, addToast, char.name]);
 
   /** 公屏送个小礼物 */
   const sendGift = useCallback(
@@ -825,17 +893,26 @@ export default function WatchAlongApp({
     setBubbleSeq(n => n + 1);
   }, [charBubbleMsgs.length]);
 
-  // 设置里开了「语音自动念」：角色发来语音条就自己合成并播放（同一条只合成一次）
+  // 角色开了「收到就自动播放」：语音条自己合成并念。关着就只留条，等用户点。
   const autoVoiceRef = useRef<Set<string>>(new Set());
+  const autoVoiceSig = (session?.chat ?? [])
+    .filter(m => m.from === 'char')
+    .map(m => `${m.id}|${m.voiceId || ''}|${m.wantVoice ? 1 : 0}|${m.text || ''}`)
+    .join('\n');
   useEffect(() => {
     const cur = session;
-    if (!cur || !settings.voiceAuto || !voiceReady) return;
-    const msg = [...cur.chat].reverse().find(m => m.from === 'char' && m.wantVoice && m.text);
-    if (!msg || msg.voiceId || autoVoiceRef.current.has(msg.id)) return;
-    autoVoiceRef.current.add(msg.id);
+    if (!cur || !voiceReady) return;
+    if (!shouldAutoGenerateVoice({ autoPlayEnabled: char.chatVoiceAutoPlay })) return;
+    const msg = [...cur.chat].reverse().find(
+      m => m.from === 'char' && m.text && !m.voiceId && watchLineIsVoice(m.text, { wantVoice: m.wantVoice, voiceId: m.voiceId }),
+    );
+    if (!msg) return;
+    const stamp = `${msg.id}:${msg.text || ''}`;
+    if (autoVoiceRef.current.has(stamp)) return;
+    autoVoiceRef.current.add(stamp);
     void playMessageVoice(msg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.chat.length, settings.voiceAuto, voiceReady]);
+  }, [autoVoiceSig, char.chatVoiceAutoPlay, voiceReady]);
 
   const resendAsVoice = useCallback(
     async (msg: WatchChatMessage) => {
@@ -863,21 +940,29 @@ export default function WatchAlongApp({
     [voiceReady, char, apiConfig, addToast],
   );
 
-  const translateMessage = useCallback(
-    async (msg: WatchChatMessage) => {
-      if (!msg.text || busy) return;
-      setBusy('translate');
-      try {
-        const text = await translateWatchText({ apiConfig, char, text: msg.text });
-        if (!text) throw new Error('这句翻不出来');
-        await patchChat(msg.id, { translation: text });
-      } catch (e: any) {
-        addToast(e?.message || '翻译没成', 'error');
-      } finally {
-        setBusy(null);
-      }
+  const editMessage = useCallback(
+    async (msg: WatchChatMessage, text: string) => {
+      const cur = sessionRef.current;
+      if (!cur) return;
+      const nextText = text.trim();
+      const shown = shownWatchText(msg.text, apiConfig);
+      if (!nextText || nextText === shown || nextText === (msg.text || '').trim()) return;
+      const voiceIds: string[] = [];
+      const chat = cur.chat.map(item => {
+        if (item.id !== msg.id) return item;
+        const copy: WatchChatMessage = { ...item, text: nextText };
+        delete copy.translation;
+        if (watchLineIsVoice(item.text, { wantVoice: item.wantVoice, voiceId: item.voiceId })) {
+          if (item.voiceId) voiceIds.push(item.voiceId);
+          copy.wantVoice = true;
+          delete copy.voiceId;
+        }
+        return copy;
+      });
+      await persist({ ...cur, chat, updatedAt: Date.now() });
+      if (voiceIds.length) void forgetWatchVoices(voiceIds);
     },
-    [busy, apiConfig, char, patchChat, addToast],
+    [persist, apiConfig],
   );
 
   // ==================== 麦上语音：只在角色说话时出声 ====================
@@ -1202,7 +1287,7 @@ export default function WatchAlongApp({
     if (sprite) return sprite;
     return char.avatar;
   }, [char]);
-  const chatBusy = busy === 'chat' || busy === 'translate';
+  const chatBusy = busy === 'chat';
   const listeningMic = playingKey?.startsWith('mic:') === true;
   const listeningMsgId = playingKey?.startsWith('msg:') ? playingKey.slice(4) : null;
   const loadingMsgId = loadingKey?.startsWith('msg:') ? loadingKey.slice(4) : null;
@@ -1419,8 +1504,10 @@ export default function WatchAlongApp({
       <>
         <WatchChat
           session={session}
+          charId={char.id}
           charName={char.name}
           charAvatar={charAvatar}
+          apiConfig={apiConfig}
           busy={chatBusy}
           emojis={emojis}
           categories={categories}
@@ -1436,8 +1523,9 @@ export default function WatchAlongApp({
           onSend={payload => void sendChat(payload)}
           onPlayVoice={msg => void playMessageVoice(msg)}
           onDownloadVoice={msg => void downloadVoice(msg)}
-          onTranslate={msg => void translateMessage(msg)}
+          onEdit={(msg, text) => void editMessage(msg, text)}
           onDelete={msg => void deleteMessage(msg)}
+          onRedo={() => void regenerateLastReply()}
           onToggleVoiceReply={on => {
             void persist({ ...session, cast: { ...session.cast, voiceReply: on }, updatedAt: Date.now() });
           }}

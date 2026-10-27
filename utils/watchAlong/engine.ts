@@ -938,12 +938,23 @@ export async function runCharTurn(opts: {
   });
 }
 
-/** 私聊长按「翻译」：把一条消息翻成另一种语言，存进这条的 translation */
+/**
+ * 把一条消息从源语言译成目标语言，存进这条的 translation。
+ * 源语言和目标语言用主聊天已经存的那一对；没传时仍走原来的翻译规则。
+ */
 export async function translateWatchText(opts: {
   apiConfig: APIConfig;
   char: CharacterProfile;
   text: string;
+  sourceLang?: string;
+  targetLang?: string;
 }): Promise<string> {
+  const sourceLang = (opts.sourceLang || '').trim();
+  const targetLang = (opts.targetLang || '').trim();
+  const directed = Boolean(sourceLang && targetLang);
+  const system = directed
+    ? `把给你的这句话从${sourceLang}译成${targetLang}。要求：\n1. 翻得像人话，保留原来的语气、口癖和骂人的劲儿，不要翻成书面语。\n2. 只输出译文本身，不要引号、不要解释、不要标注语言。`
+    : TRANSLATE_RULES;
   const raw = await callSummaryModel({
     apiConfig: opts.apiConfig,
     char: opts.char,
@@ -951,8 +962,11 @@ export async function translateWatchText(opts: {
     temperature: 0.4,
     maxTokens: 8000,
     messages: [
-      { role: 'system', content: TRANSLATE_RULES },
-      { role: 'user', content: buildTranslateTask(opts.text, opts.char.name) },
+      { role: 'system', content: system },
+      {
+        role: 'user',
+        content: directed ? opts.text : buildTranslateTask(opts.text, opts.char.name),
+      },
     ],
   });
   return raw.replace(/^["「『]|["」』]$/g, '').trim();

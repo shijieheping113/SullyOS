@@ -2,10 +2,11 @@
  * 陪看私聊（YouTube 私信的样子）。
  *
  * 上面一条直播还在演的横条，中间是两个人说话，下面是输入条。
- * 五个常用功能都在这儿：表情包、引用、翻译、语音、转账。
+ * 表情包、引用、语音、转账、编辑、重来都在这儿。
+ * 消息翻译不开自己的开关，只跟主聊天已经存的那一组键。
  *
- * 语音照喵喵盒的规矩：**只留一条语音条，点一下才去合成，合成完直接响**；
- * 合成中显示点点，长按可以「语音下载」。这里不出声的地方一律不出声。
+ * 语音条用陪看自己的颜色和圆角。没开自动播放时点一下才合成；
+ * 开了就自己念。合成中显示点点，长按可以「语音下载」。
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import TokenImg from '../os/TokenImg';
@@ -18,23 +19,57 @@ import {
   WIco,
   timeAgo,
 } from './chrome';
-import type { Emoji, EmojiCategory } from '../../types';
+import type { APIConfig, Emoji, EmojiCategory } from '../../types';
 import type {
   WatchAlongSession,
   WatchChatMessage,
   WatchQuote,
   WatchTransfer,
 } from '../../utils/watchAlong/types';
+import { shownWatchText, watchLineIsVoice } from '../../utils/watchAlong/voice';
+import { normalizeTranslationLangLabel } from '../../utils/translationLang';
 
-/** 老记录里可能还挂着 <语音>、[语音]、（语音）这类标注，显示前统一抹掉 */
-const cleanVoiceText = (raw?: string): string =>
-  (raw || '')
-    .replace(/<\s*\/?\s*[^<>\s]{1,8}\s*>/g, '')
-    .replace(/\[(?:语音|voice)[^\]]*\]/gi, '')
-    .replace(/【(?:语音|voice)】/gi, '')
-    .replace(/（(?:语音|voice)）/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+/** 主聊天按角色存的翻译开关。没有按角色的语言键时，看旧的全局键。 */
+export function readChatTranslatePrefs(charId: string): {
+  enabled: boolean;
+  expanded: boolean;
+  sourceLang: string;
+  targetLang: string;
+} {
+  const flag = (key: string) => {
+    const raw = localStorage.getItem(key);
+    if (raw === 'true') return true;
+    try {
+      return JSON.parse(raw || 'false') === true;
+    } catch {
+      return false;
+    }
+  };
+  const lang = (perChar: string, legacy: string, fallback: string) =>
+    normalizeTranslationLangLabel(localStorage.getItem(perChar) || localStorage.getItem(legacy) || fallback) || fallback;
+  return {
+    enabled: flag(`chat_translate_enabled_${charId}`),
+    expanded: flag(`chat_translate_expanded_${charId}`),
+    sourceLang: lang(`chat_translate_source_lang_${charId}`, 'chat_translate_source_lang', '日本語'),
+    targetLang: lang(`chat_translate_lang_${charId}`, 'chat_translate_lang', '中文'),
+  };
+}
+
+/** 一条消息里的两种语言：正文里的双语标记优先，否则用存好的译文 */
+function splitWatchText(text?: string, translation?: string): { source: string; target: string } {
+  const raw = text || '';
+  const marker = '%%bilingual%%';
+  const at = raw.toLowerCase().indexOf(marker);
+  if (at !== -1) {
+    return {
+      source: raw.slice(0, at).trim(),
+      target: raw.slice(at + marker.length).trim(),
+    };
+  }
+  const tagged = raw.match(/<原文>([\s\S]*?)<\/原文>[\s\S]*?<译文>([\s\S]*?)<\/译文>/);
+  if (tagged) return { source: tagged[1].trim(), target: tagged[2].trim() };
+  return { source: raw.trim(), target: (translation || '').trim() };
+}
 
 /** 关掉长按菜单时的选块蓝影 */
 const NO_SELECT = { WebkitUserSelect: 'none', userSelect: 'none' } as React.CSSProperties;
@@ -48,8 +83,10 @@ type SendPayload = {
 
 export function WatchChat({
   session,
+  charId,
   charName,
   charAvatar,
+  apiConfig,
   busy,
   emojis,
   categories,
@@ -65,15 +102,18 @@ export function WatchChat({
   onSend,
   onPlayVoice,
   onDownloadVoice,
-  onTranslate,
+  onEdit,
   onDelete,
+  onRedo,
   onToggleVoiceReply,
   onResendAsVoice,
 }: {
   session: WatchAlongSession;
+  charId: string;
   charName: string;
   charAvatar?: string;
-  /** 角色正在想 */
+  apiConfig: APIConfig;
+  /** 角色正在想（只有点了「触发」或「重来」才亮） */
   busy: boolean;
   emojis: Emoji[];
   categories: EmojiCategory[];
@@ -94,8 +134,11 @@ export function WatchChat({
   onSend: (payload: SendPayload) => void;
   onPlayVoice: (msg: WatchChatMessage) => void;
   onDownloadVoice: (msg: WatchChatMessage) => void;
-  onTranslate: (msg: WatchChatMessage) => void;
+  /** 改一条文字消息，写回本场记录 */
+  onEdit: (msg: WatchChatMessage, text: string) => void;
   onDelete: (msg: WatchChatMessage) => void;
+  /** 重新生成角色最近一次回复 */
+  onRedo: () => void;
   onToggleVoiceReply: (on: boolean) => void;
   onResendAsVoice: (msg: WatchChatMessage) => void;
 }) {
@@ -106,7 +149,11 @@ export function WatchChat({
   const [emojiTab, setEmojiTab] = useState<string>('all');
   /** 哪些语音条点了「转文字」 */
   const [trans, setTrans] = useState<Set<string>>(new Set());
+  /** 开了翻译、没开同时展开时，哪些消息正显示译文 */
+  const [showTarget, setShowTarget] = useState<Set<string>>(new Set());
   const [menuFor, setMenuFor] = useState<WatchChatMessage | null>(null);
+  const [editing, setEditing] = useState<WatchChatMessage | null>(null);
+  const [editDraft, setEditDraft] = useState('');
   const [payOpen, setPayOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('200');
   const [payNote, setPayNote] = useState('');
@@ -115,6 +162,17 @@ export function WatchChat({
 
   const charHere = session.cast.presence !== 'solo';
   const voiceReply = session.cast.voiceReply === true;
+  const hasCharReply = session.chat.some(m => m.from === 'char');
+  const translatePrefs = useMemo(() => readChatTranslatePrefs(charId), [charId, session.chat.length]);
+  const showLine = (raw?: string) => shownWatchText(raw, apiConfig);
+  const flipTarget = (id: string) => {
+    setShowTarget(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   // 最后一条是不是我说的：用来提示「该触发了」
   const lastReal = [...session.chat].reverse().find(m => m.from === 'user' || m.from === 'char' || m.from === 'clip');
   const lastFromUser = lastReal?.from === 'user' || lastReal?.from === 'clip';
@@ -255,8 +313,15 @@ export function WatchChat({
           // 同一个人连着说，头像只留第一个
           const showAvatar = !mine && !(prev && prev.from === m.from);
           const stickerUrl = emojiUrl(m.sticker);
-          const isVoice = Boolean(m.wantVoice || m.voiceId);
+          const isVoice = watchLineIsVoice(m.text, { wantVoice: m.wantVoice, voiceId: m.voiceId });
           const mineQuote = m.quote;
+          const sides = splitWatchText(m.text, m.translation);
+          const sourceShown = showLine(sides.source);
+          const targetShown = translatePrefs.enabled ? showLine(sides.target) : '';
+          const hasTarget = Boolean(translatePrefs.enabled && targetShown);
+          const bothLangs = hasTarget && translatePrefs.expanded;
+          const showingTranslated = hasTarget && !bothLangs && showTarget.has(m.id);
+          const bodyShown = showingTranslated ? targetShown : sourceShown;
 
           if (m.from === 'action') {
             return (
@@ -270,7 +335,7 @@ export function WatchChat({
             return (
               <div
                 key={m.id}
-                className="mb-2 flex"
+                className="mb-2 flex justify-center"
                 onPointerDown={() => startPress(m)}
                 onPointerUp={endPress}
                 onPointerCancel={endPress}
@@ -278,21 +343,21 @@ export function WatchChat({
               >
                 <div
                   className="w-[232px] overflow-hidden"
-                  style={{ borderRadius: 14, border: `1px solid ${W.line}`, background: '#fff' }}
+                  style={{ borderRadius: 16, background: W.fill }}
                 >
-                  <div className="flex items-center gap-1.5 px-3 pt-2 text-[10px]" style={{ color: W.faint }}>
+                  <div className="flex items-center gap-1.5 px-3 pt-2 text-[10.5px]" style={{ color: W.faint }}>
                     <span style={{ color: W.red, fontWeight: 700 }}>片段</span>
                     第 {m.clip.beatIndex + 1} 幕 · {m.clip.streamerName}
                   </div>
-                  <div className="px-3 pb-1 pt-1 text-[12px] leading-[17px]" style={{ color: W.ink }}>
+                  <div className="px-3 pb-1 pt-1 text-[13px] leading-[19px]" style={{ color: W.ink }}>
                     {m.clip.scene}
                   </div>
                   {m.clip.speech ? (
-                    <div className="px-3 pb-2 text-[12px] leading-[17px]" style={{ color: W.sub }}>
+                    <div className="px-3 pb-2 text-[13px] leading-[19px]" style={{ color: W.sub }}>
                       「{m.clip.speech}」
                     </div>
                   ) : null}
-                  <div className="px-3 pb-2.5 text-[10px]" style={{ color: W.faint }}>
+                  <div className="px-3 pb-2.5 text-[10.5px]" style={{ color: W.faint }}>
                     公屏 {m.clip.danmaku.length} 条
                   </div>
                 </div>
@@ -427,11 +492,11 @@ export function WatchChat({
                           ))}
                         </span>
                         <span className="text-[10.5px] tabular-nums opacity-60">
-                          {m.text ? `${Math.max(2, Math.round(cleanVoiceText(m.text).length / 4))}″` : '语音'}
+                          {sourceShown ? `${Math.max(2, Math.round(sourceShown.length / 4))}″` : '语音'}
                         </span>
                       </span>
                     </button>
-                    {cleanVoiceText(m.text) ? (
+                    {sourceShown || hasTarget ? (
                       <button
                         type="button"
                         onClick={() => setTrans(prev => {
@@ -446,31 +511,45 @@ export function WatchChat({
                         {trans.has(m.id) ? '收起文字' : '转文字'}
                       </button>
                     ) : null}
-                    {trans.has(m.id) && cleanVoiceText(m.text) ? (
+                    {trans.has(m.id) && (bodyShown || (bothLangs && targetShown)) ? (
                       <div
                         className="max-w-[220px] px-2.5 py-2 text-[11.5px] leading-[17px]"
                         style={{ borderRadius: 10, background: mine ? 'rgba(15,15,15,.05)' : W.fill, color: W.ink }}
                       >
-                        {cleanVoiceText(m.text)}
+                        {bodyShown ? <span className="block whitespace-pre-wrap break-words">{bodyShown}</span> : null}
+                        {bothLangs && targetShown ? (
+                          <span
+                            className="mt-1.5 block whitespace-pre-wrap break-words pt-1.5 text-[11px] leading-[16px]"
+                            style={{ borderTop: '1px solid rgba(15,15,15,.10)', color: W.sub }}
+                          >
+                            {targetShown}
+                          </span>
+                        ) : null}
+                        {hasTarget && !bothLangs ? (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              flipTarget(m.id);
+                            }}
+                            className="mt-1 block text-[10px]"
+                            style={{ color: W.faint }}
+                          >
+                            译
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
                 ) : null}
 
                 {/* 文字气泡 */}
-                {!m.sticker && !isVoice && m.text ? (
-                  <button
-                    type="button"
+                {!m.sticker && !isVoice && (bodyShown || (bothLangs && targetShown)) ? (
+                  <div
                     onPointerDown={() => startPress(m)}
                     onPointerUp={endPress}
                     onPointerCancel={endPress}
                     onContextMenu={e => e.preventDefault()}
-                    onClick={() => {
-                      if (m.translation) {
-                        const el = document.getElementById(`tr_${m.id}`);
-                        if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
-                      }
-                    }}
                     className="block text-left"
                     style={{
                       borderRadius: 16,
@@ -502,34 +581,36 @@ export function WatchChat({
                           }}
                         >
                           {mineQuote.from === 'char' ? `${charName}：` : '我：'}
-                          {mineQuote.text}
+                          {showLine(mineQuote.text)}
                         </span>
                       </span>
                     ) : null}
-                    <span className="block whitespace-pre-wrap break-words text-[13px] leading-[19px]">{m.text}</span>
-                    {m.translation ? (
+                    <span className="block whitespace-pre-wrap break-words text-[13px] leading-[19px]">{bodyShown}</span>
+                    {bothLangs && targetShown ? (
                       <span
-                        id={`tr_${m.id}`}
-                        className="mt-1.5 block pt-1.5 text-[11.5px] leading-[17px]"
+                        className="mt-1.5 block whitespace-pre-wrap break-words pt-1.5 text-[11.5px] leading-[17px]"
                         style={{
                           borderTop: `1px solid ${mine ? 'rgba(255,255,255,.18)' : 'rgba(15,15,15,.10)'}`,
                           color: mine ? 'rgba(255,255,255,.78)' : W.sub,
                         }}
                       >
-                        <span
-                          className="mr-1 px-[2px] align-[1px] text-[8.5px]"
-                          style={{
-                            border: `1px solid ${mine ? 'rgba(255,255,255,.4)' : '#D6D6D6'}`,
-                            borderRadius: 3,
-                            color: mine ? 'rgba(255,255,255,.7)' : W.faint,
-                          }}
-                        >
-                          译
-                        </span>
-                        {m.translation}
+                        {targetShown}
                       </span>
                     ) : null}
-                  </button>
+                    {hasTarget && !bothLangs ? (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          flipTarget(m.id);
+                        }}
+                        className="mt-1 block text-right text-[10px]"
+                        style={{ color: mine ? 'rgba(255,255,255,.62)' : W.faint }}
+                      >
+                        译
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {showTime ? (
@@ -581,7 +662,7 @@ export function WatchChat({
       {/* 加号展开：只有几个圆钮，跟原型一样（指令类的东西都在导演里，不摆在这儿） */}
       {plusOpen ? (
         <div
-          className="flex shrink-0 items-start justify-center gap-[34px] px-[18px] pb-2 pt-3.5"
+          className="flex shrink-0 items-start justify-between gap-1 px-2 pb-2 pt-3.5"
           style={{ borderTop: `1px solid ${W.line}` }}
         >
           {[
@@ -590,15 +671,17 @@ export function WatchChat({
               label: voiceReply ? '语音中' : '语音',
               icon: 'mic' as const,
               on: voiceReply,
+              disabled: false,
               run: () => onToggleVoiceReply(!voiceReply),
             },
-            { key: 'pay', label: '转账', icon: 'coin' as const, on: false, run: () => setPayOpen(true) },
-            { key: 'director', label: '导演', icon: 'clap' as const, on: !!(session.stageCue || session.charCue), run: onOpenDirector },
+            { key: 'pay', label: '转账', icon: 'coin' as const, on: false, disabled: false, run: () => setPayOpen(true) },
+            { key: 'director', label: '导演', icon: 'clap' as const, on: !!(session.stageCue || session.charCue), disabled: false, run: onOpenDirector },
             {
               key: 'presence',
               label: session.cast.presence === 'side' ? '一起看' : '后台',
               icon: 'people' as const,
               on: session.cast.presence === 'side',
+              disabled: false,
               run: onTogglePresence,
             },
             {
@@ -606,17 +689,27 @@ export function WatchChat({
               label: '自主',
               icon: 'chat' as const,
               on: session.cast.autoReact === true,
+              disabled: false,
               run: onToggleAutoReact,
+            },
+            {
+              key: 'redo',
+              label: '重来',
+              icon: 'rewrite' as const,
+              on: false,
+              disabled: !hasCharReply,
+              run: () => onRedo(),
             },
           ].map(item => (
             <button
               key={item.key}
               type="button"
+              disabled={item.disabled}
               onClick={() => {
-                setPlusOpen(false);
+                if (item.disabled) return;
                 item.run();
               }}
-              className="flex w-[52px] shrink-0 flex-col items-center gap-[6px]"
+              className="flex min-w-0 flex-1 flex-col items-center gap-[6px] disabled:opacity-35"
             >
               <span
                 className="grid h-[44px] w-[44px] place-items-center rounded-full"
@@ -664,19 +757,25 @@ export function WatchChat({
             </div>
           ) : (
             <div
-              className="no-scrollbar grid shrink-0 grid-cols-4 gap-2 overflow-y-auto overscroll-contain"
-              style={{ maxHeight: 196 }}
+              className="no-scrollbar grid shrink-0 grid-cols-6 gap-1 overflow-y-auto overscroll-contain"
+              style={{ maxHeight: 168 }}
             >
               {shownEmojis.map((e, idx) => (
                 <button
                   key={`${e.name}_${idx}`}
                   type="button"
                   onClick={() => sendSticker(e.name)}
-                  className="flex aspect-square w-full items-center justify-center overflow-hidden active:opacity-80"
-                  style={{ borderRadius: 10, background: W.fill }}
+                  className="relative aspect-square min-w-0 overflow-hidden active:opacity-80"
+                  style={{ borderRadius: 8, background: W.fill }}
                   aria-label={e.name}
                 >
-                  <TokenImg value={e.url} alt={e.name} className="h-full w-full object-contain" />
+                  <TokenImg
+                    value={e.url}
+                    alt={e.name}
+                    draggable={false}
+                    className="absolute inset-1 h-[calc(100%-8px)] w-[calc(100%-8px)]"
+                    style={{ objectFit: 'contain' }}
+                  />
                 </button>
               ))}
             </div>
@@ -704,7 +803,9 @@ export function WatchChat({
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter') send();
+              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              send();
             }}
             placeholder={`跟${charName}说点什么…`}
             aria-label="私聊输入框"
@@ -742,7 +843,7 @@ export function WatchChat({
       {menuFor ? (() => {
         const target = menuFor;
         const isChar = target.from === 'char';
-        const hasVoice = Boolean(target.voiceId || target.wantVoice);
+        const hasVoice = watchLineIsVoice(target.text, { wantVoice: target.wantVoice, voiceId: target.voiceId });
         const items: Array<{ label: string; danger?: boolean; run: () => void }> = [];
         if (target.text || target.sticker || target.clip) {
           items.push({
@@ -754,7 +855,15 @@ export function WatchChat({
               }),
           });
         }
-        if (target.text) items.push({ label: '翻译', run: () => onTranslate(target) });
+        if ((target.from === 'user' || target.from === 'char') && target.text && !target.sticker && !target.clip) {
+          items.push({
+            label: '编辑',
+            run: () => {
+              setEditing(target);
+              setEditDraft(showLine(splitWatchText(target.text).source) || target.text || '');
+            },
+          });
+        }
         if (target.text && isChar && voiceReady && !hasVoice) {
           items.push({ label: '转语音', run: () => onResendAsVoice(target) });
         }
@@ -766,7 +875,8 @@ export function WatchChat({
           items.push({
             label: '复制',
             run: () => {
-              if (target.text) void navigator.clipboard?.writeText(target.text).catch(() => undefined);
+              const text = showLine(splitWatchText(target.text).source);
+              if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
             },
           });
         }
@@ -794,6 +904,39 @@ export function WatchChat({
           </div>
         );
       })() : null}
+
+      {/* 改一条文字 */}
+      <Sheet
+        open={Boolean(editing)}
+        title="改这句"
+        onClose={() => setEditing(null)}
+        footer={
+          <SolidButton
+            disabled={!editDraft.trim()}
+            onClick={() => {
+              const target = editing;
+              const next = editDraft.trim();
+              setEditing(null);
+              if (target && next) onEdit(target, next);
+            }}
+          >
+            记下
+          </SolidButton>
+        }
+      >
+        <div className="px-4 pb-2">
+          <div className="mt-2 flex px-3 py-2.5" style={{ borderRadius: 12, background: W.fill }}>
+            <textarea
+              value={editDraft}
+              onChange={e => setEditDraft(e.target.value)}
+              rows={4}
+              aria-label="消息内容"
+              className="w-full resize-none bg-transparent text-[13px] leading-[19px] outline-none"
+              style={{ color: W.ink }}
+            />
+          </div>
+        </div>
+      </Sheet>
 
       {/* 转账 */}
       <Sheet

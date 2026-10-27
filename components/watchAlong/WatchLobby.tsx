@@ -26,6 +26,8 @@ const PULL_MAX = 88;
 const PULL_AT = 56;
 const PULL_DAMP = 0.45;
 const PULL_LOCK = 10;
+/** 分类条横向拖过这么多像素才算拖动，不算点选 */
+const CAT_DRAG_LOCK = 6;
 
 type PullMode = 'replace' | 'append';
 
@@ -127,6 +129,7 @@ export function WatchLobby({
   );
 
   // 顶上往下拖：换掉这一批。滑到底再往上拖：再接一批。都只打开口味，不直接请求。
+  const categoryRowRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swallowRef = useRef(false);
   const busyRef = useRef(busy);
@@ -325,11 +328,53 @@ export function WatchLobby({
         </button>
       ) : null}
 
-      {/* 分类胶囊 */}
+      {/* 分类胶囊：按住左右拖，把被裁掉的分类拖进来；轻点仍是选中 */}
       {categories.length > 1 ? (
-        <div className="no-scrollbar flex shrink-0 gap-2 overflow-x-auto px-3 pb-2">
+        <div
+          ref={categoryRowRef}
+          className="no-scrollbar flex shrink-0 gap-2 overflow-x-auto px-3 pb-2"
+          style={{ touchAction: 'pan-x' }}
+          onPointerDown={e => {
+            const el = e.currentTarget;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            const startX = e.clientX;
+            const startScroll = el.scrollLeft;
+            let dragged = false;
+            const onMove = (ev: PointerEvent) => {
+              const dx = ev.clientX - startX;
+              if (Math.abs(dx) > CAT_DRAG_LOCK) dragged = true;
+              el.scrollLeft = startScroll - dx;
+            };
+            const onUp = () => {
+              window.removeEventListener('pointermove', onMove);
+              window.removeEventListener('pointerup', onUp);
+              window.removeEventListener('pointercancel', onUp);
+              if (!dragged) {
+                delete el.dataset.dragged;
+                return;
+              }
+              // 只挡松手带出来的那一下。下一回再点，要能选中。
+              el.dataset.dragged = '1';
+              window.setTimeout(() => delete el.dataset.dragged, 0);
+            };
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+            window.addEventListener('pointercancel', onUp);
+          }}
+        >
           {categories.map(c => (
-            <Pill key={c} active={filter === c} onClick={() => setFilter(c)}>
+            <Pill
+              key={c}
+              active={filter === c}
+              onClick={() => {
+                const row = categoryRowRef.current;
+                if (row?.dataset.dragged === '1') {
+                  delete row.dataset.dragged;
+                  return;
+                }
+                setFilter(c);
+              }}
+            >
               {c}
             </Pill>
           ))}
