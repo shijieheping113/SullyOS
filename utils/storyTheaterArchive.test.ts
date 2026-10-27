@@ -4,7 +4,12 @@ import { DB } from './db';
 import { createStoryTheaterDraft, storyTheaterThreadId } from './storyTheater';
 import { generateStoryArchiveSummary, parseStoryArchiveSummary, regenerateStoryArchiveSummary } from './storyTheaterArchive';
 
-const api = { baseUrl: 'https://llm.invalid/v1/', apiKey: 'test', model: 'test' };
+const api = {
+    baseUrl: 'https://main.invalid/v1',
+    apiKey: 'main-key',
+    model: 'main-model',
+    secondaryLlm: { enabled: true, baseUrl: 'https://llm.invalid/v1/', apiKey: 'test', model: 'test' },
+};
 const completion = (content: unknown, finish_reason = 'stop', reasoning_content = '思考过程') => ({ choices: [{ finish_reason, message: { content, reasoning_content } }] });
 const response = (data: unknown) => new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 let entry: StoryTheaterEntry, messages: Message[], serial = 0;
@@ -42,6 +47,10 @@ describe('story summary final channel', () => {
         expect(() => parseStoryArchiveSummary(completion('Paragraph 1: 31 chars\nStill too long'))).toThrow('推理过程');
         expect(parseStoryArchiveSummary(completion('他说「Let’s count together」，两人一起数星星。'))).toContain('数星星');
     });
+    it('stops when the auxiliary model is not ready and does not call the main model', async () => {
+        await expect(generateStoryArchiveSummary(entry.title, messages, {})).rejects.toThrow('辅助模型还没配好');
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
     it('does not retry automatically and rejects upstream errors', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: '服务不可用' } }), { status: 503 }));
         await expect(generateStoryArchiveSummary(entry.title, messages, api)).rejects.toThrow('服务不可用');
@@ -64,6 +73,8 @@ describe('story archive regeneration', () => {
         expect(payload.messages[1].content).not.toContain('盒外');
         expect(payload.messages[1].content).not.toContain('旧摘要');
         expect(payload).toMatchObject({ model: 'test', stream: false, max_tokens: 4096 });
+        expect(String(fetchMock.mock.calls[0][0])).toBe('https://llm.invalid/v1/chat/completions');
+        expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer test');
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(result.archives[0]).toEqual({ ...entry.archives[0], summary: '新摘要' });
         expect(result.archives).toHaveLength(2);

@@ -63,7 +63,7 @@ export default function StoryArchivePanel({entry,masks,onBack,onUpdated}:{entry:
   </div></header>
   <main className='story-page-scroll flex-1 overflow-y-auto px-5 py-6'><div className='max-w-2xl mx-auto space-y-5'>
    <section className='pb-5 border-b border-slate-200'><Archive size={30} className='text-violet-500'/><h2 className='mt-3 font-semibold'>查看事件盒，转为角色记忆</h2>
-    <p className='mt-2 text-xs leading-6 text-slate-500'>这些摘要帮助本剧情接着写。总结有误时，可用主 API 从该盒原文重新总结；成功后替换摘要，失败保留原内容。也可以勾选导出，或转为角色记忆。</p>
+    <p className='mt-2 text-xs leading-6 text-slate-500'>这些摘要帮助本剧情接着写。总结有误时，可用辅助模型从该盒原文重新总结；成功后替换摘要，失败保留原内容。也可以勾选导出，或转为角色记忆。</p>
    </section>
    {!boxes.length?<p className='text-sm leading-7 text-slate-500'>这条剧情还没有事件盒摘要。虚构剧场选择「事件盒」归档后，达到设置的归档条数才会生成；独立向量记忆请从剧情的向量入口查看。已有原文可在剧情页展开或导出。</p>:<>
     <label className='block text-xs font-semibold'>接收记忆的角色<select aria-label='接收记忆的角色' disabled={busy} value={charId} onChange={e=>{setCharId(e.target.value);setSelected([]);setError('');setStatus('');}} className='mt-2 w-full p-3 rounded-xl bg-white border border-slate-200'>{actors.map(actor=><option key={actor.id} value={actor.id}>{actor.name}</option>)}</select></label>
