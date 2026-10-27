@@ -80,6 +80,8 @@ export interface WatchRoom {
   viewerCount: number;
   customRule: string;
   coverGradient: string;
+  /** 模型按这间房正在播的事画的小封面。洗过才留；没有就继续用渐变 */
+  coverSvg?: string;
 }
 
 /** 大厅刷出来的候选房间卡片 */

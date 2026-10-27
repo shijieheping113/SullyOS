@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   collectVoiceIds,
+  createSession,
   deleteWatchSession,
   loadWatchGlobals,
   loadWatchSessions,
@@ -8,7 +9,7 @@ import {
   saveWatchGlobals,
   saveWatchSession,
 } from './storage';
-import { defaultCast, defaultGlobals } from './types';
+import { defaultCast, defaultGlobals, defaultWatchSettings } from './types';
 import type { WatchAlongSession, WatchRoom } from './types';
 
 // 这组钉住期二骨架的三条生死线：
@@ -243,5 +244,36 @@ describe('全局杂项', () => {
     expect(loaded.customRule).toBe('多看塔罗和鉴宝');
     expect(loaded.pool.length).toBe(1);
     expect(loaded.pool[0].streamerName).toBe('阿茶');
+  });
+});
+
+describe('封面跟着房间走', () => {
+  it('进房再读档，coverSvg 还在', async () => {
+    const svg =
+      '<svg viewBox="0 0 160 90"><rect width="160" height="90" fill="#f6e7c1"/><circle cx="80" cy="70" r="16" fill="#e07a3d"/></svg>';
+    const session = createSession({
+      charId: CHAR_ID,
+      charName: '阿猫',
+      settings: defaultWatchSettings(),
+      room: {
+        id: 'room_cover',
+        styleTag: '日常',
+        streamerName: '晚风',
+        streamerHandle: '@wind',
+        category: '做饭吃播',
+        title: '今晚做一锅汤',
+        bio: '厨房',
+        viewerCount: 80,
+        customRule: '',
+        coverGradient: '#e7d5c0,#c4a484',
+        coverSvg: svg,
+      },
+    });
+    expect(session.room.coverSvg).toContain('<rect');
+    await saveWatchSession(session);
+    const [loaded] = await loadWatchSessions('阿猫');
+    expect(loaded.room.coverSvg).toContain('<rect');
+    expect(loaded.room.coverSvg).not.toMatch(/<script/i);
+    expect(loaded.room.coverGradient).toBe('#e7d5c0,#c4a484');
   });
 });

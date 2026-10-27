@@ -55,6 +55,7 @@ import type {
   WatchStreamerTier,
 } from './types';
 import { watchId } from './types';
+import { washCoverSvg } from './coverSvg';
 
 // ==================== 输出形状 ====================
 
@@ -1093,6 +1094,7 @@ function toRoomCard(r: any, idx: number): WatchRoomCard {
         ? `${legacy[0]},${legacy[1]}`
         : GRADIENT_FALLBACK[idx % GRADIENT_FALLBACK.length];
   const viewers = Number(r?.viewerCount);
+  const coverSvg = washCoverSvg(r?.coverSvg);
   return {
     id: watchId('room'),
     streamerName: name.slice(0, 20),
@@ -1106,6 +1108,7 @@ function toRoomCard(r: any, idx: number): WatchRoomCard {
     customRule: '',
     styleTag: roomStr(r?.styleTag).slice(0, 6),
     coverGradient: gradient,
+    ...(coverSvg ? { coverSvg } : {}),
   };
 }
 
@@ -1210,7 +1213,7 @@ export async function generateRoomPool(opts: {
         {
           role: 'user',
           content: `上一条没照格式。现在回 ${count} 个房间的 JSON 数组，照下面这个骨架把每个字段填上，别的字都不要：
-[{"streamerName":"","streamerHandle":"","title":"","titleTranslated":"","bio":"","viewerCount":0,"styleTag":"","coverStart":"#000000","coverEnd":"#000000","profile":{"ageBand":0,"identity":"","language":"","screenForm":"","category":"","tier":"","speechStyle":"","motive":""}}]`,
+[{"streamerName":"","streamerHandle":"","title":"","titleTranslated":"","bio":"","viewerCount":0,"styleTag":"","coverSvg":"","profile":{"ageBand":0,"identity":"","language":"","screenForm":"","category":"","tier":"","speechStyle":"","motive":""}}]`,
         },
       ],
     });

@@ -527,4 +527,52 @@ describe('大厅刷台的解析', () => {
   it('什么都没认出来就抛错（界面会提示换一批）', () => {
     expect(() => __parseRooms('今天想不出来。')).toThrow();
   });
+
+  it('合法的 coverSvg 能读进房间', () => {
+    const svg =
+      '<svg viewBox="0 0 160 90"><rect width="160" height="90" fill="#87b7e8"/><circle cx="40" cy="40" r="10" fill="#f4e1a8"/></svg>';
+    const rooms = __parseRooms(
+      JSON.stringify([
+        {
+          streamerName: '晚风',
+          title: '下班路散步',
+          coverSvg: svg,
+          coverStart: '#1b2430',
+          coverEnd: '#3a2a44',
+        },
+      ]),
+    );
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].coverSvg).toContain('<rect');
+    expect(rooms[0].coverSvg).toContain('viewBox="0 0 160 90"');
+    expect(rooms[0].coverGradient).toBe('#1b2430,#3a2a44');
+  });
+
+  it('封面里的 script 和事件属性会被洗掉，房间还在', () => {
+    const svg =
+      '<svg viewBox="0 0 160 90"><rect width="160" height="90" fill="#87b7e8" onclick="alert(1)"/><script>alert(1)</script></svg>';
+    const rooms = __parseRooms(
+      JSON.stringify([
+        {
+          streamerName: '阿七',
+          title: '上来就送',
+          coverSvg: svg,
+        },
+      ]),
+    );
+    expect(rooms[0].streamerName).toBe('阿七');
+    expect(rooms[0].title).toBe('上来就送');
+    const washed = rooms[0].coverSvg || '';
+    expect(washed).not.toMatch(/<script|onclick|alert\(/i);
+    if (washed) expect(washed).toContain('<rect');
+  });
+
+  it('缺封面的旧 JSON 仍然能读出房间并保留 coverGradient', () => {
+    const rooms = __parseRooms(
+      '[{"streamerName":"阿七","title":"上来就送","coverStart":"#1b2430","coverEnd":"#3a2a44"}]',
+    );
+    expect(rooms[0].streamerName).toBe('阿七');
+    expect(rooms[0].coverGradient).toBe('#1b2430,#3a2a44');
+    expect(rooms[0].coverSvg).toBeUndefined();
+  });
 });

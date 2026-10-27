@@ -135,6 +135,10 @@ export default function WatchAlongApp({
   const [exitOpen, setExitOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
   const [ruleDraft, setRuleDraft] = useState('');
+  /** 这次口味确认之后：换掉整批，还是接在现有房间后面 */
+  const [poolMode, setPoolMode] = useState<'replace' | 'append'>('replace');
+  /** 再刷一批成功才 +1，大厅据此滚到新内容那一头 */
+  const [tailToken, setTailToken] = useState(0);
   const [accountBusy, setAccountBusy] = useState<'user' | 'char' | null>(null);
 
   // 大厅长按卡片：就地改这一场的直播信息
@@ -322,24 +326,36 @@ export default function WatchAlongApp({
 
   // ==================== 大厅 ====================
 
-  const refreshPool = useCallback(async (ruleOverride?: string) => {
+  const refreshPool = useCallback(async (ruleOverride?: string, mode: 'replace' | 'append' = 'replace') => {
     if (busy) return;
     setBusy('pool');
+    // 追加时用这一下调用里的池子做底。生成的那几秒里不要把已经在的房间丢掉。
+    const basePool = globals.pool;
+    const rule = ruleOverride ?? globals.customRule;
     try {
       const rooms = await generateRoomPool({
         apiConfig,
         char,
         userName: userProfile?.name || '你',
-        // 刚在口味面板里保存的新口味要立刻用上：保存和刷新是两个先后动作，
+        // 刚在口味面板里写的一句要立刻用上：保存和刷新是两个先后动作，
         // 刷新拿不到刚存进 state 的新值，所以由调用方把新口味直接传进来。
-        customRule: ruleOverride ?? globals.customRule,
+        customRule: rule,
         count: 6,
-        exclude: globals.pool.map(r => r.streamerName),
+        exclude: basePool.map(r => r.streamerName),
       });
       if (!rooms.length) throw new Error('这次一个房间都没刷出来，再点一次试试');
-      const next = { ...globals, pool: rooms };
+      let pool = rooms;
+      let added = rooms.length;
+      if (mode === 'append') {
+        const names = new Set(basePool.map(r => r.streamerName));
+        const extra = rooms.filter(r => r.streamerName && !names.has(r.streamerName));
+        pool = [...basePool, ...extra];
+        added = extra.length;
+      }
+      const next = { ...globals, customRule: rule, pool };
       setGlobals(next);
       await saveWatchGlobals(next);
+      if (mode === 'append' && added > 0) setTailToken(n => n + 1);
     } catch (e: any) {
       addToast(e?.message || '刷台没成', 'error');
     } finally {
@@ -1103,14 +1119,13 @@ export default function WatchAlongApp({
     [addToast],
   );
 
-  /** 大厅里换个人陪你看：换这一册，退回大厅重来 */
+  /** 大厅里换个人陪你看：换这一册，人留在当前这一页 */
   const switchCompanion = useCallback(
     (id: string) => {
       if (id === companionId) return;
       setCompanionId(id);
       setSession(null);
       setUnread(0);
-      setPage('lobby');
     },
     [companionId],
   );
@@ -1244,10 +1259,13 @@ export default function WatchAlongApp({
           pool={globals.pool}
           customRule={globals.customRule}
           busy={busy === 'pool'}
+          busyEdge={poolMode}
           sessions={sessions}
           onBack={onClose}
-          onRefresh={() => void refreshPool()}
-          onEditRule={() => {
+          tailToken={tailToken}
+          onAskRefresh={mode => {
+            if (busy === 'pool') return;
+            setPoolMode(mode);
             setRuleDraft(globals.customRule);
             setRuleOpen(true);
           }}
@@ -1271,10 +1289,10 @@ export default function WatchAlongApp({
               onClick={() => {
                 setRuleOpen(false);
                 const nextRule = ruleDraft.trim();
-                void saveGlobals({ ...globals, customRule: nextRule }).then(() => refreshPool(nextRule));
+                void refreshPool(nextRule, poolMode);
               }}
             >
-              照这个换一批
+              {poolMode === 'append' ? '再刷一批' : '换一批'}
             </SolidButton>
           }
         >

@@ -35,6 +35,7 @@ import {
   emptyModelSlot,
   watchId,
 } from './types';
+import { washCoverSvg } from './coverSvg';
 
 const KV_GLOBALS = 'watch_along_globals_v1';
 /**
@@ -120,6 +121,7 @@ export function normalizeSettings(raw: any): WatchSettings {
 function normalizeRoom(raw: any, idx: number): WatchRoom {
   const bio = text(raw.bio) || text(raw.npcBio, '');
   const profile = normalizeProfile(raw.profile);
+  const coverSvg = washCoverSvg(raw.coverSvg);
   // 旧记录里「本场正在推进的事」「观众能立刻参与的抓手」两个字段已经取消，
   // 原来把 bio 塞进 mainline 的那段兼容逻辑一并去掉：bio 自己照旧当简介显示，旧记录照样能打开。
   return {
@@ -133,6 +135,8 @@ function normalizeRoom(raw: any, idx: number): WatchRoom {
     viewerCount: num(raw.viewerCount, 1000),
     customRule: text(raw.customRule) || text(raw.customRulePrompt, ''),
     coverGradient: text(raw.coverGradient) || ['#243447', '#0e1621', '#3a2a44'][idx % 3],
+    // 旧房间没有这段，洗不干净也当没有，界面继续用上面的渐变
+    ...(coverSvg ? { coverSvg } : {}),
   };
 }
 
@@ -416,6 +420,7 @@ export function createSession(opts: {
   charAccount?: WatchAccount;
 }): WatchAlongSession {
   const now = Date.now();
+  const coverSvg = washCoverSvg(opts.room.coverSvg);
   const cast = defaultCast(opts.charName);
   if (opts.userAccount) cast.userAccount = { ...opts.userAccount };
   if (opts.charAccount) cast.charAccount = { ...opts.charAccount };
@@ -441,6 +446,7 @@ export function createSession(opts: {
       viewerCount: opts.room.viewerCount,
       customRule: opts.room.customRule,
       coverGradient: opts.room.coverGradient,
+      ...(coverSvg ? { coverSvg } : {}),
     },
     cast,
     beats: [],

@@ -4,7 +4,7 @@
  * 一屏只做一件事：挑一个房间进去。
  * 顶栏：返回电波 / 标题 / 历史 / 设置（三个都常驻，不会被挤掉）。
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   EmptyState,
   Pill,
@@ -19,6 +19,15 @@ import {
   timeAgo,
 } from './chrome';
 import type { WatchAlongSession, WatchRoomCard } from '../../utils/watchAlong/types';
+import { washCoverSvg } from '../../utils/watchAlong/coverSvg';
+
+/** 手指位移乘上阻尼，指示条最高到这里 */
+const PULL_MAX = 88;
+const PULL_AT = 56;
+const PULL_DAMP = 0.45;
+const PULL_LOCK = 10;
+
+type PullMode = 'replace' | 'append';
 
 /** 封面渐变：存档里存的是「起始色,结束色」 */
 export const coverBackground = (gradient: string): string => {
@@ -33,9 +42,10 @@ export function WatchLobby({
   pool,
   customRule,
   busy,
+  busyEdge = 'replace',
   sessions,
-  onRefresh,
-  onEditRule,
+  onAskRefresh,
+  tailToken,
   onStart,
   onOpenSession,
   onOpenHistory,
@@ -49,10 +59,14 @@ export function WatchLobby({
   customRule: string;
   /** 正在刷台 */
   busy: boolean;
+  /** 这一轮是换掉整批，还是接在后面。圆圈就停在对应的那一头 */
+  busyEdge?: PullMode;
   /** 全部历史，用来挑「还在看」的那场 */
   sessions: WatchAlongSession[];
-  onRefresh: () => void;
-  onEditRule: () => void;
+  /** 松手过了阈值才打开口味。replace 换掉整批，append 接在现有房间后面 */
+  onAskRefresh: (mode: PullMode) => void;
+  /** 再刷一批写进池子之后 +1，列表滚到新的那一头 */
+  tailToken: number;
   onStart: (room: WatchRoomCard) => void;
   onOpenSession: (id: string) => void;
   onOpenHistory: () => void;
@@ -111,6 +125,139 @@ export function WatchLobby({
     () => sessions.find(s => s.status === 'watching' && !s.legacy) || null,
     [sessions],
   );
+
+  // 顶上往下拖：换掉这一批。滑到底再往上拖：再接一批。都只打开口味，不直接请求。
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const swallowRef = useRef(false);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const onAskRef = useRef(onAskRefresh);
+  onAskRef.current = onAskRefresh;
+  const gesture = useRef({
+    active: false,
+    startY: 0,
+    atTop: false,
+    atBottom: false,
+    kind: null as PullMode | null,
+    offset: 0,
+    dy: 0,
+  });
+  const settleTimer = useRef<number | null>(null);
+  const [pull, setPull] = useState<{ kind: PullMode | null; offset: number; armed: boolean; dragging: boolean }>({
+    kind: null,
+    offset: 0,
+    armed: false,
+    dragging: false,
+  });
+
+  const pullApi = useRef({
+    begin: (_y: number) => {},
+    move: (_y: number) => false,
+    end: (_open: boolean) => {},
+  });
+
+  pullApi.current.begin = (y: number) => {
+    if (settleTimer.current !== null) {
+      window.clearTimeout(settleTimer.current);
+      settleTimer.current = null;
+    }
+    const el = scrollerRef.current;
+    const atTop = !el || el.scrollTop <= 2;
+    const atBottom = !el || el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+    gesture.current = { active: true, startY: y, atTop, atBottom, kind: null, offset: 0, dy: 0 };
+  };
+
+  pullApi.current.move = (y: number) => {
+    const g = gesture.current;
+    if (!g.active) return false;
+    const dy = y - g.startY;
+    g.dy = dy;
+    if (Math.abs(dy) > PULL_LOCK) clearPress();
+    if (!g.kind) {
+      if (dy > PULL_LOCK && g.atTop) g.kind = 'replace';
+      else if (dy < -PULL_LOCK && g.atBottom) g.kind = 'append';
+      else if (Math.abs(dy) > PULL_LOCK) {
+        g.active = false;
+        return false;
+      } else {
+        return false;
+      }
+    }
+    const raw = g.kind === 'replace' ? Math.max(0, dy) : Math.max(0, -dy);
+    const offset = Math.min(PULL_MAX, raw * PULL_DAMP);
+    g.offset = offset;
+    setPull({ kind: g.kind, offset, armed: offset >= PULL_AT, dragging: true });
+    return true;
+  };
+
+  pullApi.current.end = (openIfArmed: boolean) => {
+    const g = gesture.current;
+    const moved = Math.abs(g.dy) > PULL_LOCK;
+    const open = openIfArmed && Boolean(g.kind) && g.offset >= PULL_AT && !busyRef.current && !pressRef.current.fired;
+    // 只吞松手带出来的那一下 click。弹层挡住、click 没来，也不能把下一次进房吃掉。
+    if (moved || open) {
+      swallowRef.current = true;
+      window.setTimeout(() => {
+        swallowRef.current = false;
+      }, 400);
+    }
+    if (open && g.kind) onAskRef.current(g.kind);
+    const kind = g.kind;
+    gesture.current = { active: false, startY: 0, atTop: false, atBottom: false, kind: null, offset: 0, dy: 0 };
+    setPull({ kind, offset: 0, armed: false, dragging: false });
+    if (settleTimer.current !== null) window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(() => {
+      settleTimer.current = null;
+      setPull({ kind: null, offset: 0, armed: false, dragging: false });
+    }, 220);
+  };
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const start = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        pullApi.current.end(false);
+        return;
+      }
+      pullApi.current.begin(e.touches[0].clientY);
+    };
+    const move = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      if (pullApi.current.move(e.touches[0].clientY)) e.preventDefault();
+    };
+    const end = () => pullApi.current.end(true);
+    const cancel = () => pullApi.current.end(false);
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('touchmove', move, { passive: false });
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', cancel);
+    return () => {
+      el.removeEventListener('touchstart', start);
+      el.removeEventListener('touchmove', move);
+      el.removeEventListener('touchend', end);
+      el.removeEventListener('touchcancel', cancel);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!tailToken) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [tailToken]);
+
+  const pullLabel = pull.kind
+    ? busy
+      ? '刷台中…'
+      : pull.kind === 'replace'
+        ? pull.armed
+          ? '松开，填写口味'
+          : '下拉，换一批'
+        : pull.armed
+          ? '松开，填写口味'
+          : '继续拖，再刷一批'
+    : '';
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: W.page, color: W.ink }}>
@@ -189,18 +336,84 @@ export function WatchLobby({
         </div>
       ) : null}
 
-      {/* 房间列表 */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* 房间列表：下拉换一批，滑到底再拖就再接一批 */}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        {busy ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
+            style={{ top: busyEdge === 'append' ? undefined : 10, bottom: busyEdge === 'append' ? 10 : undefined }}
+          >
+            <span
+              aria-label="正在刷新"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white"
+              style={{ boxShadow: '0 6px 18px rgba(0,0,0,.16)' }}
+            >
+              <i
+                className="block h-[18px] w-[18px] rounded-full"
+                style={{
+                  border: '2px solid rgba(15,15,15,.16)',
+                  borderTopColor: W.ink,
+                  animation: 'watchPullSpin .7s linear infinite',
+                }}
+              />
+            </span>
+          </div>
+        ) : null}
+        <style>{'@keyframes watchPullSpin { to { transform: rotate(360deg); } }'}</style>
+        {pull.kind === 'replace' ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center overflow-hidden text-[12px]"
+            style={{
+              height: pull.offset,
+              color: W.sub,
+              transition: pull.dragging ? 'none' : 'height 200ms ease',
+            }}
+          >
+            {pullLabel}
+          </div>
+        ) : null}
+        <div
+          ref={scrollerRef}
+          className="h-full select-none overflow-y-auto"
+          style={{
+            overscrollBehavior: 'contain',
+            transform:
+              pull.kind === 'append'
+                ? `translateY(${-pull.offset}px)`
+                : pull.kind === 'replace'
+                  ? `translateY(${pull.offset}px)`
+                  : undefined,
+            transition: pull.dragging ? 'none' : 'transform 200ms ease',
+          }}
+          onPointerDown={e => {
+            if (e.pointerType !== 'mouse' || e.button !== 0) return;
+            pullApi.current.begin(e.clientY);
+          }}
+          onPointerMove={e => {
+            if (e.pointerType !== 'mouse') return;
+            if (!pullApi.current.move(e.clientY)) return;
+            e.preventDefault();
+            if (!e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerUp={e => {
+            if (e.pointerType !== 'mouse') return;
+            pullApi.current.end(true);
+          }}
+          onPointerCancel={e => {
+            if (e.pointerType !== 'mouse') return;
+            pullApi.current.end(false);
+          }}
+        >
         {rooms.length === 0 ? (
           <EmptyState
             text={q ? '没有搜到这样的直播间' : busy ? '正在刷台…' : '还没刷出直播间'}
-            hint={q ? '换个词试试' : '点下面的「换一批」，按你的口味刷几个出来'}
-            action={q ? undefined : busy ? undefined : '换一批'}
-            onAction={q ? undefined : onRefresh}
+            hint={q ? '换个词试试' : busy ? undefined : '往下拉，换一批'}
           />
         ) : (
           <div className="px-3 pb-3">
-            {rooms.map(room => (
+            {rooms.map(room => {
+              const cover = washCoverSvg(room.coverSvg);
+              return (
               <button
                 key={room.id}
                 type="button"
@@ -210,9 +423,10 @@ export function WatchLobby({
                 onPointerLeave={clearPress}
                 onContextMenu={e => e.preventDefault()}
                 onClick={() => {
-                  // 长按已经出过菜单，这一下 click 不进场
-                  if (pressRef.current.fired) {
+                  // 长按出过菜单，或者这一下是下拉松手，都不进场
+                  if (pressRef.current.fired || swallowRef.current) {
                     pressRef.current.fired = false;
+                    swallowRef.current = false;
                     return;
                   }
                   onStart(room);
@@ -221,8 +435,18 @@ export function WatchLobby({
               >
                 <div
                   className="relative w-full overflow-hidden"
-                  style={{ borderRadius: R_COVER, background: coverBackground(room.coverGradient), aspectRatio: '16 / 9' }}
+                  style={{
+                    borderRadius: R_COVER,
+                    background: cover ? W.fill : coverBackground(room.coverGradient),
+                    aspectRatio: '16 / 9',
+                  }}
                 >
+                  {cover ? (
+                    <div
+                      className="pointer-events-none absolute inset-0 [&_svg]:block [&_svg]:h-full [&_svg]:w-full"
+                      dangerouslySetInnerHTML={{ __html: cover }}
+                    />
+                  ) : null}
                   <span
                     className="absolute left-2 top-2 inline-flex h-[19px] items-center gap-[4px] px-[6px] text-[9.5px] font-bold tracking-wide text-white"
                     style={{ borderRadius: 4, background: W.red }}
@@ -247,7 +471,10 @@ export function WatchLobby({
                 <div className="mt-2 flex gap-2.5">
                   <span
                     className="mt-[1px] inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center overflow-hidden rounded-full text-[13px] font-medium"
-                    style={{ background: coverBackground(room.coverGradient), color: 'rgba(255,255,255,.9)' }}
+                    style={{
+                      background: cover ? W.fill : coverBackground(room.coverGradient),
+                      color: cover ? W.ink : 'rgba(255,255,255,.9)',
+                    }}
                   >
                     {(room.streamerName || '?').slice(0, 1)}
                   </span>
@@ -269,32 +496,23 @@ export function WatchLobby({
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
-      </div>
-
-      {/* 底条：换一批 + 口味 */}
-      <div className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-2" style={{ borderTop: `1px solid ${W.line}` }}>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onRefresh}
-          className="inline-flex h-[38px] flex-1 items-center justify-center gap-1.5 text-[13px] font-medium disabled:opacity-45"
-          style={{ borderRadius: R_PILL, background: W.ink, color: '#fff' }}
-        >
-          <WIco name="rewrite" size={16} />
-          {busy ? '刷台中…' : '换一批'}
-        </button>
-        <button
-          type="button"
-          onClick={onEditRule}
-          className="inline-flex h-[38px] shrink-0 items-center gap-1.5 px-4 text-[13px]"
-          style={{ borderRadius: R_PILL, background: W.fill, color: W.ink }}
-        >
-          <WIco name="edit" size={15} />
-          口味
-        </button>
+        </div>
+        {pull.kind === 'append' ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-center overflow-hidden text-[12px]"
+            style={{
+              height: pull.offset,
+              color: W.sub,
+              transition: pull.dragging ? 'none' : 'height 200ms ease',
+            }}
+          >
+            {pullLabel}
+          </div>
+        ) : null}
       </div>
 
       {/* 长按卡片出的小菜单 */}

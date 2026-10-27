@@ -17,7 +17,7 @@ import {
 } from './chrome';
 import { WatchPet } from './WatchPet';
 import TokenImg from '../os/TokenImg';
-import { coverBackground } from './WatchLobby';
+import { washCoverSvg } from '../../utils/watchAlong/coverSvg';
 import type { WatchAlongSession, WatchSeqItem } from '../../utils/watchAlong/types';
 
 /** 公屏能送的小礼物 */
@@ -129,6 +129,7 @@ export function WatchRoom({
 
   const charHere = session.cast.presence !== 'solo';
   const [c1, c2] = gradientColors(session.room.coverGradient);
+  const cover = washCoverSvg(session.room.coverSvg);
 
   /** 麦上最后一句话（角色说的）；没有就是 undefined */
   const micLine = useMemo(() => {
@@ -414,14 +415,23 @@ export function WatchRoom({
         onPointerCancel={pressEnd}
         onPointerLeave={pressEnd}
       >
-        <span
-          className="pointer-events-none absolute"
-          style={{ width: 220, height: 220, left: '12%', top: -70, borderRadius: '50%', background: c1, opacity: 0.75, filter: 'blur(40px)' }}
-        />
-        <span
-          className="pointer-events-none absolute"
-          style={{ width: 180, height: 180, left: '56%', bottom: -70, borderRadius: '50%', background: c2, opacity: 0.6, filter: 'blur(40px)' }}
-        />
+        {cover ? (
+          <div
+            className="pointer-events-none absolute inset-0 [&_svg]:block [&_svg]:h-full [&_svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: cover }}
+          />
+        ) : (
+          <>
+            <span
+              className="pointer-events-none absolute"
+              style={{ width: 220, height: 220, left: '12%', top: -70, borderRadius: '50%', background: c1, opacity: 0.75, filter: 'blur(40px)' }}
+            />
+            <span
+              className="pointer-events-none absolute"
+              style={{ width: 180, height: 180, left: '56%', bottom: -70, borderRadius: '50%', background: c2, opacity: 0.6, filter: 'blur(40px)' }}
+            />
+          </>
+        )}
 
         <div className="absolute left-2.5 top-2.5 flex items-center gap-1.5">
           <span

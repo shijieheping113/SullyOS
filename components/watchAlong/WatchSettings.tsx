@@ -5,7 +5,9 @@
  * 模型那两块默认关着——关着就用主模型，开了才整路换过去，两边互不影响；
  * 开的时候从「设置里的 API 预设」里挑一条，不用再手抄地址和密钥。
  */
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import Modal from '../os/Modal';
+import ModelPicker from '../settings/ModelPicker';
 import {
   Avatar,
   R_PILL,
@@ -17,6 +19,9 @@ import {
   WIco,
 } from './chrome';
 import type { ApiPreset, CharacterProfile } from '../../types';
+import { normalizeApiBaseUrl, normalizeApiCredential } from '../../utils/apiConfigNormalize';
+import { extractModelIds } from '../../utils/modelList';
+import { safeResponseJson } from '../../utils/safeApi';
 import type {
   WatchAccount,
   WatchModelSlot,
@@ -134,8 +139,82 @@ const ModelBlock = ({
   onChange: (next: WatchModelSlot) => void;
 }) => {
   const [manual, setManual] = useState(false);
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [modelFetchHint, setModelFetchHint] = useState<string | null>(null);
+  const [showModelModal, setShowModelModal] = useState(false);
+  const [pickerModel, setPickerModel] = useState('');
+  const modelBeforePickerRef = useRef('');
+
   const picked = presets.find(p => p.config.baseUrl === slot.baseUrl && p.config.model === slot.model);
   const ready = Boolean(slot.baseUrl.trim() && slot.model.trim());
+
+  const openModelPicker = () => {
+    modelBeforePickerRef.current = slot.model;
+    setPickerModel(slot.model);
+    setShowModelModal(true);
+  };
+
+  const cancelModelPicker = () => {
+    setPickerModel(modelBeforePickerRef.current);
+    setShowModelModal(false);
+  };
+
+  const confirmModelPicker = (model: string) => {
+    onChange({ ...slot, model });
+    setShowModelModal(false);
+  };
+
+  const applyPreset = (p: ApiPreset) => {
+    onChange({
+      ...slot,
+      baseUrl: p.config.baseUrl,
+      apiKey: p.config.apiKey,
+      model: p.config.model,
+      temperature:
+        typeof p.config.temperature === 'number' ? p.config.temperature : slot.temperature,
+    });
+    setPresetOpen(false);
+  };
+
+  const fetchModels = async () => {
+    const baseUrl = normalizeApiBaseUrl(slot.baseUrl);
+    const apiKey = normalizeApiCredential(slot.apiKey);
+    if (!baseUrl) {
+      setModelFetchHint('先填接口地址');
+      return;
+    }
+    setModelFetchHint(null);
+    setIsFetchingModels(true);
+    try {
+      const response = await fetch(`${baseUrl}/models`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await safeResponseJson(response);
+      const models = extractModelIds(data);
+      if (models.length > 0) {
+        setFetchedModels(models);
+        setModelFetchHint(null);
+        openModelPicker();
+      } else {
+        setFetchedModels([]);
+        setModelFetchHint('没拉到模型');
+      }
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setFetchedModels([]);
+      setModelFetchHint(`拉取失败${reason ? `：${reason}` : ''}`);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  const presetRowPrimary = picked ? picked.name : slot.model.trim() || '还没选';
+  const presetRowSecondary = picked ? picked.config.model || '没填模型' : null;
+
   return (
     <div className="mx-4 mt-2 overflow-hidden" style={{ borderRadius: 12, background: W.soft }}>
       <SettingRow
@@ -150,40 +229,62 @@ const ModelBlock = ({
             用哪一条
           </div>
           {presets.length ? (
-            <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
-              {presets.map(p => {
-                const on = picked?.id === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() =>
-                      onChange({
-                        ...slot,
-                        baseUrl: p.config.baseUrl,
-                        apiKey: p.config.apiKey,
-                        model: p.config.model,
-                        temperature:
-                          typeof p.config.temperature === 'number' ? p.config.temperature : slot.temperature,
-                      })
-                    }
-                    className="shrink-0 px-2.5 py-[7px] text-left"
-                    style={{
-                      borderRadius: 9,
-                      background: on ? W.ink : '#fff',
-                      color: on ? '#fff' : W.ink,
-                    }}
-                  >
-                    <span className="block text-[11.5px] font-medium leading-[14px]">{p.name}</span>
-                    <span
-                      className="mt-[1px] block max-w-[120px] truncate text-[9.5px] leading-[12px]"
-                      style={{ color: on ? 'rgba(255,255,255,.62)' : W.faint }}
-                    >
-                      {p.config.model || '没填模型'}
+            <div>
+              <button
+                type="button"
+                onClick={() => setPresetOpen(v => !v)}
+                className="flex w-full items-center gap-2 px-2.5 py-[7px] text-left"
+                style={{ borderRadius: 9, background: '#fff', color: W.ink }}
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="block text-[11.5px] font-medium leading-[14px]">{presetRowPrimary}</span>
+                  {presetRowSecondary ? (
+                    <span className="mt-[1px] block truncate text-[9.5px] leading-[12px]" style={{ color: W.faint }}>
+                      {presetRowSecondary}
                     </span>
-                  </button>
-                );
-              })}
+                  ) : null}
+                </div>
+                <WIco
+                  name="next"
+                  size={11}
+                  style={{
+                    flexShrink: 0,
+                    color: W.faint,
+                    transform: presetOpen ? 'rotate(90deg)' : 'none',
+                    transition: 'transform .16s ease',
+                  }}
+                />
+              </button>
+              {presetOpen ? (
+                <div
+                  className="mt-1 overflow-y-auto"
+                  style={{ maxHeight: 180, borderRadius: 9, background: '#fff' }}
+                >
+                  {presets.map(p => {
+                    const on = picked?.id === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p)}
+                        className="w-full px-2.5 py-[7px] text-left"
+                        style={{
+                          background: on ? W.ink : 'transparent',
+                          color: on ? '#fff' : W.ink,
+                        }}
+                      >
+                        <span className="block text-[11.5px] font-medium leading-[14px]">{p.name}</span>
+                        <span
+                          className="mt-[1px] block truncate text-[9.5px] leading-[12px]"
+                          style={{ color: on ? 'rgba(255,255,255,.62)' : W.faint }}
+                        >
+                          {p.config.model || '没填模型'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="text-[10.5px] leading-[16px]" style={{ color: W.faint }}>
@@ -210,7 +311,6 @@ const ModelBlock = ({
               {[
                 { key: 'baseUrl' as const, label: '接口地址', placeholder: 'https://…/v1' },
                 { key: 'apiKey' as const, label: '密钥', placeholder: 'sk-…' },
-                { key: 'model' as const, label: '模型名', placeholder: '比如 gpt-4o-mini' },
               ].map(field => (
                 <div key={field.key} className="mt-1.5">
                   <div className="mb-1 text-[10px]" style={{ color: W.sub }}>
@@ -226,6 +326,43 @@ const ModelBlock = ({
                   />
                 </div>
               ))}
+              <div className="mt-1.5">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-[10px]" style={{ color: W.sub }}>
+                    模型名
+                  </span>
+                  <button
+                    type="button"
+                    disabled={isFetchingModels}
+                    onClick={() => void fetchModels()}
+                    className="shrink-0 text-[10px] disabled:opacity-40"
+                    style={{ color: W.ink }}
+                  >
+                    {isFetchingModels ? '拉取中' : '拉取模型'}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={openModelPicker}
+                  className="flex w-full items-center gap-2 px-2.5 py-[7px] text-left"
+                  style={{ borderRadius: 9, background: '#fff', color: W.ink }}
+                  aria-label={`${title}选择模型`}
+                >
+                  <span className="min-w-0 flex-1 truncate text-[11.5px]">
+                    {slot.model.trim() || '还没选'}
+                  </span>
+                  <WIco
+                    name="next"
+                    size={11}
+                    style={{ flexShrink: 0, color: W.faint, transform: 'rotate(90deg)' }}
+                  />
+                </button>
+                {modelFetchHint ? (
+                  <div className="mt-1 text-[10px] leading-[14px]" style={{ color: W.faint }}>
+                    {modelFetchHint}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -246,6 +383,20 @@ const ModelBlock = ({
           </div>
         </div>
       ) : null}
+
+      <Modal
+        isOpen={showModelModal}
+        title="选择模型"
+        onClose={cancelModelPicker}
+        zIndexClass="z-[260]"
+      >
+        <ModelPicker
+          availableModels={fetchedModels}
+          localModel={pickerModel}
+          setLocalModel={setPickerModel}
+          confirmModelPicker={confirmModelPicker}
+        />
+      </Modal>
     </div>
   );
 };
