@@ -73,6 +73,7 @@ import {
   downloadWatchVoice,
   forgetWatchVoices,
   loadWatchVoiceUrl,
+  shownWatchText,
   synthesizeWatchVoice,
   watchLineIsVoice,
 } from '../../utils/watchAlong/voice';
@@ -995,37 +996,91 @@ export default function WatchAlongApp({
     [voiceReady, playingKey, char, apiConfig, patchChat, playUrl, addToast],
   );
 
-  // 桌宠气泡：默认是最新一条角色消息。文字气泡点一下往前翻一条，语音气泡点一下播放。
-  const charBubbleMsgs = useMemo(
-    () =>
-      (session?.chat ?? [])
-        .filter(m => m.from === 'char' && (m.text || m.voiceId || m.wantVoice))
-        .slice(-8)
-        .reverse(),
-    [session?.chat],
-  );
+  // 浮窗只放最新一轮：上一条用户消息之后，角色发出的那些，按说话顺序。
+  const charBubbleMsgs = useMemo(() => {
+    const chat = session?.chat ?? [];
+    let boundary = -1;
+    for (let i = chat.length - 1; i >= 0; i -= 1) {
+      if (chat[i].from === 'user' || chat[i].from === 'clip') {
+        boundary = i;
+        break;
+      }
+    }
+    return chat.slice(boundary + 1).filter(m => m.from === 'char' && (m.text || m.sticker || m.voiceId || m.wantVoice));
+  }, [session?.chat]);
   const [bubblePick, setBubblePick] = useState(0);
   const [bubbleSeq, setBubbleSeq] = useState(0);
-  // 有新消息进来就回到最新那条
+  // 新的一轮进来，从第一句开始
   useEffect(() => {
     setBubblePick(0);
     setBubbleSeq(n => n + 1);
   }, [session?.chat.length]);
 
   const bubbleMsg = charBubbleMsgs[bubblePick] ?? null;
-  const bubbleIsVoice = Boolean(bubbleMsg && (bubbleMsg.voiceId || bubbleMsg.wantVoice));
-  const petBubbleText = bubblePick === 0 ? bubble || bubbleMsg?.text || null : bubbleMsg?.text || null;
+  const bubbleIsVoice = Boolean(
+    bubbleMsg && watchLineIsVoice(bubbleMsg.text, { wantVoice: bubbleMsg.wantVoice, voiceId: bubbleMsg.voiceId }),
+  );
+  const petBubbleText = bubbleMsg
+    ? shownWatchText(bubbleMsg.text, apiConfig) || bubbleMsg.sticker || null
+    : null;
 
   const playBubbleVoice = useCallback(() => {
     if (!bubbleMsg) return;
     void playMessageVoice(bubbleMsg);
   }, [bubbleMsg, playMessageVoice]);
 
+  const revealBubble = useCallback(() => {
+    setBubbleSeq(n => n + 1);
+  }, []);
+
   const tapBubble = useCallback(() => {
-    if (charBubbleMsgs.length < 2) return;
+    if (charBubbleMsgs.length < 2) {
+      setBubbleSeq(n => n + 1);
+      return;
+    }
     setBubblePick(i => (i + 1) % charBubbleMsgs.length);
     setBubbleSeq(n => n + 1);
   }, [charBubbleMsgs.length]);
+
+  const sendLiveLine = useCallback(
+    async (text: string) => {
+      const cur = sessionRef.current;
+      const line = text.trim();
+      if (!cur || !line || busy) return;
+      if (cur.legacy) {
+        addToast('这是旧版记录，只能翻看', 'info');
+        return;
+      }
+      if (cur.cast.presence === 'solo') {
+        addToast(`先把${char.name}叫进来，ta 才接得上话`, 'info');
+        return;
+      }
+      setBusy('chat');
+      try {
+        const ctx = await buildCtx();
+        const r = await chatRound({
+          ...ctx,
+          session: cur,
+          text: line,
+          onLogged: next => persist(next),
+        });
+        let next = r.session;
+        try {
+          next = await maybeDigest({ ...ctx, session: next });
+        } catch {
+          /* 压不动不影响这一轮 */
+        }
+        await persist(next);
+        if (r.failed) addToast(`${char.name}这条没接上`, 'error');
+        if (r.bubble) setBubble(r.bubble);
+      } catch (e: any) {
+        addToast(e?.message || '这条没发出去', 'error');
+      } finally {
+        setBusy(null);
+      }
+    },
+    [busy, buildCtx, persist, addToast, char.name],
+  );
 
   // 角色开了「收到就自动播放」：语音条自己合成并念。关着就只留条，等用户点。
   const autoVoiceRef = useRef<Set<string>>(new Set());
@@ -1709,10 +1764,13 @@ export default function WatchAlongApp({
         charAvatar={charAvatar}
         petSrc={petSrc}
         busy={busy === 'advance'}
+        petGenerating={busy === 'chat'}
         bubble={petBubbleText}
         bubbleSeq={bubbleSeq}
         bubbleIsVoice={bubbleIsVoice}
         onTapBubble={tapBubble}
+        onRevealBubble={revealBubble}
+        onSendLiveLine={text => void sendLiveLine(text)}
         chatUnread={unread}
         micPlaying={listeningMic}
         micLoading={loadingKey?.startsWith('mic:') === true}

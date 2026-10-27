@@ -2,7 +2,8 @@
  * 陪看桌宠。
  *
  * 可以在整个房间范围内自由拖动；拖到哪就停在哪。
- * 不是拖动（只是点一下）就打开私聊。
+ * 单击：气泡收着就亮出当前这一句，亮着就换下一条。
+ * 双击：在直播画面上打字。长按：进入私聊。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import TokenImg from '../os/TokenImg';
@@ -16,8 +17,11 @@ export function WatchPet({
   bubble,
   bubbleSeq,
   bubbleIsVoice,
+  generating,
   onTapBubble,
-  onClick,
+  onRevealBubble,
+  onCompose,
+  onOpenChat,
   containerRef,
   hidden,
   onPlayVoice,
@@ -29,10 +33,18 @@ export function WatchPet({
   bubble: string | null;
   /** 气泡换了一句时 +1，用来重置「几秒后自动收起」 */
   bubbleSeq?: number;
-  /** 这一句是不是语音：只有语音才给喇叭，文字气泡点一下换下一条 */
+  /** 这一句是不是语音：喇叭只负责播放，点气泡本身换下一条 */
   bubbleIsVoice?: boolean;
+  /** 正在生成私聊回复：小人轻轻呼吸，好认出来还在想 */
+  generating?: boolean;
+  /** 气泡亮着时，点一下换下一条 */
   onTapBubble?: () => void;
-  onClick: () => void;
+  /** 气泡收着时，单击先亮出当前这一句 */
+  onRevealBubble?: () => void;
+  /** 双击：打开直播画面上的输入 */
+  onCompose?: () => void;
+  /** 长按：进入私聊 */
+  onOpenChat: () => void;
   /** 房间页的最外层容器，用来限制拖动边界 */
   containerRef: React.RefObject<HTMLDivElement | null>;
   hidden?: boolean;
@@ -44,6 +56,12 @@ export function WatchPet({
   const [dragging, setDragging] = useState(false);
   const [shown, setShown] = useState(true);
   const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
+  const longTimer = useRef<number | null>(null);
+  const clickTimer = useRef<number | null>(null);
+  const longFired = useRef(false);
+  const lastClickAt = useRef(0);
+  /** 当前这条语音有没有真正播过。没播完之前，不开始算收起时间。 */
+  const voicePlayed = useRef(false);
 
   // 第一次摆位：右侧偏下，落在公屏那一带，不压主播行和底栏
   useEffect(() => {
@@ -58,13 +76,31 @@ export function WatchPet({
     setPos({ x: Math.max(8, r.width - PET_SIZE - 12), y: Math.min(preferred, ceiling) });
   }, [containerRef, pos]);
 
-  // 有新的一句话就亮出来，几秒后自己收回去
+  // 换一条就重新亮出来。文字消息马上开始算 6 秒无操作收起。
+  // 语音消息要等这一条播放结束，才开始算这 6 秒。
+  useEffect(() => {
+    voicePlayed.current = false;
+  }, [bubble, bubbleSeq]);
+
   useEffect(() => {
     if (!bubble) return;
     setShown(true);
+    if (bubbleIsVoice) return;
     const t = setTimeout(() => setShown(false), 6000);
     return () => clearTimeout(t);
-  }, [bubble, bubbleSeq]);
+  }, [bubble, bubbleSeq, bubbleIsVoice]);
+
+  useEffect(() => {
+    if (!bubble || !bubbleIsVoice) return;
+    if (voicePlaying) {
+      voicePlayed.current = true;
+      setShown(true);
+      return;
+    }
+    if (!voicePlayed.current) return;
+    const t = setTimeout(() => setShown(false), 6000);
+    return () => clearTimeout(t);
+  }, [bubble, bubbleIsVoice, voicePlaying]);
 
   if (hidden) return null;
 
@@ -76,18 +112,39 @@ export function WatchPet({
     return { x: Math.min(maxX, Math.max(6, x)), y: Math.min(maxY, Math.max(6, y)) };
   };
 
+  const clearLong = () => {
+    if (longTimer.current !== null) {
+      window.clearTimeout(longTimer.current);
+      longTimer.current = null;
+    }
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (!pos) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y, moved: false };
+    longFired.current = false;
     setDragging(true);
+    clearLong();
+    longTimer.current = window.setTimeout(() => {
+      longTimer.current = null;
+      longFired.current = true;
+      if (clickTimer.current !== null) {
+        window.clearTimeout(clickTimer.current);
+        clickTimer.current = null;
+      }
+      onOpenChat();
+    }, 480);
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
     const d = drag.current;
     if (!d) return;
     const next = clamp(e.clientX - d.dx, e.clientY - d.dy);
-    if (Math.abs(next.x - (pos?.x ?? 0)) > 3 || Math.abs(next.y - (pos?.y ?? 0)) > 3) d.moved = true;
+    if (Math.abs(next.x - (pos?.x ?? 0)) > 3 || Math.abs(next.y - (pos?.y ?? 0)) > 3) {
+      d.moved = true;
+      clearLong();
+    }
     setPos(next);
   };
 
@@ -95,10 +152,32 @@ export function WatchPet({
     const d = drag.current;
     drag.current = null;
     setDragging(false);
+    clearLong();
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
-    if (d && !d.moved) onClick();
+    if (!d || d.moved || longFired.current) return;
+    const now = Date.now();
+    if (now - lastClickAt.current < 280) {
+      lastClickAt.current = 0;
+      if (clickTimer.current !== null) {
+        window.clearTimeout(clickTimer.current);
+        clickTimer.current = null;
+      }
+      onCompose?.();
+      return;
+    }
+    lastClickAt.current = now;
+    if (clickTimer.current !== null) window.clearTimeout(clickTimer.current);
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      if (!shown) {
+        setShown(true);
+        onRevealBubble?.();
+      } else {
+        onTapBubble?.();
+      }
+    }, 280);
   };
 
   if (!pos) return null;
@@ -118,19 +197,46 @@ export function WatchPet({
     ...(below ? { top: PET_SIZE + 8 } : { bottom: PET_SIZE + 8 }),
   };
 
+  const breathing = Boolean(generating) && !dragging;
+
   return (
     <div
       className="pointer-events-none absolute z-30"
       style={{ left: pos.x, top: pos.y, width: PET_SIZE, height: PET_SIZE }}
     >
+      <style>{`
+        @keyframes watchPetBreathe {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.08); }
+        }
+        @keyframes watchPetRing {
+          0%, 100% { opacity: .22; transform: scale(1); }
+          50% { opacity: .5; transform: scale(1.14); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .watch-pet-breathe, .watch-pet-ring { animation: none !important; }
+        }
+      `}</style>
+      {breathing ? (
+        <span
+          aria-hidden
+          className="watch-pet-ring pointer-events-none absolute inset-0 rounded-full"
+          style={{
+            border: '1.5px solid rgba(255,255,255,.55)',
+            animation: 'watchPetRing 1.7s ease-in-out infinite',
+          }}
+        />
+      ) : null}
       {bubble && shown ? (
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           onClick={e => {
             e.stopPropagation();
-            // 文字气泡点一下换一条；语音气泡点一下播放
-            if (bubbleIsVoice) onPlayVoice?.();
-            else onTapBubble?.();
+            onTapBubble?.();
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') onTapBubble?.();
           }}
           className="pointer-events-auto absolute w-max max-w-[196px] px-[11px] py-[8px] text-left"
           style={{
@@ -145,34 +251,45 @@ export function WatchPet({
           <span className="mb-[2px] flex items-center gap-1 text-[9.5px]" style={{ color: W.faint }}>
             {name}
             {bubbleIsVoice ? (
-              <span
+              <button
+                type="button"
+                aria-label={voicePlaying ? '暂停语音' : '播放语音'}
+                onClick={e => {
+                  e.stopPropagation();
+                  onPlayVoice?.();
+                }}
                 className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full"
                 style={{ background: W.fill, color: W.ink }}
               >
                 <span className="text-[7px] leading-none" style={{ opacity: voicePlaying ? 1 : 0.7 }}>
                   {voicePlaying ? '❚❚' : '▶'}
                 </span>
-              </span>
+              </button>
             ) : null}
           </span>
           <span className="block text-[11.5px] leading-[17px]">{bubble}</span>
-        </button>
+        </div>
       ) : null}
 
       <button
         type="button"
-        aria-label={`${name}（可拖动，点一下打开私聊）`}
+        aria-label={
+          generating
+            ? `${name}正在想回复（单击下一条，双击打字，长按进入私聊）`
+            : `${name}（单击下一条，双击打字，长按进入私聊）`
+        }
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        className="pointer-events-auto flex h-full w-full touch-none items-center justify-center overflow-hidden rounded-full"
+        className={`pointer-events-auto flex h-full w-full touch-none items-center justify-center overflow-hidden rounded-full${breathing ? ' watch-pet-breathe' : ''}`}
         style={{
           background: '#12141A',
-          border: `1.5px solid ${dragging ? 'rgba(255,255,255,.45)' : 'rgba(255,255,255,.22)'}`,
+          border: `1.5px solid ${dragging ? 'rgba(255,255,255,.45)' : breathing ? 'rgba(255,255,255,.4)' : 'rgba(255,255,255,.22)'}`,
           boxShadow: dragging ? '0 10px 26px rgba(0,0,0,.32)' : '0 6px 18px rgba(0,0,0,.30)',
-          transform: dragging ? 'scale(1.06)' : 'scale(1)',
-          transition: dragging ? 'none' : 'transform .16s ease, box-shadow .16s ease',
+          transform: dragging ? 'scale(1.06)' : undefined,
+          animation: breathing ? 'watchPetBreathe 1.7s ease-in-out infinite' : undefined,
+          transition: dragging || breathing ? 'none' : 'transform .16s ease, box-shadow .16s ease',
         }}
       >
         {src ? (

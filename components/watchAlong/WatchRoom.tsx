@@ -44,10 +44,13 @@ export function WatchRoom({
   charAvatar,
   petSrc,
   busy,
+  petGenerating,
   bubble,
   bubbleSeq,
   bubbleIsVoice,
   onTapBubble,
+  onRevealBubble,
+  onSendLiveLine,
   chatUnread,
   micPlaying,
   micLoading,
@@ -83,13 +86,19 @@ export function WatchRoom({
   petSrc?: string;
   /** 正在生成下一段 */
   busy: boolean;
+  /** 小人正在等私聊回复：呼吸一下好认 */
+  petGenerating?: boolean;
   bubble: string | null;
   /** 气泡换了一句就 +1，用来重置自动收起 */
   bubbleSeq?: number;
   /** 当前这条是不是语音（只有语音才给喇叭） */
   bubbleIsVoice?: boolean;
-  /** 文字气泡点一下：换一条 */
+  /** 气泡已经亮着时，点一下换下一条 */
   onTapBubble?: () => void;
+  /** 气泡收着时，单击先把它亮出来 */
+  onRevealBubble?: () => void;
+  /** 在直播画面上发一句，并让角色接话 */
+  onSendLiveLine?: (text: string) => void;
   chatUnread: number;
   /** 麦上那句正在响 / 正在合成 */
   micPlaying?: boolean;
@@ -126,6 +135,8 @@ export function WatchRoom({
   const rootRef = useRef<HTMLDivElement>(null);
   const danmakuRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
+  const [liveDraft, setLiveDraft] = useState('');
+  const [liveCompose, setLiveCompose] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   /** 长按画面出的小菜单：改这一幕 / 本场信息 / 重来 / 转给角色 */
   const [pressMenuOpen, setPressMenuOpen] = useState(false);
@@ -885,13 +896,65 @@ export function WatchRoom({
         bubble={bubble}
         bubbleSeq={bubbleSeq}
         bubbleIsVoice={bubbleIsVoice}
+        generating={petGenerating}
         onTapBubble={onTapBubble}
+        onRevealBubble={onRevealBubble}
+        onCompose={() => setLiveCompose(true)}
         hidden={!charHere || !session.cast.petVisible}
         containerRef={rootRef}
-        onClick={onOpenChat}
+        onOpenChat={onOpenChat}
         onPlayVoice={onPlayBubble}
         voicePlaying={bubblePlaying}
       />
+
+      {liveCompose ? (
+        <>
+        <button
+          type="button"
+          aria-label="关闭输入"
+          className="absolute inset-0 z-40"
+          onClick={() => setLiveCompose(false)}
+        />
+        <div
+          className="absolute inset-x-3 z-40 flex items-center gap-2 px-3 py-2"
+          style={{ bottom: 72, borderRadius: 16, background: '#fff', boxShadow: '0 10px 28px rgba(0,0,0,.18)' }}
+          onPointerDown={e => e.stopPropagation()}
+        >
+          <input
+            autoFocus
+            value={liveDraft}
+            onChange={e => setLiveDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key !== 'Enter') return;
+              const text = liveDraft.trim();
+              if (!text) return;
+              setLiveDraft('');
+              setLiveCompose(false);
+              onSendLiveLine?.(text);
+            }}
+            placeholder={`跟${charName}说一句`}
+            aria-label="直播画面上的私聊"
+            className="h-9 min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+            style={{ color: W.ink }}
+          />
+          <button
+            type="button"
+            disabled={!liveDraft.trim()}
+            onClick={() => {
+              const text = liveDraft.trim();
+              if (!text) return;
+              setLiveDraft('');
+              setLiveCompose(false);
+              onSendLiveLine?.(text);
+            }}
+            className="shrink-0 px-3 py-1.5 text-[12.5px] text-white disabled:opacity-40"
+            style={{ borderRadius: R_PILL, background: W.ink }}
+          >
+            发送
+          </button>
+        </div>
+        </>
+      ) : null}
 
       {/* 长按画面出的小菜单 */}
       <Sheet open={pressMenuOpen} onClose={() => setPressMenuOpen(false)} title={`第 ${beatNo} / ${totalBeats} 段`}>
