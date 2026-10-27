@@ -7,8 +7,10 @@
 
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { clampManualContextLimit } from '../chatContextRange';
+import { ChatParser } from '../chatParser';
 import { resolveDialogueApi } from '../characterApi';
 import { callMainStreamerLlm } from '../liveStreamAiHelpers';
+import { parseVoiceOutput } from '../minimaxTts';
 import { isSecondaryLlmReady } from '../secondaryLlmApi';
 import { secondaryLlmCall } from '../secondaryLlmCall';
 import type {
@@ -102,7 +104,10 @@ const stripNoise = (raw: string): string =>
     .replace(/```/g, '')
     .trim();
 
-/** 语音/情绪标注会被模型顺手写进正文（<语音>、[语音]、<v:开心>），显示前统一剥掉 */
+/**
+ * 口味代笔、麦上那句用：把标签壳剥掉，留下里面的字。
+ * 陪看私聊正文不走这里——`<语音>` 和 `<字幕>` 要原样留下。
+ */
 const VOICE_MARKUP = /<\s*\/?\s*[^<>\s]{1,8}\s*>|\[(?:语音|voice)[^\]]*\]|【(?:语音|voice)】|（(?:语音|voice)）/gi;
 
 export const stripVoiceMarkup = (raw: string): string =>
@@ -166,7 +171,7 @@ function labelLines(raw: string): LabelLine[] {
  */
 const KNOWN_LABELS = [
   ...STRUCT_LABELS,
-  '私聊', '说', '聊', '回', '表情', '打赏', '礼物', '投喂', '刷个',
+  '私聊', '说', '聊', '回', '打赏', '礼物', '投喂', '刷个',
   '上麦', '麦上', '下麦', '转账', '安静', '理由', '动作',
 ];
 
@@ -385,15 +390,16 @@ function splitByQuotes(text: string): WatchSeqItem[] {
 }
 
 /**
- * 昵称判据要偏严：认错一个昵称，前半句内容直接没了；认不出昵称的整行也不再收下。
- * 2026-10-26 实测过的坏样本：`他刚才那句真的绝了：哈哈哈哈哈` —— 原来会把前半句当昵称吃掉，
- * 剩下的整句再兜底成「路人」搬上公屏。现在这种整行直接丢掉。
+ * 昵称判据：认错一个昵称，前半句内容直接没了；认不出昵称的整行也不再收下。
+ * 2026-10-26 实测过的坏样本：`他刚才那句真的绝了：哈哈哈哈哈` —— 原来会把前半句当昵称吃掉。
+ * 以「我你他她这那」开头的，整行丢掉。
  *
- * 前面那截是按字判（作者名里带这些字就不像人名）；后面 `^(?:作者|Names|name|作者名|昵称)$`
- * 是**整名精确匹配**，只有整个作者名恰好等于其中一个才算，别用包含判断，否则「作者阿明」这种真昵称会被误伤。
+ * `^(?:作者|Names|name|作者名|昵称)$` 是整名精确匹配，只有整个名字恰好等于其中一个才丢掉。
+ * 别用包含判断，否则「作者阿明」这种真昵称会被误伤。
+ * 名字里带「的、是、了」照旧留下，「路过的人」是真网名。竖线或冒号左边当网名、右边当话。
  */
 const DM_AUTHOR = /^\s*([^\s：:，,。.！!？?、；;｜|「」『』"']{1,8})\s*[：:｜|]\s*([\s\S]+)$/;
-const DM_BAD_NAME = /[的是了吗呢吧啊嘛哦呀哈]|^[我你他她这那]|^(?:作者|Names|name|作者名|昵称)$/i;
+const DM_BAD_NAME = /^[我你他她这那]|^(?:作者|Names|name|作者名|昵称)$/i;
 
 /** 真弹幕没那么长；超过这个长度就是模型把正文挤进了这一行 */
 const DM_TEXT_MAX = 60;
@@ -526,57 +532,127 @@ function toStageOutput(raw: string): StageOutput {
   };
 }
 
+const CHAT_LINE_KEYS = ['私聊', '说', '聊', '回'];
+
+function isPublicCharLine(label: string): boolean {
+  if (!label) return false;
+  if (DANMAKU_KEYS.some(k => label.includes(k))) return true;
+  if (['打赏', '礼物', '刷个', '投喂'].some(k => label.includes(k))) return true;
+  if (['上麦', '申请上麦', '下麦', '挂麦'].includes(label)) return true;
+  if (['麦上', '连麦', '麦里'].some(k => label.includes(k))) return true;
+  if (['转账', '收钱', '领钱', '理由', '安静', '为什么'].some(k => label.includes(k))) return true;
+  return false;
+}
+
+/** 旧的「私聊：」整词还认，只取后面的字。提示词里已经不再教这套。 */
+function isLegacyChatLine(label: string): boolean {
+  return CHAT_LINE_KEYS.includes(label);
+}
+
+/**
+ * 私聊正文跟主聊天同一套：一行一句。
+ * `<语音>` `<字幕>` 整段留下。`[[SEND_EMOJI: 名字]]` 拆成表情包消息，可以跟字在一起。
+ */
+function chatLinesFromBody(raw: string): CharChatLine[] {
+  const body = (raw || '').trim();
+  if (!body) return [];
+  const out: CharChatLine[] = [];
+  for (const chunk of ChatParser.chunkText(body)) {
+    for (const part of ChatParser.splitResponse(chunk)) {
+      if (part.type === 'emoji') {
+        const name = part.content.replace(/[「」【】"']/g, '').trim();
+        if (name) out.push({ text: '', sticker: name, voice: false });
+        continue;
+      }
+      const text = part.content.trim();
+      if (!text) continue;
+      out.push({ text, sticker: '', voice: parseVoiceOutput(text).hasVoiceTag });
+    }
+  }
+  return out;
+}
+
+function chatBodyFromLines(lines: LabelLine[]): string {
+  const parts: string[] = [];
+  for (const line of lines) {
+    if (line.label && isPublicCharLine(line.label)) continue;
+    if (!line.label) {
+      if (line.value.trim()) parts.push(line.value.trim());
+      continue;
+    }
+    if (isLegacyChatLine(line.label)) {
+      if (line.value.trim()) parts.push(line.value.trim());
+      continue;
+    }
+    const whole = `${line.label}：${line.value}`.trim();
+    if (whole) parts.push(whole);
+  }
+  return parts.join('\n');
+}
+
+function chatLinesFromJson(items: any[]): CharChatLine[] {
+  const chat: CharChatLine[] = [];
+  for (const c of items) {
+    const preset = String(c?.sticker || '').replace(/[「」【】"']/g, '').trim();
+    const fromBody = chatLinesFromBody(String(c?.text || ''));
+    if (preset && !fromBody.some(part => part.sticker === preset)) {
+      chat.push({ text: '', sticker: preset, voice: false });
+    }
+    chat.push(...fromBody);
+  }
+  return chat.filter(part => part.text || part.sticker);
+}
+
 function toCharOutput(raw: string): CharOutput {
   const asJson = tryJson(raw);
   if (asJson && (Array.isArray(asJson.chat) || Array.isArray(asJson.public))) {
-    const chat: CharChatLine[] = (Array.isArray(asJson.chat) ? asJson.chat : []).slice(0, 3).map((c: any) => ({
-      text: stripVoiceMarkup(String(c?.text || '')),
-      sticker: stripVoiceMarkup(String(c?.sticker || '')),
-      voice: c?.voice === true,
-    }));
+    const chat: CharChatLine[] = chatLinesFromJson(Array.isArray(asJson.chat) ? asJson.chat : []).slice(0, 4);
     const publicActions: WatchPublicAction[] = (Array.isArray(asJson.public) ? asJson.public : [])
       .slice(0, 4)
-      .map((a: any) => ({
-        id: watchId('act'),
-        kind: (['danmaku', 'gift', 'mic_on', 'mic_line', 'mic_off'].includes(a?.kind)
-          ? a.kind
-          : 'danmaku') as WatchPublicAction['kind'],
-        text: a?.text ? String(a.text) : undefined,
-        giftName: a?.giftName ? String(a.giftName) : undefined,
-        giftAmount: typeof a?.giftAmount === 'number' ? a.giftAmount : undefined,
-      }))
+      .map((a: any) => {
+        const kind = (
+          ['danmaku', 'gift', 'mic_on', 'mic_line', 'mic_off'].includes(a?.kind) ? a.kind : 'danmaku'
+        ) as WatchPublicAction['kind'];
+        const rawText = a?.text ? String(a.text) : '';
+        const split = kind === 'danmaku' ? splitBilingual(rawText) : { text: rawText };
+        const translated =
+          kind === 'danmaku'
+            ? String(a?.translated || split.translated || '').trim()
+            : '';
+        return {
+          id: watchId('act'),
+          kind,
+          text: split.text || undefined,
+          translated: translated || undefined,
+          giftName: a?.giftName ? String(a.giftName) : undefined,
+          giftAmount: typeof a?.giftAmount === 'number' ? a.giftAmount : undefined,
+        };
+      })
       .filter((a: WatchPublicAction) => a.kind !== 'danmaku' || Boolean(a.text));
     const t = String(asJson.transfer || '').toLowerCase();
     const transfer: CharOutput['transfer'] =
       t === 'accept' ? 'accept' : t === 'return' ? 'return' : null;
-    if (chat.length || publicActions.length || transfer) {
-      return {
-        chat: chat.filter(c => c.text || c.sticker),
-        public: publicActions,
-        transfer,
-        why: String(asJson.why || ''),
-        wentPublic: publicActions.length > 0,
-      };
-    }
+    return {
+      chat: chat.filter(c => c.text || c.sticker),
+      public: publicActions,
+      transfer,
+      why: String(asJson.why || ''),
+      wentPublic: publicActions.length > 0,
+    };
   }
 
   const lines = absorbContinuation(labelLines(raw));
-
-  const chat: CharChatLine[] = valuesOf(lines, ['私聊', '说', '聊', '回'])
-    .map(text => ({ text: stripVoiceMarkup(text), sticker: '', voice: false }))
-    .filter(c => c.text)
-    .slice(0, 3);
-
-  // 表情单独成一条（只发表情不发字）
-  valuesOf(lines, ['表情']).forEach(name => {
-    const clean = stripVoiceMarkup(name.replace(/[「」【】"']/g, '')).trim();
-    if (clean) chat.push({ text: '', sticker: clean, voice: false });
-  });
+  const chat: CharChatLine[] = chatLinesFromBody(chatBodyFromLines(lines));
 
   const publicActions: WatchPublicAction[] = [];
   // 角色这一路只传兜底作者名：角色的公屏本来就不带作者，这里收下内容，作者名后面不用
   parseDanmaku(valuesOf(lines, DANMAKU_KEYS), '我').forEach(d => {
-    publicActions.push({ id: watchId('act'), kind: 'danmaku', text: d.text });
+    publicActions.push({
+      id: watchId('act'),
+      kind: 'danmaku',
+      text: d.text,
+      translated: d.translated || undefined,
+    });
   });
 
   // 打赏：礼物名 + 数字
@@ -608,8 +684,8 @@ function toCharOutput(raw: string): CharOutput {
   const transfer: CharOutput['transfer'] =
     /收|accept|接受/.test(transferRaw) ? 'accept' : /退|return|还/.test(transferRaw) ? 'return' : null;
 
-  // 一个能认的标签都没有：说明它没照格式写，交给上层重问一遍
-  if (!lines.some(l => l.label)) throw new Error('模型没按约好的格式回');
+  // 私聊正文可以没有「私聊：」这种标签。一个字都没有、公屏动作也没有，才重问。
+  if (!lines.some(l => l.label) && chat.length === 0) throw new Error('模型没按约好的格式回');
 
   const trimmed = publicActions.filter(a => a.kind !== 'danmaku' || Boolean(a.text)).slice(0, 4);
 
@@ -874,7 +950,7 @@ export async function runCharTurn(opts: {
     historyMsgs: opts.historyMessages,
     contextLimit: clampManualContextLimit(opts.char.contextLimit),
     recallQueryHint: recallHint || undefined,
-    // 'direct' 不带私聊专属引导与协同文件柜；也不传 realtimeConfig，所以没有天气/新闻/小红书。
+    // 'direct' 不带私聊专属引导与协同文件柜。
     recallEntryPoint: 'direct',
     // 这里**不传 rules**。传 rules 会把「聊天 App 行为规范」整段拿掉——对话质量那一整块
     // （拒绝空话 / 让每句话只有你能说出来 / 情绪要有层次 / 像真正了解对方的人那样回应）跟着一起没了，
@@ -887,7 +963,10 @@ export async function runCharTurn(opts: {
       }),
       scene: '',
     },
+    // 日程、情绪、由日程带出的音乐氛围仍靠这个开关。含义不改，自播也在用。
     liveGenerator: true,
+    // 热点、小红书、X、家园和宠物只在陪看私聊这一路跳过。
+    watchAlongPrivate: true,
     stripImages: true,
   });
 
@@ -898,7 +977,7 @@ export async function runCharTurn(opts: {
     userLine: opts.userLine,
     clip: opts.clip,
     assign: opts.assign,
-    stickers: opts.emojis.map(e => e.name).slice(0, 60),
+    voiceReply: opts.session.cast.voiceReply === true && opts.char.chatVoiceEnabled === true,
   });
 
   // 陪看私聊要作为真正的对话轮次出现，模型才记得住自己刚才是什么语气。
@@ -931,9 +1010,8 @@ export async function runCharTurn(opts: {
     purpose: 'watch_along_char',
     maxTokens: 8000,
     parse: toCharOutput,
-    nudge: `上一条没照格式。这次一行只放一样，每行都以标签开头：
-私聊：要说的话
-公屏：想在直播间说的一句（不想就算了）
+    nudge: `上一条没照格式。私聊按平时发消息那样写，一行一句。想去直播间才另起一行：
+公屏：想在直播间说的一句
 安静：什么都不想做的理由`,
   });
 }

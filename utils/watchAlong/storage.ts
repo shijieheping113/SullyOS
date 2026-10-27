@@ -214,6 +214,7 @@ function normalizeActions(list: unknown, beatId: string): WatchPublicAction[] {
         ? a.kind
         : 'danmaku',
     text: text(a?.text) || undefined,
+    translated: text(a?.translated) || undefined,
     giftName: text(a?.giftName) || undefined,
     giftAmount: typeof a?.giftAmount === 'number' ? a.giftAmount : undefined,
   }));
@@ -337,6 +338,9 @@ export function normalizeSession(raw: any, charName = ''): WatchAlongSession {
     ? arr<any>(raw?.chat).map((c, i) => normalizeChat(c, i, id))
     : legacyChatFromBeats;
   const isLegacy = !raw?.room && !raw?.cast;
+  const pendingPublic = normalizeActions(raw?.pendingPublic, `${id}_pend`).filter(
+    a => (a.kind === 'danmaku' || a.kind === 'mic_line') && Boolean(a.text),
+  );
 
   return {
     id,
@@ -362,6 +366,7 @@ export function normalizeSession(raw: any, charName = ''): WatchAlongSession {
     charCue: text(raw?.charCue) || undefined,
     recap: text(raw?.recap) || undefined,
     recapEdited: raw?.recapEdited === true ? true : undefined,
+    pendingPublic: pendingPublic.length ? pendingPublic : undefined,
     legacy: isLegacy || Boolean(raw?.legacy),
   };
 }

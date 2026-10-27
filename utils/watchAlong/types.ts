@@ -97,6 +97,8 @@ export interface WatchPublicAction {
   id: string;
   kind: 'danmaku' | 'gift' | 'mic_on' | 'mic_line' | 'mic_off';
   text?: string;
+  /** 中文译文：角色公屏的外语弹幕才有，中文弹幕留空 */
+  translated?: string;
   giftName?: string;
   giftAmount?: number;
 }
@@ -242,6 +244,11 @@ export interface WatchAlongSession {
   room: WatchRoom;
   cast: WatchCast;
   beats: WatchBeat[];
+  /**
+   * 还没有任何一幕时，用户已经发出的公屏文字（弹幕或麦上）。
+   * 第一幕生成出来以后仍留在这里，公屏上排在这一幕的新弹幕前面。
+   */
+  pendingPublic?: WatchPublicAction[];
   chat: WatchChatMessage[];
   digests: WatchDigest[];
   /** 旧版单句导演引导，只为兼容老记录；新记录只用下面两个分组 */

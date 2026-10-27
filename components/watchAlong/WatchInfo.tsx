@@ -11,11 +11,20 @@ import { Sheet, SolidButton, W } from './chrome';
 import {
   defaultStreamerProfile,
   type WatchAlongSession,
+  type WatchBeat,
   type WatchRoom,
   type WatchStreamerLanguage,
   type WatchStreamerScreenForm,
   type WatchStreamerTier,
 } from '../../utils/watchAlong/types';
+
+/** 台词框带上已有的中文，保存时才能按 ▸ 拆回去。没有译文就用原来那句。 */
+function speechDraft(beat: WatchBeat | undefined): string {
+  if (!beat) return '';
+  const lines = (beat.seq || []).filter(s => s.kind === 'line' && s.text);
+  if (!lines.length) return beat.speech || '';
+  return lines.map(s => (s.translated ? `${s.text} ▸ ${s.translated}` : s.text)).join('\n');
+}
 
 const Field = ({
   label,
@@ -121,15 +130,22 @@ const TIER_OPTIONS: { value: WatchStreamerTier; label: string }[] = [
 export function WatchInfo({
   open,
   session,
+  beatIndex,
   onClose,
   onSave,
 }: {
   open: boolean;
   session: WatchAlongSession;
+  /** 正在看的这一幕。不传就用最新一幕 */
+  beatIndex?: number;
   onClose: () => void;
-  onSave: (next: { room: WatchRoom; scene: string; speech: string }) => void;
+  onSave: (next: { room: WatchRoom; scene: string; speech: string; beatIndex?: number }) => void;
 }) {
   const last = session.beats[session.beats.length - 1];
+  const editing =
+    typeof beatIndex === 'number'
+      ? session.beats.find(b => b.index === beatIndex) ?? last
+      : last;
   const p = session.room.profile || defaultStreamerProfile();
   const [name, setName] = useState(session.room.streamerName);
   const [handle, setHandle] = useState(session.room.streamerHandle);
@@ -143,8 +159,8 @@ export function WatchInfo({
   const [tier, setTier] = useState<WatchStreamerTier>(p.tier);
   const [speechStyle, setSpeechStyle] = useState(p.speechStyle);
   const [motive, setMotive] = useState(p.motive);
-  const [scene, setScene] = useState(last?.scene || '');
-  const [speech, setSpeech] = useState(last?.speech || '');
+  const [scene, setScene] = useState(editing?.scene || '');
+  const [speech, setSpeech] = useState(speechDraft(editing));
 
   // 每次打开 / 换一场，都把表单对齐到本场当前的值
   useEffect(() => {
@@ -162,10 +178,10 @@ export function WatchInfo({
     setTier(cur.tier);
     setSpeechStyle(cur.speechStyle);
     setMotive(cur.motive);
-    setScene(last?.scene || '');
-    setSpeech(last?.speech || '');
+    setScene(editing?.scene || '');
+    setSpeech(speechDraft(editing));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, session.id, last?.id]);
+  }, [open, session.id, editing?.id]);
 
   return (
     <Sheet
@@ -197,6 +213,7 @@ export function WatchInfo({
               },
               scene: scene.trim(),
               speech: speech.trim(),
+              beatIndex: editing?.index,
             })
           }
         >
@@ -260,7 +277,7 @@ export function WatchInfo({
         />
 
         <div className="mt-4 text-[11px] font-medium" style={{ color: W.ink }}>
-          当前这一幕（第 {Math.max(1, last ? last.index + 1 : 1)} 幕）
+          当前这一幕（第 {Math.max(1, editing ? editing.index + 1 : 1)} 幕）
         </div>
         <Field label="画面" value={scene} onChange={setScene} multiline rows={3} placeholder="画面里发生了什么" />
         <Field label="主播台词" value={speech} onChange={setSpeech} multiline rows={3} placeholder="主播说的这一句" />

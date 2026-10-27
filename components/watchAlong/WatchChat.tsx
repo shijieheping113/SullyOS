@@ -1,7 +1,7 @@
 /**
  * 陪看私聊（YouTube 私信的样子）。
  *
- * 上面一条直播还在演的横条，中间是两个人说话，下面是输入条。
+ * 上面是会话头，中间是两个人说话，下面是输入条。返回键回到直播间。
  * 表情包、引用、语音、转账、编辑、重来都在这儿。
  * 消息翻译不开自己的开关，只跟主聊天已经存的那一组键。
  *
@@ -94,7 +94,6 @@ export function WatchChat({
   loadingId,
   voiceReady,
   onBack,
-  onOpenRoom,
   onOpenDirector,
   onTrigger,
   onTogglePresence,
@@ -151,13 +150,14 @@ export function WatchChat({
   const [trans, setTrans] = useState<Set<string>>(new Set());
   /** 开了翻译、没开同时展开时，哪些消息正显示译文 */
   const [showTarget, setShowTarget] = useState<Set<string>>(new Set());
-  const [menuFor, setMenuFor] = useState<WatchChatMessage | null>(null);
+  const [menu, setMenu] = useState<{ msg: WatchChatMessage; top: number; left: number } | null>(null);
   const [editing, setEditing] = useState<WatchChatMessage | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [payOpen, setPayOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('200');
   const [payNote, setPayNote] = useState('');
   const flowRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const charHere = session.cast.presence !== 'solo';
@@ -202,10 +202,36 @@ export function WatchChat({
   const emojiUrl = (name?: string): string | undefined =>
     name ? emojis.find(e => e.name === name)?.url : undefined;
 
-  const startPress = (m: WatchChatMessage) => {
+  const menuRows = (m: WatchChatMessage): number => {
+    let n = 1;
+    if (m.text || m.sticker || m.clip) n += 1;
+    if ((m.from === 'user' || m.from === 'char') && m.text && !m.sticker && !m.clip) n += 1;
+    const hasVoice = watchLineIsVoice(m.text, { wantVoice: m.wantVoice, voiceId: m.voiceId });
+    if (m.text && m.from === 'char' && voiceReady && !hasVoice) n += 1;
+    if (hasVoice && voiceReady) n += 2;
+    if (m.text) n += 1;
+    return n;
+  };
+
+  const startPress = (m: WatchChatMessage, el: HTMLElement) => {
     if (m.from === 'action') return;
     if (pressTimer.current) clearTimeout(pressTimer.current);
-    pressTimer.current = setTimeout(() => setMenuFor(m), 420);
+    pressTimer.current = setTimeout(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      const page = root.getBoundingClientRect();
+      const row = el.getBoundingClientRect();
+      const menuW = 210;
+      const menuH = menuRows(m) * 42;
+      let top = row.bottom - page.top + 6;
+      if (top + menuH > page.height - 8) top = row.top - page.top - menuH - 6;
+      if (top < 8) top = 8;
+      if (top + menuH > page.height - 8) top = Math.max(8, page.height - menuH - 8);
+      let left = m.from === 'user' ? row.right - page.left - menuW : row.left - page.left;
+      if (left + menuW > page.width - 8) left = Math.max(8, page.width - menuW - 8);
+      if (left < 8) left = 8;
+      setMenu({ msg: m, top, left });
+    }, 420);
   };
   const endPress = () => {
     if (pressTimer.current) {
@@ -244,29 +270,12 @@ export function WatchChat({
   const textColor = (mine: boolean) => (mine ? '#FFFFFF' : W.ink);
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: W.page }}>
-      {/* 台上还在演的那一条 */}
-      <button
-        type="button"
-        onClick={onOpenRoom}
-        className="relative flex min-h-[40px] shrink-0 items-center gap-2 px-3 pb-1 text-left"
-        style={{ background: W.ink, color: 'rgba(255,255,255,.9)', paddingTop: 'max(6px, env(safe-area-inset-top))' }}
-      >
-        <span
-          className="inline-flex h-[17px] items-center px-[5px] text-[9px] font-bold tracking-wide text-white"
-          style={{ borderRadius: 3, background: W.red }}
-        >
-          LIVE
-        </span>
-        <span className="truncate text-[11.5px]">
-          {session.room.streamerName} · 第 {Math.max(1, session.beats.length)} 幕
-        </span>
-        <span className="ml-auto shrink-0 text-[11px] text-white/55">回到直播</span>
-        <WIco name="next" size={13} style={{ color: 'rgba(255,255,255,.6)' }} />
-      </button>
-
+    <div ref={rootRef} className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: W.page }}>
       {/* 会话头 */}
-      <div className="flex h-[50px] shrink-0 items-center gap-2 px-2" style={{ borderBottom: `1px solid ${W.line}` }}>
+      <div
+        className="flex min-h-[50px] shrink-0 items-center gap-2 px-2"
+        style={{ borderBottom: `1px solid ${W.line}`, paddingTop: 'max(0px, env(safe-area-inset-top))' }}
+      >
         <button
           type="button"
           aria-label="返回直播"
@@ -282,7 +291,11 @@ export function WatchChat({
             {charName}
           </div>
           <div className="truncate text-[10.5px] leading-[13px]" style={{ color: W.sub }}>
-            {charHere ? (session.cast.presence === 'side' ? '陪你看 · 一起看中' : '只在私聊里') : '还没进来'}
+            {charHere
+              ? (session.cast.presence === 'side'
+                ? `一起看${session.room.streamerName} · 第 ${Math.max(1, session.beats.length)} 幕`
+                : '只在私聊里')
+              : '还没进来'}
           </div>
         </div>
         <button
@@ -336,7 +349,7 @@ export function WatchChat({
               <div
                 key={m.id}
                 className="mb-2 flex justify-center"
-                onPointerDown={() => startPress(m)}
+                onPointerDown={e => startPress(m, e.currentTarget)}
                 onPointerUp={endPress}
                 onPointerCancel={endPress}
                 onContextMenu={e => e.preventDefault()}
@@ -380,12 +393,12 @@ export function WatchChat({
                 {m.sticker ? (
                   <button
                     type="button"
-                    onPointerDown={() => startPress(m)}
+                    onPointerDown={e => startPress(m, e.currentTarget)}
                     onPointerUp={endPress}
                     onPointerCancel={endPress}
                     onContextMenu={e => e.preventDefault()}
                     className="block overflow-hidden active:opacity-90"
-                    style={{ borderRadius: 10, width: 82, height: 82, background: W.fill }}
+                    style={{ borderRadius: 10, width: 56, height: 56, background: W.fill }}
                   >
                     {stickerUrl ? (
                       <TokenImg value={stickerUrl} alt={m.sticker} className="h-full w-full object-cover" />
@@ -401,7 +414,7 @@ export function WatchChat({
                 {m.transfer ? (
                   <button
                     type="button"
-                    onPointerDown={() => startPress(m)}
+                    onPointerDown={e => startPress(m, e.currentTarget)}
                     onPointerUp={endPress}
                     onPointerCancel={endPress}
                     onContextMenu={e => e.preventDefault()}
@@ -443,7 +456,7 @@ export function WatchChat({
                     <button
                       type="button"
                       disabled={!voiceReady || busy}
-                      onPointerDown={() => startPress(m)}
+                      onPointerDown={e => startPress(m, e.currentTarget)}
                       onPointerUp={endPress}
                       onPointerCancel={endPress}
                       onContextMenu={e => e.preventDefault()}
@@ -546,7 +559,7 @@ export function WatchChat({
                 {/* 文字气泡 */}
                 {!m.sticker && !isVoice && (bodyShown || (bothLangs && targetShown)) ? (
                   <div
-                    onPointerDown={() => startPress(m)}
+                    onPointerDown={e => startPress(m, e.currentTarget)}
                     onPointerUp={endPress}
                     onPointerCancel={endPress}
                     onContextMenu={e => e.preventDefault()}
@@ -757,25 +770,29 @@ export function WatchChat({
             </div>
           ) : (
             <div
-              className="no-scrollbar grid shrink-0 grid-cols-6 gap-1 overflow-y-auto overscroll-contain"
-              style={{ maxHeight: 168 }}
+              className="no-scrollbar grid shrink-0 grid-cols-5 gap-2 overflow-y-auto overscroll-contain"
+              style={{ maxHeight: 228 }}
             >
               {shownEmojis.map((e, idx) => (
                 <button
                   key={`${e.name}_${idx}`}
                   type="button"
                   onClick={() => sendSticker(e.name)}
-                  className="relative aspect-square min-w-0 overflow-hidden active:opacity-80"
-                  style={{ borderRadius: 8, background: W.fill }}
+                  className="flex min-w-0 flex-col items-center active:opacity-80"
+                  style={{ borderRadius: 8, background: W.fill, padding: 4 }}
                   aria-label={e.name}
                 >
-                  <TokenImg
-                    value={e.url}
-                    alt={e.name}
-                    draggable={false}
-                    className="absolute inset-1 h-[calc(100%-8px)] w-[calc(100%-8px)]"
-                    style={{ objectFit: 'contain' }}
-                  />
+                  <span className="block h-[44px] w-full overflow-hidden">
+                    <TokenImg
+                      value={e.url}
+                      alt={e.name}
+                      draggable={false}
+                      className="pointer-events-none h-full w-full object-contain"
+                    />
+                  </span>
+                  <span className="mt-0.5 w-full truncate text-center text-[9px] leading-tight" style={{ color: W.sub }}>
+                    {e.name}
+                  </span>
                 </button>
               ))}
             </div>
@@ -840,8 +857,8 @@ export function WatchChat({
       </div>
 
       {/* 长按菜单 */}
-      {menuFor ? (() => {
-        const target = menuFor;
+      {menu ? (() => {
+        const target = menu.msg;
         const isChar = target.from === 'char';
         const hasVoice = watchLineIsVoice(target.text, { wantVoice: target.wantVoice, voiceId: target.voiceId });
         const items: Array<{ label: string; danger?: boolean; run: () => void }> = [];
@@ -860,7 +877,7 @@ export function WatchChat({
             label: '编辑',
             run: () => {
               setEditing(target);
-              setEditDraft(showLine(splitWatchText(target.text).source) || target.text || '');
+              setEditDraft(target.text || '');
             },
           });
         }
@@ -883,15 +900,18 @@ export function WatchChat({
         items.push({ label: '删除', danger: true, run: () => onDelete(target) });
 
         return (
-          <div className="absolute inset-0 z-40 flex flex-col justify-end">
-            <button type="button" aria-label="关闭菜单" onClick={() => setMenuFor(null)} className="absolute inset-0 bg-[rgba(15,15,15,0.16)]" />
-            <div className="relative mx-auto mb-4 w-[210px] overflow-hidden bg-white" style={{ borderRadius: 14, boxShadow: '0 14px 40px rgba(0,0,0,.22)' }}>
+          <div className="absolute inset-0 z-40">
+            <button type="button" aria-label="关闭菜单" onClick={() => setMenu(null)} className="absolute inset-0 bg-[rgba(15,15,15,0.16)]" />
+            <div
+              className="absolute w-[210px] overflow-hidden bg-white"
+              style={{ top: menu.top, left: menu.left, borderRadius: 14, boxShadow: '0 14px 40px rgba(0,0,0,.22)' }}
+            >
               {items.map((item, i) => (
                 <button
                   key={item.label}
                   type="button"
                   onClick={() => {
-                    setMenuFor(null);
+                    setMenu(null);
                     item.run();
                   }}
                   className="block w-full px-3.5 py-[11px] text-left text-[12.5px] active:bg-[#F8F8F8]"

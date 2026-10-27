@@ -202,6 +202,20 @@ describe('外语直播的新字段能存能取', () => {
     expect(loaded.beats[0].seq?.[1].translated).toBe('');
     expect(loaded.beats[0].danmaku[0].translated).toBe('好听');
   });
+
+  it('开场前发出的公屏文字往返不丢', async () => {
+    const s = newSession();
+    s.beats = [];
+    s.pendingPublic = [
+      { id: 'p1', kind: 'danmaku', text: '先说一句' },
+      { id: 'p2', kind: 'mic_line', text: '麦上这句' },
+    ];
+    await saveWatchSession(s);
+    const [loaded] = await loadWatchSessions('阿猫');
+    expect(loaded.beats).toHaveLength(0);
+    expect(loaded.pendingPublic?.map(a => a.text)).toEqual(['先说一句', '麦上这句']);
+    expect(loaded.pendingPublic?.map(a => a.kind)).toEqual(['danmaku', 'mic_line']);
+  });
 });
 
 describe('删除要把录音交出来', () => {

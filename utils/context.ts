@@ -565,6 +565,11 @@ const renderCoreContext = async (
              * 与 deferVolatile 独立：时间感知和记忆宫殿召回仍正常内联输出。
              */
             skipEmotionBuff?: boolean;
+            /**
+             * 陪看私聊专用：不注入家园设定和宠物。
+             * 不传就跟以前一样，主聊天和自播都还带着这两段。
+             */
+            skipHomeContext?: boolean;
             emotion?: EmotionContextOptions;
         },
     ): Promise<string> => {
@@ -622,9 +627,11 @@ const renderCoreContext = async (
             }
         }
 
-        // 家园背景由所有入口共用，未设置时不注入。
-        context += buildHomeDefinitionContext(char.homeDefinition, user.name);
-        context += buildHomePetContext(char.home3D);
+        // 家园背景由所有入口共用，未设置时不注入。陪看私聊显式跳过。
+        if (!layout?.skipHomeContext) {
+            context += buildHomeDefinitionContext(char.homeDefinition, user.name);
+            context += buildHomePetContext(char.home3D);
+        }
 
         // 4. [NEW] 印象档案 (Private Impression)
         // 这是角色对用户的私密看法，只有角色知道

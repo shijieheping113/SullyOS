@@ -131,6 +131,11 @@ export interface BuildChatPayloadInput {
      * 关闭情绪 buff / innerState、当日日程与日程导出的音乐氛围。主聊天不传，行为不变。
      */
     liveGenerator?: boolean;
+    /**
+     * 电波陪看私聊。只有 runCharTurn 传 true。
+     * 跳过实时世界信息、小红书、X、家园和宠物。不改变 liveGenerator 的含义。
+     */
+    watchAlongPrivate?: boolean;
 }
 
 export type ChatPreparationStage='vision'|'memory'|'prompt'|'collaboration'|'tasks';
@@ -393,6 +398,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             appRules: input.appPrompt?.rules,
             appendRules: input.appPrompt?.appendRules,
             liveGenerator: input.liveGenerator === true,
+            watchAlongPrivate: input.watchAlongPrivate === true,
         },
     ));
     input.signal?.throwIfAborted();

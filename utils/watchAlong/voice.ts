@@ -1,16 +1,16 @@
 /**
- * 陪看的语音。
+ * 陪看私聊的语音。
  *
- * 语言、演出标记、合成，走主聊天同一套：
- * `chatVoiceLang` → `translateVoiceLangText` + `languageBoost`，
- * 显示用 `stripTtsMarkupForDisplay` / `stripFishCuesForDisplay` 把标记从字上拿掉，
- * 交给合成的仍是清洗后、带演出标记的那一版。
+ * 台词是主模型在同一次回复里写进 `<语音>` 的。合成直接念标签里的字，
+ * 走 `parseVoiceOutput` + `synthesizeSpeechDetailed`，跟主聊天拿标签内文去合成一样。
+ * 不另请辅助模型改写，也不走「把已有文字翻译成外语语音」那条路。
+ *
+ * 「转文字」有字幕就显示字幕；没选语种、没有字幕时，显示语音标签里要念的字。
  *
  * 没开角色上的「收到就自动播放」时，只留语音条，点一下才合成。
  * 开了就自己合成并念出来。录音存在本机，刷新还在；换设备会丢。
  */
 
-import { inferChatVoiceEmotionFromSpoken } from '../chatVoiceTagFormat';
 import { stripFishCuesForDisplay } from '../fishAudioTts';
 import { parseVoiceOutput } from '../minimaxTts';
 import {
@@ -19,11 +19,6 @@ import {
   stripTtsMarkupForDisplay,
   synthesizeSpeechDetailed,
 } from '../ttsRouter';
-import {
-  applyLongpressTranslateResult,
-  buildVoiceLangTranslateSystemPrompt,
-  translateVoiceLangText,
-} from '../voiceLangTranslate';
 import {
   downloadVoiceAudioUrl,
   forgetLiveBeatVoices,
@@ -38,12 +33,12 @@ export function watchLineIsVoice(text: string | undefined, flags: { wantVoice?: 
   return parseVoiceOutput(text || '').hasVoiceTag;
 }
 
-/** 给界面看的字：演出标记拿掉，跟主聊天气泡 / 转文字同一套清洗 */
+/** 「转文字」：有字幕就显示字幕；没有字幕就显示语音标签里要念的字 */
 export function shownWatchText(text: string | undefined, apiConfig: APIConfig): string {
   const raw = text || '';
   const parsed = parseVoiceOutput(raw);
   const base = parsed.hasVoiceTag
-    ? [parsed.display, parsed.subtitle].filter(Boolean).join('\n') || parsed.speech
+    ? (parsed.subtitle || parsed.speech || parsed.display)
     : raw;
   return stripFishCuesForDisplay(stripTtsMarkupForDisplay(base, apiConfig))
     .replace(/<\s*\/?\s*[^<>\s]{1,12}\s*>/g, '')
@@ -64,9 +59,8 @@ export async function loadWatchVoiceUrl(key: string): Promise<string | null> {
 }
 
 /**
- * 现合成一条。语种跟主聊天一样读角色的 `chatVoiceLang`：
- * 有语种就先用主聊天那条翻译路把要念的字翻过去，再交给 `synthesizeSpeechDetailed`，
- * `languageBoost` 用同一个值。
+ * 现合成一条。有 `<语音>` 就念标签里面的字；没有就念这条正文本身。
+ * 不调用辅助模型补字或翻译。语种提示仍把角色的 `chatVoiceLang` 交给 `languageBoost`。
  */
 export async function synthesizeWatchVoice(opts: {
   key: string;
@@ -86,29 +80,6 @@ export async function synthesizeWatchVoice(opts: {
     if (!emotion && parsed.emotion) emotion = parsed.emotion;
   } else {
     spokenText = cleanTextForTtsProvider(opts.text || '', opts.apiConfig);
-    if (voiceLang && spokenText.trim()) {
-      const originalText = stripTtsMarkupForDisplay(spokenText, opts.apiConfig) || spokenText;
-      try {
-        const translated = await translateVoiceLangText({
-          apiConfig: opts.apiConfig,
-          systemPrompt: buildVoiceLangTranslateSystemPrompt(voiceLang, { apiConfig: opts.apiConfig }),
-          text: originalText,
-          purpose: 'chat-manual-voice-translate',
-          charId: opts.char.id,
-          retryMainOnce: true,
-        });
-        if (translated) {
-          const applied = applyLongpressTranslateResult(translated, { preserveRawMarkup });
-          if (applied.spokenText) {
-            spokenText = applied.spokenText;
-            const tagEmotion = applied.voiceEmotion || inferChatVoiceEmotionFromSpoken(spokenText);
-            if (tagEmotion) emotion = tagEmotion;
-          }
-        }
-      } catch {
-        /* 翻译没成就按原文念，语种提示仍走 languageBoost */
-      }
-    }
   }
 
   spokenText = spokenText.trim();

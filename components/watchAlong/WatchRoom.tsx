@@ -98,8 +98,8 @@ export function WatchRoom({
   onOpenDirector: () => void;
   onOpenSummary: () => void;
   onOpenSettings: () => void;
-  /** 本场直播信息：标题、主播人设、这一幕内容，都能手改 */
-  onOpenInfo: () => void;
+  /** 本场直播信息：标题、主播人设、这一幕内容，都能手改。带上正在看的这一幕 */
+  onOpenInfo: (beatIndex?: number) => void;
   onExit: () => void;
   onSummon: () => void;
   onHidePet: () => void;
@@ -149,27 +149,32 @@ export function WatchRoom({
     return undefined;
   }, [session.beats, viewBeat, isLatest]);
 
-  const myMicLine = useMemo(() => {
-    const pick = (b: (typeof session.beats)[number] | undefined): string | undefined => {
-      if (!b) return undefined;
-      if (b.userMicLine) return b.userMicLine;
-      return [...b.userActions].reverse().find(a => a.kind === 'mic_line' && a.text)?.text;
+  const myMicLines = useMemo(() => {
+    const fromBeat = (b: (typeof session.beats)[number] | undefined): string[] => {
+      if (!b) return [];
+      const texts = (b.userActions ?? []).filter(a => a.kind === 'mic_line' && a.text).map(a => a.text as string);
+      if (texts.length) return texts;
+      if (b.userMicLine) return [b.userMicLine];
+      return [];
     };
-    const own = pick(viewBeat);
-    if (own) return own;
-    if (!isLatest) return undefined;
-    for (let i = session.beats.length - 1; i >= 0; i--) {
-      const found = pick(session.beats[i]);
-      if (found) return found;
+    const pending = (session.pendingPublic ?? [])
+      .filter(a => a.kind === 'mic_line' && a.text)
+      .map(a => a.text as string);
+    const own = fromBeat(viewBeat);
+    let beatLines: string[] = [];
+    if (own.length) beatLines = own;
+    else if (isLatest) {
+      for (let i = session.beats.length - 1; i >= 0; i--) {
+        const found = fromBeat(session.beats[i]);
+        if (found.length) {
+          beatLines = found;
+          break;
+        }
+      }
     }
-    return undefined;
-  }, [session.beats, viewBeat, isLatest]);
-
-  // 公屏滚动：新弹幕进来就贴到底
-  useEffect(() => {
-    const el = danmakuRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [viewBeat?.id, session.beats.length]);
+    const showPending = session.beats.length === 0 || isLatest || viewBeat?.index === 0;
+    return showPending ? [...pending, ...beatLines] : beatLines;
+  }, [session.beats, session.pendingPublic, viewBeat, isLatest]);
 
   /**
    * 公屏是累加的：上一轮的弹幕留在下面，新的一轮接在后面继续往上飘。
@@ -178,33 +183,38 @@ export function WatchRoom({
    */
   const lines = useMemo(() => {
     const out: Array<{ id: string; author: string; text: string; translated?: string; mine: boolean; char: boolean; gift: boolean }> = [];
+    const nickname = session.cast.userAccount.nickname;
+    const pushUser = (a: (typeof session.beats)[number]['userActions'][number]) => {
+      if (a.kind === 'mic_line') return;
+      if (a.kind === 'danmaku' && a.text) {
+        out.push({ id: a.id, author: nickname, text: a.text, mine: true, char: false, gift: false });
+        return;
+      }
+      if (a.kind === 'danmaku') return;
+      out.push({
+        id: a.id,
+        author: nickname,
+        text:
+          a.kind === 'gift'
+            ? `${a.giftName || '礼物'} ×${a.giftAmount || 1}`
+            : a.kind === 'mic_on'
+              ? '申请上麦，接通了'
+              : a.kind === 'mic_off'
+                ? '下麦了'
+                : a.text || '',
+        mine: true,
+        char: false,
+        gift: a.kind === 'gift',
+      });
+    };
+    // 开场前发出的话排在所有幕前面；第一幕的新弹幕接在它们后面
+    (session.pendingPublic ?? []).forEach(pushUser);
     const upTo = viewBeat ? viewBeat.index : -1;
     session.beats.slice(0, upTo + 1).forEach(beat => {
       (beat.danmaku ?? []).forEach(d => {
         out.push({ id: d.id, author: d.author, text: d.text, translated: d.translated || '', mine: false, char: false, gift: false });
       });
-      (beat.userActions ?? []).forEach(a => {
-        if (a.kind === 'mic_line') return;
-        if (a.kind === 'danmaku' && a.text) {
-          out.push({ id: a.id, author: session.cast.userAccount.nickname, text: a.text, mine: true, char: false, gift: false });
-        } else {
-          out.push({
-            id: a.id,
-            author: session.cast.userAccount.nickname,
-            text:
-              a.kind === 'gift'
-                ? `${a.giftName || '礼物'} ×${a.giftAmount || 1}`
-                : a.kind === 'mic_on'
-                  ? '申请上麦，接通了'
-                  : a.kind === 'mic_off'
-                    ? '下麦了'
-                    : a.text || '',
-            mine: true,
-            char: false,
-            gift: a.kind === 'gift',
-          });
-        }
-      });
+      (beat.userActions ?? []).forEach(pushUser);
       (beat.charActions ?? []).forEach(a => {
         if (a.kind === 'mic_line') return;
         out.push({
@@ -218,6 +228,7 @@ export function WatchRoom({
                 : a.kind === 'mic_off'
                   ? '下麦了'
                   : a.text || '',
+          translated: a.kind === 'danmaku' ? a.translated || '' : '',
           mine: false,
           char: true,
           gift: a.kind === 'gift',
@@ -226,7 +237,14 @@ export function WatchRoom({
     });
     // 看一晚上会攒出很多条，只留最近的，界面上不会越滚越卡
     return out.filter(l => l.text).slice(-150);
-  }, [viewBeat, session.beats, session.cast.charAccount.nickname, session.cast.userAccount.nickname]);
+  }, [viewBeat, session.beats, session.pendingPublic, session.cast.charAccount.nickname, session.cast.userAccount.nickname]);
+
+  const lineKey = lines.map(l => l.id).join('\n');
+  // 公屏有新字就贴到底。只盯幕 id / 幕数时，往当前幕加字不会滚。
+  useEffect(() => {
+    const el = danmakuRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [viewBeat?.id, session.beats.length, lineKey]);
 
   const send = () => {
     const text = draft.trim();
@@ -256,27 +274,30 @@ export function WatchRoom({
   }, [viewBeat]);
 
   const [step, setStep] = useState(0);
-  /** 从段首往回翻时要停在上一段的最后一条（默认进新一段是从头放） */
-  const landAtEndRef = useRef(false);
-  useEffect(() => {
-    setStep(landAtEndRef.current ? Number.MAX_SAFE_INTEGER : 0);
-    landAtEndRef.current = false;
-  }, [viewBeat?.id]);
+  /** 往回翻到上一段时，落到那一段的最后一句；进下一段则从第一句开始 */
+  const [landAtEnd, setLandAtEnd] = useState(false);
+  const [placedBeatId, setPlacedBeatId] = useState(viewBeat?.id);
+  if (placedBeatId !== viewBeat?.id) {
+    setPlacedBeatId(viewBeat?.id);
+    setStep(landAtEnd ? Math.max(0, seq.length - 1) : 0);
+    if (landAtEnd) setLandAtEnd(false);
+  }
 
-  // Ann 2026-10-27（施工单第八节「六」）：字幕层改成线性显示——点一下切一段，只显示当前这一条，
-  // 画面条显示画面、台词条显示台词，不再分「画面区」和「台词区」两块，画面那行也不再常驻。
-  // 分条点播机制、翻页计数、上一句下一句按钮一个字节没动。
-  const curItem = seq.length ? seq[Math.min(step, seq.length - 1)] : undefined;
+  // 字幕层线性显示：点一下切一句，画面条显示画面、台词条显示台词。
+  // 句位按真实下标记，0 到最后一句；落到上一段末尾时就是 seq.length - 1。
+  const sentenceIndex = seq.length ? Math.min(Math.max(step, 0), seq.length - 1) : 0;
+  const curItem = seq.length ? seq[sentenceIndex] : undefined;
   const curIsScene = curItem?.kind === 'scene';
   const curText = curItem?.text || '';
   /** 台词条的中文同传：外语直播才有；中文大字在上（主体位置），外语原声小字跟在下面 */
   const curTranslated = curIsScene ? '' : curItem?.translated || '';
-  const atEnd = seq.length === 0 || step >= seq.length - 1;
+  const atEnd = seq.length === 0 || sentenceIndex >= seq.length - 1;
+  const sentenceLabel = seq.length ? `第 ${sentenceIndex + 1} 句 / 共 ${seq.length} 句` : '';
 
   const goBack = () => {
     if (!canBack) return;
-    // 往回退要落在上一段的最后一条，接得上刚才看到哪儿
-    landAtEndRef.current = true;
+    // 往回退要落在上一段的最后一句，接得上刚才看到哪儿
+    setLandAtEnd(true);
     setViewIdx((viewBeat?.index ?? 1) - 1);
   };
   const goForward = () => {
@@ -295,7 +316,7 @@ export function WatchRoom({
   const stepNext = () => {
     if (!viewBeat || session.legacy) return;
     if (!atEnd) {
-      setStep(s => s + 1);
+      setStep(sentenceIndex + 1);
       return;
     }
     if (!isLatest) goForward();
@@ -304,8 +325,8 @@ export function WatchRoom({
   /** 往上一句：段内往回退；退到段首就翻回上一段的最后一条 */
   const stepPrev = () => {
     if (!viewBeat || session.legacy) return;
-    if (step > 0) {
-      setStep(s => s - 1);
+    if (sentenceIndex > 0) {
+      setStep(sentenceIndex - 1);
       return;
     }
     goBack();
@@ -484,11 +505,17 @@ export function WatchRoom({
               )}
               {!session.legacy ? (
                 <div className="mt-1 text-[9.5px] text-white/45">
-                  {atEnd
-                    ? isLatest
-                      ? '这一段播完了 · 按「下一段」接着看'
-                      : '这段看完了 · 点右边往下翻'
-                    : `点右边下一句 · 点左边上一句 · ${Math.min(step + 1, seq.length)}/${seq.length}`}
+                  {sentenceLabel
+                    ? atEnd
+                      ? isLatest
+                        ? `${sentenceLabel} · 按「下一段」接着看`
+                        : `${sentenceLabel} · 点右边往下翻`
+                      : `点右边下一句 · 点左边上一句 · ${sentenceLabel}`
+                    : atEnd
+                      ? isLatest
+                        ? '这一段播完了 · 按「下一段」接着看'
+                        : '这段看完了 · 点右边往下翻'
+                      : '点右边下一句 · 点左边上一句'}
                 </div>
               ) : null}
             </>
@@ -571,7 +598,7 @@ export function WatchRoom({
       </div>
 
       {/* 连麦席：麦上只有角色出声，我说的话是文字 */}
-      {micLine ? (
+      {micLine || myMicLines.length ? (
         <div className="mx-4 shrink-0 px-3 py-2.5" style={{ borderRadius: 12, background: W.soft, border: `1px solid ${W.line}` }}>
           <div className="flex items-center gap-1.5">
             <span
@@ -585,6 +612,7 @@ export function WatchRoom({
             </span>
           </div>
 
+          {micLine ? (
           <div className="mt-2 flex items-start gap-2">
             <Avatar src={charAvatar} name={charName} size={22} />
             <div className="min-w-0 flex-1">
@@ -630,17 +658,18 @@ export function WatchRoom({
               <div className="mt-1 text-[11.5px] leading-[16px]">{micLine}</div>
             </div>
           </div>
+          ) : null}
 
-          {myMicLine ? (
-            <div className="mt-2 flex justify-end">
+          {myMicLines.map((line, i) => (
+            <div key={`${i}:${line}`} className="mt-2 flex justify-end">
               <div
                 className="max-w-[78%] px-2.5 py-1.5 text-[11.5px] leading-[16px]"
                 style={{ borderRadius: 12, background: '#fff', color: W.ink, border: `1px solid ${W.line}` }}
               >
-                {myMicLine}
+                {line}
               </div>
             </div>
-          ) : null}
+          ))}
         </div>
       ) : null}
 
@@ -651,7 +680,7 @@ export function WatchRoom({
         style={{
           flex: '6 1 0',
           borderTop: `1px solid ${W.line}`,
-          marginTop: micLine ? 8 : 0,
+          marginTop: micLine || myMicLines.length ? 8 : 0,
           maskImage: 'linear-gradient(to bottom, transparent 0, #000 18%)',
           WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 18%)',
         }}
@@ -783,8 +812,8 @@ export function WatchRoom({
       <Sheet open={pressMenuOpen} onClose={() => setPressMenuOpen(false)} title={`第 ${beatNo} / ${totalBeats} 段`}>
         <div className="pb-2">
           {[
-            { label: '改这一幕', desc: '画面和台词，就地改', run: onOpenInfo },
-            { label: '本场信息', desc: '主播名、人设、房间标题、分区', run: onOpenInfo },
+            { label: '改这一幕', desc: '画面和台词，就地改', run: () => onOpenInfo(viewBeat?.index) },
+            { label: '本场信息', desc: '主播名、人设、房间标题、分区', run: () => onOpenInfo(viewBeat?.index) },
             {
               label: '这一段重来',
               desc: isLatest ? '换一种走向，重新写这一段' : '只有最新那一段能重来',
@@ -821,7 +850,7 @@ export function WatchRoom({
         <div className="pb-2">
           {[
             { label: '导演一下', desc: '写下一轮台上和角色怎么走', icon: 'clap' as const, run: onOpenDirector },
-            { label: '本场信息', desc: '标题、主播人设、这一幕内容都能改', icon: 'edit' as const, run: onOpenInfo },
+            { label: '本场信息', desc: '标题、主播人设、这一幕内容都能改', icon: 'edit' as const, run: () => onOpenInfo(viewBeat?.index) },
             { label: '送个礼物', desc: '在公屏上给主播刷一个', icon: 'gift' as const, run: () => setGiftOpen(true) },
             { label: '看总结', desc: '整场回顾与阶段摘要', icon: 'clock' as const, run: onOpenSummary },
             { label: '陪看设置', desc: '角色、小号、语音、模型', icon: 'gear' as const, run: onOpenSettings },

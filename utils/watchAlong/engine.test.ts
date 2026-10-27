@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { __parseChar, __parseRooms, __parseStage } from './engine';
-import { buildStageTask } from './prompts';
+import { buildStageCounterTask, buildStageTask } from './prompts';
 import type { WatchAlongSession, WatchStreamerProfile } from './types';
 
 describe('台上这一幕的解析', () => {
@@ -224,6 +224,29 @@ describe('台上这一幕的解析', () => {
     });
     expect(r.danmaku[0]).toMatchObject({ author: 'ゆき', text: 'うぽつ', translated: '感谢开播' });
   });
+
+  it('双语缺了译文：已经写出来的那一半仍然留下，不为这个再丢掉整行', () => {
+    const onlyOriginal = __parseStage(`话：あーもう、これ無理だって
+弹幕：ゆき｜うぽつ
+点名：否`);
+    expect(onlyOriginal.seq[0].text).toBe('あーもう、これ無理だって');
+    expect(onlyOriginal.seq[0].translated).toBeUndefined();
+    expect(onlyOriginal.danmaku[0]).toMatchObject({ author: 'ゆき', text: 'うぽつ' });
+    expect(onlyOriginal.danmaku[0].translated).toBeUndefined();
+
+    const emptyRight = __parseStage('话：あーもう ▸\n弹幕：ゆき｜うぽつ ▸\n点名：否');
+    expect(emptyRight.seq[0].text).toBe('あーもう');
+    expect(emptyRight.seq[0].translated).toBeUndefined();
+    expect(emptyRight.danmaku[0].text).toBe('うぽつ');
+    expect(emptyRight.danmaku[0].translated).toBeUndefined();
+
+    const onlyChinese = __parseStage(`话：▸ 啊不行了这个真打不过
+弹幕：ゆき｜ ▸ 感谢开播
+点名：否`);
+    expect(onlyChinese.seq[0].text).toContain('打不过');
+    expect(onlyChinese.danmaku).toHaveLength(1);
+    expect(onlyChinese.danmaku[0].text).toContain('感谢开播');
+  });
 });
 
 /** 台上提示词的材料：造一条最小可用的陪看记录 */
@@ -358,6 +381,28 @@ describe('台上提示词：不抢话与主播档案', () => {
     expect(task).not.toContain('【你是谁】');
     expect(task).not.toContain('你在开一场直播');
   });
+
+  it('日语或英语直播间：话和弹幕同一行里原话和中文都写全', () => {
+    const s = makeStageSession({ profile });
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    const counter = buildStageCounterTask({ session: s, actionText: '有人发了条弹幕', micOn: false });
+    for (const text of [task, counter]) {
+      expect(text).toContain('即时翻译');
+      expect(text).toContain('▸');
+      expect(text).toContain('两种语言都写全');
+      expect(text).toContain('画面只写中文');
+      expect(text).not.toContain('写外语原话');
+    }
+  });
+
+  it('中文直播间不加译文', () => {
+    const s = makeStageSession({
+      profile: { ...profile, language: 'zh' },
+    });
+    const task = buildStageTask({ session: s, latest: '', micOn: false });
+    expect(task).toContain('这一场是中文直播间');
+    expect(task).toContain('不加译文');
+  });
 });
 
 describe('角色这一轮的解析', () => {
@@ -387,11 +432,27 @@ describe('角色这一轮的解析', () => {
     expect(r.wentPublic).toBe(false);
   });
 
-  it('只发一个表情', () => {
-    const r = __parseChar('表情：「翻白眼」');
+  it('表情包按主聊天的写法，可以单独一条，也可以跟字在一起', () => {
+    const only = __parseChar('[[SEND_EMOJI: 翻白眼]]');
+    expect(only.chat).toHaveLength(1);
+    expect(only.chat[0].sticker).toBe('翻白眼');
+    expect(only.chat[0].text).toBe('');
+
+    const both = __parseChar('别给他打赏了\n[[SEND_EMOJI: 翻白眼]]');
+    expect(both.chat).toHaveLength(2);
+    expect(both.chat[0].text).toContain('打赏');
+    expect(both.chat[1].sticker).toBe('翻白眼');
+  });
+
+  it('语音标签和字幕原样留下', () => {
+    const r = __parseChar('<语音 emotion="surprised">Wait... are you serious?</语音>\n<字幕>等等……你是认真的？</字幕>\n公屏：来了');
     expect(r.chat).toHaveLength(1);
-    expect(r.chat[0].sticker).toBe('翻白眼');
-    expect(r.chat[0].text).toBe('');
+    expect(r.chat[0].text).toContain('<语音');
+    expect(r.chat[0].text).toContain('</语音>');
+    expect(r.chat[0].text).toContain('<字幕>');
+    expect(r.chat[0].text).toContain('等等……你是认真的？');
+    expect(r.chat[0].voice).toBe(true);
+    expect(r.public[0]).toMatchObject({ kind: 'danmaku', text: '来了' });
   });
 
   it('上麦、麦上说话、打赏', () => {
@@ -411,8 +472,11 @@ describe('角色这一轮的解析', () => {
     expect(r.wentPublic).toBe(false);
   });
 
-  it('一句标签都没有：抛错，让上层重问一遍', () => {
-    expect(() => __parseChar('嗯……这段我没看明白。')).toThrow();
+  it('私聊正文没有标签也收下', () => {
+    const r = __parseChar('嗯……这段我没看明白。');
+    expect(r.chat).toHaveLength(1);
+    expect(r.chat[0].text).toContain('没看明白');
+    expect(r.chat[0].voice).toBe(false);
   });
 
   it('模型还照老习惯写 JSON：能捡回来', () => {

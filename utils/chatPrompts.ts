@@ -210,6 +210,12 @@ export interface PromptBuildOptions {
      */
     liveGenerator?: boolean;
     /**
+     * 电波陪看私聊这一轮。只有 runCharTurn 传 true。
+     * 跳过热点 / 热搜 / 新闻 / 天气这整块实时世界信息、小红书、X、家园和宠物。
+     * 不改 liveGenerator：日程、情绪和由日程带出的音乐氛围仍由那个开关负责，自播照旧。
+     */
+    watchAlongPrivate?: boolean;
+    /**
      * 电量提醒：要人设、世界书、记忆、实时状态和说话原则。
      * 不要表情包清单、语音条、Spark，也不要短气泡和各种暗号写法。
      * 普通聊天不传这个，主聊天提示词一个字不动。
@@ -362,6 +368,8 @@ export const ChatPrompts = {
         const boxPlay = !!promptOptions?.miaomiaoBoxPrompt;
         // 电波生成：人设/世界书/历史/记忆/实时背景照旧，情绪与日程整块不进来
         const liveGenerator = promptOptions?.liveGenerator === true;
+        // 陪看私聊：实时世界、小红书、X、家园另走这个旗标。liveGenerator 的含义不动。
+        const watchAlongPrivate = promptOptions?.watchAlongPrivate === true;
         // 电量提醒只要角色和近况，不要教它怎么发表情包、语音、Spark 或别的暗号。
         const batterySlice = promptOptions?.forBatteryReminder === true;
         // ── 分段计时（定位瓶颈用）──
@@ -396,7 +404,7 @@ export const ChatPrompts = {
         const context = await ContextBuilder.buildCharacterContext({
             char, user: userProfile, history: promptOptions?.history,
             timeOptions: { worldbookMessages: currentMsgs, userHolidays: config.userHolidays, skipUserHoliday: forFirePack || timelyByWorker },
-            layout: { deferVolatile: true },
+            layout: { deferVolatile: true, skipHomeContext: watchAlongPrivate },
         });
         let baseSystemPrompt = context.coreContext;
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
@@ -444,7 +452,7 @@ export const ChatPrompts = {
         // 两句自称「来自真实世界」——包括天气热搜关掉时那条「今日特殊」节日兜底，
         // worker 的 realtimeWorld 里也有它（同样跟着角色的时间感知开关走）。
         const realtimePromise: Promise<string> = (async () => {
-            if (forFirePack || timelyByWorker || boxPlay) return '';
+            if (forFirePack || timelyByWorker || boxPlay || watchAlongPrivate) return '';
             try {
                 const includeJp = jpHotInjectOn(config, char);
                 if (config.weatherEnabled || config.newsEnabled || includeJp) {
@@ -712,10 +720,10 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
             realtimeConfig?.xhsMcpConfig?.enabled && xhsServerUrl
             && (!forFirePack || isWorkerReachableUrl(xhsServerUrl))
         );
-        const xhsEnabled = !!(char.xhsEnabled && mcpXhsAvailable);
+        const xhsEnabled = !!(char.xhsEnabled && mcpXhsAvailable) && !watchAlongPrivate;
         // 这些标记只在手机这一轮的二轮里执行。主动消息和即时对话在 Worker 上生成，
         // 那边不会去跑，教了只会剩下一行没人接的标记。
-        const xPackTeaching = (forFirePack || timelyByWorker)
+        const xPackTeaching = (forFirePack || timelyByWorker || watchAlongPrivate)
             ? ''
             : buildXPackTeaching(realtimeConfig, char);
         // `[schedule_message]` 排的是本地定时消息：存在浏览器里，靠 OSContext 那个 5 秒

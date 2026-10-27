@@ -43,7 +43,7 @@ describe('私聊转对话轮次', () => {
     );
     expect(turns[0].content).toContain('第 3 幕');
     expect(turns[0].content).toContain('200');
-    expect(turns[1].content).toContain('翻白眼');
+    expect(turns[1].content).toContain('发送了表情包: 翻白眼');
   });
 
   it('只带最近 10 条，老账不往里堆', () => {

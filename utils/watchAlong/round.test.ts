@@ -13,7 +13,7 @@ vi.mock('./engine', () => ({
   buildSessionRecap: vi.fn(async () => '本场回顾'),
 }));
 
-const { advanceRound, chatRound, maybeDigest, finishSession } = await import('./round');
+const { advanceRound, appendLivePublic, chatRound, maybeDigest, finishSession } = await import('./round');
 
 const stage = (speech = '主播开口', hot = false) => ({
   scene: '画面动了一下',
@@ -203,6 +203,47 @@ describe('主播不许替台下的人说话（设计单禁令）', () => {
     });
     const r = await advanceRound({ ...ctx, session: makeSession('solo') });
     expect(r.session.beats[1].danmaku.map(d => d.author)).toEqual(['路人甲']);
+  });
+});
+
+describe('公屏发文字先留在当前幕', () => {
+  it('有幕时连发几条，幕数不变，按顺序挂在这一幕后面', () => {
+    const s = makeSession('solo');
+    const once = appendLivePublic(s, { id: 'u1', kind: 'danmaku', text: '第一句' });
+    const twice = appendLivePublic(once, { id: 'u2', kind: 'danmaku', text: '第二句' });
+    expect(twice.beats).toHaveLength(1);
+    expect(twice.beats[0].danmaku).toEqual([]);
+    expect(twice.beats[0].userActions.map(a => a.text)).toEqual(['第一句', '第二句']);
+    expect(s.beats[0].userActions).toEqual([]);
+    expect(stageSpy).not.toHaveBeenCalled();
+  });
+
+  it('连麦中的发言记成麦上文字，仍在当前幕', () => {
+    const s = makeSession('solo');
+    const r = appendLivePublic(s, { id: 'u1', kind: 'mic_line', text: '我在麦上' });
+    expect(r.beats).toHaveLength(1);
+    expect(r.beats[0].userMicLine).toBe('我在麦上');
+    expect(r.beats[0].userActions.map(a => a.kind)).toEqual(['mic_line']);
+  });
+
+  it('还没有幕时先记在公屏队列里', () => {
+    const s = makeSession('solo');
+    s.beats = [];
+    const once = appendLivePublic(s, { id: 'u1', kind: 'danmaku', text: '有人吗' });
+    const twice = appendLivePublic(once, { id: 'u2', kind: 'danmaku', text: '再来一条' });
+    expect(twice.beats).toHaveLength(0);
+    expect(twice.pendingPublic?.map(a => a.text)).toEqual(['有人吗', '再来一条']);
+  });
+
+  it('第一幕生成后，开场前的话仍留着，不挂进新幕的动作里', async () => {
+    const s = makeSession('solo');
+    s.beats = [];
+    s.pendingPublic = [{ id: 'p1', kind: 'danmaku', text: '先说一句' }];
+    const r = await advanceRound({ ...ctx, session: s });
+    expect(stageSpy).toHaveBeenCalledTimes(1);
+    expect(r.session.beats).toHaveLength(1);
+    expect(r.session.pendingPublic?.map(a => a.text)).toEqual(['先说一句']);
+    expect(r.session.beats[0].userActions).toEqual([]);
   });
 });
 

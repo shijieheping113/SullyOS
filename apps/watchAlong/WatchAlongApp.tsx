@@ -12,6 +12,7 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import { ChatPrompts } from '../../utils/chatPrompts';
 import { loadCharacterContextMessages } from '../../utils/chatContextRange';
+import { parseVoiceOutput } from '../../utils/minimaxTts';
 import { canSynthesizeSpeech } from '../../utils/ttsRouter';
 import { playVoiceAudio, shouldAutoGenerateVoice, stopVoiceAudio, voicePlaybackErrorMessage } from '../../utils/voicePlayback';
 import { cardMessageContent } from '../../utils/liveStreamStorage';
@@ -39,6 +40,7 @@ import {
 } from '../../components/watchAlong/chrome';
 import {
   advanceRound,
+  appendLivePublic,
   chatRound,
   finishSession,
   forceDigest,
@@ -70,7 +72,6 @@ import {
   downloadWatchVoice,
   forgetWatchVoices,
   loadWatchVoiceUrl,
-  shownWatchText,
   synthesizeWatchVoice,
   watchLineIsVoice,
 } from '../../utils/watchAlong/voice';
@@ -81,11 +82,38 @@ import type {
   WatchGlobals,
   WatchPublicAction,
   WatchRoomCard,
+  WatchSeqItem,
   WatchSettings as WatchSettingsType,
 } from '../../utils/watchAlong/types';
 import { defaultGlobals, watchId } from '../../utils/watchAlong/types';
 
 type Page = 'lobby' | 'room' | 'chat' | 'history' | 'settings' | 'summary';
+
+/**
+ * 手改的画面和台词写回屏幕正在读的 seq。
+ * 台词里有 ▸，左边是原话、右边是中文。没有 ▸，就按改完的这句显示，不再挂旧译文。
+ */
+function seqFromEdited(scene: string, speech: string): WatchSeqItem[] {
+  const scenes = scene
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(text => ({ kind: 'scene' as const, text }));
+  const lines = speech
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(raw => {
+      const at = raw.indexOf('▸');
+      if (at < 0) return { kind: 'line' as const, text: raw };
+      const left = raw.slice(0, at).trim();
+      const right = raw.slice(at + 1).trim();
+      if (!left) return { kind: 'line' as const, text: right };
+      if (!right) return { kind: 'line' as const, text: left };
+      return { kind: 'line' as const, text: left, translated: right };
+    });
+  return [...scenes, ...lines];
+}
 
 /** 一次生成中用来挡住重复点按 */
 type Busy =
@@ -151,6 +179,8 @@ export default function WatchAlongApp({
   const [categories, setCategories] = useState<EmojiCategory[]>([]);
   const [directorOpen, setDirectorOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  /** 打开本场信息时，正在看的是哪一幕 */
+  const [infoBeatIndex, setInfoBeatIndex] = useState<number | undefined>(undefined);
   const [tasteBusy, setTasteBusy] = useState(false);
   const [exitOpen, setExitOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
@@ -568,14 +598,19 @@ export default function WatchAlongApp({
     [busy, buildCtx, persist, addToast],
   );
 
-  /** 公屏输入：连麦中就当麦上说话（文字），没连麦就是弹幕 */  const sendPublic = useCallback(
+  /** 公屏输入：连麦中就当麦上说话（文字），没连麦就是弹幕。先留在当前幕，不为此开新段。 */
+  const sendPublic = useCallback(
     (text: string) => {
       const cur = sessionRef.current;
       if (!cur) return;
+      if (cur.legacy) {
+        addToast('这是旧版记录，只能翻看，不能再往下演', 'info');
+        return;
+      }
       const kind: WatchPublicAction['kind'] = cur.cast.mic === 'on' ? 'mic_line' : 'danmaku';
-      void runAdvance([{ id: watchId('act'), kind, text }]);
+      void persist(appendLivePublic(cur, { id: watchId('act'), kind, text }));
     },
-    [runAdvance],
+    [persist, addToast],
   );
 
   const toggleMic = useCallback(() => {
@@ -753,14 +788,29 @@ export default function WatchAlongApp({
     addToast(on ? '开了自主反应，ta 会自己开口' : '关了自主反应，只看你叫不叫 ta', 'success');
   }, [persist, addToast]);
 
-  /** 手改本场直播信息与当前这一幕 */
+  /** 手改本场直播信息与正在看的这一幕 */
   const saveInfo = useCallback(
-    async (next: { room: WatchAlongSession['room']; scene: string; speech: string }) => {
+    async (next: { room: WatchAlongSession['room']; scene: string; speech: string; beatIndex?: number }) => {
       const cur = sessionRef.current;
       if (!cur) return;
-      const beats = cur.beats.map((b, i) =>
-        i === cur.beats.length - 1 ? { ...b, scene: next.scene || b.scene, speech: next.speech } : b,
-      );
+      const target =
+        typeof next.beatIndex === 'number'
+          ? cur.beats.findIndex(b => b.index === next.beatIndex)
+          : cur.beats.length - 1;
+      const idx = target >= 0 ? target : cur.beats.length - 1;
+      const beats = cur.beats.map((b, i) => {
+        if (i !== idx) return b;
+        const scene = next.scene || b.scene;
+        const seq = seqFromEdited(scene, next.speech);
+        const sceneText = seq.filter(s => s.kind === 'scene').map(s => s.text).join('\n');
+        const speechText = seq.filter(s => s.kind === 'line').map(s => s.text).join('\n');
+        return {
+          ...b,
+          scene: sceneText || scene,
+          speech: speechText,
+          seq: seq.length ? seq : undefined,
+        };
+      });
       await persist({ ...cur, room: next.room, beats, updatedAt: Date.now() });
       setInfoOpen(false);
       addToast('本场信息改好了', 'success');
@@ -945,24 +995,40 @@ export default function WatchAlongApp({
       const cur = sessionRef.current;
       if (!cur) return;
       const nextText = text.trim();
-      const shown = shownWatchText(msg.text, apiConfig);
-      if (!nextText || nextText === shown || nextText === (msg.text || '').trim()) return;
-      const voiceIds: string[] = [];
-      const chat = cur.chat.map(item => {
+      if (!nextText || nextText === (msg.text || '').trim()) return;
+      const wasVoice = watchLineIsVoice(msg.text, { wantVoice: msg.wantVoice, voiceId: msg.voiceId });
+      const stillVoice = parseVoiceOutput(nextText).hasVoiceTag;
+      const audioKey = `msg:${msg.id}`;
+      if (playingKey === audioKey || loadingKey === audioKey) {
+        const audio = audioRef.current;
+        if (audio) stopVoiceAudio(audio);
+        if (playingKey === audioKey) setPlayingKey(null);
+        if (loadingKey === audioKey) setLoadingKey(null);
+      }
+      if (wasVoice || stillVoice) {
+        const keys = [...new Set([msg.id, msg.voiceId].filter((id): id is string => Boolean(id)))];
+        if (keys.length) await forgetWatchVoices(keys);
+      }
+      // 保存只改字并清掉旧录音。合成留到用户点这条；先占住记号，开着自动播放也不要自己念。
+      if (stillVoice) autoVoiceRef.current.add(`${msg.id}:${nextText}`);
+      const latest = sessionRef.current;
+      if (!latest) return;
+      const chat = latest.chat.map(item => {
         if (item.id !== msg.id) return item;
         const copy: WatchChatMessage = { ...item, text: nextText };
         delete copy.translation;
-        if (watchLineIsVoice(item.text, { wantVoice: item.wantVoice, voiceId: item.voiceId })) {
-          if (item.voiceId) voiceIds.push(item.voiceId);
+        if (stillVoice) {
           copy.wantVoice = true;
+          delete copy.voiceId;
+        } else if (wasVoice) {
+          delete copy.wantVoice;
           delete copy.voiceId;
         }
         return copy;
       });
-      await persist({ ...cur, chat, updatedAt: Date.now() });
-      if (voiceIds.length) void forgetWatchVoices(voiceIds);
+      await persist({ ...latest, chat, updatedAt: Date.now() });
     },
-    [persist, apiConfig],
+    [persist, playingKey, loadingKey],
   );
 
   // ==================== 麦上语音：只在角色说话时出声 ====================
@@ -1543,6 +1609,7 @@ export default function WatchAlongApp({
         <WatchInfo
           open={infoOpen}
           session={session}
+          beatIndex={infoBeatIndex}
           onClose={() => setInfoOpen(false)}
           onSave={next => void saveInfo(next)}
         />
@@ -1585,7 +1652,10 @@ export default function WatchAlongApp({
         onOpenDirector={() => setDirectorOpen(true)}
         onOpenSummary={() => setPage('summary')}
         onOpenSettings={() => setPage('settings')}
-        onOpenInfo={() => setInfoOpen(true)}
+        onOpenInfo={beatIndex => {
+          setInfoBeatIndex(beatIndex);
+          setInfoOpen(true);
+        }}
         onExit={() => void openExit()}
         onSummon={() => void summon()}
         onHidePet={() => void hidePet()}
@@ -1605,6 +1675,7 @@ export default function WatchAlongApp({
       <WatchInfo
         open={infoOpen}
         session={session}
+        beatIndex={infoBeatIndex}
         onClose={() => setInfoOpen(false)}
         onSave={next => void saveInfo(next)}
       />

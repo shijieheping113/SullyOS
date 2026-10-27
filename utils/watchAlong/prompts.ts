@@ -47,9 +47,9 @@ export const STAGE_RULES = `# 任务
 # 回复格式
 一行一条，照下面这四个名字起头，别写 JSON，别用代码块，别加解释。
 
-- 画：此刻直播画面里发生的事。
-- 话：主播嘴里蹦出来的原话。
-- 弹幕：作者｜他发的那条。
+- 画：此刻直播画面里发生的事。画面只写中文。
+- 话：主播嘴里蹦出来的原话。档案语言是日语或英语时，同一行写成「原话 ▸ 中文」，原话和中文都写全。
+- 弹幕：作者｜他发的那条。档案语言是日语或英语时，写成「作者｜原话 ▸ 中文」，原话和中文都写全。
 - 点名：是 或者 否。
 
 # 画面
@@ -71,11 +71,17 @@ export const STAGE_RULES = `# 任务
 
 # 弹幕
 1. 每一行都写成「作者｜他发的那条」。上面写了要几条，就按那个数写。
-2. 弹幕语言跟着主播走：中文直播间写中文，外语直播间写外语原话。
+2. 弹幕语言跟着档案走。中文直播间这一行写中文。日语或英语直播间，这一行里原话和中文都写全。
 3. 不许写说明、思考、你正在做什么、条数统计。
 
-# 外语直播间
-主播说日语或英语时，「话」那一行写成「原话 ▸ 中文同传」，弹幕那一行写成「作者｜原话 ▸ 中文译文」，用 ▸ 隔开，同一行。中文直播间不用译文。译文通顺自然，像真人随口说的中文，不许堆语气词，也不许翻成书面语。
+# 直播间里的翻译
+直播间有即时翻译。主播看得懂公屏上的外语，外语弹幕照样进得了对话，能接着聊。主播自己嘴里的话用档案里的语言。
+
+档案语言是日语或英语时，「话」和「弹幕」都是双语：同一行里原话和中文都要有，用 ▸ 隔开。两种语言都写全，原话写完整，中文也写完整。画面仍然只写中文。
+
+中文直播间不加译文，「话」和「弹幕」用中文写。
+
+译文通顺自然，像真人随口说的中文。
 
 # 台词禁令
 1. 不许出现：欢迎来到直播间、家人们、谁懂啊、宝子们、感谢某某送的礼物、今天给大家带来、让我们一起、接下来我们、话不多说、老铁、双击、刷起来、有兴趣的可以看一下。
@@ -152,23 +158,47 @@ const ownBanLine = (spoken: string[]): string => {
   return `${names} 不归你写：不替${them}发弹幕，也不替${them}接下一句。`;
 };
 
-const beatLines = (beat: WatchBeat, withFollowUp = true): string => {
+const castNames = (session: WatchAlongSession): { user: string; char: string } => ({
+  user: (session.cast?.userAccount?.nickname || '').trim(),
+  char: (session.cast?.charAccount?.nickname || '').trim(),
+});
+
+/** 台词、弹幕回灌时带上已经有的中文：原话 ▸ 中文 */
+const withChinese = (text: string, translated?: string): string => {
+  const zh = (translated || '').trim();
+  return zh ? `${text} ▸ ${zh}` : text;
+};
+
+const actionPhrase = (a: WatchBeat['userActions'][number]): string => {
+  if (a.kind === 'gift') return `打赏 ${a.giftName || '小礼物'}${a.giftAmount ? ` ${a.giftAmount}` : ''}`;
+  if (a.kind === 'mic_on') return '申请上麦';
+  if (a.kind === 'mic_off') return '下麦';
+  if (a.kind === 'mic_line') return `连麦说「${a.text || ''}」`;
+  return `发弹幕「${a.text || ''}」`;
+};
+
+const beatLines = (
+  beat: WatchBeat,
+  withFollowUp = true,
+  names?: { user: string; char: string },
+): string => {
   // 回灌的格式必须跟要它写的格式一模一样，否则每轮都在教它写回旧格式（嵌套冒号）。
-  const dm = beat.danmaku.map(d => `弹幕：${d.author}｜${d.text}`).join('\n');
-  const acts = [...beat.userActions, ...beat.charActions]
-    .map(a => {
-      if (a.kind === 'gift') return `打赏 ${a.giftName || '小礼物'}${a.giftAmount ? ` ${a.giftAmount}` : ''}`;
-      if (a.kind === 'mic_on') return '申请上麦';
-      if (a.kind === 'mic_off') return '下麦';
-      if (a.kind === 'mic_line') return `连麦说「${a.text || ''}」`;
-      return `发弹幕「${a.text || ''}」`;
-    })
-    .join('；');
+  const dm = beat.danmaku
+    .map(d => `弹幕：${d.author}｜${withChinese(d.text, d.translated)}`)
+    .join('\n');
+  const named = (who: string, line: string) => (who ? `${who} ${line}` : line);
+  const acts = [
+    ...(beat.userActions || []).map(a => named(names?.user || '', actionPhrase(a))),
+    ...(beat.charActions || []).map(a => named(names?.char || '', actionPhrase(a))),
+  ].join('；');
   // 有交替条目就按原来的节奏喂回去：主播接着往下演的时候，能接住上一段的呼吸，
   // 而不是看到「一大块画面 + 一大块台词」那种剧本。
+  // 话已经有中文的，写成「话：原话 ▸ 中文」，别把译文丢在半路。
   const body =
     beat.seq && beat.seq.length
-      ? beat.seq.map(s => `${s.kind === 'scene' ? '画' : '话'}：${s.text}`)
+      ? beat.seq.map(s =>
+          s.kind === 'scene' ? `画：${s.text}` : `话：${withChinese(s.text, s.translated)}`,
+        )
       : [`画面：${beat.scene}`, `主播：${beat.speech}`];
   const lines = [
     `【第 ${beat.index + 1} 段】`,
@@ -177,7 +207,15 @@ const beatLines = (beat: WatchBeat, withFollowUp = true): string => {
     acts ? `台下动作：${acts}` : '',
   ];
   if (withFollowUp && beat.followUp) {
-    lines.push(`画：${beat.followUp.scene}`, `话：${beat.followUp.speech}`);
+    if (beat.followUp.seq && beat.followUp.seq.length) {
+      lines.push(
+        ...beat.followUp.seq.map(s =>
+          s.kind === 'scene' ? `画：${s.text}` : `话：${withChinese(s.text, s.translated)}`,
+        ),
+      );
+    } else {
+      lines.push(`画：${beat.followUp.scene}`, `话：${beat.followUp.speech}`);
+    }
   }
   return lines.filter(Boolean).join('\n');
 };
@@ -243,6 +281,21 @@ const formLine = (room: WatchRoom): string => {
   return `【这一场画面里是什么】\n${FORM_TEXT[room.profile.screenForm] || FORM_TEXT.live}。\n`;
 };
 
+/**
+ * 档案语言怎么进模型。
+ * 日语、英语：话和弹幕同一行里原话和中文都写全。中文：不加译文。
+ */
+const stageLanguageLine = (room: WatchRoom): string => {
+  const lang = room.profile?.language;
+  if (lang === 'ja' || lang === 'en') {
+    return '这一场有即时翻译。主播看得懂公屏上的外语，外语弹幕也能接着聊。主播嘴里的话用档案里的语言。「话」和「弹幕」都是双语，同一行里原话和中文都写全，中间用 ▸ 隔开。画面只写中文。';
+  }
+  if (lang === 'zh') {
+    return '这一场是中文直播间。「话」和「弹幕」用中文写，这一行就是原话，不加译文。画面也写中文。';
+  }
+  return '直播间有即时翻译。主播看得懂公屏上的外语。主播嘴里的话用档案里的语言。';
+};
+
 /** 台上这一轮的材料：主播档案 + 前情 + 上一幕 + 本轮台下的互动 + 导演引导 */
 export function buildStageTask(opts: {
   session: WatchAlongSession;
@@ -279,6 +332,7 @@ export function buildStageTask(opts: {
     `档案里的话一个字都不改：语言、画面形态、体量、分区、身份、说话调性、开播动机，全部从这里来，不许另外发明一个主播。`,
     ``,
     formLine(room),
+    stageLanguageLine(room),
     `【现在】`,
     `此刻房间里有 ${room.viewerCount} 个人在看。`,
     mic,
@@ -288,7 +342,7 @@ export function buildStageTask(opts: {
     ownLine,
     ``,
     digest ? `【本场前情】\n${digest}\n` : '',
-    recent.length ? `【刚才播过的】\n${recent.map(b => beatLines(b)).join('\n\n')}\n` : '',
+    recent.length ? `【刚才播过的】\n${recent.map(b => beatLines(b, true, castNames(session))).join('\n\n')}\n` : '',
     opts.latest ? `【这一轮台下刚发生】\n${opts.latest}\n` : '',
     cue ? `【本场导演要这么走】\n${cue}\n（这一轮顺着兑现，别把"导演"两个字说出来）\n` : '',
     `【这一轮要写的】`,
@@ -325,12 +379,13 @@ export function buildStageCounterTask(opts: {
     `档案里的话一个字都不改：语言、画面形态、体量、分区、身份、说话调性、开播动机，全部从这里来。`,
     ``,
     formLine(session.room),
+    stageLanguageLine(session.room),
     `【现在】`,
     opts.micOn ? '正在连麦。' : '没在连麦。',
     `台下坐着几个看客，看不见脸，只看得见网名。`,
     `弹幕照写，同一个号可以反复出现，熟客会一来再来。${ownLine ? ` ${ownLine}` : ''}`,
     ``,
-    last ? `【当前这一段】\n${beatLines(last, false)}\n` : '',
+    last ? `【当前这一段】\n${beatLines(last, false, castNames(session))}\n` : '',
     `【刚刚台下出的动静】\n${opts.actionText}`,
     ``,
     `【这一轮要写的】`,
@@ -343,12 +398,11 @@ export function buildStageCounterTask(opts: {
 
 // ==================== 台下：沙盒角色引擎 ====================
 
-/** 角色的回报格式：一行一条，不用 JSON（写在 buildCharRules 里，它要引用） */
-export const CHAR_FORMAT = `怎么回：一行一条，照下面的名字起头。别写 JSON，别用代码块，别加解释。
+/**
+ * 直播间里多出来的动作。私聊正文、语音、表情都按主聊天已经教过的格式写，这里不另写一套。
+ */
+export const CHAR_FORMAT = `直播间里的动作另起一行，用下面这些名字起头。私聊就按平时发消息那样写。
 
-私聊：要说的话
-私聊：想再说一句就再写一行（最多三行）
-表情：表情包名字（只想发表情就写这行）
 公屏：想飘上去的那一句
 打赏：礼物名 数字
 上麦：
@@ -357,12 +411,9 @@ export const CHAR_FORMAT = `怎么回：一行一条，照下面的名字起头�
 转账：收 或者 退
 安静：一句话说明为什么不出声
 
-规矩：
-- 私聊最多三行，按你说话的先后排。
-- 表情只能填给你的表情包名字里的一个；只发表情不发字，就只写「表情：」那一行，不要写私聊。
-- 公屏、打赏、上麦、麦上、下麦都是你用自己的账号进直播间里掺一脚，不想去就一行都别写。
-- 转账只在对方向你转了钱、还没被处理时写：收下写「收」，退回写「退」，没这回事就别写这行。
-- 什么都不想做，就只写一行「安静：」加一句理由。`;
+公屏、打赏、上麦、麦上、下麦是你用自己的账号进这个直播间。想做才写，不想做就别写这些行。
+转账只在对方向你转了钱、还没处理时写：收下写「收」，退回写「退」。
+什么都不想做，就只写一行「安静：」加上理由。`;
 
 /**
  * 陪看这一路补在后面的那一段。
@@ -391,7 +442,11 @@ export const buildCharRules = (opts: { charName: string; userName: string }): st
 除了平时聊天那些，这一段你还能：在公屏发一条弹幕、送一个礼物、上麦、在麦上说话、下麦。
 做不做、做哪个，你自己看着来；一个都不想做就不写这些行。
 
-${CHAR_FORMAT}`;
+${CHAR_FORMAT}
+
+发送公屏弹幕的语言必须要使用你平时跟用户发消息的语言来写。
+你平时跟用户说中文，就必须写中文。
+平时跟用户说其他语言（以日语举例），就必须写成「日语 ▸ 中文」，必须写在一行上。`;
 };
 
 /**
@@ -411,10 +466,12 @@ export function buildSessionTurns(session: WatchAlongSession): Array<{ role: 'us
     } else if (c.transfer) {
       text = `（${c.from === 'char' ? '你' : '对方'}转了 ${c.transfer.amount}${c.transfer.note ? `，备注「${c.transfer.note}」` : ''}）`;
     } else if (c.sticker && !c.text) {
-      text = `（发了个表情：${c.sticker}）`;
+      text = `[${c.from === 'char' ? '你' : '用户'} 发送了表情包: ${c.sticker}]`;
     } else {
       text = c.text || '';
-      if (c.voiceId || c.wantVoice) text = `（语音）${text}`;
+      if (c.sticker) {
+        text = `${text}\n[${c.from === 'char' ? '你' : '用户'} 发送了表情包: ${c.sticker}]`.trim();
+      }
     }
     if (!text.trim()) continue;
     const role: 'user' | 'assistant' = c.from === 'char' ? 'assistant' : 'user';
@@ -441,8 +498,8 @@ export function buildCharStateBlock(opts: {
   clip?: WatchClip;
   /** 对方指的活 */
   assign?: string;
-  /** 这个角色能发的表情包名字 */
-  stickers?: string[];
+  /** 这一轮加号开了「语音回你」，并且角色自己开着语音消息 */
+  voiceReply?: boolean;
 }): string {
   const { session } = opts;
   const { room, cast } = session;
@@ -481,9 +538,7 @@ export function buildCharStateBlock(opts: {
     opts.userLine ? `【对方刚对你说】${opts.userLine}` : '',
     opts.clip ? `【对方转发给你的片段】第 ${opts.clip.beatIndex + 1} 幕｜${opts.clip.scene}｜主播：${opts.clip.speech}` : '',
     opts.assign ? `【对方让你去做】${opts.assign}` : '',
-    opts.stickers && opts.stickers.length
-      ? `【你能发的表情包】${opts.stickers.join(' / ')}（表情只能填这里的名字）`
-      : '',
+    opts.voiceReply ? '【这一轮的说法】这一轮用语音消息回。台词你自己写，按系统里已经教过的语音消息来。' : '',
     opts.trigger === 'stage'
       ? '【这一轮】台上刚走过去一幕，你自己决定要不要说点什么、要不要去公屏。'
       : opts.trigger === 'assign'
@@ -665,7 +720,7 @@ export function buildDigestTask(session: WatchAlongSession, beats: WatchBeat[]):
     .slice(-16)
     .map(c => `${c.from === 'char' ? '角色' : c.from === 'clip' ? '（转发片段）' : '用户'}：${c.text || c.clip?.speech || ''}`)
     .join('\n');
-  return [`【台上的这几幕】`, beats.map(b => beatLines(b)).join('\n\n'), `【台下这段时间】`, chat || '（没说话）'].join('\n');
+  return [`【台上的这几幕】`, beats.map(b => beatLines(b, true, castNames(session))).join('\n\n'), `【台下这段时间】`, chat || '（没说话）'].join('\n');
 }
 
 export const RECAP_RULES = `两人刚结束一场陪看。根据本场阶段摘要与最后几幕实况，写一段放进主聊天时间线的陪看回顾，150 到 250 字。
@@ -674,7 +729,7 @@ export const RECAP_RULES = `两人刚结束一场陪看。根据本场阶段摘�
 
 export function buildRecapTask(session: WatchAlongSession): string {
   const digest = session.digests.map(d => d.text).join('\n');
-  const last = session.beats.slice(-3).map(b => beatLines(b)).join('\n\n');
+  const last = session.beats.slice(-3).map(b => beatLines(b, true, castNames(session))).join('\n\n');
   return [
     `【主播】${session.room.streamerName} · ${session.room.category} ·《${session.room.title}》`,
     digest ? `【本场摘要】\n${digest}` : '',

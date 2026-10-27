@@ -82,6 +82,23 @@ export interface RoundResult {
 const clone = (session: WatchAlongSession): WatchAlongSession =>
   JSON.parse(JSON.stringify(session)) as WatchAlongSession;
 
+/**
+ * 用户在公屏发文字：立刻写进当前这一幕，不另开一幕，也不叫模型。
+ * 还没有任何一幕时，先搁在 pendingPublic，等第一幕真正生成后再排在新弹幕前面。
+ */
+export function appendLivePublic(session: WatchAlongSession, action: WatchPublicAction): WatchAlongSession {
+  const next = clone(session);
+  next.updatedAt = Date.now();
+  if (!next.beats.length) {
+    next.pendingPublic = [...(next.pendingPublic ?? []), action];
+    return next;
+  }
+  const last = next.beats[next.beats.length - 1];
+  last.userActions = [...(last.userActions ?? []), action];
+  if (action.kind === 'mic_line' && action.text) last.userMicLine = action.text;
+  return next;
+}
+
 // ==================== 动作转成人话（给模型看）====================
 
 function describeAction(a: WatchPublicAction): string {
@@ -412,10 +429,7 @@ export async function chatRound(
     // 这一轮没接上：我的消息留在记录里，界面上提示一下就行
     return { session, advanced: false, failed: true };
   }
-  // 加号里开了「语音回你」：这一轮角色第一句就是语音条（内容还是它自己写的）
-  if (session.cast.voiceReply && out.chat.length) {
-    out.chat[0] = { ...out.chat[0], voice: true };
-  }
+  // 「语音回你」只在这一轮的提示里告诉主模型用语音标签写。这里不再把第一条改成语音条。
   const bubble = applyCharOutput(session, out, beat);
 
   // 这一轮不管台上跳不跳幕，导演给两边的话都已经交给模型了，用完即清
