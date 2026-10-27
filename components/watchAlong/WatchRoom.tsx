@@ -23,6 +23,15 @@ import type { WatchAlongSession, WatchSeqItem } from '../../utils/watchAlong/typ
 /** 公屏能送的小礼物 */
 export const WATCH_GIFTS = ['小鱼干', '小星星', '一杯奶茶', '小烟花', '醒目留言'];
 
+/** 公屏上能长按改、删的一条 */
+export type WatchPublicLineRef = {
+  id: string;
+  source: 'danmaku' | 'user' | 'char' | 'pending';
+  beatId?: string;
+  text: string;
+  translated?: string;
+};
+
 /** 封面渐变拆成两个色，用在画面的两团光斑上 */
 const gradientColors = (gradient: string): [string, string] => {
   const [a, b] = (gradient || '').split(',').map(s => s.trim());
@@ -58,6 +67,10 @@ export function WatchRoom({
   onOpenSummary,
   onOpenSettings,
   onOpenInfo,
+  onRepairBeats,
+  repairBusy,
+  onEditPublic,
+  onDeletePublic,
   onExit,
   onSummon,
   onHidePet,
@@ -100,6 +113,11 @@ export function WatchRoom({
   onOpenSettings: () => void;
   /** 本场直播信息：标题、主播人设、这一幕内容，都能手改。带上正在看的这一幕 */
   onOpenInfo: (beatIndex?: number) => void;
+  /** 把选中的几段交给辅助模型补格式 */
+  onRepairBeats: (indexes: number[]) => void;
+  repairBusy?: boolean;
+  onEditPublic: (line: WatchPublicLineRef, text: string) => void;
+  onDeletePublic: (line: WatchPublicLineRef) => void;
   onExit: () => void;
   onSummon: () => void;
   onHidePet: () => void;
@@ -111,6 +129,12 @@ export function WatchRoom({
   const [moreOpen, setMoreOpen] = useState(false);
   /** 长按画面出的小菜单：改这一幕 / 本场信息 / 重来 / 转给角色 */
   const [pressMenuOpen, setPressMenuOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [repairPick, setRepairPick] = useState<number[]>([]);
+  const [lineMenu, setLineMenu] = useState<{ line: WatchPublicLineRef; top: number; left: number } | null>(null);
+  const [lineEdit, setLineEdit] = useState<WatchPublicLineRef | null>(null);
+  const [lineDraft, setLineDraft] = useState('');
+  const linePress = useRef<number | null>(null);
   const [giftOpen, setGiftOpen] = useState(false);
   const [giftName, setGiftName] = useState(WATCH_GIFTS[0]);
   const [giftCount, setGiftCount] = useState(1);
@@ -182,17 +206,23 @@ export function WatchRoom({
    * 翻旧段时只累加到那一段为止——看到哪儿就聊到哪儿。
    */
   const lines = useMemo(() => {
-    const out: Array<{ id: string; author: string; text: string; translated?: string; mine: boolean; char: boolean; gift: boolean }> = [];
+    const out: Array<WatchPublicLineRef & { author: string; mine: boolean; char: boolean; gift: boolean }> = [];
     const nickname = session.cast.userAccount.nickname;
-    const pushUser = (a: (typeof session.beats)[number]['userActions'][number]) => {
+    const pushUser = (
+      a: (typeof session.beats)[number]['userActions'][number],
+      source: 'user' | 'pending',
+      beatId?: string,
+    ) => {
       if (a.kind === 'mic_line') return;
       if (a.kind === 'danmaku' && a.text) {
-        out.push({ id: a.id, author: nickname, text: a.text, mine: true, char: false, gift: false });
+        out.push({ id: a.id, source, beatId, author: nickname, text: a.text, translated: a.translated, mine: true, char: false, gift: false });
         return;
       }
       if (a.kind === 'danmaku') return;
       out.push({
         id: a.id,
+        source,
+        beatId,
         author: nickname,
         text:
           a.kind === 'gift'
@@ -208,17 +238,29 @@ export function WatchRoom({
       });
     };
     // 开场前发出的话排在所有幕前面；第一幕的新弹幕接在它们后面
-    (session.pendingPublic ?? []).forEach(pushUser);
+    (session.pendingPublic ?? []).forEach(a => pushUser(a, 'pending'));
     const upTo = viewBeat ? viewBeat.index : -1;
     session.beats.slice(0, upTo + 1).forEach(beat => {
       (beat.danmaku ?? []).forEach(d => {
-        out.push({ id: d.id, author: d.author, text: d.text, translated: d.translated || '', mine: false, char: false, gift: false });
+        out.push({
+          id: d.id,
+          source: 'danmaku',
+          beatId: beat.id,
+          author: d.author,
+          text: d.text,
+          translated: d.translated || '',
+          mine: false,
+          char: false,
+          gift: false,
+        });
       });
-      (beat.userActions ?? []).forEach(pushUser);
+      (beat.userActions ?? []).forEach(a => pushUser(a, 'user', beat.id));
       (beat.charActions ?? []).forEach(a => {
         if (a.kind === 'mic_line') return;
         out.push({
           id: a.id,
+          source: 'char',
+          beatId: beat.id,
           author: session.cast.charAccount.nickname,
           text:
             a.kind === 'gift'
@@ -369,6 +411,42 @@ export function WatchRoom({
   // 只有整场进度才看得出是不是已经到最后一段（Ann 2026-10-26）。
   // 段内走到第几句写在字幕下面那行小字里。
   const progress = totalBeats > 1 ? Math.round((beatNo / totalBeats) * 100) : 100;
+  const wasRepair = useRef(false);
+  useEffect(() => {
+    if (wasRepair.current && !repairBusy) setRepairOpen(false);
+    wasRepair.current = Boolean(repairBusy);
+  }, [repairBusy]);
+
+  const openRepair = () => {
+    setRepairPick(viewBeat ? [viewBeat.index] : []);
+    setRepairOpen(true);
+  };
+  const toggleRepair = (index: number) => {
+    setRepairPick(prev => (prev.includes(index) ? prev.filter(n => n !== index) : [...prev, index]));
+  };
+  const startLinePress = (line: WatchPublicLineRef & { gift?: boolean }, el: HTMLElement) => {
+    if (line.gift) return;
+    if (linePress.current !== null) window.clearTimeout(linePress.current);
+    linePress.current = window.setTimeout(() => {
+      linePress.current = null;
+      const root = rootRef.current;
+      if (!root) return;
+      const page = root.getBoundingClientRect();
+      const row = el.getBoundingClientRect();
+      const menuH = 88;
+      let top = row.bottom - page.top + 6;
+      if (top + menuH > page.height - 8) top = Math.max(8, row.top - page.top - menuH - 6);
+      let left = row.left - page.left;
+      if (left + 160 > page.width - 8) left = Math.max(8, page.width - 168);
+      setLineMenu({ line, top, left });
+    }, 420);
+  };
+  const endLinePress = () => {
+    if (linePress.current !== null) {
+      window.clearTimeout(linePress.current);
+      linePress.current = null;
+    }
+  };
 
   return (
     <div ref={rootRef} className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: W.page, color: W.ink }}>
@@ -697,7 +775,14 @@ export function WatchRoom({
           </div>
         ) : (
           lines.map(l => (
-            <div key={l.id} className="mb-[9px] flex gap-[7px]">
+            <div
+              key={l.id}
+              className="mb-[9px] flex gap-[7px]"
+              onPointerDown={e => startLinePress(l, e.currentTarget)}
+              onPointerUp={endLinePress}
+              onPointerCancel={endLinePress}
+              onContextMenu={e => e.preventDefault()}
+            >
               <span
                 className="mt-[1px] inline-flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full text-[9.5px]"
                 style={{
@@ -813,6 +898,7 @@ export function WatchRoom({
         <div className="pb-2">
           {[
             { label: '改这一幕', desc: '画面和台词，就地改', run: () => onOpenInfo(viewBeat?.index) },
+            { label: '修复格式', desc: '选几段，让辅助模型补上缺少的中文', run: openRepair },
             { label: '本场信息', desc: '主播名、人设、房间标题、分区', run: () => onOpenInfo(viewBeat?.index) },
             {
               label: '这一段重来',
@@ -842,6 +928,108 @@ export function WatchRoom({
               </span>
             </button>
           ))}
+        </div>
+      </Sheet>
+
+      <Sheet open={repairOpen} onClose={() => !repairBusy && setRepairOpen(false)} title="修复格式">
+        <div className="px-4 pb-2">
+          <div className="mb-2 text-[11.5px]" style={{ color: W.sub }}>
+            选要补格式的段。可以一次选好几段。
+          </div>
+          <div className="max-h-[240px] overflow-y-auto">
+            {session.beats.map(beat => {
+              const on = repairPick.includes(beat.index);
+              return (
+                <button
+                  key={beat.id}
+                  type="button"
+                  onClick={() => toggleRepair(beat.index)}
+                  className="flex w-full items-center gap-2 py-2 text-left"
+                >
+                  <span
+                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-[10px] text-white"
+                    style={{ background: on ? W.ink : '#fff', border: `1px solid ${on ? W.ink : W.line}` }}
+                  >
+                    {on ? '✓' : ''}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[13px]" style={{ color: W.ink }}>
+                    第 {beat.index + 1} 段
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="px-4 pb-4">
+          <SolidButton
+            disabled={!repairPick.length || repairBusy}
+            onClick={() => onRepairBeats([...repairPick].sort((a, b) => a - b))}
+          >
+            {repairBusy ? '修复中' : `修复选中的 ${repairPick.length} 段`}
+          </SolidButton>
+        </div>
+      </Sheet>
+
+      {lineMenu ? (
+        <div className="absolute inset-0 z-40">
+          <button type="button" aria-label="关闭菜单" onClick={() => setLineMenu(null)} className="absolute inset-0" />
+          <div
+            className="absolute w-[148px] overflow-hidden bg-white"
+            style={{ top: lineMenu.top, left: lineMenu.left, borderRadius: 12, boxShadow: '0 10px 28px rgba(0,0,0,.18)' }}
+          >
+            <button
+              type="button"
+              className="block w-full px-3 py-2.5 text-left text-[13px]"
+              style={{ color: W.ink }}
+              onClick={() => {
+                const line = lineMenu.line;
+                setLineMenu(null);
+                setLineEdit(line);
+                setLineDraft(line.translated ? `${line.text} ▸ ${line.translated}` : line.text);
+              }}
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              className="block w-full px-3 py-2.5 text-left text-[13px]"
+              style={{ color: W.red, borderTop: `1px solid ${W.line}` }}
+              onClick={() => {
+                const line = lineMenu.line;
+                setLineMenu(null);
+                onDeletePublic(line);
+              }}
+            >
+              删除
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <Sheet open={Boolean(lineEdit)} onClose={() => setLineEdit(null)} title="改这条弹幕">
+        <div className="px-4 pb-2">
+          <div className="mt-2 flex px-3 py-2.5" style={{ borderRadius: 12, background: W.fill }}>
+            <textarea
+              value={lineDraft}
+              onChange={e => setLineDraft(e.target.value)}
+              rows={4}
+              aria-label="弹幕内容"
+              className="w-full resize-none bg-transparent text-[13px] leading-[19px] outline-none"
+              style={{ color: W.ink }}
+            />
+          </div>
+        </div>
+        <div className="px-4 pb-4">
+          <SolidButton
+            disabled={!lineDraft.trim() || !lineEdit}
+            onClick={() => {
+              if (!lineEdit) return;
+              onEditPublic(lineEdit, lineDraft.trim());
+              setLineEdit(null);
+            }}
+          >
+            记下
+          </SolidButton>
         </div>
       </Sheet>
 

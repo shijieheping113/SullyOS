@@ -37,6 +37,7 @@ import {
   buildRecapTask,
   buildRoomPoolTask,
   buildSessionTurns,
+  buildFormatRepairRules,
   buildStageCounterTask,
   buildStageTask,
   buildTasteTask,
@@ -191,6 +192,28 @@ function absorbContinuation(lines: LabelLine[], max = 10): LabelLine[] {
       cur.value = buf.join('\n');
     }
     out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * 中文被换到下一行、行首是 ▸ 时，接回上一句台词或弹幕。
+ * 不接的话，这一行没有标签，后面直接丢掉。丢掉之后回灌给下一段的样例就只剩日语，
+ * 下一段会照着这个样例继续只写日语。
+ */
+function attachBilingualTails(lines: LabelLine[]): LabelLine[] {
+  const out: LabelLine[] = [];
+  for (const line of lines) {
+    const prev = out[out.length - 1];
+    const tail = (line.label ? '' : line.value).trim();
+    const isTail = tail.startsWith(BILINGUAL_SEP) || tail.startsWith('>');
+    const prevHoldsSpeech =
+      Boolean(prev) && /话|台词|弹幕|公屏|网友|观众|评论/.test(prev.label) && !prev.value.includes(BILINGUAL_SEP);
+    if (prev && isTail && prevHoldsSpeech) {
+      prev.value = `${prev.value} ${tail.replace(/^>\s*/, `${BILINGUAL_SEP} `)}`.trim();
+      continue;
+    }
+    out.push({ ...line });
   }
   return out;
 }
@@ -495,7 +518,7 @@ function toStageOutput(raw: string): StageOutput {
     };
   }
 
-  const lines = absorbContinuation(labelLines(raw));
+  const lines = attachBilingualTails(absorbContinuation(labelLines(raw)));
   const rawSeq = stageSeqOf(lines);
   if (rawSeq.length) {
     const danmaku = parseDanmaku(valuesOf(lines, DANMAKU_KEYS));
@@ -606,9 +629,8 @@ function chatLinesFromJson(items: any[]): CharChatLine[] {
 function toCharOutput(raw: string): CharOutput {
   const asJson = tryJson(raw);
   if (asJson && (Array.isArray(asJson.chat) || Array.isArray(asJson.public))) {
-    const chat: CharChatLine[] = chatLinesFromJson(Array.isArray(asJson.chat) ? asJson.chat : []).slice(0, 4);
+    const chat: CharChatLine[] = chatLinesFromJson(Array.isArray(asJson.chat) ? asJson.chat : []);
     const publicActions: WatchPublicAction[] = (Array.isArray(asJson.public) ? asJson.public : [])
-      .slice(0, 4)
       .map((a: any) => {
         const kind = (
           ['danmaku', 'gift', 'mic_on', 'mic_line', 'mic_off'].includes(a?.kind) ? a.kind : 'danmaku'
@@ -687,10 +709,10 @@ function toCharOutput(raw: string): CharOutput {
   // 私聊正文可以没有「私聊：」这种标签。一个字都没有、公屏动作也没有，才重问。
   if (!lines.some(l => l.label) && chat.length === 0) throw new Error('模型没按约好的格式回');
 
-  const trimmed = publicActions.filter(a => a.kind !== 'danmaku' || Boolean(a.text)).slice(0, 4);
+  const trimmed = publicActions.filter(a => a.kind !== 'danmaku' || Boolean(a.text));
 
   return {
-    chat: chat.slice(0, 4),
+    chat,
     public: trimmed,
     transfer,
     why: firstOf(lines, ['理由', '安静', '为什么']),
@@ -1349,6 +1371,68 @@ export async function suggestTaste(opts: {
     .join('')
     .replace(/^["「『]|["」』]$/g, '')
     .slice(0, 60);
+}
+
+/** 用辅助模型把选中的几段补回「外语 ▸ 中文」。没配辅助模型就停，不改走主模型。 */
+export async function repairWatchBeats(opts: {
+  apiConfig: APIConfig;
+  char: CharacterProfile;
+  language: WatchStreamerLanguage | undefined;
+  beats: WatchBeat[];
+}): Promise<WatchBeat[]> {
+  if (!opts.beats.length) return [];
+  if (!isSecondaryLlmReady(opts.apiConfig.secondaryLlm)) {
+    throw new Error('辅助模型还没配好');
+  }
+  const material = opts.beats
+    .map(beat => {
+      const body =
+        beat.seq && beat.seq.length
+          ? beat.seq.map(s =>
+              s.kind === 'scene'
+                ? `画：${s.text}`
+                : `话：${s.translated ? `${s.text} ▸ ${s.translated}` : s.text}`,
+            )
+          : [`画：${beat.scene}`, beat.speech ? `话：${beat.speech}` : ''].filter(Boolean);
+      const dm = (beat.danmaku || []).map(
+        d => `弹幕：${d.author}｜${d.translated ? `${d.text} ▸ ${d.translated}` : d.text}`,
+      );
+      return [`【第 ${beat.index + 1} 段】`, ...body, ...dm].join('\n');
+    })
+    .join('\n\n');
+  const raw = await secondaryLlmCall({
+    config: opts.apiConfig.secondaryLlm!,
+    purpose: 'watch_along_format_repair',
+    messages: [
+      { role: 'system', content: buildFormatRepairRules(opts.language) },
+      { role: 'user', content: material },
+    ],
+    featureOpts: { temperature: 0.3 },
+    maxTokens: 8000,
+    charId: opts.char.id,
+  });
+  const parts = raw.split(/【第\s*(\d+)\s*段】/).slice(1);
+  const byNo = new Map<number, string>();
+  for (let i = 0; i < parts.length; i += 2) {
+    byNo.set(Number(parts[i]), parts[i + 1] || '');
+  }
+  return opts.beats.map(beat => {
+    const piece = byNo.get(beat.index + 1) || (opts.beats.length === 1 ? raw : '');
+    if (!piece.trim()) return beat;
+    try {
+      const parsed = toStageOutput(piece);
+      if (!parsed.seq.length && !parsed.danmaku.length) return beat;
+      return {
+        ...beat,
+        scene: parsed.scene || beat.scene,
+        speech: parsed.speech || beat.speech,
+        seq: parsed.seq.length ? parsed.seq : beat.seq,
+        danmaku: parsed.danmaku.length ? parsed.danmaku : beat.danmaku,
+      };
+    } catch {
+      return beat;
+    }
+  });
 }
 
 // ==================== 账号：起名 ====================

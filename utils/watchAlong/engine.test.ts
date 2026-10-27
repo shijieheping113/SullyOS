@@ -213,6 +213,14 @@ describe('台上这一幕的解析', () => {
     expect(r.danmaku).toHaveLength(1);
   });
 
+  it('中文另起一行、行首是 ▸：接到上一句台词上', () => {
+    const r = __parseStage(`话：あーもう、これ無理だって
+▸ 啊不行了这个真打不过
+点名：否`);
+    expect(r.seq[0].text).toContain('無理');
+    expect(r.seq[0].translated).toContain('打不过');
+  });
+
   it('外语双语：话和弹幕都按 ▸ 拆成原话 + 译文', () => {
     const r = __parseStage(`话：あーもう、これ無理だって ▸ 啊——不行了这个真打不过
 弹幕：ゆき｜うぽつ ▸ 感谢开播
@@ -388,8 +396,8 @@ describe('台上提示词：不抢话与主播档案', () => {
     const counter = buildStageCounterTask({ session: s, actionText: '有人发了条弹幕', micOn: false });
     for (const text of [task, counter]) {
       expect(text).toContain('即时翻译');
-      expect(text).toContain('▸');
-      expect(text).toContain('两种语言都写全');
+      expect(text).toContain('日语 ▸ 中文');
+      expect(text).toContain('必须写在同一行');
       expect(text).toContain('画面只写中文');
       expect(text).not.toContain('写外语原话');
     }
@@ -400,8 +408,8 @@ describe('台上提示词：不抢话与主播档案', () => {
       profile: { ...profile, language: 'zh' },
     });
     const task = buildStageTask({ session: s, latest: '', micOn: false });
-    expect(task).toContain('这一场是中文直播间');
-    expect(task).toContain('不加译文');
+    expect(task).toContain('主播台词只写中文');
+    expect(task).toContain('网名｜中文');
   });
 });
 
@@ -430,6 +438,17 @@ describe('角色这一轮的解析', () => {
     const r = __parseChar('公屏：Hmm 弹幕需要反映投票结果');
     expect(r.public).toHaveLength(0);
     expect(r.wentPublic).toBe(false);
+  });
+
+  it('私聊不限条数，排在后面的表情包也留下', () => {
+    const r = __parseChar(`第一句
+第二句
+第三句
+第四句
+第五句
+[[SEND_EMOJI: 翻白眼]]`);
+    expect(r.chat).toHaveLength(6);
+    expect(r.chat[5].sticker).toBe('翻白眼');
   });
 
   it('表情包按主聊天的写法，可以单独一条，也可以跟字在一起', () => {

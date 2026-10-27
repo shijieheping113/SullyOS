@@ -24,7 +24,7 @@ import type {
   UserProfile,
 } from '../../types';
 import { WatchLobby } from '../../components/watchAlong/WatchLobby';
-import { WatchRoom } from '../../components/watchAlong/WatchRoom';
+import { WatchRoom, type WatchPublicLineRef } from '../../components/watchAlong/WatchRoom';
 import { WatchChat } from '../../components/watchAlong/WatchChat';
 import { WatchDirector } from '../../components/watchAlong/WatchDirector';
 import { WatchHistory } from '../../components/watchAlong/WatchHistory';
@@ -51,6 +51,7 @@ import {
 } from '../../utils/watchAlong/round';
 import {
   generateRoomPool,
+  repairWatchBeats,
   suggestAccountName,
   suggestTaste,
 } from '../../utils/watchAlong/engine';
@@ -120,6 +121,7 @@ type Busy =
   | null
   | 'advance'
   | 'chat'
+  | 'repair'
   | 'pool'
   | 'recap'
   | 'digest'
@@ -709,7 +711,7 @@ export default function WatchAlongApp({
     [busy, buildCtx, persist, addToast, char.name],
   );
 
-  /** 拿掉角色最近一次回复，再按「触发」那条路重写一次 */
+  /** 先从界面拿掉角色最近一次回复，再按「触发」那条路重写 */
   const regenerateLastReply = useCallback(async () => {
     const cur = sessionRef.current;
     if (!cur || busy) return;
@@ -726,9 +728,16 @@ export default function WatchAlongApp({
     const removed = cur.chat.slice(span.start, span.end + 1);
     const keptBefore = cur.chat.slice(0, span.start);
     const keptAfter = cur.chat.slice(span.end + 1);
-    const base: WatchAlongSession = { ...cur, chat: keptBefore, updatedAt: Date.now() };
+    const base: WatchAlongSession = {
+      ...cur,
+      chat: [...keptBefore, ...keptAfter],
+      updatedAt: Date.now(),
+    };
     setBusy('chat');
+    const voiceIds = removed.map(m => m.voiceId).filter((id): id is string => Boolean(id));
+    if (voiceIds.length) void forgetWatchVoices(voiceIds);
     try {
+      await persist(base);
       const ctx = await buildCtx();
       const r = await chatRound({ ...ctx, session: base, manual: true });
       if (r.failed) {
@@ -737,7 +746,6 @@ export default function WatchAlongApp({
       }
       let next: WatchAlongSession = {
         ...r.session,
-        chat: [...r.session.chat, ...keptAfter],
         updatedAt: Date.now(),
       };
       try {
@@ -746,8 +754,6 @@ export default function WatchAlongApp({
         /* 压不动不影响这一轮 */
       }
       await persist(next);
-      const voiceIds = removed.map(m => m.voiceId).filter((id): id is string => Boolean(id));
-      if (voiceIds.length) void forgetWatchVoices(voiceIds);
       if (r.bubble) setBubble(r.bubble);
     } catch (e: any) {
       addToast(e?.message || '没重写出来', 'error');
@@ -816,6 +822,84 @@ export default function WatchAlongApp({
       addToast('本场信息改好了', 'success');
     },
     [persist, addToast],
+  );
+
+  const splitPublicEdit = (raw: string): { text: string; translated?: string } => {
+    const at = raw.indexOf('▸');
+    if (at < 0) return { text: raw.trim() };
+    const text = raw.slice(0, at).trim();
+    const translated = raw.slice(at + 1).trim();
+    if (!text) return { text: translated };
+    return { text, translated: translated || undefined };
+  };
+
+  const editPublicLine = useCallback(
+    async (line: WatchPublicLineRef, raw: string) => {
+      const cur = sessionRef.current;
+      if (!cur) return;
+      const next = splitPublicEdit(raw);
+      if (!next.text) return;
+      const patchAction = <T extends { id: string; text?: string; translated?: string }>(list: T[]) =>
+        list.map(item => (item.id === line.id ? { ...item, text: next.text, translated: next.translated } : item));
+      let pendingPublic = cur.pendingPublic;
+      let beats = cur.beats;
+      if (line.source === 'pending') {
+        pendingPublic = patchAction(cur.pendingPublic ?? []);
+      } else if (line.source === 'danmaku') {
+        beats = cur.beats.map(b => (b.id === line.beatId ? { ...b, danmaku: patchAction(b.danmaku) } : b));
+      } else if (line.source === 'user') {
+        beats = cur.beats.map(b => (b.id === line.beatId ? { ...b, userActions: patchAction(b.userActions) } : b));
+      } else {
+        beats = cur.beats.map(b => (b.id === line.beatId ? { ...b, charActions: patchAction(b.charActions) } : b));
+      }
+      await persist({ ...cur, pendingPublic, beats, updatedAt: Date.now() });
+    },
+    [persist],
+  );
+
+  const deletePublicLine = useCallback(
+    async (line: WatchPublicLineRef) => {
+      const cur = sessionRef.current;
+      if (!cur) return;
+      const drop = <T extends { id: string }>(list: T[]) => list.filter(item => item.id !== line.id);
+      let pendingPublic = cur.pendingPublic;
+      let beats = cur.beats;
+      if (line.source === 'pending') pendingPublic = drop(cur.pendingPublic ?? []);
+      else if (line.source === 'danmaku') beats = cur.beats.map(b => (b.id === line.beatId ? { ...b, danmaku: drop(b.danmaku) } : b));
+      else if (line.source === 'user') beats = cur.beats.map(b => (b.id === line.beatId ? { ...b, userActions: drop(b.userActions) } : b));
+      else beats = cur.beats.map(b => (b.id === line.beatId ? { ...b, charActions: drop(b.charActions) } : b));
+      await persist({ ...cur, pendingPublic, beats, updatedAt: Date.now() });
+    },
+    [persist],
+  );
+
+  const repairBeats = useCallback(
+    async (indexes: number[]) => {
+      const cur = sessionRef.current;
+      if (!cur || !indexes.length || busy) return;
+      setBusy('repair');
+      try {
+        const picked = cur.beats.filter(b => indexes.includes(b.index));
+        const fixed = await repairWatchBeats({
+          apiConfig,
+          char,
+          language: cur.room.profile?.language,
+          beats: picked,
+        });
+        const byId = new Map(fixed.map(b => [b.id, b]));
+        await persist({
+          ...cur,
+          beats: cur.beats.map(b => byId.get(b.id) || b),
+          updatedAt: Date.now(),
+        });
+        addToast('选中的段已经按格式补过', 'success');
+      } catch (e: any) {
+        addToast(e?.message || '格式没补上', 'error');
+      } finally {
+        setBusy(null);
+      }
+    },
+    [busy, apiConfig, char, persist, addToast],
   );
 
   /** 大厅里让辅助模型代笔一句口味 */
@@ -1656,6 +1740,10 @@ export default function WatchAlongApp({
           setInfoBeatIndex(beatIndex);
           setInfoOpen(true);
         }}
+        onRepairBeats={indexes => void repairBeats(indexes)}
+        repairBusy={busy === 'repair'}
+        onEditPublic={(line, text) => void editPublicLine(line, text)}
+        onDeletePublic={line => void deletePublicLine(line)}
         onExit={() => void openExit()}
         onSummon={() => void summon()}
         onHidePet={() => void hidePet()}
