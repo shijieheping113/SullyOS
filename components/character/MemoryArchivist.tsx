@@ -377,7 +377,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                             本月没有日度记录
                         </div>
                     )}
-                    {Object.entries(groupedByDay).sort(([a], [b]) => a.localeCompare(b)).map(([date, dayMemories]) => {
+                    {Object.entries(groupedByDay).sort(([a], [b]) => b.localeCompare(a)).map(([date, dayMemories]) => {
                         const dayActive = isMemoryDayActive(date, activeMemoryMonths, activeMemoryDays);
                         const rangeLo = rangeMode?.start && rangeMode?.end
                             ? (rangeMode.start <= rangeMode.end ? rangeMode.start : rangeMode.end)
