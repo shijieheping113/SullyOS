@@ -50,3 +50,27 @@ describe('listRecallableMonths', () => {
       .toMatchObject({ ok: false, reason: 'no_logs' });
   });
 });
+
+describe('runRecall 按天', () => {
+  it('只返回那一天的日志', async () => {
+    const memories = [mem('2026-06-15', '十五'), mem('2026-06-16', '十六'), mem('2026年6月15日', '十五中文')];
+    const result = await runRecall({ year: '2026', month: '06', day: '15' }, ctxWith(memories));
+    expect(result).toMatchObject({ ok: true, alreadyActive: false, yearMonth: '2026-06-15' });
+    if (result.ok) {
+      expect(result.logsText).toContain('十五');
+      expect(result.logsText).not.toContain('十六');
+    }
+  });
+
+  it('整月亮着或该日已亮时算 alreadyActive', async () => {
+    const memories = [mem('2026-06-15')];
+    expect(await runRecall({ year: '2026', month: '06', day: '15' }, {
+      char: { name: '测', memories, activeMemoryMonths: ['2026-06'] },
+      userProfile: { name: '用户' } as UserProfile,
+    })).toMatchObject({ ok: true, alreadyActive: true });
+    expect(await runRecall({ year: '2026', month: '06', day: '15' }, {
+      char: { name: '测', memories, activeMemoryDays: ['2026-06-15'] },
+      userProfile: { name: '用户' } as UserProfile,
+    })).toMatchObject({ ok: true, alreadyActive: true });
+  });
+});

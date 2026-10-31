@@ -31,6 +31,7 @@ import {
     normalizeXhsLiteDetail,
 } from './xhsMcpClient';
 import { getLocalDateKey } from './localDate';
+import { isMemoryDayActive, normalizeMemoryDayKey } from './memoryDayActivation';
 
 // ─── 共用类型 ────────────────────────────────────────────────────────────────
 
@@ -114,6 +115,7 @@ export interface AgenticToolChar {
     name: string;
     xhsEnabled?: boolean;
     activeMemoryMonths?: string[];
+    activeMemoryDays?: string[];
     memories?: AgenticToolMemory[];
 }
 
@@ -165,14 +167,49 @@ export function listRecallableMonths(memories: AgenticToolMemory[] | undefined):
     return [...months].sort();
 }
 
+function memoryMatchesMonth(mem: AgenticToolMemory, year: string, month: string, targetMonth: string): boolean {
+    return mem.date.includes(targetMonth) || mem.date.includes(`${year}年${parseInt(month, 10)}月`);
+}
+
+function memoryMatchesDay(mem: AgenticToolMemory, dayKey: string): boolean {
+    const key = normalizeMemoryDayKey(mem.date);
+    if (key) return key === dayKey;
+    // 归一失败时尽量用旧字符串包含判断，避免漏掉怪格式
+    const [y, m, d] = dayKey.split('-');
+    return mem.date.includes(dayKey)
+        || mem.date.includes(`${y}年${parseInt(m, 10)}月${parseInt(d, 10)}日`)
+        || mem.date.includes(`${y}年${parseInt(m, 10)}月${parseInt(d, 10)}`);
+}
+
+/**
+ * 调阅详细回忆。`day` 有值时按天（`YYYY-MM-DD`）；否则按月（原作者行为不变）。
+ * yearMonth 字段：按月返回 `YYYY-MM`，按天返回 `YYYY-MM-DD`（给提示与去重用）。
+ */
 export async function runRecall(
-    args: { year: string; month: string },
+    args: { year: string; month: string; day?: string },
     ctx: AgenticToolCtx,
 ): Promise<RecallResult> {
     const { char } = ctx;
     const targetMonth = `${args.year}-${args.month.padStart(2, '0')}`;
-    const alreadyActive = !!char.activeMemoryMonths?.includes(targetMonth);
+    const dayPart = args.day?.trim();
+    if (dayPart) {
+        const dayKey = `${targetMonth}-${dayPart.padStart(2, '0')}`;
+        const alreadyActive = isMemoryDayActive(dayKey, char.activeMemoryMonths, char.activeMemoryDays);
+        if (alreadyActive) {
+            return { ok: true, alreadyActive: true, yearMonth: dayKey, logsText: null };
+        }
+        if (!char.memories) {
+            return { ok: false, reason: 'no_logs', yearMonth: dayKey };
+        }
+        const logs = char.memories.filter(mem => memoryMatchesDay(mem, dayKey));
+        if (logs.length === 0) {
+            return { ok: false, reason: 'no_logs', yearMonth: dayKey };
+        }
+        const logsText = logs.map(mem => `[${mem.date}] (${mem.mood || 'normal'}): ${mem.summary}`).join('\n');
+        return { ok: true, alreadyActive: false, yearMonth: dayKey, logsText };
+    }
 
+    const alreadyActive = !!char.activeMemoryMonths?.includes(targetMonth);
     if (alreadyActive) {
         return { ok: true, alreadyActive: true, yearMonth: targetMonth, logsText: null };
     }
@@ -180,9 +217,7 @@ export async function runRecall(
     if (!char.memories) {
         return { ok: false, reason: 'no_logs', yearMonth: targetMonth };
     }
-    const logs = char.memories.filter(mem => {
-        return mem.date.includes(targetMonth) || mem.date.includes(`${args.year}年${parseInt(args.month)}月`);
-    });
+    const logs = char.memories.filter(mem => memoryMatchesMonth(mem, args.year, args.month, targetMonth));
     if (logs.length === 0) {
         return { ok: false, reason: 'no_logs', yearMonth: targetMonth };
     }

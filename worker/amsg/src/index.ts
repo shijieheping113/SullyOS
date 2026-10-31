@@ -537,6 +537,7 @@ const buildToolCtx = (
     name: pack.charName,
     xhsEnabled: pack.xhsEnabled,
     activeMemoryMonths: pack.activeMemoryMonths,
+    activeMemoryDays: pack.activeMemoryDays || [],
     memories: pack.memories,
   };
 

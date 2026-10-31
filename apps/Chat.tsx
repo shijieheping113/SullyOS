@@ -6369,9 +6369,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             />
 
             {/* Forward Modal */}
-            {char && <MemoryContextSelfCheck key={`memory-self-check:${char.id}`} character={char} active={activeApp === AppID.Chat && modalType === 'none'} onDisable={months => {
-                const closing = new Set(months);
-                updateCharacter(char.id, current => ({ activeMemoryMonths: (current.activeMemoryMonths || []).filter(month => !closing.has(month)) }));
+            {char && <MemoryContextSelfCheck key={`memory-self-check:${char.id}`} character={char} active={activeApp === AppID.Chat && modalType === 'none'} onDisable={({ months, days }) => {
+                const closingMonths = new Set(months);
+                const closingDays = new Set(days);
+                updateCharacter(char.id, current => ({
+                    activeMemoryMonths: (current.activeMemoryMonths || []).filter(month => !closingMonths.has(month)),
+                    activeMemoryDays: (current.activeMemoryDays || []).filter(day => !closingDays.has(day)),
+                }));
             }} />}
             <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>
                 {(() => {

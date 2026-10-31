@@ -115,6 +115,16 @@ interface DataTagSpec {
 }
 
 const DATA_TAGS: DataTagSpec[] = [
+  // [[RECALL: 2024-05-19]] / [[RECALL: 2024年5月19日]] — 必须写在按月规则前面，否则按月吃不到日
+  {
+    re: /\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?\]\]/g,
+    toolName: 'recall',
+    toArgs: (m) => ({
+      year: m[1],
+      month: m[2].padStart(2, '0'),
+      day: m[3].padStart(2, '0'),
+    }),
+  },
   // [[RECALL: 2024-05]] / [[RECALL: 2024年5]]
   {
     re: /\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/g,

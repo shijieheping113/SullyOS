@@ -4,11 +4,13 @@ import { MemoryFragment } from '../../types';
 import Modal from '../../components/os/Modal';
 import { DEFAULT_REFINE_PROMPTS } from '../../components/chat/ChatConstants';
 import { buildMemoryArchiveIndex } from '../../utils/memoryArchiveIndex';
+import { countActiveDaysInMonth, isMemoryDayActive, normalizeMemoryDayKey } from '../../utils/memoryDayActivation';
 
 interface MemoryArchivistProps {
     memories: MemoryFragment[];
     refinedMemories: Record<string, string>;
     activeMemoryMonths: string[];
+    activeMemoryDays: string[];
     charName: string;
     userName: string;
     onRefine: (year: string, month: string, summary: string, formattedPrompt?: string) => Promise<void>;
@@ -16,6 +18,8 @@ interface MemoryArchivistProps {
     onUpdateMemory: (id: string, newSummary: string) => void | Promise<void>;
     linkedMemoryEnabled?: boolean;
     onToggleActiveMonth: (year: string, month: string) => void;
+    onToggleActiveDay: (dayKey: string, allDaysInMonth: string[]) => void;
+    onActivateDayRange: (startKey: string, endKey: string, allDaysInMonth: string[], turnOn: boolean) => void;
     onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void;
     onDeleteRefinedMemory: (year: string, month: string) => void;
     /**
@@ -28,7 +32,7 @@ interface MemoryArchivistProps {
     forceArchiveDefaultPromptId?: string;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, linkedMemoryEnabled, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, activeMemoryDays, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, linkedMemoryEnabled, onToggleActiveMonth, onToggleActiveDay, onActivateDayRange, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
     // 每个日期的"强制重总结"运行状态
     const [forcingDate, setForcingDate] = useState<string | null>(null);
     // 重总结前弹出模板选择器：把 date 存起来打开 modal
@@ -75,6 +79,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     };
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(new Set());
+    /** 区间多选：null=关；pick=点两天；ready=两端已定可确认亮开/关掉 */
+    const [rangeMode, setRangeMode] = useState<null | { start?: string; end?: string }>(null);
 
     // Core Memory Edit State
     const [editingCore, setEditingCore] = useState<{year: string, month: string, content: string} | null>(null);
@@ -107,9 +113,11 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const handleYearClick = (year: string) => setViewState({ level: 'year', selectedYear: year, selectedMonth: null });
     const handleMonthClick = (month: string) => {
         setExpandedMemoryIds(new Set());
+        setRangeMode(null);
         setViewState(prev => ({ ...prev, level: 'month', selectedMonth: month }));
     };
     const handleBack = () => {
+        setRangeMode(null);
         if (viewState.level === 'month') setViewState(prev => ({ ...prev, level: 'year', selectedMonth: null }));
         else if (viewState.level === 'year') setViewState({ level: 'root', selectedYear: null, selectedMonth: null });
     };
@@ -216,6 +224,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             {Object.keys(tree[viewState.selectedYear]).map(month => {
                 const monthKey = `${viewState.selectedYear}-${month}`;
                 const isActive = activeMemoryMonths.includes(monthKey);
+                const dayCount = countActiveDaysInMonth(monthKey, activeMemoryDays);
                 return (
                     <div key={month} className="relative group">
                          <div onClick={() => handleMonthClick(month)} className="bg-white/50 backdrop-blur-sm p-3 rounded-2xl border border-white/40 shadow-sm active:scale-95 transition-all flex flex-col justify-center items-center gap-2 aspect-square cursor-pointer hover:bg-white/70 relative overflow-hidden">
@@ -227,8 +236,11 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                     ? `${tree[viewState.selectedYear!][month].length} 条日度`
                                     : (refinedMemories?.[monthKey] ? '仅月度核心' : '无日度记录')}
                             </span>
+                            {!isActive && dayCount > 0 && (
+                                <span className="text-[9px] text-primary font-medium">已选 {dayCount} 天</span>
+                            )}
                         </div>
-                        <button onClick={(e) => { e.stopPropagation(); onToggleActiveMonth(viewState.selectedYear!, month); }} className={`absolute -top-2 -right-2 p-1.5 rounded-full shadow-md z-10 transition-colors ${isActive ? 'bg-primary text-white' : 'bg-white text-slate-300 border border-slate-100'}`}>
+                        <button title="整月详细回忆" onClick={(e) => { e.stopPropagation(); onToggleActiveMonth(viewState.selectedYear!, month); }} className={`absolute -top-2 -right-2 p-1.5 rounded-full shadow-md z-10 transition-colors ${isActive ? 'bg-primary text-white' : 'bg-white text-slate-300 border border-slate-100'}`}>
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path fillRule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 0 1 0-1.113ZM17.25 12a5.25 5.25 0 1 1-10.5 0 5.25 5.25 0 0 1 10.5 0Z" clipRule="evenodd" /></svg>
                         </button>
                     </div>
@@ -243,17 +255,41 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         const refinedContent = refinedMemories?.[key];
         const rawMemories = tree[viewState.selectedYear]?.[viewState.selectedMonth] || [];
         const isActive = activeMemoryMonths.includes(key);
+        const dayPickCount = countActiveDaysInMonth(key, activeMemoryDays);
 
         const groupedByDay: Record<string, MemoryFragment[]> = {};
-        rawMemories.forEach(m => { if (!groupedByDay[m.date]) groupedByDay[m.date] = []; groupedByDay[m.date].push(m); });
+        rawMemories.forEach(m => {
+            const dayKey = normalizeMemoryDayKey(m.date) || m.date;
+            if (!groupedByDay[dayKey]) groupedByDay[dayKey] = [];
+            groupedByDay[dayKey].push(m);
+        });
+        const allDaysInMonth = Object.keys(groupedByDay).sort();
+        const monthDetailLabel = isActive
+            ? '整月详细已激活'
+            : dayPickCount > 0
+                ? `已选 ${dayPickCount} 天详细`
+                : '仅使用核心记忆';
+
+        const onDayHeaderClick = (dayKey: string) => {
+            if (!rangeMode) return;
+            if (!rangeMode.start) {
+                setRangeMode({ start: dayKey });
+                return;
+            }
+            if (!rangeMode.end && dayKey !== rangeMode.start) {
+                setRangeMode({ start: rangeMode.start, end: dayKey });
+                return;
+            }
+            setRangeMode({ start: dayKey });
+        };
 
         return (
             <div className="space-y-6 animate-fade-in pb-8">
                 <div className="bg-indigo-50/50 rounded-2xl p-4 border border-indigo-100 relative group">
                     <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2 text-indigo-700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .914-.143Z" clipRule="evenodd" /></svg><h4 className="text-xs font-bold tracking-wide uppercase">核心记忆 (AI Context)</h4></div>
-                        <div className="flex gap-2">
-                             <button onClick={() => onToggleActiveMonth(viewState.selectedYear!, viewState.selectedMonth!)} className={`text-[10px] px-3 py-1 rounded-full border shadow-sm transition-colors flex items-center gap-1 ${isActive ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-200'}`}>{isActive ? '详细回忆已激活 (Active)' : '仅使用核心记忆 (Default)'}</button>
+                        <div className="flex gap-2 flex-wrap justify-end">
+                             <button onClick={() => onToggleActiveMonth(viewState.selectedYear!, viewState.selectedMonth!)} className={`text-[10px] px-3 py-1 rounded-full border shadow-sm transition-colors flex items-center gap-1 ${isActive ? 'bg-primary text-white border-primary' : dayPickCount > 0 ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-slate-500 border-slate-200'}`}>{monthDetailLabel}</button>
                              <button onClick={() => setShowPromptPanel(!showPromptPanel)} className="text-[10px] bg-white text-slate-500 px-2 py-1 rounded-full border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" /></svg>
                              </button>
@@ -303,13 +339,37 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     )}
                 </div>
                 
-                <div className="flex items-center justify-between px-1">
+                <div className="flex items-center justify-between px-1 gap-2 flex-wrap">
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap justify-end">
+                        {rawMemories.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => setRangeMode(rangeMode ? null : {})}
+                                className={`text-[10px] px-3 py-1 rounded-full border transition-colors ${rangeMode ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-slate-500 border-slate-200'}`}
+                            >
+                                {rangeMode ? '取消区间' : '区间多选'}
+                            </button>
+                        )}
                         {isManageMode && selectedIds.size > 0 && <button onClick={(e) => { e.stopPropagation(); requestDelete(); }} className="text-[10px] bg-red-500 text-white px-3 py-1 rounded-full font-bold shadow-sm active:scale-95 transition-transform">删除 ({selectedIds.size})</button>}
-                        {rawMemories.length > 0 && <button onClick={() => { setIsManageMode(!isManageMode); setSelectedIds(new Set()); }} className={`text-[10px] px-3 py-1 rounded-full border transition-colors ${isManageMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}>{isManageMode ? '完成' : '管理'}</button>}
+                        {rawMemories.length > 0 && <button onClick={() => { setIsManageMode(!isManageMode); setSelectedIds(new Set()); setRangeMode(null); }} className={`text-[10px] px-3 py-1 rounded-full border transition-colors ${isManageMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}>{isManageMode ? '完成' : '管理'}</button>}
                     </div>
                 </div>
+                {rangeMode && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] text-amber-800 space-y-2">
+                        <p>
+                            {!rangeMode.start && '先点某一天的日期，作为区间起点。'}
+                            {rangeMode.start && !rangeMode.end && <>已选起点 <b>{rangeMode.start}</b>，再点另一天作为终点。</>}
+                            {rangeMode.start && rangeMode.end && <>区间 <b>{rangeMode.start <= rangeMode.end ? rangeMode.start : rangeMode.end}</b> → <b>{rangeMode.start <= rangeMode.end ? rangeMode.end : rangeMode.start}</b>（只亮档案里真实有的天）</>}
+                        </p>
+                        {rangeMode.start && rangeMode.end && (
+                            <div className="flex gap-2">
+                                <button type="button" className="flex-1 py-1.5 rounded-full bg-primary text-white font-bold" onClick={() => { onActivateDayRange(rangeMode.start!, rangeMode.end!, allDaysInMonth, true); setRangeMode(null); }}>亮开这几天</button>
+                                <button type="button" className="flex-1 py-1.5 rounded-full bg-white border border-amber-300 text-amber-800 font-bold" onClick={() => { onActivateDayRange(rangeMode.start!, rangeMode.end!, allDaysInMonth, false); setRangeMode(null); }}>关掉这几天</button>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <div className="mt-2 pl-2">
                     {rawMemories.length === 0 && (
@@ -317,13 +377,40 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                             本月没有日度记录
                         </div>
                     )}
-                    {Object.entries(groupedByDay).map(([date, dayMemories]) => (
-                        <div key={date} className="relative pl-8 pb-8 last:pb-0 border-l-[2px] border-slate-100 last:border-l-0 last:border-image-source-none">
+                    {Object.entries(groupedByDay).sort(([a], [b]) => a.localeCompare(b)).map(([date, dayMemories]) => {
+                        const dayActive = isMemoryDayActive(date, activeMemoryMonths, activeMemoryDays);
+                        const rangeLo = rangeMode?.start && rangeMode?.end
+                            ? (rangeMode.start <= rangeMode.end ? rangeMode.start : rangeMode.end)
+                            : null;
+                        const rangeHi = rangeMode?.start && rangeMode?.end
+                            ? (rangeMode.start <= rangeMode.end ? rangeMode.end : rangeMode.start)
+                            : null;
+                        const highlighted = !!(rangeMode && (
+                            date === rangeMode.start
+                            || date === rangeMode.end
+                            || (rangeLo && rangeHi && date >= rangeLo && date <= rangeHi)
+                        ));
+                        return (
+                        <div key={date} className={`relative pl-8 pb-8 last:pb-0 border-l-[2px] border-slate-100 last:border-l-0 last:border-image-source-none ${highlighted ? 'bg-amber-50/50 rounded-r-xl' : ''}`}>
                             <div className="absolute left-[-2px] top-0 bottom-0 w-[2px] bg-slate-100"></div>
-                            <div className="absolute left-[-7px] top-0 w-3.5 h-3.5 bg-slate-300 rounded-full border-4 border-slate-50 z-10"></div>
-                            <div className="mb-3 -mt-1.5 flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-500 font-mono tracking-tight">{date}</span>
+                            <div className={`absolute left-[-7px] top-0 w-3.5 h-3.5 rounded-full border-4 border-slate-50 z-10 ${dayActive ? 'bg-primary' : 'bg-slate-300'}`}></div>
+                            <div className="mb-3 -mt-1.5 flex items-center gap-2 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={() => { if (rangeMode) onDayHeaderClick(date); }}
+                                    className={`text-xs font-bold font-mono tracking-tight ${rangeMode ? 'text-amber-700 underline decoration-dotted' : 'text-slate-500'}`}
+                                >
+                                    {date}
+                                </button>
                                 {dayMemories.length > 1 && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 rounded-md text-slate-400 font-normal">{dayMemories.length} 记录</span>}
+                                <button
+                                    type="button"
+                                    title={dayActive ? '关闭这一天的详细回忆' : '只亮开这一天的详细回忆'}
+                                    onClick={(e) => { e.stopPropagation(); onToggleActiveDay(date, allDaysInMonth); }}
+                                    className={`p-1 rounded-full shadow-sm border transition-colors ${dayActive ? 'bg-primary text-white border-primary' : 'bg-white text-slate-300 border-slate-100'}`}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path fillRule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 0 1 0-1.113ZM17.25 12a5.25 5.25 0 1 1-10.5 0 5.25 5.25 0 0 1 10.5 0Z" clipRule="evenodd" /></svg>
+                                </button>
                                 {onForceArchiveDate && (
                                     <button
                                         onClick={(e) => { e.stopPropagation(); openForcePicker(date); }}
@@ -366,7 +453,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                 ))}
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         );
@@ -390,7 +478,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             </div>
             {viewState.level === 'root' && renderYears()}
             {viewState.level === 'year' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">选择月份</h3></div>{renderMonths()}</>}
-            {viewState.level === 'month' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">本月记忆 (点击眼睛图标激活详细回忆)</h3></div>{renderMemories()}</>}
+            {viewState.level === 'month' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">本月记忆（月眼睛=整月；日眼睛=某天；可区间多选）</h3></div>{renderMemories()}</>}
 
             <Modal isOpen={!!editMemory} title="编辑记忆" onClose={() => { if (!savingMemory) setEditMemory(null); }} footer={<button disabled={savingMemory || !editMemory?.summary.trim()} onClick={() => void saveEditedMemory()} className="w-full py-3 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">{savingMemory ? '保存中…' : '保存修改'}</button>}>
                 {editMemory && <div className="space-y-3"><div className="text-xs text-slate-400">日期: {editMemory.date}</div>{linkedMemoryEnabled && editMemory.palaceMemoryId && <p className="text-xs text-violet-600">此条关联记忆宫殿。修改正文会同步修改宫殿并更新向量，可能产生 Embedding API 费用。</p>}<textarea disabled={savingMemory} value={editMemory.summary} onChange={e => setEditMemory({...editMemory, summary: e.target.value})} className="w-full h-40 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary"/>{memorySaveError && <p role="alert" className="text-xs text-red-500">{memorySaveError}</p>}</div>}

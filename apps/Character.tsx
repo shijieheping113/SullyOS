@@ -17,6 +17,7 @@ import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import RoomPlatePanel from '../components/character/RoomPlatePanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
+import { activateMemoryDayRange, deactivateMemoryDayRange, toggleMemoryDay, toggleMemoryMonth } from '../utils/memoryDayActivation';
 import { resolveLinkedArchives, useLinkedArchives } from '../utils/memoryPalace/linkedArchive';
 import { updateStoredMemoryNode } from '../utils/memoryPalace/vectorStore';
 import { MemoryNodeDB } from '../utils/memoryPalace/db';
@@ -495,10 +496,26 @@ const Character: React.FC = () => {
   // ... (Other handlers unchanged)
   const handleToggleActiveMonth = (year: string, month: string) => {
       if (!formData) return;
-      const key = `${year}-${month}`;
-      const current = formData.activeMemoryMonths || [];
-      const next = current.includes(key) ? current.filter(k => k !== key) : [...current, key];
-      handleChange('activeMemoryMonths', next);
+      const key = `${year}-${month.padStart(2, '0')}`;
+      const next = toggleMemoryMonth(key, formData.activeMemoryMonths || [], formData.activeMemoryDays || []);
+      handleChange('activeMemoryMonths', next.activeMemoryMonths);
+      handleChange('activeMemoryDays', next.activeMemoryDays);
+  };
+
+  const handleToggleActiveDay = (dayKey: string, allDaysInMonth: string[]) => {
+      if (!formData) return;
+      const next = toggleMemoryDay(dayKey, formData.activeMemoryMonths || [], formData.activeMemoryDays || [], allDaysInMonth);
+      handleChange('activeMemoryMonths', next.activeMemoryMonths);
+      handleChange('activeMemoryDays', next.activeMemoryDays);
+  };
+
+  const handleActivateDayRange = (startKey: string, endKey: string, allDaysInMonth: string[], turnOn: boolean) => {
+      if (!formData) return;
+      const next = turnOn
+          ? activateMemoryDayRange(startKey, endKey, formData.activeMemoryMonths || [], formData.activeMemoryDays || [], allDaysInMonth)
+          : deactivateMemoryDayRange(startKey, endKey, formData.activeMemoryMonths || [], formData.activeMemoryDays || [], allDaysInMonth);
+      handleChange('activeMemoryMonths', next.activeMemoryMonths);
+      handleChange('activeMemoryDays', next.activeMemoryDays);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1094,7 +1111,7 @@ ${isInitialGeneration ? `
       if (!formData) return;
       
       const {
-          id, memories, refinedMemories, activeMemoryMonths, impression, guidebookInsights,
+          id, memories, refinedMemories, activeMemoryMonths, activeMemoryDays, impression, guidebookInsights,
           ...rest
       } = formData;
 
@@ -1188,6 +1205,7 @@ ${isInitialGeneration ? `
               memories: [],
               refinedMemories: {},
               activeMemoryMonths: [],
+              activeMemoryDays: [],
               mountedWorldbooks: incomingMounted,
           } as CharacterProfile;
 
@@ -1845,11 +1863,21 @@ ${isInitialGeneration ? `
                                <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-600">记忆设置</summary>
                                <label className="flex items-center justify-between gap-4 border-t border-slate-100 px-4 py-3">
                                <span className="min-w-0">
-                                   <span className="block text-sm font-semibold text-slate-700">隐藏 RECALL 指令提示</span>
+                                   <span className="block text-sm font-semibold text-slate-700">隐藏按月 RECALL 指令提示</span>
                                    <span className="mt-1 block text-xs leading-relaxed text-slate-400">聊天时不再提示角色按月份调阅旧版记忆。使用记忆宫殿时可保持开启。</span>
                                </span>
                                <span className="shrink-0">
-                                   <input type="checkbox" role="switch" aria-label="隐藏 RECALL 指令提示" checked={formData.hideMonthlyRecallPrompt !== false} onChange={e => handleChange('hideMonthlyRecallPrompt', e.target.checked)} className="peer sr-only" />
+                                   <input type="checkbox" role="switch" aria-label="隐藏按月 RECALL 指令提示" checked={formData.hideMonthlyRecallPrompt !== false} onChange={e => handleChange('hideMonthlyRecallPrompt', e.target.checked)} className="peer sr-only" />
+                                   <span aria-hidden="true" className="relative block h-6 w-11 rounded-full bg-slate-200 transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-5" />
+                               </span>
+                               </label>
+                               <label className="flex items-center justify-between gap-4 border-t border-slate-100 px-4 py-3">
+                               <span className="min-w-0">
+                                   <span className="block text-sm font-semibold text-slate-700">隐藏按日 RECALL 指令提示</span>
+                                   <span className="mt-1 block text-xs leading-relaxed text-slate-400">聊天时不再提示角色用「年-月-日」调阅某一天的旧版记忆。关掉开关才会把按日教学写进提示词。</span>
+                               </span>
+                               <span className="shrink-0">
+                                   <input type="checkbox" role="switch" aria-label="隐藏按日 RECALL 指令提示" checked={formData.hideDailyRecallPrompt !== false} onChange={e => handleChange('hideDailyRecallPrompt', e.target.checked)} className="peer sr-only" />
                                    <span aria-hidden="true" className="relative block h-6 w-11 rounded-full bg-slate-200 transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-5" />
                                </span>
                                </label>
@@ -1864,12 +1892,15 @@ ${isInitialGeneration ? `
                                linkedMemoryEnabled={linkedMemoryEnabled}
                                refinedMemories={formData.refinedMemories || {}}
                                activeMemoryMonths={formData.activeMemoryMonths || []}
+                               activeMemoryDays={formData.activeMemoryDays || []}
                                charName={formData.name || ''}
                                userName={userProfile.name}
                                onRefine={handleRefineMonth}
                                onDeleteMemories={handleDeleteMemories}
                                onUpdateMemory={handleUpdateMemory}
                                onToggleActiveMonth={handleToggleActiveMonth}
+                               onToggleActiveDay={handleToggleActiveDay}
+                               onActivateDayRange={handleActivateDayRange}
                                onUpdateRefinedMemory={handleUpdateRefinedMemory}
                                onDeleteRefinedMemory={handleDeleteRefinedMemory}
                                onForceArchiveDate={handleForceArchiveDate}

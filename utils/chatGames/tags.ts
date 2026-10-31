@@ -5,6 +5,7 @@
  */
 
 const RERUN_SOURCES = [
+    String.raw`\[\[RECALL:\s*\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?\]\]`,
     String.raw`\[\[RECALL:\s*\d{4}[-/年]\d{1,2}\]\]`,
     String.raw`\[\[SEARCH:\s*.+?\]\]`,
     String.raw`\[\[READ_DIARY:\s*.+?\]\]`,

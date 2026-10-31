@@ -30,6 +30,8 @@ export interface AmsgToolPack {
   charName: string;
   xhsEnabled: boolean;
   activeMemoryMonths: string[];
+  /** 按天激活的详细回忆；缺省按空数组。旧包没有此字段时 parse 补成 []。 */
+  activeMemoryDays: string[];
   memories: AgenticToolMemory[];
   /**
    * 角色的「时间感知」开关。关掉的角色不该知道今天几号，所以到点注入的实时世界里
@@ -127,6 +129,7 @@ export const buildToolPack = (char: CharacterProfile): AmsgToolPack => ({
   charName: char.name,
   xhsEnabled: !!char.xhsEnabled,
   activeMemoryMonths: char.activeMemoryMonths || [],
+  activeMemoryDays: char.activeMemoryDays || [],
   // id 等工具用不到的字段不上云；runRecall 只读 date / mood / summary。
   memories: (char.memories || []).map((mem) => ({
     date: mem.date,
@@ -214,6 +217,9 @@ export const parseToolPack = (value: string): AmsgToolPack | null => {
       !Array.isArray(parsed.memories)
     ) {
       return null;
+    }
+    if (!Array.isArray(parsed.activeMemoryDays)) {
+      parsed.activeMemoryDays = [];
     }
     return parsed as AmsgToolPack;
   } catch {

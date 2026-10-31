@@ -49,6 +49,17 @@ describe('classifyLLMOutput', () => {
     }
   });
 
+  it('按日 RECALL 只走一天参数，不被按月规则截半或重复', () => {
+    const r = classifyLLMOutput('翻那天[[RECALL: 2024-05-19]]');
+    expect(r.kind).toBe('tool-request');
+    if (r.kind === 'tool-request') {
+      expect(r.toolCalls).toHaveLength(1);
+      expect(JSON.parse(r.toolCalls[0].function.arguments)).toEqual({
+        year: '2024', month: '05', day: '19',
+      });
+    }
+  });
+
   it('D5 tool-request prefix 为空 (LLM 直接吐数据标签)', () => {
     const r = classifyLLMOutput('[[SEARCH: weather]]');
     expect(r.kind).toBe('tool-request');

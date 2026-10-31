@@ -1124,22 +1124,31 @@ export async function applyAssistantPostProcessing(
         await replyStep(async () => renderLeadIn(aiContent));
     }
 
-    // 5. Handle Recall (Loop if needed)
-    const recallMatch = aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/);
-    if (!skipSecondPassLLM && recallMatch) {
-        const year = recallMatch[1];
-        const month = recallMatch[2];
+    // 5. Handle Recall (Loop if needed) — 先按天再按月，避免 YYYY-MM-DD 被月规则截半
+    const recallDayMatch = aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?\]\]/);
+    const recallMatch = recallDayMatch ? null : aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/);
+    if (!skipSecondPassLLM && (recallDayMatch || recallMatch)) {
+        const year = (recallDayMatch || recallMatch)![1];
+        const month = (recallDayMatch || recallMatch)![2];
+        const day = recallDayMatch ? recallDayMatch[3] : undefined;
+        const stripRecallTags = (text: string) => text
+            .replace(/\[\[RECALL:\s*\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?\]\]/g, '')
+            .replace(/\[\[RECALL:\s*\d{4}[-/年]\d{1,2}\]\]/g, '')
+            .trim();
         // 模型常把 [[RECALL]] 指令和本轮正文 A 写在同一条回复里 (A 已在 Step 2 开头先行展示)。把 A
         // 作为 assistant 上文喂给二轮, 让二轮结果 B 接着 A 往下说, 更连贯。
-        const recallLeadIn = aiContent.replace(/\[\[RECALL:\s*\d{4}[-/年]\d{1,2}\]\]/g, '').trim();
-        const rr = await replyStep(async () => runRecall({ year, month }, agenticCtx));
+        const recallLeadIn = stripRecallTags(aiContent);
+        const rr = await replyStep(async () => runRecall({ year, month, ...(day ? { day } : {}) }, agenticCtx));
+        const label = day
+            ? `${year}年${parseInt(month, 10)}月${parseInt(day, 10)}日`
+            : `${year}年${month}月`;
 
         if (rr.ok && rr.alreadyActive) {
-            console.log(`♻️ [Recall] ${rr.yearMonth} already in activeMemoryMonths, skipping duplicate recall`);
-            aiContent = aiContent.replace(/\[\[RECALL:\s*\d{4}[-/年]\d{1,2}\]\]/g, '').trim();
+            console.log(`♻️ [Recall] ${rr.yearMonth} already active in detailed recall, skipping duplicate recall`);
+            aiContent = stripRecallTags(aiContent);
         } else if (rr.ok && rr.logsText) {
-            setRecallStatus(`正在调阅 ${year}年${month}月 的详细档案...`);
-            const recallMessages = [...fullMessages, ...(recallLeadIn ? [{ role: 'assistant', content: recallLeadIn }] : []), { role: 'user', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${rr.logsText}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
+            setRecallStatus(`正在调阅 ${label} 的详细档案...`);
+            const recallMessages = [...fullMessages, ...(recallLeadIn ? [{ role: 'assistant', content: recallLeadIn }] : []), { role: 'user', content: `[系统: 已成功调取 ${rr.yearMonth} 的详细日志]\n${rr.logsText}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
             try {
                 data = await replyStep(async () => safeFetchJson(`${baseUrl}/chat/completions`, {
                     signal: ctx.replyRun?.signal,
@@ -1149,14 +1158,14 @@ export async function applyAssistantPostProcessing(
                 updateTokenUsage(data, historyMsgCount, 'recall');
                 aiContent = data.choices?.[0]?.message?.content || '';
                 aiContent = normalizeAiContent(aiContent);
-                addToast(`已调用 ${year}-${month} 详细记忆`, 'info');
+                addToast(`已调用 ${rr.yearMonth} 详细记忆`, 'info');
             } catch (recallErr: any) {
                 ctx.replyRun?.check();
                 console.error('Recall API failed:', recallErr.message);
             }
         } else {
             // !rr.ok && rr.reason === 'no_logs' — matches original "set status, no-op, clear" path
-            setRecallStatus(`正在调阅 ${year}年${month}月 的详细档案...`);
+            setRecallStatus(`正在调阅 ${label} 的详细档案...`);
         }
     }
     setRecallStatus('');

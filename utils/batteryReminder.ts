@@ -232,7 +232,7 @@ export function batteryHistoryTurns(
  */
 export function batteryMemoryBlock(char: Pick<
     CharacterProfile,
-    'refinedMemories' | 'memories' | 'activeMemoryMonths' | 'memoryPalaceEnabled' | 'roomPlatesInjection' | 'memoryPalaceInjection'
+    'refinedMemories' | 'memories' | 'activeMemoryMonths' | 'activeMemoryDays' | 'memoryPalaceEnabled' | 'roomPlatesInjection' | 'memoryPalaceInjection'
 >): string {
     const parts: string[] = [];
     const readable = readableContextMemories(char as CharacterProfile, true);

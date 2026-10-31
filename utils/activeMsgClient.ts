@@ -844,7 +844,7 @@ export const buildFirePack = async (
   // 只写进下面这段主动消息自己的规则里，不动 chatPrompts 那条所有角色每轮都走的主链路。
   const recallableMonths = listRecallableMonths(char.memories);
   const recallHint = recallableMonths.length > 0
-    ? `- 你的记忆库里存着这些月份的经历：${recallableMonths.join('、')}。想聊起其中某段时，先输出 [[RECALL: 年-月]] 把细节取回来再写，别凭印象编。`
+    ? `- 你的记忆库里存着这些月份的经历：${recallableMonths.join('、')}。想聊起其中某段时，优先输出 [[RECALL: 年-月-日]] 只取那一天；需要整月细节时再用 [[RECALL: 年-月]]。两套是独立动作，选用其一即可，不必同时使用，别凭印象编。`
     : null;
 
   const template = templateStub ? AMSG2_INSTANT_STUB_TEMPLATE : [

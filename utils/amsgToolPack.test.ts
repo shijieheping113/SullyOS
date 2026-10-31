@@ -34,6 +34,7 @@ describe('buildToolPack / parseToolPack', () => {
       charName: '小鹿',
       xhsEnabled: true,
       activeMemoryMonths: ['2026-06'],
+      activeMemoryDays: [],
       memories: [
         { date: '2026-06-12', summary: '一起看了落日', mood: 'happy' },
         { date: '2026-05-01', summary: '吵了一小架' },
@@ -52,11 +53,24 @@ describe('buildToolPack / parseToolPack', () => {
       charName: '阿绫',
       xhsEnabled: false,
       activeMemoryMonths: [],
+      activeMemoryDays: [],
       memories: [],
       timeAwarenessEnabled: true,
       jpHotEnabled: false,
       xToolsEnabled: false,
     });
+  });
+
+  it('旧包没有 activeMemoryDays 时 parse 补成空数组', () => {
+    const legacy = {
+      v: 1,
+      charName: '旧档',
+      xhsEnabled: false,
+      activeMemoryMonths: ['2026-01'],
+      memories: [],
+      timeAwarenessEnabled: true,
+    };
+    expect(parseToolPack(JSON.stringify(legacy))).toMatchObject({ activeMemoryDays: [] });
   });
 
   it('坏数据一律 null：非 JSON / 形状不对 / 版本不认识', () => {

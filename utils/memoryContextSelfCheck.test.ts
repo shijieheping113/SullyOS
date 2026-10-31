@@ -16,15 +16,18 @@ describe('memory context self check', () => {
         localStorage.clear(); disable.mockClear(); host = document.createElement('div'); document.body.append(host); root = createRoot(host);
     });
     afterEach(() => { act(() => root.unmount()); host.remove(); });
-    it('only prompts active chats with palace and enabled months', () => {
+    it('only prompts active chats with palace and enabled months or days', () => {
         render({ memoryPalaceEnabled: false }); expect(host.textContent).toBe('');
-        render({ activeMemoryMonths: [] }); expect(host.textContent).toBe('');
+        render({ activeMemoryMonths: [], activeMemoryDays: [] }); expect(host.textContent).toBe('');
         render({}, false); expect(host.textContent).toBe('');
         render(); expect(host.textContent).toContain('2025年9月、2026年10月');
+        render({ activeMemoryMonths: [], activeMemoryDays: ['2026-10-03', '2026-10-05'] });
+        expect(host.textContent).toContain('2026-10-03');
+        expect(host.textContent).toContain('2026-10-05');
     });
     it('yes passes only the displayed months for disabling', () => {
         render(); click('是');
-        expect(disable).toHaveBeenCalledWith(['2025-09', '2026-10']);
+        expect(disable).toHaveBeenCalledWith({ months: ['2025-09', '2026-10'], days: [] });
         expect(localStorage.getItem(memorySelfCheckKey('a'))).toBe('done');
         expect(host.textContent).toBe('');
     });

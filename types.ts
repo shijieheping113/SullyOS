@@ -2984,8 +2984,15 @@ export interface CharacterProfile {
   memories: MemoryFragment[];
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
+  /**
+   * 按天激活的详细回忆（YYYY-MM-DD）。与 activeMemoryMonths 并存：
+   * 某天进上下文当且仅当整月亮开或该日在本名单中。不改月度精炼始终注入的原行为。
+   */
+  activeMemoryDays?: string[];
   /** 默认隐藏 ChatApp 的按月 RECALL 指令提示；false 恢复提示，不禁用指令解析。 */
   hideMonthlyRecallPrompt?: boolean;
+  /** 默认隐藏 ChatApp 的按日 RECALL 指令提示；false 恢复提示，不禁用指令解析。 */
+  hideDailyRecallPrompt?: boolean;
   
   writerPersona?: string;
   writerPersonaGeneratedAt?: number;
@@ -3390,7 +3397,7 @@ export interface GroupTopicBox {
     updatedAt: number;
 }
 
-export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'impression' | 'groupId'> {
+export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'activeMemoryDays' | 'impression' | 'groupId'> {
     version: number;
     type: 'sully_character_card';
     embeddedTheme?: ChatTheme;
