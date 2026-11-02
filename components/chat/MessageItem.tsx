@@ -2,7 +2,7 @@ import { avatarDecorationImageStyle, isAnniversaryFrame } from '../../utils/anni
 
 
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 const AivenFishSaleReceipt = React.lazy(() => import('../../apps/vrWorld/AivenFishSaleReceipt').then(module => ({ default: module.AivenFishSaleReceipt })));
 import { Message, ChatTheme } from '../../types';
 import { DB } from '../../utils/db';
@@ -1425,6 +1425,27 @@ const MessageItem = React.memo(({
     // 气泡底纹画在 CSS background-image 上，拿不到 <img> 那层的自动解析，只能在顶层
     // 无条件解析一次（hook 不能进条件分支）。挂件/头像挂件走 TokenImg，各自组件内解析。
     const bubbleBgUrl = useBlobRefUrl(styleConfig.backgroundImage);
+    const bubbleBoxRef = useRef<HTMLDivElement>(null);
+    const translationBoxRef = useRef<HTMLDivElement>(null);
+    const [bubbleInset, setBubbleInset] = useState({ left: 0, right: 0, width: 0, height: 0 });
+    useLayoutEffect(() => {
+        const el = bubbleBoxRef.current;
+        if (!el) return;
+        const read = () => {
+            const cs = getComputedStyle(el);
+            const left = parseFloat(cs.paddingLeft) || 0;
+            const right = parseFloat(cs.paddingRight) || 0;
+            const width = el.offsetWidth;
+            const height = translationBoxRef.current ? translationBoxRef.current.offsetHeight : 0;
+            setBubbleInset(prev => (prev.left === left && prev.right === right && prev.width === width && prev.height === height) ? prev : { left, right, width, height });
+        };
+        read();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(read);
+        ro.observe(el);
+        if (translationBoxRef.current) ro.observe(translationBoxRef.current);
+        return () => ro.disconnect();
+    });
     const [showVoiceText, setShowVoiceText] = useState(previewExpanded);
     const [showSarTruth, setShowSarTruth] = useState(false);
     const [peekExpanded, setPeekExpanded] = useState(false);
@@ -3957,8 +3978,8 @@ const MessageItem = React.memo(({
         ? <BubbleInlineTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
         : undefined;
     return commonLayout(
-        <div style={parenSplit ? { display: 'grid', gridTemplateColumns: 'minmax(0, max-content)', maxWidth: '100%' } : { display: 'contents' }}>
-        <div className={isVoiceOnlyMsg
+        <div style={parenSplit ? { position: 'relative', display: 'inline-block', maxWidth: '100%', verticalAlign: 'top', marginBottom: bubbleInset.height ? bubbleInset.height + 18 : 0 } : { display: 'contents' }}>
+        <div ref={bubbleBoxRef} className={isVoiceOnlyMsg
             ? `relative ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`
             : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${suppressEntranceAnimation ? '' : 'animate-fade-in'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'} ${bubbleGroupClasses}`}
             style={isVoiceOnlyMsg ? undefined : containerStyle}>
@@ -4254,15 +4275,17 @@ const MessageItem = React.memo(({
         </div>
         {parenSplit && (
             <div
+                ref={translationBoxRef}
                 className="sully-paren-translation select-text whitespace-pre-wrap break-normal [overflow-wrap:anywhere]"
                 style={{
-                    width: 0,
-                    minWidth: '100%',
+                    position: 'absolute',
+                    left: 0,
+                    top: '100%',
+                    width: bubbleInset.width || undefined,
                     boxSizing: 'border-box',
-                    marginTop: -13,
-                    marginBottom: 8,
-                    paddingLeft: '1.25rem',
-                    paddingRight: '1.25rem',
+                    marginTop: 10,
+                    paddingLeft: bubbleInset.left,
+                    paddingRight: bubbleInset.right,
                     fontSize: 13,
                     fontWeight: 700,
                     lineHeight: 1.35,
@@ -4271,7 +4294,6 @@ const MessageItem = React.memo(({
                     WebkitTextStroke: '2.5px #000000',
                     paintOrder: 'stroke fill',
                     textShadow: '0 0 1px #000, 1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000',
-                    position: 'relative',
                     zIndex: 4,
                 }}
             >
