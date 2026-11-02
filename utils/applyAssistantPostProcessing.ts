@@ -569,6 +569,14 @@ export interface PostProcessCtx {
      * 其余路径（非流式 / 双语 / 工具模式 / 实时送达的主动消息）不传，打字节奏不变。
      */
     instantRender?: boolean;
+    /**
+     * 每落库一条**正文**气泡就调一次（表情、卡片、语音条不算）。
+     *
+     * 用途只有一个：私聊回复在后台到达时，让系统通知跟着气泡一条条弹，而不是攒到
+     * 整段结束才一起冒（没开流式时这是唯一能跟聊天节奏对上的路）。
+     * 只有本地私聊这条路径会传；主动消息、通话收尾不传，免得跟它们自己的通知打架。
+     */
+    onTextBubblePersisted?: (text: string) => void;
     /** 用户准备生成下一轮时结束 inbox 的打字等待；仅加速显示，不取消正文或副作用。 */
     skipTypingSignal?: AbortSignal;
     /**
@@ -636,6 +644,11 @@ export async function applyAssistantPostProcessing(
         sarModuleSurface,
     } = ctx;
     const { baseUrl, headers, effectiveApi } = api;
+    /** 报一条正文气泡落库了（通知用）。报错不能连带把落库搞挂。 */
+    const reportTextBubble = (text: string): void => {
+        if (!ctx.onTextBubblePersisted) return;
+        try { ctx.onTextBubblePersisted(text); } catch { /* 忽略 */ }
+    };
     // 拟人打字延迟：流式预览已实时展示过气泡时（instantRender）跳过，避免二次慢放
     const typingPause = (ms: number): Promise<void> => {
         const signal = ctx.skipTypingSignal;
@@ -941,6 +954,7 @@ export async function applyAssistantPostProcessing(
                         const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                         await replyStep(async () => typingPause(Math.min(Math.max(chunk.length * 50, 500), 2000)));
                         await replyStep(async () => persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: takeMeta(mcdInheritMeta, chunk) } as any));
+                        reportTextBubble(chunk);
                         setMessages(await replyStep(async () => DB.getRecentMessagesByCharId(char.id, 200)));
                         globalMsgIndex++;
                     }
@@ -967,6 +981,7 @@ export async function applyAssistantPostProcessing(
                     const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                     await replyStep(async () => typingPause(Math.min(Math.max(biContent.length * 30, 400), 2000)));
                     await replyStep(async () => persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: takeMeta(mcdInheritMeta, biContent) } as any));
+                    reportTextBubble(biContent);
                     setMessages(await replyStep(async () => DB.getRecentMessagesByCharId(char.id, 200)));
                     globalMsgIndex++;
                 }
@@ -1016,6 +1031,7 @@ export async function applyAssistantPostProcessing(
                             const cleanChunk = ChatParser.sanitize(chunk);
                             if (cleanChunk) {
                                 await replyStep(async () => persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: takeMeta(mcdInheritMeta, cleanChunk) } as any));
+                                reportTextBubble(cleanChunk);
                                 setMessages(await replyStep(async () => DB.getRecentMessagesByCharId(char.id, 200)));
                                 globalMsgIndex++;
                                 chunkSaved = true;

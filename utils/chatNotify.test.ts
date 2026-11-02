@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: {} }));
 
-import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, wasStreamNotified, resetStreamNotify } from './chatNotify';
+import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, resetStreamNotify, getStreamSpokenCount, describeStreamScan, noteStreamScan, notifyRoundSegment, notifyPersistedBubble, wasRoundNotified } from './chatNotify';
 
 describe('私聊通知正文整理', () => {
     it('没有内容时用兜底文案', () => {
@@ -208,20 +208,126 @@ describe('说一段播一条', () => {
         expect(drainStreamSegments('c-a', ['一', '二'], false)).toEqual(['二']);
     });
 
-    it('播过之后才知道这一轮不用再补总结通知', () => {
-        expect(wasStreamNotified('c-b')).toBe(false);
+    it('播过的条数记在游标上，整段结束时据此只补没播的', () => {
+        expect(getStreamSpokenCount('c-b')).toBe(0);
         drainStreamSegments('c-b', ['嗯'], false);
-        expect(wasStreamNotified('c-b')).toBe(true);
+        expect(getStreamSpokenCount('c-b')).toBe(1);
         resetStreamNotify('c-b');
-        expect(wasStreamNotified('c-b')).toBe(false);
+        expect(getStreamSpokenCount('c-b')).toBe(0);
     });
 
     it('只有一句、没有换行时不当成「已完成」，等整段结束那条兜底', () => {
         expect(drainStreamSegments('c-b', ['一句还没说完'], true)).toEqual([]);
-        expect(wasStreamNotified('c-b')).toBe(false);
+        expect(getStreamSpokenCount('c-b')).toBe(0);
     });
 
     it('没有气泡时什么也不做', () => {
         expect(drainStreamSegments('c-a', [], false)).toEqual([]);
+    });
+});
+
+describe('只弹一条的病根：播了几条 + 为什么没播', () => {
+    beforeEach(() => {
+        resetStreamNotify('c-s');
+    });
+
+    it('没收到任何增量时，说清是流式没开、或者页面被冻住后一次到齐', () => {
+        expect(describeStreamScan('c-s')).toContain('没收到任何流式增量');
+    });
+
+    it('播过就报「几次增量、切出几段、已播几条」', () => {
+        // 两个计数器：drainStreamSegments 维护「真实播出的游标」，
+        // noteStreamScan 维护「体检里的累计条数」——两条都要对得上。
+        expect(drainStreamSegments('c-s', ['一', '二'], false)).toEqual(['一', '二']);
+        noteStreamScan('c-s', { bubbles: 2, spokenNow: 2, hasUnfinishedTail: false, pageVisible: false });
+        expect(getStreamSpokenCount('c-s')).toBe(2);
+        expect(describeStreamScan('c-s')).toContain('切出 2 段');
+        expect(describeStreamScan('c-s')).toContain('已播 2 条');
+    });
+
+    it('页面亮着所以一条没播，要说清楚这是设计如此，不是坏了', () => {
+        noteStreamScan('c-s', { bubbles: 2, spokenNow: 0, hasUnfinishedTail: false, pageVisible: true });
+        expect(describeStreamScan('c-s')).toContain('页面是亮的');
+    });
+
+    it('离开屏幕却一条没播、且最后一段一直没换行 —— 直接点名这个原因', () => {
+        noteStreamScan('c-s', { bubbles: 1, spokenNow: 0, hasUnfinishedTail: true, pageVisible: false });
+        const text = describeStreamScan('c-s');
+        expect(text).toContain('只切出 1 段');
+        expect(text).toContain('没换行');
+    });
+
+    it('游标数决定「还差哪几段没播」，播过的不会重播', () => {
+        drainStreamSegments('c-s', ['一', '二'], false);
+        expect(getStreamSpokenCount('c-s')).toBe(2);
+        expect(drainStreamSegments('c-s', ['一', '二'], false)).toEqual([]);
+    });
+
+    // 回归：曾经用「这一轮离开过屏幕」这面旗子做判据，中断的一轮不会走到 reset，
+    // 旗子留着，下一轮就在用户正盯着聊天的时候弹系统通知。现在只认「此刻可见与否」，
+    // 每轮结束 reset 之前读到的条数也必须是干净的一轮的量。
+    it('一轮结束 reset 之后，下一轮从零开始数（不继承上一轮的条数）', () => {
+        drainStreamSegments('c-s', ['一', '二'], false);
+        expect(getStreamSpokenCount('c-s')).toBe(2);
+        resetStreamNotify('c-s');
+        expect(getStreamSpokenCount('c-s')).toBe(0);
+        expect(drainStreamSegments('c-s', ['一'], false)).toEqual(['一']);
+    });
+});
+
+describe('一轮里同一句只弹一次（流式那条和落库那条不许打架）', () => {
+    beforeEach(() => {
+        resetStreamNotify('c-r');
+    });
+
+    it('认领过的正文不会再发，末尾兜底据此只补没发过的', () => {
+        expect(wasRoundNotified('c-r', '在呢')).toBe(false);
+        expect(notifyRoundSegment({ charId: 'c-r', charName: '阿糯', body: '在呢' })).not.toBeNull();
+        expect(wasRoundNotified('c-r', '在呢')).toBe(true);
+        // 空白差异不算另一句：预览气泡和落库气泡的空白处理不完全一致。
+        expect(notifyRoundSegment({ charId: 'c-r', charName: '阿糯', body: ' 在呢 ' })).toBeNull();
+        expect(notifyRoundSegment({ charId: 'c-r', charName: '阿糯', body: '刚到楼下' })).not.toBeNull();
+    });
+
+    it('发失败要把认领退回去，不然这一句就永远丢了', async () => {
+        // node 里没有浏览器通知通道，这次发送必然失败 —— 正好用来验退回逻辑。
+        const pending = notifyRoundSegment({ charId: 'c-r', charName: '阿糯', body: '电梯里信号差' });
+        expect(pending).not.toBeNull();
+        expect(wasRoundNotified('c-r', '电梯里信号差')).toBe(true);
+        const result = await pending!;
+        expect(result.ok).toBe(false);
+        expect(wasRoundNotified('c-r', '电梯里信号差')).toBe(false);
+    });
+
+    it('换一轮就重新算 —— 上一轮说过的话这一轮还能弹', () => {
+        notifyRoundSegment({ charId: 'c-r', charName: '阿糯', body: '晚安' });
+        resetStreamNotify('c-r');
+        expect(wasRoundNotified('c-r', '晚安')).toBe(false);
+        expect(notifyRoundSegment({ charId: 'c-r', charName: '阿糯', body: '晚安' })).not.toBeNull();
+    });
+
+    it('人就在屏幕前（页面可见）时不弹系统通知', () => {
+        vi.stubGlobal('document', { visibilityState: 'visible' });
+        const before = wasRoundNotified('c-r', '在呢');
+        notifyPersistedBubble({ charId: 'c-r', charName: '阿糯', body: '在呢' });
+        expect(before).toBe(false);
+        expect(wasRoundNotified('c-r', '在呢')).toBe(false);
+        vi.unstubAllGlobals();
+    });
+});
+
+describe('自检第④行：分段播报的结论要出现在留痕里', () => {
+    it('有分段记录就多打一行', () => {
+        const lines = describeNotifyTrace({
+            wiredAt: Date.now(),
+            lastReplyAt: Date.now(),
+            lastStreamNote: '分段播报：共 5 次增量、切出 2 段，已播 2 条',
+        });
+        expect(lines.some(line => line.startsWith('④ 分段播报'))).toBe(true);
+    });
+
+    it('没有分段记录时不冒充一行空的', () => {
+        const lines = describeNotifyTrace({ wiredAt: Date.now(), lastReplyAt: Date.now() });
+        expect(lines.some(line => line.startsWith('④'))).toBe(false);
     });
 });

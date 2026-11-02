@@ -40,7 +40,7 @@ import {
     extractStreamingEmbeddedThinking,
     findNewStreamPreviewHandoverIds,
 } from '../utils/streamPreview';
-import { drainStreamSegments, notifyChatReply } from '../utils/chatNotify';
+import { drainStreamSegments, notifyRoundSegment, notifyPersistedBubble, noteStreamScan, resetStreamNotify } from '../utils/chatNotify';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
@@ -680,6 +680,10 @@ export const useChatAI = ({
         // 闭包都会保留并继续落库——横幅靠 window 事件与组件生命周期
         // 解耦，用户切走 Chat 也能看到生成还活着。finally 里派发 end（两条路径都经过）。
         announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: char.id, charName: char.name });
+        // 新一轮开始：把「上一轮已经通知过哪几句」清掉。
+        // 通知的判据是「同一句这一轮只发一次」，清晚了下一轮就会被上一轮的记录挡住；
+        // 清早了（在整段结束时清）末尾那条兜底就会把刚发过的再弹一遍。所以放在这里。
+        resetStreamNotify(char.id);
 
         // 本轮里角色自己新排出来的任务。排程现状块每轮现算时靠它把这些点名标出来——不标
         // 的话角色分不清清单上哪条是自己刚排的，回头又排一条一模一样的。
@@ -1367,19 +1371,34 @@ export const useChatAI = ({
                         );
                         // 人已经离开屏幕：说一段播一条，别等整段说完才一次全冒出来。
                         // 只播已经收尾的段——最后一段后面还没换行时可能还在长，按住不发。
-                        // 拿不到预览气泡时（用户关了流式）整段结束那条总结通知照旧兜底。
-                        if (bubbles.length > 0 && typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-                            const tail = fullText.slice(fullText.lastIndexOf('\n') + 1);
-                            const fresh = drainStreamSegments(char.id, bubbles, tail.trim().length > 0);
-                            for (const segment of fresh) {
-                                void notifyChatReply({
-                                    charId: char.id,
-                                    charName: char.name,
-                                    body: segment,
-                                    avatarRef: char.avatar,
-                                });
-                            }
+                        // 拿不到预览气泡时（用户关了流式）整段结束那条兜底照旧负责。
+                        //
+                        // 判据就是「此刻屏幕上看不到这一页」。别记「这一轮离开过没有」：
+                        // 那面旗子只要因为中断没清掉，下一轮就会在用户正盯着聊天的时候弹
+                        // 系统通知；而且人回来接着看时，剩下的段本来也不该再弹。
+                        // 页面被冻住、增量一起在回到前台时才回调的情况，由整段结束那一刻
+                        // 的兜底一口气补齐（那条读的是落库气泡，不会再只剩最后一句）。
+                        const tail = fullText.slice(fullText.lastIndexOf('\n') + 1);
+                        const hasTail = tail.trim().length > 0;
+                        const pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+                        const fresh = (bubbles.length > 0 && !pageVisible)
+                            ? drainStreamSegments(char.id, bubbles, hasTail)
+                            : [];
+                        for (const segment of fresh) {
+                            void notifyRoundSegment({
+                                charId: char.id,
+                                charName: char.name,
+                                body: segment,
+                                avatarRef: char.avatar,
+                            });
                         }
+                        // 不播也要记：留痕里要能回答「为什么只弹一条」。
+                        noteStreamScan(char.id, {
+                            bubbles: bubbles.length,
+                            spokenNow: fresh.length,
+                            hasUnfinishedTail: hasTail,
+                            pageVisible,
+                        });
                     }
                     if (streamThinkingEligible) {
                         latestEmbeddedThinking = extractStreamingEmbeddedThinking(fullText);
@@ -2132,6 +2151,17 @@ export const useChatAI = ({
                 },
                 // 流式预览已把气泡展示过 → 落库免打字延迟，秒回填（未预览时行为不变）
                 instantRender: streamPreviewShown,
+                // 每落库一条正文气泡就报一次：人不在屏幕前时，系统通知跟着气泡一条条弹。
+                // 没开流式时这是唯一能跟上节奏的路——只靠整段结束那条兜底，通知会攒到最后
+                // 一起冒出来，用户体感是「跟聊天里出来的时间对不上」。
+                onTextBubblePersisted: (text: string) => {
+                    notifyPersistedBubble({
+                        charId: char.id,
+                        charName: char.name,
+                        body: text,
+                        avatarRef: char.avatar,
+                    });
+                },
                 // Phase 0: 本地 fetch 路径保持原逻辑, 不跳 2nd-pass LLM, 也没有结构化 directives。
                 skipSecondPassLLM: false,
                 suppressGameTags,

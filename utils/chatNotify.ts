@@ -28,6 +28,9 @@ const BODY_MAX_LENGTH = 80;
 /** 自检探 Service Worker 时最多等多久（只用于自检，真正发通知不设超时）。 */
 const SW_READY_TIMEOUT_MS = 3000;
 
+/** 真发通知时等后台通道的上限。给安装/激活留足时间，又不至于卡死队列。 */
+const SW_SEND_READY_TIMEOUT_MS = 5000;
+
 /**
  * 「上一次离开屏幕时到底发生了什么」的存放处。
  *
@@ -51,15 +54,6 @@ const ATTEMPT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
  */
 const TRACE_STORAGE_KEY = 'sullyos.chatNotify.trace.v1';
 const TRACE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-/**
- * 「说一段播一条」的有效窗口。
- *
- * 流式播报过之后，整段结束时就不再补一条总结通知——否则用户会先收到三条
- * 分段通知，紧接着又收到一条把整段重说一遍的。窗口只用来判定「这些分段
- * 属于刚刚这一轮」，超过这个时长还没等到整段结束，就当那一轮已经散了。
- */
-const STREAM_NOTIFY_WINDOW_MS = 5 * 60 * 1000;
 
 export interface ChatReplyNotification {
     charId: string;
@@ -239,8 +233,6 @@ export function decideReplyDelivery(input: { isChattingWithThisChar: boolean; pa
 interface StreamCursor {
     /** 已经播报过的段数（按预览气泡的序号算）。 */
     spoken: number;
-    /** 最近一次播报的时刻，用来判定「整段结束时还要不要补一条总结」。 */
-    at: number;
 }
 
 const streamCursors = new Map<string, StreamCursor>();
@@ -265,25 +257,145 @@ export function drainStreamSegments(
     const finishedCount = hasUnfinishedTail ? Math.max(0, bubbles.length - 1) : bubbles.length;
 
     if (spoken > finishedCount) {
-        streamCursors.set(charId, { spoken: finishedCount, at: current?.at ?? 0 });
+        streamCursors.set(charId, { spoken: finishedCount });
         return [];
     }
 
     const fresh = bubbles.slice(spoken, finishedCount);
-    if (fresh.length > 0) streamCursors.set(charId, { spoken: finishedCount, at: Date.now() });
+    if (fresh.length > 0) streamCursors.set(charId, { spoken: finishedCount });
     return fresh;
 }
 
-/** 这一轮是否已经「说一段播一条」过 —— 是的话整段结束就不再补一条总结。 */
-export function wasStreamNotified(charId: string, withinMs = STREAM_NOTIFY_WINDOW_MS): boolean {
-    const cursor = streamCursors.get(charId);
-    if (!cursor || cursor.spoken === 0) return false;
-    return Date.now() - cursor.at <= withinMs;
+/** 这一轮已经播出去几条 —— 整段结束时用它算「还差哪几段没播」，避免重复也避免漏。 */
+export function getStreamSpokenCount(charId: string): number {
+    return streamCursors.get(charId)?.spoken ?? 0;
+}
+
+/**
+ * 这一轮已经通知过哪些正文。
+ *
+ * 为什么不能只数「第几条」：这一轮有两条路会去发同一句话——流式那条按「预览气泡」
+ * 数，落库那条按「落库气泡」数，两边的切分规则并不完全一样，差一段就会重弹，
+ * 或者漏掉最后一句。所以改成按正文认领：同一句话这一轮只许通知一次，谁先来谁发，
+ * 整段结束时的兜底只补「没人认领过」的那些。
+ */
+const roundSpoken = new Map<string, Set<string>>();
+
+function roundTextKey(text: string): string {
+    return (text || '').replace(/\s+/g, ' ').trim();
+}
+
+/** 这一轮这句正文是不是已经通知过了。 */
+export function wasRoundNotified(charId: string, text: string): boolean {
+    const key = roundTextKey(text);
+    if (!key) return false;
+    return roundSpoken.get(charId)?.has(key) ?? false;
+}
+
+/** 认领这一轮的这句正文（返回 false = 别人已经发过，这次别发了）。 */
+function claimRoundText(charId: string, text: string): boolean {
+    const key = roundTextKey(text);
+    if (!key) return true;
+    const spoken = roundSpoken.get(charId) ?? new Set<string>();
+    if (spoken.has(key)) return false;
+    spoken.add(key);
+    roundSpoken.set(charId, spoken);
+    return true;
+}
+
+/** 退回认领：这条其实没发出去，末尾那条兜底要能再试一次。 */
+function releaseRoundText(charId: string, text: string): void {
+    const key = roundTextKey(text);
+    if (!key) return;
+    roundSpoken.get(charId)?.delete(key);
+}
+
+/**
+ * 发一条「这一轮的第 N 段」。已经发过的正文直接跳过。
+ * 返回 null = 这句已经发过，什么都没做。
+ *
+ * 认领是同步占位的（不然两路同时发会一起通过检查），但发失败会把占位退回去——
+ * 否则一次网络/系统抖动就让这一句永远发不出去，末尾兜底也会以为「发过了」。
+ */
+export function notifyRoundSegment(payload: ChatReplyNotification): Promise<NotifyResult> | null {
+    if (!claimRoundText(payload.charId, payload.body)) return null;
+    const task = notifyChatReply(payload);
+    void task.then(
+        result => { if (!result.ok) releaseRoundText(payload.charId, payload.body); },
+        () => releaseRoundText(payload.charId, payload.body),
+    );
+    return task;
+}
+
+/**
+ * 落库一条正文气泡时调一次：人不在屏幕前，就照这条的内容立刻弹一条系统通知。
+ *
+ * 这是「说一段弹一条」在「没开流式」时的正路：气泡是一条一条落库的（中间还有
+ * 500~2000ms 的打字停顿），通知跟着气泡走，节奏跟聊天里看到的一致；而不是等整段
+ * 说完才在末尾把几条一起补上——那正是「跟消息出来的时间对不上」的来源。
+ */
+export function notifyPersistedBubble(payload: ChatReplyNotification): void {
+    // 人就在屏幕前：页面上本来就有一条条冒出来，不必再弹系统通知。
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
+    void notifyRoundSegment(payload);
+}
+
+/**
+ * 流式播报的体检记录（只在内存里）。
+ * 每次增量都写 localStorage 会拖慢流，所以攒着；整段结束时由 OSContext 汇总写进 trace。
+ * 它存在的唯一理由：回答「明明回了三段，为什么只弹了一条」。
+ */
+interface StreamScan {
+    /** 这一轮收到多少次增量。0 = 流式没开、或页面被冻住后一次到齐。 */
+    deltas: number;
+    /** 最后一次看到的预览气泡数。 */
+    bubbles: number;
+    /** 这一轮累计播出去几条。 */
+    spoken: number;
+    /** 最后一次增量时，最后一段后面是否还没换行（被按住不发）。 */
+    hasTail: boolean;
+    /** 最后一次增量时页面可见不可见。 */
+    pageVisible: boolean;
+}
+
+const streamScans = new Map<string, StreamScan>();
+
+export function noteStreamScan(charId: string, input: {
+    bubbles: number;
+    spokenNow: number;
+    hasUnfinishedTail: boolean;
+    pageVisible: boolean;
+}): void {
+    const prev = streamScans.get(charId);
+    streamScans.set(charId, {
+        deltas: (prev?.deltas ?? 0) + 1,
+        bubbles: input.bubbles,
+        spoken: (prev?.spoken ?? 0) + input.spokenNow,
+        hasTail: input.hasUnfinishedTail,
+        pageVisible: input.pageVisible,
+    });
+}
+
+/** 用一句人话说清这一轮流式播报到底发生了什么 —— 自检里直接显示这句。 */
+export function describeStreamScan(charId: string): string {
+    const scan = streamScans.get(charId);
+    if (!scan) {
+        return '分段播报：这一轮没收到任何流式增量 —— 要么流式没开，要么页面被冻住、回复是回到前台才一次到齐的';
+    }
+    if (scan.spoken > 0) {
+        return `分段播报：共 ${scan.deltas} 次增量、切出 ${scan.bubbles} 段，已播 ${scan.spoken} 条`;
+    }
+    if (scan.pageVisible) {
+        return `分段播报：有 ${scan.deltas} 次增量，但那时页面是亮的 —— 按设计不弹系统通知`;
+    }
+    return `分段播报：有 ${scan.deltas} 次增量，却只切出 ${scan.bubbles} 段${scan.hasTail ? '（最后一段始终没换行、被按住）' : ''}，一条都没播`;
 }
 
 /** 一轮回复结束：清掉游标，下一轮从零开始数。 */
 export function resetStreamNotify(charId: string): void {
     streamCursors.delete(charId);
+    streamScans.delete(charId);
+    roundSpoken.delete(charId);
 }
 
 // ─── 权限 ───
@@ -376,13 +488,36 @@ async function probeServiceWorker(timeoutMs = SW_READY_TIMEOUT_MS): Promise<Serv
 /** 通知发送队列：每次 notifyChatReply 接在这条链后面，保证先后顺序。 */
 let sendChain: Promise<unknown> = Promise.resolve();
 
+/**
+ * 刚刚发过的正文，用来挡重复。
+ *
+ * 「说一段播一条」有两条路会碰到同一段话：流式那一路按「预览气泡」计数，
+ * 整段结束时那一路按「落库气泡」补剩下的。两边的切分规则不完全一样，
+ * 差一段就会把同一句再弹一遍。用户看到的是「怎么同一条弹了两遍」，
+ * 比漏一条还难受。所以同一角色、同一正文、几秒之内只算一次。
+ */
+const recentBodies = new Map<string, { body: string; at: number }>();
+const DEDUPE_WINDOW_MS = 4000;
+
 export function notifyChatReply(
     payload: ChatReplyNotification,
-    options?: { trace?: boolean },
+    options?: { trace?: boolean; dedupe?: boolean },
 ): Promise<NotifyResult> {
     // 「说一段播一条」会连着调好几次。并发发出去的话，谁先准备好谁先弹，
     // 锁屏上就成了乱序——读起来像倒着说话。所以这里排一条队，按顺序落地。
-    const task = sendChain.then(() => sendOne(payload, options));
+    const task = sendChain.then(async () => {
+        const body = toNotificationBody(payload.body, `${payload.charName} 回复了消息`);
+        if (options?.dedupe !== false) {
+            const last = recentBodies.get(payload.charId);
+            if (last && last.body === body && Date.now() - last.at < DEDUPE_WINDOW_MS) {
+                return OK;
+            }
+        }
+        const result = await sendOne(payload, options);
+        // 只有真的发出去了才记：失败的那条还要给下一次机会，不能被自己挡掉。
+        if (result.ok) recentBodies.set(payload.charId, { body, at: Date.now() });
+        return result;
+    });
     // 排队只关心「什么时候能轮到下一条」：某一条卡死不等于后面全都不要了，
     // 到点先放行，别让一条通知把整轮都堵住。
     sendChain = Promise.race([task, delay(QUEUE_STALL_MS)]).then(() => undefined, () => undefined);
@@ -443,8 +578,9 @@ async function sendNative(payload: ChatReplyNotification, body: string): Promise
  *   ① 和 `serviceWorker.ready` 赛跑，超时 3 秒就放弃 —— 刚从后台回来时正好超时；
  *   ② 发送前又做一遍异步权限协商 —— 白白多一次等待；
  *   ③ 图标写死相对路径，不解析角色头像。
- * 现在：权限只看一眼现成状态，不协商；`ready` 直接等，不设超时；图标走和主动消息
- * 同一个解析函数。宁可等，也不要因为「等不及」而假装发过。
+ * 现在：权限只看一眼现成状态，不协商；`ready` 等到「真的好了」为止，但封了 5 秒上限
+ * （没注册 Service Worker 时它永远不兑现，封了上限才不会把发送队列卡死）；图标走和
+ * 主动消息同一个解析函数，且解析失败只退成默认图标，不连累整条通知。
  */
 async function sendWeb(payload: ChatReplyNotification, body: string): Promise<NotifyResult> {
     if (typeof window === 'undefined') return { ok: false, reason: 'web-unsupported' };
@@ -456,10 +592,18 @@ async function sendWeb(payload: ChatReplyNotification, body: string): Promise<No
         return { ok: false, reason: 'sw-unavailable' };
     }
     try {
-        const registration = await navigator.serviceWorker.ready;
+        // 等后台通道就绪，但不能无限等：没注册 Service Worker 时（比如本地开发直接开端口）
+        // `ready` 永远不会兑现，排队会一直卡住，用户只看到「怎么都不弹」。
+        // 5 秒足够真实的安装/激活，超时就如实报「通道没起来」。
+        const registration = await probeServiceWorker(SW_SEND_READY_TIMEOUT_MS);
+        if (!registration) return { ok: false, reason: 'sw-unavailable' };
         // 令牌是个非空字符串，`avatar || 默认图标` 这种写法会让默认图标那条兜底永远轮不到，
         // 结果一个图标都没有还不报错。所以先解析成能加载的地址，拿到空串才用默认图标。
-        const icon = (await resolveRefToDataUrl(payload.avatarRef || '')) || './icons/icon-192.png';
+        // 解析要单独兜一层：它读的是本地资源库，万一抛错，不该把整条通知一起带走。
+        let icon = './icons/icon-192.png';
+        try {
+            icon = (await resolveRefToDataUrl(payload.avatarRef || '')) || icon;
+        } catch { /* 用默认图标 */ }
         await registration.showNotification(payload.charName, {
             body,
             icon,
@@ -485,6 +629,9 @@ export interface NotifyTrace {
     lastSendAt?: number;
     lastSendOk?: boolean;
     lastReason?: NotifyFailureReason;
+    /** 最近一轮结束时，分段播报发生了什么的汇总（人话，直接显示）。 */
+    lastStreamNote?: string;
+    lastStreamAt?: number;
 }
 
 function readTraceRaw(): NotifyTrace {
@@ -499,14 +646,15 @@ function readTraceRaw(): NotifyTrace {
 }
 
 export function traceNotify(
-    step: 'wired' | 'reply' | 'send',
-    extra: Omit<NotifyTrace, 'wiredAt' | 'lastReplyAt' | 'lastSendAt'> = {},
+    step: 'wired' | 'reply' | 'send' | 'stream',
+    extra: Omit<NotifyTrace, 'wiredAt' | 'lastReplyAt' | 'lastSendAt' | 'lastStreamAt'> = {},
 ): void {
     try {
         const next: NotifyTrace = { ...readTraceRaw(), ...extra };
         if (step === 'wired') next.wiredAt = Date.now();
         if (step === 'reply') next.lastReplyAt = Date.now();
         if (step === 'send') next.lastSendAt = Date.now();
+        if (step === 'stream') next.lastStreamAt = Date.now();
         localStorage.setItem(TRACE_STORAGE_KEY, JSON.stringify(next));
     } catch { /* 记不上不影响主流程 */ }
 }
@@ -514,12 +662,12 @@ export function traceNotify(
 /** 读链路留痕（不清空：自检要能反复看）。全部过期就整条作废。 */
 export function readNotifyTrace(): NotifyTrace {
     const trace = readTraceRaw();
-    const newest = Math.max(trace.wiredAt || 0, trace.lastReplyAt || 0, trace.lastSendAt || 0);
+    const newest = Math.max(trace.wiredAt || 0, trace.lastReplyAt || 0, trace.lastSendAt || 0, trace.lastStreamAt || 0);
     if (!newest || Date.now() - newest > TRACE_MAX_AGE_MS) return {};
     return trace;
 }
 
-/** 把留痕翻成三行人话，直接展示，用户念出来就能定位。 */
+/** 把留痕翻成人话，直接展示，用户念出来就能定位。 */
 export function describeNotifyTrace(trace: NotifyTrace = readNotifyTrace()): string[] {
     const lines: string[] = [];
     lines.push(trace.wiredAt
@@ -534,6 +682,11 @@ export function describeNotifyTrace(trace: NotifyTrace = readNotifyTrace()): str
             : `③ 发通知：失败（${clockOf(trace.lastSendAt)}）—— ${describeNotifyFailure(trace.lastReason || 'web-error')}`);
     } else {
         lines.push('③ 发通知：没有记录 —— 收到回复之后没走到发送这一步');
+    }
+    // ④ 只在「这一轮到底播了几段」上才有的答案。只弹一条时看这行：
+    // 它要么说「页面是亮的所以按设计不弹」，要么说「只切出一段」，要么说「播了 N 条」。
+    if (trace.lastStreamNote) {
+        lines.push(`④ ${trace.lastStreamNote}`);
     }
     return lines;
 }
@@ -581,7 +734,7 @@ export async function runNotifySelfCheck(): Promise<string[]> {
             charId: 'self-check',
             charName: '通知自检',
             body: '看到这一条，就说明通知通道是通的',
-        }, { trace: false });
+        }, { trace: false, dedupe: false });
         lines.push(sent.ok
             ? '试发一条：已经发出去了（去看通知栏 / 锁屏有没有）'
             : `试发一条：失败 —— ${describeNotifyFailure(sent.reason || 'web-error')}`);

@@ -102,7 +102,7 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasStreamNotified, resetStreamNotify, type NotifyFailureReason } from '../utils/chatNotify';
+import { notifyRoundSegment, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasRoundNotified, describeStreamScan, type NotifyFailureReason } from '../utils/chatNotify';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped, isNotifyDebugEnabled } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
@@ -132,7 +132,14 @@ import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSul
 import { normalizeCharacterRoomAssetsInPlace } from '../utils/roomTemplateAssets';
 
 /** 一次性到齐的回复切成几段时，相邻两条通知之间留的空当（太挤会像刷屏）。 */
-const SEGMENT_NOTIFY_GAP_MS = 650;
+const SEGMENT_NOTIFY_GAP_MS = 1200;
+
+/**
+ * 认「这一轮」的时间上限。
+ * 消息往前翻的时候，光靠「遇到用户那句就停」还不够：角色主动发消息、电话挂断补一句
+ * 这类情况，两轮之间可能没有用户发言，一直往前翻会把上一轮的话再弹一遍。
+ */
+const ROUND_NOTIFY_MAX_SPAN_MS = 10 * 60 * 1000;
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -2228,30 +2235,58 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }).catch(() => {});
       };
 
-      // 系统通知的正文要读刚落库的那条回复，所以抽成异步：别让一次 DB 读拖住
+      // 本轮回复 = 落库末尾那一串连续的 assistant 消息（前面紧挨着用户那句就收手）。
+      // 落库时一段一个气泡，所以这串就是「这次到底回了哪几句」。
+      // 以前只读最后一条，于是三段回复只弹最后一段——这是 Ann 反复遇到的「只有最后一条」。
+      const collectRoundBubbles = async (charId: string): Promise<string[]> => {
+          try {
+              const recent = await DB.getRecentMessagesByCharId(charId, 40);
+              const bubbles: string[] = [];
+              let newestAt = 0;
+              for (let i = recent.length - 1; i >= 0; i -= 1) {
+                  const message = recent[i];
+                  if (message.role !== 'assistant') break;
+                  const at = message.timestamp || 0;
+                  if (!newestAt) newestAt = at || Date.now();
+                  // 隔了十分钟以上就不是「刚刚这一轮」了，收手（见 ROUND_NOTIFY_MAX_SPAN_MS）。
+                  if (at && newestAt - at > ROUND_NOTIFY_MAX_SPAN_MS) break;
+                  // 表情、图片、语音条不进通知，但也不能因为「这条不是文字」就提前收手：
+                  // 一轮里本来就可能夹着好几条表情。跳过，接着往前找。
+                  if (message.type !== 'text') continue;
+                  const text = ChatParser.sanitize(message.content || '').trim();
+                  if (text && ChatParser.hasDisplayContent(text)) bubbles.unshift(text);
+                  if (bubbles.length >= 12) break;   // 别一口气刷一屏
+              }
+              return bubbles;
+          } catch {
+              return [];
+          }
+      };
+
+      // 系统通知的正文要读刚落库的那几条回复，所以抽成异步：别让一次 DB 读拖住
       // chatReplyArrivedHandler（它还要负责刷新当前页面的消息列表）。
       // 不管发成没发成，都留一条「这次回复到达时是怎么处理的」，连同「当时页面
       // 是不是被看着」——用户回来时 OSContext 会据此说清卡在哪一环，而不是只剩
       // 一句「又没弹」。
+      //
+      // 已经在别处发过的正文不再重发：流式那条路、以及「每条气泡落库时就报」那条路，
+      // 都可能已经把它弹过了。整段结束时只补「还没人认领过」的那些，既不会重播，
+      // 也不会把按住没发、或者流式根本没收到的最后一段漏掉。
       const notifyReplyInBackground = async (charId: string, charName: string) => {
           const char = charactersRef.current.find(c => c.id === charId);
           try {
-              // 正文要读刚落库的那条，但读库不能挡住发送：后台被冻过之后，一次 IndexedDB
-              // 读有可能半天不回来。宁可先发一条没有正文的通知，也不能因为等正文而不发。
-              const body = await Promise.race([
-                  DB.getRecentMessagesByCharId(charId, 10).then(recent => {
-                      const lastAssistant = [...recent].reverse().find(m => m.role === 'assistant' && m.type === 'text');
-                      return ChatParser.sanitize(lastAssistant?.content || '');
-                  }).catch(() => ''),
-                  new Promise<string>(resolve => window.setTimeout(() => resolve(''), 500)),
+              // 读库不能挡住发送：后台被冻过之后，一次 IndexedDB 读有可能半天不回来。
+              // 宁可先发一条没有正文的通知，也不能因为等正文而不发。
+              const bubbles = await Promise.race([
+                  collectRoundBubbles(charId),
+                  new Promise<string[]>(resolve => window.setTimeout(() => resolve([]), 2000)),
               ]);
-              // 没开流式（或模型不支持流式）时，整段是一次到齐的：按聊天气泡的规则
-              // 切成几段，一段一条按顺序弹，跟「说一段播一条」出来的效果一样。
-              // 切不开（整段没有换行）就还是原来那样，一条。
-              const segments = ChatParser.chunkText(body)
-                  .map(chunkText => chunkText.trim())
-                  .filter(chunkText => chunkText.length > 0);
-              const list = segments.length > 0 ? segments : [body];
+              const remaining = bubbles.filter(text => !wasRoundNotified(charId, text));
+              // 这一轮读不到任何气泡、也没有哪一句被发过：仍然发一条，宁可不带正文，
+              // 也不能一声不响（真到这一步，说明回复只回了表情，或者库没读到）。
+              const list = remaining.length > 0
+                  ? remaining
+                  : (bubbles.length === 0 ? [''] : []);
 
               let allOk = true;
               let failReason: NotifyFailureReason | undefined;
@@ -2260,7 +2295,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       // 中间留一点空，几条同时落地会挤成一堆，看着像刷屏。
                       await new Promise<void>(resolve => window.setTimeout(resolve, SEGMENT_NOTIFY_GAP_MS));
                   }
-                  const one = await notifyChatReply({ charId, charName, body: list[index], avatarRef: char?.avatar });
+                  // 走「认领」这条：万一同一句已经在别处弹过，这里直接跳过，不会重弹。
+                  const pending = notifyRoundSegment({ charId, charName, body: list[index], avatarRef: char?.avatar });
+                  if (!pending) continue;
+                  const one = await pending;
                   if (!one.ok) {
                       allOk = false;
                       failReason = one.reason;
@@ -2302,10 +2340,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 留痕：证明「回复事件确实到了」，并记下那一刻屏幕是什么状态。
           // 自检里这一行没有时间戳 = 事件压根没派发到这里，问题在更前面。
           traceNotify('reply', { lastReplyVisible: pageVisible });
-          // 离开屏幕期间已经「说一段播一条」播过了：整段结束时不再补一条把整段重说一遍。
-          // 判断必须在 reset 之前，reset 会把游标清掉。
-          const streamAlreadySpoken = delivery === 'notify' && wasStreamNotified(charId);
-          resetStreamNotify(charId);
+          // 这一轮「分段播报到底播了几条、为什么没播」写进留痕，自检第④行直接显示，
+          // 不用再靠「弹没弹」反推。这里不清游标：末尾那条兜底要靠这一轮的
+          // 「已发过哪些正文」去重，清早了会把刚弹过的再弹一遍；清理由下一轮开始时做。
+          traceNotify('stream', { lastStreamNote: describeStreamScan(charId) });
           if (delivery === 'silent') return;
 
           if (!isChattingWithThisChar) {
@@ -2314,7 +2352,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (delivery === 'toast') {
               // 人就在屏幕前，只是没开这个聊天：页内提示，跟微信一样不弹系统窗口。
               addToast(`${charName || '角色'} 回复了消息`, 'success');
-          } else if (!streamAlreadySpoken) {
+          } else {
+              // 已经弹过的正文由 notifyReplyInBackground 自己去重，这里只负责把剩下的一次补齐。
               void notifyReplyInBackground(charId, charName || '角色');
           }
       };
