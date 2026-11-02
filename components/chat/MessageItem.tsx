@@ -9,6 +9,7 @@ import { DB } from '../../utils/db';
 import { phoneFieldToText } from '../../utils/phoneEvidence';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import { dedupeRepeatedLines, spokenWithoutBilingualMarker, textBeforeBilingualMarker, visibleVoiceSubtitle } from '../../utils/bilingualMarker';
+import { splitParenTranslation, type ParenTranslationFormat } from '../../utils/parenTranslation';
 import { VALID_INTERJECTION_TAGS, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
 import { stripFishCuesForDisplay } from '../../utils/fishAudioTts';
 import { formatStatCount } from '../../utils/videoParser';
@@ -1297,6 +1298,8 @@ interface MessageItemProps {
     // Translation (AI messages only, bilingual content parsed from %%BILINGUAL%%)
     translationEnabled?: boolean;
     translationExpanded?: boolean;
+    /** 气泡下中文。有值才按该格式拆显示；不改语音、不走上面的翻译开关。 */
+    parenTranslationFormat?: ParenTranslationFormat;
     isShowingTarget?: boolean;
     onTranslateToggle?: (msgId: number) => void;
     // Voice TTS
@@ -1363,6 +1366,7 @@ const MessageItem = React.memo(({
     onToggleThinkingSelect,
     translationEnabled,
     translationExpanded,
+    parenTranslationFormat,
     isShowingTarget,
     onTranslateToggle,
     voiceData,
@@ -3936,6 +3940,13 @@ const MessageItem = React.memo(({
     const isVoiceOnlyMsg = isUserVoiceMsg || isPairedVoiceSubtitleMsg
         || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
 
+    // 气泡下中文：只拆普通文字气泡。语音条、旧的 %%BILINGUAL%% 翻译都不进这里。
+    const parenSplit = parenTranslationFormat && !isUser && (m.type === 'text' || !m.type)
+        && !hasVoiceContent && !hasBilingual && !suppressVoiceDupTextBubble
+        ? splitParenTranslation(displayContent, parenTranslationFormat)
+        : null;
+    const bubbleText = parenSplit ? parenSplit.original : displayContent;
+
     suppressOutsideTime = wantInsideTime;
     const fenceSource = !hasBilingual
         ? rawContent
@@ -3946,6 +3957,7 @@ const MessageItem = React.memo(({
         ? <BubbleInlineTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
         : undefined;
     return commonLayout(
+        <div style={parenSplit ? { display: 'grid', gridTemplateColumns: 'minmax(0, max-content)', maxWidth: '100%' } : { display: 'contents' }}>
         <div className={isVoiceOnlyMsg
             ? `relative ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`
             : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${suppressEntranceAnimation ? '' : 'animate-fade-in'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'} ${bubbleGroupClasses}`}
@@ -3987,9 +3999,9 @@ const MessageItem = React.memo(({
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {/* 外语语音和用户语音都把文字交给下方语音条，顶部不再重复。长英文整词换行。 */}
-            {displayContent && !isUserVoiceMsg && !suppressVoiceDupTextBubble && (
+            {bubbleText && !isUserVoiceMsg && !suppressVoiceDupTextBubble && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-normal [overflow-wrap:anywhere] select-text" style={{ color: styleConfig.textColor }}>
-                {renderContent(hasVoiceTag ? dedupeRepeatedLines(displayContent) : displayContent, inlineTimeNode)}
+                {renderContent(hasVoiceTag ? dedupeRepeatedLines(bubbleText) : bubbleText, inlineTimeNode)}
                 {wantInsideTime && !inlineTimeAttached && (
                     <BubbleCornerTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
                 )}
@@ -4240,6 +4252,35 @@ const MessageItem = React.memo(({
                 );
             })()}
         </div>
+        {parenSplit && (
+            <div
+                className="sully-paren-translation select-text whitespace-pre-wrap break-normal [overflow-wrap:anywhere]"
+                style={{
+                    width: 0,
+                    minWidth: '100%',
+                    boxSizing: 'border-box',
+                    marginTop: -13,
+                    marginBottom: 8,
+                    paddingLeft: '1.25rem',
+                    paddingRight: '1.25rem',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    lineHeight: 1.35,
+                    color: '#ffffff',
+                    WebkitTextFillColor: '#ffffff',
+                    WebkitTextStroke: '2.5px #000000',
+                    paintOrder: 'stroke fill',
+                    textShadow: '0 0 1px #000, 1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000',
+                    position: 'relative',
+                    zIndex: 4,
+                }}
+            >
+                {parenSplit.translations.map((line, index) => (
+                    <div key={index} style={index > 0 ? { marginTop: 2 } : undefined}>{line}</div>
+                ))}
+            </div>
+        )}
+        </div>
     );
 }, (prev, next) => {
     return prev.msg.id === next.msg.id &&
@@ -4275,6 +4316,7 @@ const MessageItem = React.memo(({
            prev.isSelected === next.isSelected &&
            prev.translationEnabled === next.translationEnabled &&
            prev.translationExpanded === next.translationExpanded &&
+           prev.parenTranslationFormat === next.parenTranslationFormat &&
            prev.isShowingTarget === next.isShowingTarget &&
            prev.avatarShape === next.avatarShape &&
            prev.avatarSize === next.avatarSize &&

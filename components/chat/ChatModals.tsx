@@ -111,6 +111,11 @@ interface ChatModalsProps {
     onToggleTranslation?: () => void;
     translationExpanded?: boolean;
     onToggleTranslationExpanded?: () => void;
+    /** 气泡下中文：总开关。跟上面的「消息翻译」不是一套。 */
+    parenTranslationEnabled?: boolean;
+    onToggleParenTranslation?: () => void;
+    parenTranslationFormat?: 'paren' | 'quoted';
+    onSetParenTranslationFormat?: (format: 'paren' | 'quoted') => void;
     translateSourceLang?: string;
     translateTargetLang?: string;
     onSetTranslateSourceLang?: (lang: string) => void;
@@ -287,7 +292,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onOpenSullyAssistant, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onConfirmEditVideoMessage, onDeleteMessage, onCopyMessage, onToggleMessageFavorite, messageFavorited, onDeleteEmoji, onDeleteCategory, onRenameCategory, onDownloadCategory,
     allCharacters = [], onSaveCategoryVisibility,
-    translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
+    translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, parenTranslationEnabled, onToggleParenTranslation, parenTranslationFormat, onSetParenTranslationFormat, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
     jpHotEnabled, onToggleJpHot, xToolsEnabled, onToggleXTools,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
@@ -632,6 +637,41 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     <div className="text-[11px] text-center text-slate-500 bg-slate-50 rounded-lg py-2">
                                         选<span className="font-bold text-slate-700">{translateSourceLang || '?'}</span> 译<span className="font-bold text-primary">{translateTargetLang || '?'}</span>
                                     </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100">
+                            <div className="flex justify-between items-center cursor-pointer" onClick={onToggleParenTranslation}>
+                                <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">气泡下中文</label>
+                                <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${parenTranslationEnabled ? 'bg-primary' : 'bg-slate-200'}`}>
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${parenTranslationEnabled ? 'translate-x-4' : ''}`}></div>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                                角色自己写成双语时，气泡只留原文，中文贴在气泡下面。不改语音，也不打开上面的消息翻译。
+                            </p>
+                            {parenTranslationEnabled && (
+                                <div className="mt-3">
+                                    <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">认哪种写法</label>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {([
+                                            { id: 'paren' as const, label: '日文（中文）' },
+                                            { id: 'quoted' as const, label: '「日文（中文）」' },
+                                        ]).map(opt => (
+                                            <button
+                                                key={opt.id}
+                                                type="button"
+                                                onClick={() => onSetParenTranslationFormat?.(opt.id)}
+                                                className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${(parenTranslationFormat || 'paren') === opt.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                                            >
+                                                {opt.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                                        日文里用「」引用不会拆错。引号包住整句时选第二种。
+                                    </p>
                                 </div>
                             )}
                         </div>

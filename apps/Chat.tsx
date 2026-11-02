@@ -478,6 +478,12 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [translationExpanded, setTranslationExpanded] = useState(() => {
         try { return JSON.parse(localStorage.getItem(`chat_translate_expanded_${activeCharacterId}`) || 'false'); } catch { return false; }
     });
+    const [parenTranslationEnabled, setParenTranslationEnabled] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(`chat_paren_translation_enabled_${activeCharacterId}`) || 'false'); } catch { return false; }
+    });
+    const [parenTranslationFormat, setParenTranslationFormat] = useState<'paren' | 'quoted'>(() => {
+        return localStorage.getItem(`chat_paren_translation_format_${activeCharacterId}`) === 'quoted' ? 'quoted' : 'paren';
+    });
     // Which messages are currently showing "译" version (toggle state only, no API calls)
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
@@ -1421,6 +1427,10 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             try {
                 setTranslationExpanded(JSON.parse(localStorage.getItem(`chat_translate_expanded_${activeCharacterId}`) || 'false'));
             } catch { setTranslationExpanded(false); }
+            try {
+                setParenTranslationEnabled(JSON.parse(localStorage.getItem(`chat_paren_translation_enabled_${activeCharacterId}`) || 'false'));
+            } catch { setParenTranslationEnabled(false); }
+            setParenTranslationFormat(localStorage.getItem(`chat_paren_translation_format_${activeCharacterId}`) === 'quoted' ? 'quoted' : 'paren');
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
@@ -5303,6 +5313,17 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     setShowingTargetIds(new Set());
                     trackEvent('切换翻译展开模式', { enabled: next ? 'on' : 'off' });
                 }}
+                parenTranslationEnabled={parenTranslationEnabled}
+                onToggleParenTranslation={() => {
+                    const next = !parenTranslationEnabled;
+                    setParenTranslationEnabled(next);
+                    localStorage.setItem(`chat_paren_translation_enabled_${activeCharacterId}`, JSON.stringify(next));
+                }}
+                parenTranslationFormat={parenTranslationFormat}
+                onSetParenTranslationFormat={(format) => {
+                    setParenTranslationFormat(format);
+                    localStorage.setItem(`chat_paren_translation_format_${activeCharacterId}`, format);
+                }}
                 onSetTranslateSourceLang={(lang: string) => { const next = normalizeTranslationLangLabel(lang); if (!next) return; setTranslateSourceLang(next); localStorage.setItem(`chat_translate_source_lang_${activeCharacterId}`, next); setShowingTargetIds(new Set()); }}
                 onSetTranslateLang={(lang: string) => { const next = normalizeTranslationLangLabel(lang); if (!next) return; setTranslateTargetLang(next); localStorage.setItem(`chat_translate_lang_${activeCharacterId}`, next); setShowingTargetIds(new Set()); }}
                 xhsEnabled={!!char.xhsEnabled}
@@ -5726,6 +5747,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             onToggleThinkingSelect={toggleThinkingSelection}
                             translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
                             translationExpanded={translationExpanded}
+                            parenTranslationFormat={parenTranslationEnabled ? parenTranslationFormat : undefined}
                             isShowingTarget={showingTargetIds.has(m.id)}
                             onTranslateToggle={handleTranslateToggle}
                             voiceData={voiceDataMap[m.id]}
@@ -5822,6 +5844,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                     messageSpacing={osTheme.chatMessageSpacing}
                                     showTimestamp={osTheme.chatShowTimestamp}
                                     timestampPlacement={osTheme.chatTimestampPlacement}
+                                    parenTranslationFormat={parenTranslationEnabled ? parenTranslationFormat : undefined}
                                     thinkingChainOptions={thinkingChainOptions}
                                 />
                             </div>
