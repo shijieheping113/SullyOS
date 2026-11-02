@@ -102,7 +102,7 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeNotifyFailure, describeNotifyFailure } from '../utils/chatNotify';
+import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeNotifyFailure, describeNotifyFailure, decideReplyDelivery } from '../utils/chatNotify';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
@@ -2253,15 +2253,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (!charId) return;
           setLastMsgTimestamp(Date.now());
           const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
+          // 「正开着这个聊天」不等于「人看着这个聊天」：按了手机 home 键 / 熄屏之后，
+          // 页面里照样停在聊天页，可屏幕上根本没有它。这种时候必须发系统通知——
+          // 以前只看「开的是哪个页面」，于是从聊天页直接大退就一点动静都没有。
+          const delivery = decideReplyDelivery({ isChattingWithThisChar, pageVisible: document.visibilityState === 'visible' });
+          if (delivery === 'silent') return;
+
           if (!isChattingWithThisChar) {
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              if (document.visibilityState === 'visible') {
-                  addToast(`${charName || '角色'} 回复了消息`, 'success');
-              } else {
-                  // 页面在后台 / 熄屏：页内提示看不见，补一条系统通知。
-                  // 前台时不发——人正看着屏幕，和微信一样不弹窗打断。
-                  void notifyReplyInBackground(charId, charName || '角色');
-              }
+          }
+          if (delivery === 'toast') {
+              // 人就在屏幕前，只是没开这个聊天：页内提示，跟微信一样不弹系统窗口。
+              addToast(`${charName || '角色'} 回复了消息`, 'success');
+          } else {
+              void notifyReplyInBackground(charId, charName || '角色');
           }
       };
       const chatReplyEndHandler = () => {

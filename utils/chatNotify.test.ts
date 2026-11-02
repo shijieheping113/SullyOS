@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: {} }));
 
-import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeNotifyFailure } from './chatNotify';
+import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeNotifyFailure, decideReplyDelivery } from './chatNotify';
 
 describe('私聊通知正文整理', () => {
     it('没有内容时用兜底文案', () => {
@@ -30,6 +30,27 @@ describe('私聊通知正文整理', () => {
     it('刚好到上限不截断', () => {
         const raw = '啊'.repeat(80);
         expect(toNotificationBody(raw, '兜底')).toBe(raw);
+    });
+});
+
+describe('回复到达要不要弹', () => {
+    it('页面在后台，无论开着哪个页面都发系统通知', () => {
+        expect(decideReplyDelivery({ isChattingWithThisChar: true, pageVisible: false })).toBe('notify');
+        expect(decideReplyDelivery({ isChattingWithThisChar: false, pageVisible: false })).toBe('notify');
+    });
+
+    it('页面在前台又正开着这个聊天，不打扰', () => {
+        expect(decideReplyDelivery({ isChattingWithThisChar: true, pageVisible: true })).toBe('silent');
+    });
+
+    it('页面在前台但开着别处，用页内提示', () => {
+        expect(decideReplyDelivery({ isChattingWithThisChar: false, pageVisible: true })).toBe('toast');
+    });
+
+    // 回归：第一版把「界面停在聊天页」当成「人看着聊天页」，从聊天页按 home 大退后
+    // 一条通知都不发。这条钉住「后台优先系统通知」。
+    it('从聊天页直接大退（停在那页但不可见）也要弹系统通知', () => {
+        expect(decideReplyDelivery({ isChattingWithThisChar: true, pageVisible: false })).not.toBe('silent');
     });
 });
 

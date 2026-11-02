@@ -131,6 +131,24 @@ export function takeNotifyFailure(): NotifyFailureRecord | null {
     }
 }
 
+// ─── 该不该发 ───
+
+/**
+ * 回复到达时该走哪条路。抽成纯函数是有教训的：第一版把「界面正开着这个聊天」
+ * 当成「人看着这个聊天」，结果从聊天页直接按 home 大退，页面还停在聊天页，
+ * 程序认定用户在看，于是一条通知都不发、连页内提示也不飘。
+ *
+ *  - silent：页面在前台、而且正是这个聊天 → 屏幕上已经有这条了，不打扰
+ *  - toast ：页面在前台、但开的是别处 → 页内小卡片（跟微信一致）
+ *  - notify：页面在后台 / 熄屏 → 系统通知，不管开的是哪个页面
+ */
+export type ReplyDelivery = 'silent' | 'toast' | 'notify';
+
+export function decideReplyDelivery(input: { isChattingWithThisChar: boolean; pageVisible: boolean }): ReplyDelivery {
+    if (!input.pageVisible) return 'notify';
+    return input.isChattingWithThisChar ? 'silent' : 'toast';
+}
+
 // ─── 权限 ───
 
 /**
