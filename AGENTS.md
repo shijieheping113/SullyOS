@@ -1,3 +1,14 @@
+> ⚠️ **这份是「原项目作者的开发导航」，不是二改工作的东西。**
+>
+> 它跟着作者仓库一起下来，只讲一件事：改某一类问题该去翻哪份 `docs/`。
+> 它**不记录**二改做了什么、现在做到哪一步、存档停在哪一笔。
+>
+> - 二改的进度 → 只看 `D:\SullyOS\WORKLOG.md` **最上面几条**（新的记在顶部）。
+> - 人格与规矩 → `D:\SullyOS\SULLY.md`、`D:\SullyOS\AGENTS.md`。
+> - 二改新加的代码（例如 `utils/chatNotify.ts`、`utils/chatNotifySettings.ts`、
+>   `components/settings/ChatNotifySettingsCard.tsx`）在这份导航里查不到，
+>   **查不到不等于不存在**，别拿「文档里没有」当「没做过」。
+
 # AGENTS.md
 
 给 AI 编程助手（Claude Code 等）的项目导航。SullyOS 是装在浏览器里的虚拟手机系统（React + TS + Vite，local-first，IndexedDB 存储）。详细介绍见 [`README.md`](./README.md)。
