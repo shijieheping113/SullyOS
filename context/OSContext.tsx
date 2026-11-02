@@ -102,6 +102,7 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
+import { notifyChatReply, ensureNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap } from '../utils/chatNotify';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
@@ -2224,6 +2225,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }).catch(() => {});
       };
 
+      // 系统通知的正文要读刚落库的那条回复，所以抽成异步：别让一次 DB 读拖住
+      // chatReplyArrivedHandler（它还要负责刷新当前页面的消息列表）。
+      const notifyReplyInBackground = async (charId: string, charName: string) => {
+          try {
+              const recent = await DB.getRecentMessagesByCharId(charId, 10);
+              const lastAssistant = [...recent].reverse().find(m => m.role === 'assistant' && m.type === 'text');
+              await notifyChatReply({
+                  charId,
+                  charName,
+                  body: ChatParser.sanitize(lastAssistant?.content || ''),
+              });
+          } catch (err) {
+              console.warn('[OS] 私聊回复通知发送失败', err);
+          }
+      };
+
       // 本地 fetch 聊天回复的全局回落：triggerAI 的异步闭包在 Chat 卸载后继续跑完
       // 并落库，但它捕获的 setMessages 指向已卸载的实例。这里是它跟当前 UI 的唯一桥：
       //   - replyArrived（后处理管线全部落库后）→ bump lastMsgTimestamp 让当前挂载的
@@ -2240,6 +2257,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
               if (document.visibilityState === 'visible') {
                   addToast(`${charName || '角色'} 回复了消息`, 'success');
+              } else {
+                  // 页面在后台 / 熄屏：页内提示看不见，补一条系统通知。
+                  // 前台时不发——人正看着屏幕，和微信一样不弹窗打断。
+                  void notifyReplyInBackground(charId, charName || '角色');
               }
           }
       };
@@ -2320,6 +2341,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener('active-msg-backfill-stale', backfillStaleHandler);
       window.addEventListener('active-msg-progress', progressHandler);
       window.addEventListener('active-msg-open', openHandler);
+
+      // 冷启动时点通知进来：通知点击的监听可能晚于那次点击，事件先存在 chatNotify 里了。
+      // 这里补一次，用户点完通知打开 App 就落在那个角色的聊天，而不是首页。
+      const pendingTapCharId = consumePendingNotificationTap();
+      if (pendingTapCharId) {
+          openHandler(new CustomEvent('active-msg-open', { detail: { charId: pendingTapCharId } }) as unknown as Event);
+      }
+
       const secretSyncHandler = (event: Event) => {
           const charId = (event as CustomEvent).detail?.charId;
           const char = charactersRef.current.find(c => c.id === charId);
@@ -2348,6 +2377,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           document.removeEventListener('visibilitychange', onVisible);
       };
   }, [sendProactiveNativeNotification]);
+
+  // ─── 系统通知：点击跳回聊天 + 首次申请权限 ───
+  // 这两件事跟「当前打开哪个 App」无关，所以挂载就跑、不等数据加载：
+  // 冷启动点通知进来时，点击监听必须在用户看到界面之前就位。
+  useEffect(() => {
+      let dispose: (() => void) | null = null;
+      let cancelled = false;
+
+      void installNotificationTapHandler()
+          .then(off => {
+              if (cancelled) { off(); return; }
+              dispose = off;
+          })
+          .catch(err => { console.warn('[OS] 通知点击监听挂载失败', err); });
+
+      // 装成 App 之后系统不会白给通知权限，这里主动问一次。
+      // 稍等一下再问，别跟启动动画抢焦点。拒绝过就不再烦（系统自己记得）。
+      const permissionTimer = window.setTimeout(() => { void ensureNotificationPermission(); }, 1500);
+
+      return () => {
+          cancelled = true;
+          window.clearTimeout(permissionTimer);
+          dispose?.();
+      };
+  }, []);
 
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<ProactiveQueueEntry[]>([]);
