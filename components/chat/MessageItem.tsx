@@ -1439,8 +1439,14 @@ const MessageItem = React.memo(({
         if (spacer) spacer.style.height = '0px';
         if (avatar) avatar.style.bottom = '';
         if (!row || !el || !cap) return;
-        const padBottom = parseFloat(getComputedStyle(el).paddingBottom) || 0;
+        const cs = getComputedStyle(el);
+        const padLeft = parseFloat(cs.paddingLeft) || 0;
+        const padRight = parseFloat(cs.paddingRight) || 0;
+        const padBottom = parseFloat(cs.paddingBottom) || 0;
         const inset = Math.max(0, padBottom - 6) + 8;
+        // 左边跟气泡正文同一条内边距，不再写死 22；绝对定位，不挤小尾巴布局
+        cap.style.left = `${padLeft}px`;
+        cap.style.maxWidth = `calc(100% - ${padLeft + padRight}px)`;
         cap.style.top = `calc(100% - ${inset}px)`;
         const base = parseFloat(getComputedStyle(row).marginBottom) || 0;
         const hang = Math.max(0, Math.ceil(cap.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + 3);
@@ -4281,8 +4287,6 @@ const MessageItem = React.memo(({
                 className="sully-paren-translation select-text whitespace-pre-wrap break-normal [overflow-wrap:anywhere]"
                 style={{
                     position: 'absolute',
-                    left: 22,
-                    maxWidth: 'calc(100% - 22px)',
                     fontSize: 13,
                     fontWeight: 700,
                     lineHeight: 1.35,
