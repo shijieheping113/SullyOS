@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: {} }));
 
-import { toNotificationBody, previewTextOf, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, resetStreamNotify, getStreamSpokenCount, describeStreamScan, noteStreamScan, noteStreamRequest, notifyRoundSegment, notifyPersistedBubble, wasRoundNotified } from './chatNotify';
+import { toNotificationBody, previewTextOf, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, resetStreamNotify, getStreamSpokenCount, describeStreamScan, noteStreamScan, noteStreamRequest, notifyRoundSegment, notifyPersistedBubble, wasRoundNotified, notifyIconFallback, peekNotifyIcon, primeNotifyIcon } from './chatNotify';
 
 describe('私聊通知正文整理', () => {
     it('没有内容时用兜底文案', () => {
@@ -375,5 +375,30 @@ describe('自检第④行要分清「没开流式」和「开了但冻住」', (
         noteStreamRequest('c-v', true, true);
         resetStreamNotify('c-v');
         expect(describeStreamScan('c-v')).not.toContain('冻住');
+    });
+});
+
+describe('通知图标（角色头像）', () => {
+    it('默认图标是绝对地址 —— 相对路径在子路径部署下会 404，浏览器就退回自己的图标', () => {
+        vi.stubGlobal('location', { origin: 'https://example.pages.dev' });
+        try {
+            const url = notifyIconFallback();
+            expect(url.startsWith('https://example.pages.dev/')).toBe(true);
+            expect(url).toContain('icons/icon-192.png');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('没有头像时判定成「没有图」，不是「还没备」', () => {
+        expect(peekNotifyIcon(undefined)).toBe('');
+        expect(peekNotifyIcon('')).toBe('');
+        expect(peekNotifyIcon('   ')).toBe('');
+    });
+
+    it('头像字段填的是 emoji / 首字时，老实说没有图，不硬塞进 icon', async () => {
+        await expect(primeNotifyIcon('🐱')).resolves.toBe('');
+        // 备过一次之后就是「确定没有图」，下次不用再算
+        expect(peekNotifyIcon('🐱')).toBe('');
     });
 });

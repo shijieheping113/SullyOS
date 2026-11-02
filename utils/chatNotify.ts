@@ -20,7 +20,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { resolveRefToDataUrl } from './blobRef';
+import { isImageValue, resolveRefToDataUrl } from './blobRef';
 import { isChatNotifyEnabled } from './chatNotifySettings';
 
 /** 通知正文上限。安卓侧太长的正文会被系统截断，宁可自己先收干净。 */
@@ -627,6 +627,140 @@ function titleOf(payload: ChatReplyNotification): string {
     return name || '新消息';
 }
 
+// ─── 通知图标（角色头像） ───
+
+/**
+ * 通知左侧那块图就是 `icon`。它有三个实际卡点，缺一个就退成浏览器自己的图标：
+ *
+ *   ① 地址必须是绝对的。`./icons/…` 按当前页面地址解析，前端路由一换就成了
+ *      `/chat/icons/…` 这种不存在的路径，404 之后系统拿应用图标顶上——看上去
+ *      就像「头像根本没设」。
+ *   ② 图不能太大。安卓会把几十上百 KB 以上的 base64 大图直接丢掉（不是缩放，是丢），
+ *      丢掉之后就退回 badge。所以先缩到 192 见方再交出去。
+ *   ③ 头像字段不一定是图。用户可以只填 emoji 或名字首字，那种字符串塞进 `icon`
+ *      当然什么也显示不出来，要老实退回默认图标。
+ *
+ * 还有一层是时机：真发通知时页面往往刚从后台被唤醒，那时再去 IndexedDB 读头像
+ * 很可能来不及。所以头像在角色加载完的空闲时间就先解析好、缩好、缓存住，
+ * 发送时同步取。
+ */
+const NOTIFY_ICON_PX = 192;
+/** 超过这个长度的 data URL 才值得重新编码一次（缩图本身也要解码，不是免费的）。 */
+const ICON_SHRINK_THRESHOLD = 96 * 1024;
+
+/** avatarRef → 图标（data URL 或绝对 URL）；'' = 这个角色的头像不是图。 */
+const iconByRef = new Map<string, string>();
+const iconJobs = new Map<string, Promise<string>>();
+
+/** 默认图标：应用自己的图标，绝对地址（见上面 ①）。 */
+export function notifyIconFallback(): string {
+    const base = ((import.meta as any).env?.BASE_URL as string | undefined) ?? '/';
+    const path = `${base}icons/icon-192.png`.replace(/\/{2,}/g, '/');
+    if (typeof location === 'undefined') return path;
+    try {
+        return new URL(path, location.origin).href;
+    } catch {
+        return path;
+    }
+}
+
+function loadIconImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('icon-load-failed'));
+        img.src = src;
+    });
+}
+
+/** 居中裁成方图再缩到 192：头像多是长方形，直接拉会变扁。 */
+async function shrinkIcon(dataUrl: string): Promise<string> {
+    if (typeof document === 'undefined' || typeof Image === 'undefined') return dataUrl;
+    try {
+        const img = await loadIconImage(dataUrl);
+        const canvas = document.createElement('canvas');
+        canvas.width = NOTIFY_ICON_PX;
+        canvas.height = NOTIFY_ICON_PX;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return dataUrl;
+        const w = img.naturalWidth || img.width || NOTIFY_ICON_PX;
+        const h = img.naturalHeight || img.height || NOTIFY_ICON_PX;
+        const side = Math.min(w, h) || NOTIFY_ICON_PX;
+        ctx.drawImage(img, (w - side) / 2, (h - side) / 2, side, side, 0, 0, NOTIFY_ICON_PX, NOTIFY_ICON_PX);
+        const out = canvas.toDataURL('image/png');
+        // 重编码反而更大（原本就是张小图）就别换了，省得白折腾。
+        return out.length < dataUrl.length ? out : dataUrl;
+    } catch {
+        return dataUrl;
+    }
+}
+
+/** 已经备好的图标；null = 还没备过（跟「确定没有图」的 '' 区分开）。 */
+export function peekNotifyIcon(avatarRef?: string): string | null {
+    const ref = (avatarRef || '').trim();
+    if (!ref) return '';
+    return iconByRef.get(ref) ?? null;
+}
+
+/**
+ * 把头像备成通知图标。可以随便重复调：同一个头像只解析一次，结果缓存到页面刷新为止。
+ * 返回 '' 表示这个角色没有能用的图，调用方据此退回默认图标。
+ */
+export function primeNotifyIcon(avatarRef?: string): Promise<string> {
+    const ref = (avatarRef || '').trim();
+    if (!ref) return Promise.resolve('');
+    const cached = iconByRef.get(ref);
+    if (cached !== undefined) return Promise.resolve(cached);
+    const running = iconJobs.get(ref);
+    if (running) return running;
+
+    const job = (async (): Promise<{ icon: string; settled: boolean }> => {
+        // 不是图（emoji / 名字首字）就不要往下走：塞进 icon 只会什么都不显示。
+        if (!isImageValue(ref)) return { icon: '', settled: true };
+        const src = await resolveRefToDataUrl(ref);
+        if (!src) return { icon: '', settled: false };   // Blob 一时没读到，下次还试
+        let icon = src;
+        if (icon.startsWith('data:image/') && icon.length > ICON_SHRINK_THRESHOLD) {
+            icon = await shrinkIcon(icon);
+        }
+        if (!icon.startsWith('data:') && !/^https?:\/\//i.test(icon)) {
+            try { icon = new URL(icon, location.origin).href; } catch { /* 原样交出去 */ }
+        }
+        return { icon, settled: true };
+    })()
+        .catch(() => ({ icon: '', settled: false }))
+        .then(result => {
+            if (result.settled) iconByRef.set(ref, result.icon);
+            iconJobs.delete(ref);
+            return result.icon;
+        });
+
+    iconJobs.set(ref, job);
+    return job;
+}
+
+/** 这次通知该用哪张图：备好的头像 → 现解析 → 默认图标。 */
+export async function resolveNotifyIcon(avatarRef?: string): Promise<string> {
+    const ready = peekNotifyIcon(avatarRef);
+    if (ready) return ready;
+    if (ready === null) {
+        const resolved = await primeNotifyIcon(avatarRef);
+        if (resolved) return resolved;
+    }
+    return notifyIconFallback();
+}
+
+/** 默认图标到底能不能取到（404 的话浏览器就会拿自己的图标顶上，很像「没设头像」）。 */
+async function probeIconReachable(url: string): Promise<boolean> {
+    if (typeof fetch !== 'function') return false;
+    try {
+        const res = await fetch(url, { cache: 'force-cache' });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
 async function sendNative(payload: ChatReplyNotification, body: string): Promise<NotifyResult> {
     const permission = await resolveNotificationPermission();
     if (!permission.ok) return permission;
@@ -677,17 +811,15 @@ async function sendWeb(payload: ChatReplyNotification, body: string): Promise<No
         // 5 秒足够真实的安装/激活，超时就如实报「通道没起来」。
         const registration = await probeServiceWorker(SW_SEND_READY_TIMEOUT_MS);
         if (!registration) return { ok: false, reason: 'sw-unavailable' };
-        // 令牌是个非空字符串，`avatar || 默认图标` 这种写法会让默认图标那条兜底永远轮不到，
-        // 结果一个图标都没有还不报错。所以先解析成能加载的地址，拿到空串才用默认图标。
-        // 解析要单独兜一层：它读的是本地资源库，万一抛错，不该把整条通知一起带走。
-        let icon = './icons/icon-192.png';
-        try {
-            icon = (await resolveRefToDataUrl(payload.avatarRef || '')) || icon;
-        } catch { /* 用默认图标 */ }
+        // 图标：角色头像优先，解析不出来才用应用图标。里面已经缩过图、绝对化过路径，
+        // 且解析失败只退默认图标，不连累整条通知（见 resolveNotifyIcon）。
+        const icon = await resolveNotifyIcon(payload.avatarRef);
         await registration.showNotification(titleOf(payload), {
             body,
             icon,
-            badge: './icons/icon-192.png',
+            // badge 是状态栏那个小图标。安卓要求单色剪影，给彩色图会被系统涂成灰块，
+            // 所以这里用同一张应用图标，让系统自己处理，比给角色头像干净。
+            badge: notifyIconFallback(),
             // 用唯一 tag 而不是按角色固定：同 tag 的通知浏览器会静默替换，后一条就不响了。
             // 「说一段播一条」时几段可能落在同一毫秒，用时间戳会撞 tag，所以走递增序号。
             tag: `chat-reply-${payload.charId}-${takeNotificationId()}`,
@@ -806,6 +938,13 @@ export async function runNotifySelfCheck(): Promise<string[]> {
         }
         const sw = await probeServiceWorker();
         lines.push(`后台通道：${sw ? '已就绪' : '没起来（刷新一次页面再试）'}`);
+        // 图标单列两行：「头像设了但通知上是浏览器图标」要么是默认图标取不到（404），
+        // 要么是头像字段根本不是图（emoji / 名字首字），光看通知分不出来。
+        const fallback = notifyIconFallback();
+        lines.push((await probeIconReachable(fallback))
+            ? `默认图标：能取到（${fallback}）`
+            : `默认图标：取不到 —— ${fallback} 这个地址打不开，浏览器只能拿自己的图标顶上`);
+        lines.push(`角色头像：已备好 ${iconByRef.size} 个（通知里优先用它们）`);
     }
 
     const permission = await resolveNotificationPermission();

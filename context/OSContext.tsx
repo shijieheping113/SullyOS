@@ -22,7 +22,7 @@ import { reportDatabaseFailure } from '../utils/databaseHealth';
 import type { AvatarTouchRecord } from '../utils/avatarTouch';
 import { clampClaudeTemperature, modelRejectsSamplingParams, stripSamplingParams } from '../utils/samplingParamCompat';
 import { buildMalformedImageDiagnostics, extractImagesInPlace, deepCloneForExport, stripBackupImages, parseImageDataUrlForBackup, type BackupObjectPath, type MalformedBackupImageDiagnostic } from '../utils/backupExport';
-import { isBlobRef, getBlobForRef, restoreBlobRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, migrateChatThemeBlobRefs, resolveBlobRefsDeep, resolveRefToDataUrl, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
+import { isBlobRef, getBlobForRef, restoreBlobRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, migrateChatThemeBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
 import { resolveBlobRefsInRequestBody } from '../utils/apiBlobRefs';
 import { collectBlobRefs, writeBlobsToZip, readBlobsIndex, restoreBlobsFromZip } from '../utils/backupBlobs';
 import { initPwaIcon, clearPwaIcon } from '../utils/appIcon';
@@ -102,7 +102,7 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyRoundSegment, previewTextOf, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasRoundNotified, describeStreamScan, type NotifyFailureReason } from '../utils/chatNotify';
+import { notifyRoundSegment, previewTextOf, primeNotifyIcon, resolveNotifyIcon, notifyIconFallback, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasRoundNotified, describeStreamScan, type NotifyFailureReason } from '../utils/chatNotify';
 import { isChatNotifyEnabled } from '../utils/chatNotifySettings';
 import { chatCharacterDisplayName } from '../utils/characterRemark';
 import { formatBytes } from '../utils/format';
@@ -1232,6 +1232,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       trackCurrentCharSettingsOnce(collectCharSettings(characters, activeCharacterId));
   }, [isDataLoaded, characters, activeCharacterId]);
 
+  // --- 通知头像预热 ---
+  // 真发通知时页面往往刚从后台被唤醒，那一刻再读 IndexedDB 取头像很可能来不及，
+  // 结果每条通知都是默认图标。所以趁着空闲先把各角色的头像解析好、缩成图标尺寸缓存住，
+  // 发送时同步就能拿到。重复调用是安全的（同一个头像只解析一次）。
+  useEffect(() => {
+      if (!isDataLoaded || characters.length === 0) return;
+      const refs = Array.from(new Set(characters.map(c => c.avatar).filter(Boolean)));
+      let cancelled = false;
+      const run = () => {
+          for (const ref of refs) {
+              if (cancelled) return;
+              void primeNotifyIcon(ref);
+          }
+      };
+      const idle = (window as any).requestIdleCallback as ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
+      if (typeof idle === 'function') {
+          const id = idle(run, { timeout: 4000 });
+          return () => {
+              cancelled = true;
+              try { (window as any).cancelIdleCallback?.(id); } catch { /* 不支持就算了 */ }
+          };
+      }
+      const timer = window.setTimeout(run, 1500);
+      return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [isDataLoaded, characters]);
+
   // --- 使用统计：现在开着哪些功能 ---
   // 跟「当前外观」一个道理：外部服务这类配置配一次就长期生效，只看「打开过配置页」
   // 那种流量点的话，配好之后再没进过设置页的人永远不出现，拿来判断「有没有人要」会判反。
@@ -2028,17 +2054,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
                       // If not chatting specifically with this char right now, mark as unread
                       if (!isChattingWithThisChar) {
-                          addToast(`${char.name} 发来了一条消息`, 'success');
+                          addToast(`${chatCharacterDisplayName(char)} 发来了一条消息`, 'success');
                           unreadUpdates[char.id] = dueMessages.length;
 
                           // Web Notification
                           if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
                               try {
-                                  // 通知不是 DOM，icon 只认能直接加载的地址：头像字段可能是 blobref
-                                  // 令牌，原样塞进去就是没图标。先解析（非令牌原样返回），解析不出
-                                  // 来（图已丢）时退回应用默认图标。
-                                  const icon = (await resolveRefToDataUrl(char.avatar || '')) || './icons/icon-192.png';
-                                  const notif = new Notification(char.name, {
+                                  // 图标、标题跟私聊回复那条统一：头像优先（已缩图、绝对化），
+                                  // 解析不出来才退默认图标；标题走「备注优先」，跟聊天里一致。
+                                  const icon = await resolveNotifyIcon(char.avatar);
+                                  const notif = new Notification(chatCharacterDisplayName(char) || '新消息', {
                                       body: dueMessages[0].content,
                                       icon,
                                       silent: false
@@ -2093,29 +2118,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
           if (!isChattingWithThisChar) {
               const isVisible = document.visibilityState === 'visible';
+              // 名字统一走「备注优先」，跟聊天标题一致；空名字不交给系统（安卓会拿应用名顶）。
+              const char = characters.find(c => c.id === charId);
+              const displayName = (char ? chatCharacterDisplayName(char) : charName) || '新消息';
               if (isVisible) {
-                  addToast(`${charName} 主动发来了消息`, 'success');
+                  addToast(`${displayName} 主动发来了消息`, 'success');
               } else {
                   awayProactiveCount += 1;
               }
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
+              const preview = (body || `${displayName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${displayName} sent a proactive message`;
               void sendProactiveNativeNotification(charId, charName, preview);
 
               // Web Notification —— 走 Service Worker 的 showNotification（和"测试推送"
               // 同一条链路）。页面级 `new Notification(...)` 在标签后台 / PWA / 移动端会
               // 静默失败，必须走 SW registration 才稳定。
               if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator && window.Notification && Notification.permission === 'granted') {
-                  const char = characters.find(c => c.id === charId);
                   navigator.serviceWorker.ready.then(async reg => {
-                      // 同上：令牌是个非空字符串，`char?.avatar || 默认图标` 这种写法会让默认
-                      // 图标那条兜底永远轮不到，结果一个图标都没有还不报错。所以先解析成能
-                      // 加载的地址，拿到空串才用默认图标。
-                      const icon = (await resolveRefToDataUrl(char?.avatar || '')) || './icons/icon-192.png';
-                      reg.showNotification(charName, {
+                      // 跟私聊回复那条同一套：头像优先、缩过图、绝对路径。
+                      const icon = await resolveNotifyIcon(char?.avatar);
+                      reg.showNotification(displayName, {
                           body: preview,
                           icon,
-                          badge: './icons/icon-192.png',
+                          badge: notifyIconFallback(),
                           tag: `proactive-${charId}`,
                           data: { charId, kind: 'proactive-1.0' },
                       }).catch(() => { /* notification failed */ });

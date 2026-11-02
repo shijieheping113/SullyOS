@@ -34,6 +34,9 @@ const ChatNotifySettingsCard: React.FC = () => {
         }
     }, [running]);
 
+    // 结果一旦展开就再也收不回去，会把设置页顶得很长；给一个明确的收起入口。
+    const collapse = useCallback(() => setLines(null), []);
+
     return (
         <section className="bg-[#fffefe] rounded-3xl p-5 shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-200/80">
             <div className="flex items-center justify-between mb-3">
@@ -76,17 +79,36 @@ const ChatNotifySettingsCard: React.FC = () => {
                 disabled={running}
                 className="mt-3 w-full rounded-2xl border border-sky-100 bg-sky-50/60 px-4 py-3 text-left active:scale-[0.99] transition-transform disabled:opacity-60"
             >
-                <span className="block text-xs font-semibold text-sky-700">{running ? '正在检查…' : '测一下现在通不通'}</span>
+                <span className="block text-xs font-semibold text-sky-700">
+                    {running ? '正在检查…' : lines ? '再测一次' : '测一下现在通不通'}
+                </span>
                 <span className="mt-1 block text-[11px] text-slate-500">
                     会真的发一条测试通知，然后把权限、后台通道、上一次回复为什么没弹，逐条列出来。
                 </span>
             </button>
 
             {lines && (
-                <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 px-3.5 py-3 text-[11px] leading-relaxed text-slate-600 space-y-1.5">
-                    {lines.map((line, index) => (
-                        <p key={index}>{line}</p>
-                    ))}
+                <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 overflow-hidden">
+                    <div className="flex items-center justify-between pl-3.5 pr-2 py-1.5 border-b border-slate-100/80">
+                        <span className="text-[10px] font-semibold text-slate-400 tracking-wider">检查结果</span>
+                        <button
+                            type="button"
+                            onClick={collapse}
+                            aria-label="收起检查结果"
+                            className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 active:bg-slate-100"
+                        >
+                            收起
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+                            </svg>
+                        </button>
+                    </div>
+                    {/* 行数多时自己在框里滚，别把整页往下顶；overscroll-contain 保证滑到底不会带着页面一起动 */}
+                    <div className="px-3.5 py-2.5 text-[11px] leading-relaxed text-slate-600 space-y-1.5 max-h-[38vh] overflow-y-auto overscroll-contain">
+                        {lines.map((line, index) => (
+                            <p key={index}>{line}</p>
+                        ))}
+                    </div>
                 </div>
             )}
         </section>
