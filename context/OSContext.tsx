@@ -102,7 +102,7 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyChatReply, ensureNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap } from '../utils/chatNotify';
+import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeNotifyFailure, describeNotifyFailure } from '../utils/chatNotify';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
@@ -2378,8 +2378,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
   }, [sendProactiveNativeNotification]);
 
-  // ─── 系统通知：点击跳回聊天 + 首次申请权限 ───
-  // 这两件事跟「当前打开哪个 App」无关，所以挂载就跑、不等数据加载：
+  // ─── 系统通知：点击跳回聊天 + 通知权限 + 失败回放 ───
+  // 这三件事跟「当前打开哪个 App」无关，所以挂载就跑、不等数据加载：
   // 冷启动点通知进来时，点击监听必须在用户看到界面之前就位。
   useEffect(() => {
       let dispose: (() => void) | null = null;
@@ -2392,13 +2392,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           })
           .catch(err => { console.warn('[OS] 通知点击监听挂载失败', err); });
 
-      // 装成 App 之后系统不会白给通知权限，这里主动问一次。
-      // 稍等一下再问，别跟启动动画抢焦点。拒绝过就不再烦（系统自己记得）。
-      const permissionTimer = window.setTimeout(() => { void ensureNotificationPermission(); }, 1500);
+      // 权限：原生上电后直接问；网页必须等用户第一次触摸，浏览器才肯弹框。
+      const stopPriming = primeNotificationPermission();
+
+      // 上次那条没弹出来 → 这次用大白话说清原因。手机端没有控制台，
+      // 不说的话用户只知道「又没弹」，永远分不清是权限、连不上、还是页面被冻住。
+      const failureTimer = window.setTimeout(() => {
+          const failure = takeNotifyFailure();
+          if (!failure) return;
+          showError(
+              '消息通知没发出去',
+              `上一次 ${failure.charName} 回消息时，这条通知没弹出来：${describeNotifyFailure(failure.reason)}。`,
+          );
+      }, 2600);
 
       return () => {
           cancelled = true;
-          window.clearTimeout(permissionTimer);
+          window.clearTimeout(failureTimer);
+          stopPriming();
           dispose?.();
       };
   }, []);
