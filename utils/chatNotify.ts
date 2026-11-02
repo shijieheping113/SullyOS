@@ -52,6 +52,15 @@ const ATTEMPT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const TRACE_STORAGE_KEY = 'sullyos.chatNotify.trace.v1';
 const TRACE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
+/**
+ * 「说一段播一条」的有效窗口。
+ *
+ * 流式播报过之后，整段结束时就不再补一条总结通知——否则用户会先收到三条
+ * 分段通知，紧接着又收到一条把整段重说一遍的。窗口只用来判定「这些分段
+ * 属于刚刚这一轮」，超过这个时长还没等到整段结束，就当那一轮已经散了。
+ */
+const STREAM_NOTIFY_WINDOW_MS = 5 * 60 * 1000;
+
 export interface ChatReplyNotification {
     charId: string;
     charName: string;
@@ -218,6 +227,65 @@ export function decideReplyDelivery(input: { isChattingWithThisChar: boolean; pa
     return input.isChattingWithThisChar ? 'silent' : 'toast';
 }
 
+// ─── 流式：说一段播一条 ───
+
+/**
+ * 每个角色一条游标：这一轮已经播报过几段。
+ *
+ * 为什么需要它：一次回复可能分成好几段。如果等整段说完才发一条，用户体感是
+ * 「发出去半天没回音，突然一次全冒出来」——不像在发消息，像在等一份文档。
+ * 说一段播一条才像有人在那头真的说话。
+ */
+interface StreamCursor {
+    /** 已经播报过的段数（按预览气泡的序号算）。 */
+    spoken: number;
+    /** 最近一次播报的时刻，用来判定「整段结束时还要不要补一条总结」。 */
+    at: number;
+}
+
+const streamCursors = new Map<string, StreamCursor>();
+
+/**
+ * 从「当前累计全文算出的预览气泡」里，取出刚说完的那几段。
+ *
+ * 只播已经收尾的段：最后一段后面还没有换行时，它可能还在长，这一轮先按住，
+ * 等它收尾。宁可晚一条，也不要把半句话弹到锁屏上。
+ *
+ * 流式重试会重开一条流、全文从头累计，气泡数量会倒退。游标必须跟着收回来，
+ * 否则重试之后新长出来的段会被当成「已经播过」，整段被吞掉。
+ */
+export function drainStreamSegments(
+    charId: string,
+    bubbles: string[],
+    hasUnfinishedTail: boolean,
+): string[] {
+    if (bubbles.length === 0) return [];
+    const current = streamCursors.get(charId);
+    const spoken = current?.spoken ?? 0;
+    const finishedCount = hasUnfinishedTail ? Math.max(0, bubbles.length - 1) : bubbles.length;
+
+    if (spoken > finishedCount) {
+        streamCursors.set(charId, { spoken: finishedCount, at: current?.at ?? 0 });
+        return [];
+    }
+
+    const fresh = bubbles.slice(spoken, finishedCount);
+    if (fresh.length > 0) streamCursors.set(charId, { spoken: finishedCount, at: Date.now() });
+    return fresh;
+}
+
+/** 这一轮是否已经「说一段播一条」过 —— 是的话整段结束就不再补一条总结。 */
+export function wasStreamNotified(charId: string, withinMs = STREAM_NOTIFY_WINDOW_MS): boolean {
+    const cursor = streamCursors.get(charId);
+    if (!cursor || cursor.spoken === 0) return false;
+    return Date.now() - cursor.at <= withinMs;
+}
+
+/** 一轮回复结束：清掉游标，下一轮从零开始数。 */
+export function resetStreamNotify(charId: string): void {
+    streamCursors.delete(charId);
+}
+
 // ─── 权限 ───
 
 /**
@@ -305,11 +373,43 @@ async function probeServiceWorker(timeoutMs = SW_READY_TIMEOUT_MS): Promise<Serv
  * 这里不落「尝试记录」——那次记录由调用方带着「当时页面可见吗」一起写，
  * 只有调用方知道回复到达那一刻用户在看什么。
  */
-export async function notifyChatReply(payload: ChatReplyNotification): Promise<NotifyResult> {
+/** 通知发送队列：每次 notifyChatReply 接在这条链后面，保证先后顺序。 */
+let sendChain: Promise<unknown> = Promise.resolve();
+
+export function notifyChatReply(
+    payload: ChatReplyNotification,
+    options?: { trace?: boolean },
+): Promise<NotifyResult> {
+    // 「说一段播一条」会连着调好几次。并发发出去的话，谁先准备好谁先弹，
+    // 锁屏上就成了乱序——读起来像倒着说话。所以这里排一条队，按顺序落地。
+    const task = sendChain.then(() => sendOne(payload, options));
+    // 排队只关心「什么时候能轮到下一条」：某一条卡死不等于后面全都不要了，
+    // 到点先放行，别让一条通知把整轮都堵住。
+    sendChain = Promise.race([task, delay(QUEUE_STALL_MS)]).then(() => undefined, () => undefined);
+    return task;
+}
+
+/** 队列里某一条卡住时，最多等它这么久就放行下一条。 */
+const QUEUE_STALL_MS = 8000;
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => { setTimeout(resolve, ms); });
+}
+
+async function sendOne(
+    payload: ChatReplyNotification,
+    options?: { trace?: boolean },
+): Promise<NotifyResult> {
     const body = toNotificationBody(payload.body, `${payload.charName} 回复了消息`);
-    return Capacitor.isNativePlatform()
-        ? sendNative(payload, body)
-        : sendWeb(payload, body);
+    const result = Capacitor.isNativePlatform()
+        ? await sendNative(payload, body)
+        : await sendWeb(payload, body);
+    // 「说一段播一条」直接从这里发，不经过 OSContext，所以发送结果在这里统一留痕，
+    // 否则自检第③行会一直是空的。自检自己发的那条要跳过，不然会把自己盖上去。
+    if (options?.trace !== false) {
+        traceNotify('send', { lastSendOk: result.ok, lastReason: result.reason });
+    }
+    return result;
 }
 
 async function sendNative(payload: ChatReplyNotification, body: string): Promise<NotifyResult> {
@@ -365,8 +465,8 @@ async function sendWeb(payload: ChatReplyNotification, body: string): Promise<No
             icon,
             badge: './icons/icon-192.png',
             // 用唯一 tag 而不是按角色固定：同 tag 的通知浏览器会静默替换，后一条就不响了。
-            // 连着来几条就叠几条，跟微信一样。
-            tag: `chat-reply-${payload.charId}-${Date.now()}`,
+            // 「说一段播一条」时几段可能落在同一毫秒，用时间戳会撞 tag，所以走递增序号。
+            tag: `chat-reply-${payload.charId}-${takeNotificationId()}`,
             data: { charId: payload.charId, kind: 'chat-reply' },
         });
         return OK;
@@ -481,7 +581,7 @@ export async function runNotifySelfCheck(): Promise<string[]> {
             charId: 'self-check',
             charName: '通知自检',
             body: '看到这一条，就说明通知通道是通的',
-        });
+        }, { trace: false });
         lines.push(sent.ok
             ? '试发一条：已经发出去了（去看通知栏 / 锁屏有没有）'
             : `试发一条：失败 —— ${describeNotifyFailure(sent.reason || 'web-error')}`);

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: {} }));
 
-import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace } from './chatNotify';
+import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, wasStreamNotified, resetStreamNotify } from './chatNotify';
 
 describe('私聊通知正文整理', () => {
     it('没有内容时用兜底文案', () => {
@@ -175,5 +175,53 @@ describe('把一次尝试说成一句人话', () => {
     it('失败时把可照做的原因带上，不是只说一句没发出去', () => {
         const text = describeAttempt({ at, charName: '阿糯', pageVisible: false, outcome: 'failed', reason: 'web-denied' });
         expect(text).toContain(describeNotifyFailure('web-denied'));
+    });
+});
+
+describe('说一段播一条', () => {
+    // 每个用例用不同 charId，避免游标串台（游标是模块级、按角色存的）。
+    beforeEach(() => {
+        resetStreamNotify('c-a');
+        resetStreamNotify('c-b');
+    });
+
+    it('最后一段还没收尾（后面没有换行）就先不发', () => {
+        expect(drainStreamSegments('c-a', ['第一句', '第二句正在'], true)).toEqual(['第一句']);
+    });
+
+    it('收了尾就补上，一条不落', () => {
+        drainStreamSegments('c-a', ['第一句', '第二句正在'], true);
+        expect(drainStreamSegments('c-a', ['第一句', '第二句'], false)).toEqual(['第二句']);
+    });
+
+    it('已经播过的段不会重播', () => {
+        drainStreamSegments('c-a', ['第一句'], false);
+        expect(drainStreamSegments('c-a', ['第一句'], false)).toEqual([]);
+        expect(drainStreamSegments('c-a', ['第一句', '第二句'], false)).toEqual(['第二句']);
+    });
+
+    it('流被重开、气泡变少时不吞掉后面新长出来的段', () => {
+        drainStreamSegments('c-a', ['一', '二', '三'], false);
+        // 重试后从头累计，气泡倒退
+        expect(drainStreamSegments('c-a', ['一'], false)).toEqual([]);
+        // 再长出来的时候必须还能播
+        expect(drainStreamSegments('c-a', ['一', '二'], false)).toEqual(['二']);
+    });
+
+    it('播过之后才知道这一轮不用再补总结通知', () => {
+        expect(wasStreamNotified('c-b')).toBe(false);
+        drainStreamSegments('c-b', ['嗯'], false);
+        expect(wasStreamNotified('c-b')).toBe(true);
+        resetStreamNotify('c-b');
+        expect(wasStreamNotified('c-b')).toBe(false);
+    });
+
+    it('只有一句、没有换行时不当成「已完成」，等整段结束那条兜底', () => {
+        expect(drainStreamSegments('c-b', ['一句还没说完'], true)).toEqual([]);
+        expect(wasStreamNotified('c-b')).toBe(false);
+    });
+
+    it('没有气泡时什么也不做', () => {
+        expect(drainStreamSegments('c-a', [], false)).toEqual([]);
     });
 });

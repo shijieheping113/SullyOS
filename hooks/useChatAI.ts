@@ -40,6 +40,7 @@ import {
     extractStreamingEmbeddedThinking,
     findNewStreamPreviewHandoverIds,
 } from '../utils/streamPreview';
+import { drainStreamSegments, notifyChatReply } from '../utils/chatNotify';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
@@ -1364,6 +1365,21 @@ export const useChatAI = ({
                         setStreamingBubbles(prev =>
                             (prev.length === bubbles.length && prev.every((b, i) => b === bubbles[i])) ? prev : bubbles
                         );
+                        // 人已经离开屏幕：说一段播一条，别等整段说完才一次全冒出来。
+                        // 只播已经收尾的段——最后一段后面还没换行时可能还在长，按住不发。
+                        // 拿不到预览气泡时（用户关了流式）整段结束那条总结通知照旧兜底。
+                        if (bubbles.length > 0 && typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+                            const tail = fullText.slice(fullText.lastIndexOf('\n') + 1);
+                            const fresh = drainStreamSegments(char.id, bubbles, tail.trim().length > 0);
+                            for (const segment of fresh) {
+                                void notifyChatReply({
+                                    charId: char.id,
+                                    charName: char.name,
+                                    body: segment,
+                                    avatarRef: char.avatar,
+                                });
+                            }
+                        }
                     }
                     if (streamThinkingEligible) {
                         latestEmbeddedThinking = extractStreamingEmbeddedThinking(fullText);

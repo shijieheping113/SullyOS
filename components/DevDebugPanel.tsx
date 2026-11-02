@@ -220,7 +220,9 @@ const DevDebugPanel: React.FC = () => {
             // 任何类别都返 false。
             + (flags.captureEnabled && flags.captureLogs.length > 0 ? 1 : 0)
             // exposeLogDetail 只在录制实际生效时才计（同上）。
-            + (flags.captureEnabled && flags.captureLogs.length > 0 && flags.exposeLogDetail ? 1 : 0),
+            + (flags.captureEnabled && flags.captureLogs.length > 0 && flags.exposeLogDetail ? 1 : 0)
+            // 消息通知调试开着时计一个：那说明框会真的打断聊天，属于「有生效行为」。
+            + (flags.notifyDebug ? 1 : 0),
         [flags],
     );
     // 用 read-write-set 三步：从 localStorage 读 source of truth → 写回 → 同步 React state。
@@ -369,7 +371,10 @@ const DevDebugPanel: React.FC = () => {
     if (!available) return null;
 
     const panelPosition = getPanelPosition(floatingPosition);
-    // 面板最大高度按「实际可视高度」算（visualViewport，避开手机动态工具栏），跟定位口径一致，超出部分中间滚动。
+    // 面板最大高度按「实际可视高度」算（visualViewport，避开手机动态工具栏），跟定位口径一致。
+    // 打开时统一吸到顶部：面板内容比屏幕长得多（开关 + 自检 + GC + 日志），跟着浮球定位
+    // 会把底部顶出屏幕——上一版就是这样，下半截既看不见也滚不到。
+    // 顶部固定 + 高度取满，底部必定在屏幕内，超出部分在中间滚动。
     const panelMaxHeight = getViewportSize().height - FLOATING_SAFE_MARGIN * 2;
 
     return (
@@ -377,7 +382,7 @@ const DevDebugPanel: React.FC = () => {
             className="fixed select-none"
             style={{
                 left: open ? panelPosition.x : floatingPosition.x,
-                top: open ? panelPosition.y : floatingPosition.y,
+                top: open ? FLOATING_SAFE_MARGIN : floatingPosition.y,
                 zIndex: 2147483646,
             }}
         >
@@ -429,7 +434,19 @@ const DevDebugPanel: React.FC = () => {
                         </button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto px-4">
+                    {/* min-h-0 不能省：flex 子项默认 min-height:auto，内容一多就不肯收缩，
+                        结果既不滚动、又被父级 overflow-hidden 裁掉，看上去就是「下半截没了」。
+                        overscroll-contain 防止滚到底时带着整页一起动。 */}
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-1">
+                        {/* 放在最前：这是排查「离开屏幕后为什么没弹通知」时最先要开的开关。
+                            关着时正常聊天一点不被打扰，只在解锁面板 + 打开这一项之后才弹说明框。 */}
+                        <ToggleRow
+                            title="消息通知调试"
+                            detail="打开后，离开屏幕期间收到回复会在回来时弹窗说明当时怎么处理的。平时关着，不打扰聊天。"
+                            checked={flags.notifyDebug}
+                            onChange={(checked) => updateFlag('notifyDebug', checked)}
+                        />
+                        <div className="h-px bg-white/10" />
                         <HomeCompanionDebug />
                         <ToggleRow
                             title="跳过 Prompt Build"

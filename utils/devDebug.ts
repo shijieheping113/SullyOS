@@ -72,6 +72,12 @@ export interface DevDebugFlags {
      * 纯观察不改行为，所以不计进浮球的「生效开关数」红点——它自己就有个可见的角标。
      */
     amsg2Panel: boolean;
+    /**
+     * 消息通知调试：只影响「离开屏幕期间收到回复」那份事后说明框（OSContext.reportUnseenAttempt）。
+     * 关着时记录照写但静默丢弃，正常聊天一点不被打扰；开着才用弹窗把当时怎么处理的讲出来。
+     * 跟 isDevDebugAvailable() 一起判断：面板被关掉后即使这个开关还留在存档里也不生效。
+     */
+    notifyDebug: boolean;
 }
 
 export interface DevDebugLogEntry {
@@ -108,6 +114,7 @@ export const DEFAULT_DEV_DEBUG_FLAGS: DevDebugFlags = {
     captureLogs: [],
     exposeLogDetail: false,
     amsg2Panel: false,
+    notifyDebug: false,
 };
 
 const MAX_LOG_ENTRIES = 100;
@@ -164,6 +171,7 @@ function normalizeFlags(value: unknown): DevDebugFlags {
         captureLogs,
         exposeLogDetail: source.exposeLogDetail === true,
         amsg2Panel: source.amsg2Panel === true,
+        notifyDebug: source.notifyDebug === true,
     };
 }
 
@@ -287,6 +295,29 @@ export function isHomeSecretRollForced(): boolean {
 
 export function isSystemMessageMergeEnabled(): boolean {
     return readDevDebugFlags().mergeSystemMessages;
+}
+
+/**
+ * 「离开屏幕说明框」该不该弹——两个条件必须同时成立。抽成纯函数，好钉测试。
+ * available=false 的三种情况见 isNotifyDebugEnabled 的注释。
+ */
+export function shouldShowNotifyDebugHint(input: { available: boolean; notifyDebug: boolean }): boolean {
+    return input.available && input.notifyDebug;
+}
+
+/**
+ * 消息通知调试：要不要把「离开屏幕期间收到回复」的事后说明框弹出来。
+ * 跟可用性绑定，理由同 isCaptureEnabled——面板看不见就别弹：
+ *   1. 点了面板的「关闭」（forceClosed）
+ *   2. prod 刷新后（manualUnlock 重置，但 notifyDebug 还留在存档里）
+ *   3. 从没解锁过
+ * 不挡的话，用户明明没在调试，正常聊天每隔一会儿就被一个说明框拦住。
+ */
+export function isNotifyDebugEnabled(): boolean {
+    return shouldShowNotifyDebugHint({
+        available: isDevDebugAvailable(),
+        notifyDebug: readDevDebugFlags().notifyDebug,
+    });
 }
 
 export function isCaptureEnabled(category: DevDebugCaptureCategory): boolean {

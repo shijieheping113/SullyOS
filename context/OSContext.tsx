@@ -102,9 +102,9 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery } from '../utils/chatNotify';
+import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasStreamNotified, resetStreamNotify, type NotifyFailureReason } from '../utils/chatNotify';
 import { formatBytes } from '../utils/format';
-import { isEmotionEvalSkipped } from '../utils/devDebug';
+import { isEmotionEvalSkipped, isNotifyDebugEnabled } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
 
 import { initLocalStorageMirror } from '../utils/lsMirror';
@@ -130,6 +130,9 @@ import {
 } from '../utils/forkBackup';
 import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
 import { normalizeCharacterRoomAssetsInPlace } from '../utils/roomTemplateAssets';
+
+/** 一次性到齐的回复切成几段时，相邻两条通知之间留的空当（太挤会像刷屏）。 */
+const SEGMENT_NOTIFY_GAP_MS = 650;
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -2242,19 +2245,36 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }).catch(() => ''),
                   new Promise<string>(resolve => window.setTimeout(() => resolve(''), 500)),
               ]);
-              const result = await notifyChatReply({
-                  charId,
-                  charName,
-                  body,
-                  avatarRef: char?.avatar,
-              });
+              // 没开流式（或模型不支持流式）时，整段是一次到齐的：按聊天气泡的规则
+              // 切成几段，一段一条按顺序弹，跟「说一段播一条」出来的效果一样。
+              // 切不开（整段没有换行）就还是原来那样，一条。
+              const segments = ChatParser.chunkText(body)
+                  .map(chunkText => chunkText.trim())
+                  .filter(chunkText => chunkText.length > 0);
+              const list = segments.length > 0 ? segments : [body];
+
+              let allOk = true;
+              let failReason: NotifyFailureReason | undefined;
+              for (let index = 0; index < list.length; index += 1) {
+                  if (index > 0) {
+                      // 中间留一点空，几条同时落地会挤成一堆，看着像刷屏。
+                      await new Promise<void>(resolve => window.setTimeout(resolve, SEGMENT_NOTIFY_GAP_MS));
+                  }
+                  const one = await notifyChatReply({ charId, charName, body: list[index], avatarRef: char?.avatar });
+                  if (!one.ok) {
+                      allOk = false;
+                      failReason = one.reason;
+                      break;
+                  }
+              }
+
               recordNotifyAttempt({
                   charName,
                   pageVisible: false,
-                  outcome: result.ok ? 'sent' : 'failed',
-                  reason: result.reason,
+                  outcome: allOk ? 'sent' : 'failed',
+                  reason: failReason,
               });
-              traceNotify('send', { lastSendOk: result.ok, lastReason: result.reason });
+              // 发送结果由 notifyChatReply 统一留痕（分段播报那条路也走它），这里不再重复写。
           } catch (err) {
               console.warn('[OS] 私聊回复通知发送失败', err);
               recordNotifyAttempt({ charName, pageVisible: false, outcome: 'failed', reason: 'web-error' });
@@ -2282,6 +2302,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 留痕：证明「回复事件确实到了」，并记下那一刻屏幕是什么状态。
           // 自检里这一行没有时间戳 = 事件压根没派发到这里，问题在更前面。
           traceNotify('reply', { lastReplyVisible: pageVisible });
+          // 离开屏幕期间已经「说一段播一条」播过了：整段结束时不再补一条把整段重说一遍。
+          // 判断必须在 reset 之前，reset 会把游标清掉。
+          const streamAlreadySpoken = delivery === 'notify' && wasStreamNotified(charId);
+          resetStreamNotify(charId);
           if (delivery === 'silent') return;
 
           if (!isChattingWithThisChar) {
@@ -2290,7 +2314,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (delivery === 'toast') {
               // 人就在屏幕前，只是没开这个聊天：页内提示，跟微信一样不弹系统窗口。
               addToast(`${charName || '角色'} 回复了消息`, 'success');
-          } else {
+          } else if (!streamAlreadySpoken) {
               void notifyReplyInBackground(charId, charName || '角色');
           }
       };
@@ -2435,6 +2459,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       const reportUnseenAttempt = () => {
           const attempt = takeUnseenAttempt();
           if (!attempt) return;
+          // 这是排查用的说明，不是日常提示：调试台里「消息通知调试」没打开就静默丢掉。
+          // 记录上面已经取走了，所以不会攒着、也不会等下次打开开关时突然冒出一条旧的。
+          if (!isNotifyDebugEnabled()) return;
           showError('离开时的消息通知', describeAttempt(attempt));
       };
 
