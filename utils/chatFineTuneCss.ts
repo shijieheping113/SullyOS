@@ -50,8 +50,9 @@ const TURN_AVATAR = '.sully-chat-root .sully-chat-turn-avatar-slot';
 const DEFAULT_AVATAR = '.sully-chat-root .sully-chat-message-avatar';
 const GROUP_FIRST = '.sully-chat-root .sully-chat-message-group-first:not(.sully-chat-message-module)';
 const MESSAGE_CONTENT = '.sully-chat-root .sully-chat-message-content:not(.sully-html-wrap)';
-const AI_BODY = '.sully-chat-root .sully-bubble-ai > div[class~="select-text"]';
-const USER_BODY = '.sully-chat-root .sully-bubble-user > div[class~="select-text"]';
+// 气泡下中文（.sully-paren-translation）也带 select-text，但字号要单独比正文小一号，不能被微调正文字号一起放大。
+const AI_BODY = '.sully-chat-root .sully-bubble-ai > div[class~="select-text"]:not(.sully-paren-translation)';
+const USER_BODY = '.sully-chat-root .sully-bubble-user > div[class~="select-text"]:not(.sully-paren-translation)';
 // 贴边/缩进只该动普通气泡：HTML 卡片（280px 定宽模块，包装层带 .sully-html-wrap）
 // 的默认位置就是"视觉居中"的约定，:not() 绕开让它不随美化挪窝。
 const AI_WRAP = '.sully-chat-root .group.justify-start [class~="max-w-[72%]"].ml-12:not(.sully-html-wrap)';

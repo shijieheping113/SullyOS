@@ -1444,10 +1444,17 @@ const MessageItem = React.memo(({
         const padRight = parseFloat(cs.paddingRight) || 0;
         const padBottom = parseFloat(cs.paddingBottom) || 0;
         const inset = Math.max(0, padBottom - 6) + 8;
-        // 左边跟气泡正文同一条内边距，不再写死 22；绝对定位，不挤小尾巴布局
+        // 左边跟气泡正文同一条内边距；绝对定位，不挤小尾巴布局
         cap.style.left = `${padLeft}px`;
         cap.style.maxWidth = `calc(100% - ${padLeft + padRight}px)`;
         cap.style.top = `calc(100% - ${inset}px)`;
+        // 字号比这句气泡正文小 0.5px（CSS 支持小数）。只量正文 text-[15px]。
+        // 下限 11，避免正文很小或量歪时缩得过头。
+        const textProbe = el.querySelector('[class*="text-[15px]"]') as HTMLElement | null;
+        const bodyFs = textProbe ? (parseFloat(getComputedStyle(textProbe).fontSize) || 15) : 15;
+        const capFs = Math.max(11, Math.round((bodyFs - 0.5) * 10) / 10);
+        cap.style.setProperty('font-size', `${capFs}px`, 'important');
+        // 字号定完再量探出高度，两行大字也能把下面表情包/气泡让开
         const base = parseFloat(getComputedStyle(row).marginBottom) || 0;
         const hang = Math.max(0, Math.ceil(cap.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + 3);
         const extra = Math.max(0, hang - base);

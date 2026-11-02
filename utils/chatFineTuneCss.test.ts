@@ -57,7 +57,7 @@ describe('buildChatFineTuneCss', () => {
 
     it('字号/行距走社区版四层选择器，内联元素 inherit', () => {
         const css = buildChatFineTuneCss({ chatBubbleFontSize: 14, chatBubbleLineHeight: 1.5 });
-        expect(css).toContain('.sully-bubble-ai > div[class~="select-text"]');
+        expect(css).toContain('.sully-bubble-ai > div[class~="select-text"]:not(.sully-paren-translation)');
         expect(css).toContain('font-size: 14px !important;');
         expect(css).toContain('line-height: 1.5 !important;');
         expect(css).toContain('font-size: inherit !important;');
