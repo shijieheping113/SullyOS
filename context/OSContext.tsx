@@ -102,7 +102,9 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyRoundSegment, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasRoundNotified, describeStreamScan, type NotifyFailureReason } from '../utils/chatNotify';
+import { notifyRoundSegment, previewTextOf, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery, wasRoundNotified, describeStreamScan, type NotifyFailureReason } from '../utils/chatNotify';
+import { isChatNotifyEnabled } from '../utils/chatNotifySettings';
+import { chatCharacterDisplayName } from '../utils/characterRemark';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped, isNotifyDebugEnabled } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
@@ -2238,10 +2240,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // 本轮回复 = 落库末尾那一串连续的 assistant 消息（前面紧挨着用户那句就收手）。
       // 落库时一段一个气泡，所以这串就是「这次到底回了哪几句」。
       // 以前只读最后一条，于是三段回复只弹最后一段——这是 Ann 反复遇到的「只有最后一条」。
-      const collectRoundBubbles = async (charId: string): Promise<string[]> => {
+      const collectRoundBubbles = async (charId: string): Promise<{ bubbles: string[]; voiceOnly: boolean }> => {
           try {
               const recent = await DB.getRecentMessagesByCharId(charId, 40);
               const bubbles: string[] = [];
+              let voiceCount = 0;
               let newestAt = 0;
               for (let i = recent.length - 1; i >= 0; i -= 1) {
                   const message = recent[i];
@@ -2250,16 +2253,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   if (!newestAt) newestAt = at || Date.now();
                   // 隔了十分钟以上就不是「刚刚这一轮」了，收手（见 ROUND_NOTIFY_MAX_SPAN_MS）。
                   if (at && newestAt - at > ROUND_NOTIFY_MAX_SPAN_MS) break;
-                  // 表情、图片、语音条不进通知，但也不能因为「这条不是文字」就提前收手：
+                  // 表情、图片之类不进通知，但也不能因为「这条不是文字」就提前收手：
                   // 一轮里本来就可能夹着好几条表情。跳过，接着往前找。
                   if (message.type !== 'text') continue;
-                  const text = ChatParser.sanitize(message.content || '').trim();
-                  if (text && ChatParser.hasDisplayContent(text)) bubbles.unshift(text);
+                  // 语音消息在库里也是 text，只是外面包了 `<语音>…</语音>`（对话里靠它渲染成语音条）。
+                  // 只认 type 会把整段朗读词弹到锁屏上——语音不该有文字预览，这里按空内容处理。
+                  const raw = message.content || '';
+                  const text = previewTextOf(ChatParser.sanitize(raw)).trim();
+                  if (!text) {
+                      if (/<\s*[语語]音/.test(raw)) voiceCount += 1;
+                      continue;
+                  }
+                  if (ChatParser.hasDisplayContent(text)) bubbles.unshift(text);
                   if (bubbles.length >= 12) break;   // 别一口气刷一屏
               }
-              return bubbles;
+              // 一轮里只有语音：不出正文，但也不能一声不响——给一句「发来一条语音」。
+              return { bubbles, voiceOnly: bubbles.length === 0 && voiceCount > 0 };
           } catch {
-              return [];
+              return { bubbles: [], voiceOnly: false };
           }
       };
 
@@ -2274,19 +2285,25 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // 也不会把按住没发、或者流式根本没收到的最后一段漏掉。
       const notifyReplyInBackground = async (charId: string, charName: string) => {
           const char = charactersRef.current.find(c => c.id === charId);
+          // 通知和页内提示都用「聊天标题上的那个名字」：填了备注且开着「聊天显示备注」时
+          // 备注优先。以前直接用 char.name，于是聊天里叫备注名、锁屏上弹本名。
+          const displayName = char ? chatCharacterDisplayName(char) : charName;
           try {
               // 读库不能挡住发送：后台被冻过之后，一次 IndexedDB 读有可能半天不回来。
               // 宁可先发一条没有正文的通知，也不能因为等正文而不发。
-              const bubbles = await Promise.race([
+              const { bubbles, voiceOnly } = await Promise.race([
                   collectRoundBubbles(charId),
-                  new Promise<string[]>(resolve => window.setTimeout(() => resolve([]), 2000)),
+                  new Promise<{ bubbles: string[]; voiceOnly: boolean }>(resolve => window.setTimeout(() => resolve({ bubbles: [], voiceOnly: false }), 2000)),
               ]);
               const remaining = bubbles.filter(text => !wasRoundNotified(charId, text));
               // 这一轮读不到任何气泡、也没有哪一句被发过：仍然发一条，宁可不带正文，
               // 也不能一声不响（真到这一步，说明回复只回了表情，或者库没读到）。
+              // 只有语音的那一轮另给一句「发来一条语音」：知道有消息，但不把朗读词上屏。
               const list = remaining.length > 0
                   ? remaining
-                  : (bubbles.length === 0 ? [''] : []);
+                  : voiceOnly
+                      ? ['发来一条语音']
+                      : (bubbles.length === 0 ? [''] : []);
 
               let allOk = true;
               let failReason: NotifyFailureReason | undefined;
@@ -2296,7 +2313,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       await new Promise<void>(resolve => window.setTimeout(resolve, SEGMENT_NOTIFY_GAP_MS));
                   }
                   // 走「认领」这条：万一同一句已经在别处弹过，这里直接跳过，不会重弹。
-                  const pending = notifyRoundSegment({ charId, charName, body: list[index], avatarRef: char?.avatar });
+                  const pending = notifyRoundSegment({ charId, charName: displayName, body: list[index], avatarRef: char?.avatar });
                   if (!pending) continue;
                   const one = await pending;
                   if (!one.ok) {
@@ -2307,7 +2324,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
 
               recordNotifyAttempt({
-                  charName,
+                  charName: displayName,
                   pageVisible: false,
                   outcome: allOk ? 'sent' : 'failed',
                   reason: failReason,
@@ -2315,7 +2332,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 发送结果由 notifyChatReply 统一留痕（分段播报那条路也走它），这里不再重复写。
           } catch (err) {
               console.warn('[OS] 私聊回复通知发送失败', err);
-              recordNotifyAttempt({ charName, pageVisible: false, outcome: 'failed', reason: 'web-error' });
+              recordNotifyAttempt({ charName: displayName, pageVisible: false, outcome: 'failed', reason: 'web-error' });
               traceNotify('send', { lastSendOk: false, lastReason: 'web-error' });
           }
       };
@@ -2349,9 +2366,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (!isChattingWithThisChar) {
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
           }
+          // 用户在设置里把「私聊回复通知」关掉了：屏幕上又看不到这一页，就安静收下，
+          // 只留未读数。页内 toast 不受影响——那是聊天本身的一部分，不是系统弹窗。
+          if (delivery === 'notify' && !isChatNotifyEnabled()) return;
+          // 页内提示也跟聊天标题用同一个名字：填了备注且开着「聊天显示备注」时，备注优先。
+          // 系统通知那边由 notifyReplyInBackground 自己换算，这里只管眼前这一句。
+          const toastChar = charactersRef.current.find(c => c.id === charId);
           if (delivery === 'toast') {
               // 人就在屏幕前，只是没开这个聊天：页内提示，跟微信一样不弹系统窗口。
-              addToast(`${charName || '角色'} 回复了消息`, 'success');
+              addToast(`${toastChar ? chatCharacterDisplayName(toastChar) : (charName || '角色')} 回复了消息`, 'success');
           } else {
               // 已经弹过的正文由 notifyReplyInBackground 自己去重，这里只负责把剩下的一次补齐。
               void notifyReplyInBackground(charId, charName || '角色');

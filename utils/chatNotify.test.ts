@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: {} }));
 
-import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, resetStreamNotify, getStreamSpokenCount, describeStreamScan, noteStreamScan, notifyRoundSegment, notifyPersistedBubble, wasRoundNotified } from './chatNotify';
+import { toNotificationBody, previewTextOf, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace, drainStreamSegments, resetStreamNotify, getStreamSpokenCount, describeStreamScan, noteStreamScan, noteStreamRequest, notifyRoundSegment, notifyPersistedBubble, wasRoundNotified } from './chatNotify';
 
 describe('私聊通知正文整理', () => {
     it('没有内容时用兜底文案', () => {
@@ -329,5 +329,51 @@ describe('自检第④行：分段播报的结论要出现在留痕里', () => {
     it('没有分段记录时不冒充一行空的', () => {
         const lines = describeNotifyTrace({ wiredAt: Date.now(), lastReplyAt: Date.now() });
         expect(lines.some(line => line.startsWith('④'))).toBe(false);
+    });
+});
+
+describe('语音不该进通知正文', () => {
+    it('整条是语音时抹成空串（调用方据此跳过）', () => {
+        expect(previewTextOf('<语音>今天好累啊</语音>')).toBe('');
+        expect(previewTextOf('<语音 开心>在楼下等你</语音>')).toBe('');
+    });
+
+    it('语音后面跟着字幕，两块一起抹掉', () => {
+        expect(previewTextOf('<语音>おかえり</语音><字幕>你回来啦</字幕>')).toBe('');
+    });
+
+    it('一条里既有文字又有语音，只留文字', () => {
+        expect(previewTextOf('等我一下<语音>马上就到</语音>')).toBe('等我一下');
+        expect(previewTextOf('<语音 生气>哼</语音>不理你了')).toBe('不理你了');
+    });
+
+    it('流式说到一半、只有开标签的，从标签起到末尾都算语音', () => {
+        expect(previewTextOf('先这样<语音>后面还没说完')).toBe('先这样');
+    });
+
+    it('普通文字原样保留', () => {
+        expect(previewTextOf('刚到家，饭在锅里')).toBe('刚到家，饭在锅里');
+        expect(previewTextOf('')).toBe('');
+    });
+});
+
+describe('自检第④行要分清「没开流式」和「开了但冻住」', () => {
+    it('请求没开流式：说清是设置，不是故障', () => {
+        noteStreamRequest('c-v', false, false);
+        expect(describeStreamScan('c-v')).toContain('没开流式');
+        resetStreamNotify('c-v');
+    });
+
+    it('开了流式却一个增量都没到：指到「页面被冻住」', () => {
+        noteStreamRequest('c-v', true, true);
+        expect(describeStreamScan('c-v')).toContain('页面');
+        expect(describeStreamScan('c-v')).toContain('冻住');
+        resetStreamNotify('c-v');
+    });
+
+    it('换一轮就把上一轮的请求状态清掉', () => {
+        noteStreamRequest('c-v', true, true);
+        resetStreamNotify('c-v');
+        expect(describeStreamScan('c-v')).not.toContain('冻住');
     });
 });

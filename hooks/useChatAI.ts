@@ -40,7 +40,8 @@ import {
     extractStreamingEmbeddedThinking,
     findNewStreamPreviewHandoverIds,
 } from '../utils/streamPreview';
-import { drainStreamSegments, notifyRoundSegment, notifyPersistedBubble, noteStreamScan, resetStreamNotify } from '../utils/chatNotify';
+import { drainStreamSegments, notifyRoundSegment, notifyPersistedBubble, noteStreamScan, noteStreamRequest, resetStreamNotify } from '../utils/chatNotify';
+import { chatCharacterDisplayName } from '../utils/characterRemark';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
@@ -1344,6 +1345,18 @@ export const useChatAI = ({
             const streamUiEligible = !!userStream && !toolModeActive && !bilingualActive && !sarModulePlan.requiresEnvelope;
             const streamPreviewEligible = streamUiEligible;
             const streamThinkingEligible = streamUiEligible && payload.flags.thinkingActive;
+            /**
+             * 通知上显示的名字：跟聊天标题走同一套。
+             *
+             * 聊天标题用的是 chatCharacterDisplayName —— 你给角色填了备注、并且开着「聊天显示备注」时，
+             * 标题显示的是备注名。通知以前直接拿 char.name，于是聊天里叫「阿糯」、锁屏上却弹本名，
+             * 同一个角色两种叫法。这里跟聊天标题对齐，备注优先。
+             */
+            const notifyCharName = chatCharacterDisplayName(char);
+            // 把「这次请求到底开没开流式、界面准不准逐段上屏」记下来。自检第④行原来只会说
+            // 「没收到增量」，把「你没开流式」和「开了但页面被冻住」混成一句，只能靠人猜。
+            // 只记状态、不改行为。
+            noteStreamRequest(char.id, !!userStream, streamPreviewEligible);
             // 预览真的上过屏才置 true → 后处理落库时跳过拟人打字延迟（instantRender），
             // 否则用户会看到"预览气泡收回去、再一条条慢慢重弹"的二次播放。
             let streamPreviewShown = false;
@@ -1387,7 +1400,7 @@ export const useChatAI = ({
                         for (const segment of fresh) {
                             void notifyRoundSegment({
                                 charId: char.id,
-                                charName: char.name,
+                                charName: notifyCharName,
                                 body: segment,
                                 avatarRef: char.avatar,
                             });
@@ -2157,7 +2170,7 @@ export const useChatAI = ({
                 onTextBubblePersisted: (text: string) => {
                     notifyPersistedBubble({
                         charId: char.id,
-                        charName: char.name,
+                        charName: notifyCharName,
                         body: text,
                         avatarRef: char.avatar,
                     });

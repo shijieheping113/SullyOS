@@ -21,6 +21,7 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { resolveRefToDataUrl } from './blobRef';
+import { isChatNotifyEnabled } from './chatNotifySettings';
 
 /** 通知正文上限。安卓侧太长的正文会被系统截断，宁可自己先收干净。 */
 const BODY_MAX_LENGTH = 80;
@@ -92,6 +93,31 @@ export function toNotificationBody(raw: string | undefined | null, fallback: str
     const cleaned = (raw || '').replace(/\s+/g, ' ').trim();
     if (!cleaned) return fallback;
     return cleaned.length > BODY_MAX_LENGTH ? `${cleaned.slice(0, BODY_MAX_LENGTH)}…` : cleaned;
+}
+
+/**
+ * 通知里能露出来的字：把语音块整段抹掉。
+ *
+ * 语音消息在库里仍然是 `type: 'text'`，只是外面包了一层 `<语音 …>…</语音>`
+ * （对话里靠这层标签把它渲染成语音条，外语角色后面还会跟一段 `<字幕>`）。
+ * 所以「只挑文字消息」这个筛子挡不住它——整段朗读词会直接弹到锁屏上。
+ * 语音本来就不该有文字预览，这里连里面的字一起丢掉。
+ *
+ * 返回空串 = 这条除了语音没别的可看，调用方据此跳过正文（不是跳过通知本身）。
+ */
+export function previewTextOf(raw: string | undefined | null): string {
+    const text = raw || '';
+    if (!/<\s*[语語]音|<\s*字幕/.test(text)) return text.replace(/\s+/g, ' ').trim();
+    const stripped = text
+        // 语音块 + 紧挨着的字幕块一起算一个整体，跟 chatParser 保护它们时的口径一致。
+        .replace(/(?:<\s*字幕\s*>[\s\S]*?<\/\s*字幕\s*>\s*)?<\s*[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>(?:\s*<\s*字幕\s*>[\s\S]*?<\/\s*字幕\s*>)?/g, ' ')
+        // 只有开标签、还没收尾（流式说到一半）的，从标签起到末尾都不算可预览正文。
+        .replace(/<\s*[语語]音[^>]*>[\s\S]*$/g, ' ')
+        .replace(/<\s*字幕\s*>[\s\S]*?<\/\s*字幕\s*>/g, ' ')
+        // 剩下的零散标签本身不该出现在锁屏上。
+        .replace(/<\/?\s*[语語]音[^>]*>/g, ' ')
+        .replace(/<\/?\s*字幕[^>]*>/g, ' ');
+    return stripped.replace(/\s+/g, ' ').trim();
 }
 
 function clockOf(at?: number): string {
@@ -360,6 +386,21 @@ interface StreamScan {
 
 const streamScans = new Map<string, StreamScan>();
 
+/**
+ * 这一轮请求到底开没开流式、界面准不准它逐段上屏。
+ *
+ * 第 ④ 行原本只会说「没收到增量」，把两件完全不同的事混成一句：
+ *  - 请求压根不是流式（整段一次到齐）——那是设置问题，不是故障；
+ *  - 请求是流式，但页面被冻住（锁屏/切后台），增量全攒到解锁那一刻才到齐——
+ *    这在网页里没法绕开，只能等装成 App 挂常驻服务。
+ * 记下请求那一刻的真实选择，这一行才能自己说清是哪一种，不用再靠人猜。
+ */
+const streamRequests = new Map<string, { streaming: boolean; previewAllowed: boolean }>();
+
+export function noteStreamRequest(charId: string, streaming: boolean, previewAllowed: boolean): void {
+    streamRequests.set(charId, { streaming, previewAllowed });
+}
+
 export function noteStreamScan(charId: string, input: {
     bubbles: number;
     spokenNow: number;
@@ -379,8 +420,18 @@ export function noteStreamScan(charId: string, input: {
 /** 用一句人话说清这一轮流式播报到底发生了什么 —— 自检里直接显示这句。 */
 export function describeStreamScan(charId: string): string {
     const scan = streamScans.get(charId);
+    const request = streamRequests.get(charId);
     if (!scan) {
-        return '分段播报：这一轮没收到任何流式增量 —— 要么流式没开，要么页面被冻住、回复是回到前台才一次到齐的';
+        if (request && !request.streaming) {
+            return '分段播报：这次请求没开流式 —— 回复是整段一次到齐的，通知跟着落库的气泡一条条弹';
+        }
+        if (request && !request.previewAllowed) {
+            return '分段播报：流式开了，但这个模式（工具/双语/结构化）不出逐段预览，通知走落库那条路';
+        }
+        if (request?.streaming) {
+            return '分段播报：这次请求要的是流式，但一个增量都没到 —— 要么手机把页面冻住了（锁屏 / 切后台），要么这家中转没按流式回';
+        }
+        return '分段播报：这一轮没收到任何流式增量，也没查到这次请求的流式设置（多半是回复在别的页面/别的窗口生成完的）';
     }
     if (scan.spoken > 0) {
         return `分段播报：共 ${scan.deltas} 次增量、切出 ${scan.bubbles} 段，已播 ${scan.spoken} 条`;
@@ -395,6 +446,7 @@ export function describeStreamScan(charId: string): string {
 export function resetStreamNotify(charId: string): void {
     streamCursors.delete(charId);
     streamScans.delete(charId);
+    streamRequests.delete(charId);
     roundSpoken.delete(charId);
 }
 
@@ -501,12 +553,18 @@ const DEDUPE_WINDOW_MS = 4000;
 
 export function notifyChatReply(
     payload: ChatReplyNotification,
-    options?: { trace?: boolean; dedupe?: boolean },
+    options?: { trace?: boolean; dedupe?: boolean; force?: boolean },
 ): Promise<NotifyResult> {
+    // 用户在设置里关掉了私聊回复通知：一条都不发，连队列都不进。
+    // 自检那条走 force —— 开关关着也要能验通不通，否则「关了打不开」时没处查。
+    if (!options?.force && !isChatNotifyEnabled()) return Promise.resolve(OK);
     // 「说一段播一条」会连着调好几次。并发发出去的话，谁先准备好谁先弹，
     // 锁屏上就成了乱序——读起来像倒着说话。所以这里排一条队，按顺序落地。
     const task = sendChain.then(async () => {
-        const body = toNotificationBody(payload.body, `${payload.charName} 回复了消息`);
+        const body = notificationBodyOf(payload);
+        // 这条只有语音（或只有语音标签）：不进通知正文。整轮只有语音时，
+        // 收尾那条会给一句「发来一条语音」——让人知道有消息，但不把朗读词上屏。
+        if (body === null) return OK;
         if (options?.dedupe !== false) {
             const last = recentBodies.get(payload.charId);
             if (last && last.body === body && Date.now() - last.at < DEDUPE_WINDOW_MS) {
@@ -531,11 +589,24 @@ function delay(ms: number): Promise<void> {
     return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
+/**
+ * 这一条通知该显示的正文；null = 不该发（整条只有语音）。
+ *
+ * 空正文不算「不该发」：读库超时那种情况宁可不带正文也要弹一条，
+ * 让人知道「有消息来了」比什么都不说强。所以这两种空要分开判。
+ */
+function notificationBodyOf(payload: ChatReplyNotification): string | null {
+    const preview = previewTextOf(payload.body);
+    if (!preview && /<\s*[语語]音/.test(payload.body || '')) return null;
+    return toNotificationBody(preview, `${titleOf(payload)} 回复了消息`);
+}
+
 async function sendOne(
     payload: ChatReplyNotification,
     options?: { trace?: boolean },
 ): Promise<NotifyResult> {
-    const body = toNotificationBody(payload.body, `${payload.charName} 回复了消息`);
+    const body = notificationBodyOf(payload);
+    if (body === null) return OK;
     const result = Capacitor.isNativePlatform()
         ? await sendNative(payload, body)
         : await sendWeb(payload, body);
@@ -547,6 +618,15 @@ async function sendOne(
     return result;
 }
 
+/**
+ * 通知标题。名字为空时不能把标题也留空——安卓遇到空标题会拿「应用名」顶上，
+ * 锁屏上就成了「SullyOS·糯米机」加一句话，看不出是谁发的。
+ */
+function titleOf(payload: ChatReplyNotification): string {
+    const name = (payload.charName || '').replace(/\s+/g, ' ').trim();
+    return name || '新消息';
+}
+
 async function sendNative(payload: ChatReplyNotification, body: string): Promise<NotifyResult> {
     const permission = await resolveNotificationPermission();
     if (!permission.ok) return permission;
@@ -554,7 +634,7 @@ async function sendNative(payload: ChatReplyNotification, body: string): Promise
         await LocalNotifications.schedule({
             notifications: [{
                 id: takeNotificationId(),
-                title: payload.charName,
+                title: titleOf(payload),
                 body,
                 // 稍稍延后一点，避免和「刚打开 App」的启动动画抢焦点。
                 schedule: { at: new Date(Date.now() + 250) },
@@ -604,7 +684,7 @@ async function sendWeb(payload: ChatReplyNotification, body: string): Promise<No
         try {
             icon = (await resolveRefToDataUrl(payload.avatarRef || '')) || icon;
         } catch { /* 用默认图标 */ }
-        await registration.showNotification(payload.charName, {
+        await registration.showNotification(titleOf(payload), {
             body,
             icon,
             badge: './icons/icon-192.png',
@@ -712,6 +792,9 @@ export async function runNotifySelfCheck(): Promise<string[]> {
     const lines: string[] = [];
     const isNative = Capacitor.isNativePlatform();
     lines.push(`运行环境：${isNative ? '装好的 App' : '浏览器里打开的网页'}`);
+    // 开关先摆出来：很多人「没弹」其实是被自己关掉的，比通道坏了常见得多。
+    // 这条自检本身走 force，开关关着也照样真发一条。
+    lines.push(`弹窗开关：${isChatNotifyEnabled() ? '开着的' : '关着的（正常聊天不会弹；这条自检照样发）'}`);
 
     if (!isNative) {
         // 通知 API 只在安全环境里存在：https 或 localhost。
@@ -734,10 +817,15 @@ export async function runNotifySelfCheck(): Promise<string[]> {
             charId: 'self-check',
             charName: '通知自检',
             body: '看到这一条，就说明通知通道是通的',
-        }, { trace: false, dedupe: false });
+        }, { trace: false, dedupe: false, force: true });
         lines.push(sent.ok
             ? '试发一条：已经发出去了（去看通知栏 / 锁屏有没有）'
             : `试发一条：失败 —— ${describeNotifyFailure(sent.reason || 'web-error')}`);
+        // 名字看不见时，靠这条自己分清楚「代码没写名字」还是「手机把内容藏了」。
+        // 标题写在代码里是固定的三个字，跟 App 名一眼就能分开。
+        if (sent.ok) {
+            lines.push('刚才那条的标题写的是「通知自检」：如果通知上只见到 App 名、见不到这几个字，是手机把通知内容折叠或隐藏了（设置 → 通知 → 锁屏通知 → 显示内容），不是代码没带名字。');
+        }
     }
 
     // 上次离开屏幕时那一条走了多远：三步里哪一步缺时间戳，就是断在哪一步。
