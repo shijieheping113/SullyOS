@@ -1427,24 +1427,26 @@ const MessageItem = React.memo(({
     const bubbleBgUrl = useBlobRefUrl(styleConfig.backgroundImage);
     const bubbleBoxRef = useRef<HTMLDivElement>(null);
     const translationBoxRef = useRef<HTMLDivElement>(null);
-    const [bubbleInset, setBubbleInset] = useState({ left: 0, right: 0, width: 0, height: 0 });
+    const messageRowRef = useRef<HTMLDivElement>(null);
+    const translationSpacerRef = useRef<HTMLDivElement>(null);
+    const avatarSlotRef = useRef<HTMLDivElement>(null);
     useLayoutEffect(() => {
+        const row = messageRowRef.current;
         const el = bubbleBoxRef.current;
-        if (!el) return;
-        const read = () => {
-            const cs = getComputedStyle(el);
-            const left = parseFloat(cs.paddingLeft) || 0;
-            const right = parseFloat(cs.paddingRight) || 0;
-            const width = el.offsetWidth;
-            const height = translationBoxRef.current ? translationBoxRef.current.offsetHeight : 0;
-            setBubbleInset(prev => (prev.left === left && prev.right === right && prev.width === width && prev.height === height) ? prev : { left, right, width, height });
-        };
-        read();
-        if (typeof ResizeObserver === 'undefined') return;
-        const ro = new ResizeObserver(read);
-        ro.observe(el);
-        if (translationBoxRef.current) ro.observe(translationBoxRef.current);
-        return () => ro.disconnect();
+        const cap = translationBoxRef.current;
+        const spacer = translationSpacerRef.current;
+        const avatar = avatarSlotRef.current;
+        if (spacer) spacer.style.height = '0px';
+        if (avatar) avatar.style.bottom = '';
+        if (!row || !el || !cap) return;
+        const padBottom = parseFloat(getComputedStyle(el).paddingBottom) || 0;
+        const inset = Math.max(0, padBottom - 6) + 8;
+        cap.style.top = `calc(100% - ${inset}px)`;
+        const base = parseFloat(getComputedStyle(row).marginBottom) || 0;
+        const hang = Math.max(0, Math.ceil(cap.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + 3);
+        const extra = Math.max(0, hang - base);
+        if (spacer) spacer.style.height = extra + 'px';
+        if (avatar && extra) avatar.style.bottom = extra + 'px';
     });
     const [showVoiceText, setShowVoiceText] = useState(previewExpanded);
     const [showSarTruth, setShowSarTruth] = useState(false);
@@ -2097,6 +2099,7 @@ const MessageItem = React.memo(({
                 </div>
             )}
             <div
+                ref={messageRowRef}
                 className={[
                 'sully-chat-message',
                 isUser
@@ -2129,7 +2132,7 @@ const MessageItem = React.memo(({
 
                 {/* HTML / 音乐卡片是独立模块，不继承普通消息外壳的角色头像。卡片内部自己的头像不受影响。 */}
                 {!isUser && !isModuleCard && (
-                    <div data-no-inner-peek="" className={`sully-chat-message-avatar-slot absolute bottom-0 z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-[left] duration-300`}>
+                    <div data-no-inner-peek="" ref={avatarSlotRef} className={`sully-chat-message-avatar-slot absolute bottom-0 z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-[left] duration-300`}>
                         {renderAvatar(charAvatar, { className: 'sully-chat-message-avatar' })}
                     </div>
                 )}
@@ -2177,7 +2180,7 @@ const MessageItem = React.memo(({
 
                 {/* 用户侧若存在导入/历史模块卡，也保持同一条“卡片不带消息外侧头像”规则。 */}
                 {isUser && !isModuleCard && (
-                    <div data-no-inner-peek="" className={`sully-chat-message-avatar-slot absolute right-3 bottom-0 z-0 transition-[left] duration-300`}>
+                    <div data-no-inner-peek="" ref={avatarSlotRef} className={`sully-chat-message-avatar-slot absolute right-3 bottom-0 z-0 transition-[left] duration-300`}>
                         {renderAvatar(userAvatar, { className: 'sully-chat-message-avatar' })}
                     </div>
                 )}
@@ -3978,7 +3981,7 @@ const MessageItem = React.memo(({
         ? <BubbleInlineTime time={formatTime(m.timestamp)} hover={showTimestamp === 'hover'} />
         : undefined;
     return commonLayout(
-        <div style={parenSplit ? { position: 'relative', display: 'inline-block', maxWidth: '100%', verticalAlign: 'top', marginBottom: bubbleInset.height ? bubbleInset.height + 18 : 0 } : { display: 'contents' }}>
+        <>
         <div ref={bubbleBoxRef} className={isVoiceOnlyMsg
             ? `relative ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`
             : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${suppressEntranceAnimation ? '' : 'animate-fade-in'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'} ${bubbleGroupClasses}`}
@@ -4272,29 +4275,21 @@ const MessageItem = React.memo(({
                 </div>
                 );
             })()}
-        </div>
         {parenSplit && (
             <div
                 ref={translationBoxRef}
                 className="sully-paren-translation select-text whitespace-pre-wrap break-normal [overflow-wrap:anywhere]"
                 style={{
                     position: 'absolute',
-                    left: 0,
-                    top: '100%',
-                    width: bubbleInset.width || undefined,
-                    boxSizing: 'border-box',
-                    marginTop: 10,
-                    paddingLeft: bubbleInset.left,
-                    paddingRight: bubbleInset.right,
+                    left: 22,
+                    maxWidth: 'calc(100% - 22px)',
                     fontSize: 13,
                     fontWeight: 700,
                     lineHeight: 1.35,
                     color: '#ffffff',
                     WebkitTextFillColor: '#ffffff',
-                    WebkitTextStroke: '2.5px #000000',
-                    paintOrder: 'stroke fill',
-                    textShadow: '0 0 1px #000, 1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000',
-                    zIndex: 4,
+                    WebkitTextStroke: '0',
+                    textShadow: '0.65px 0 0 #000, 0.56px 0.32px 0 #000, 0.33px 0.56px 0 #000, 0 0.65px 0 #000, -0.32px 0.56px 0 #000, -0.56px 0.32px 0 #000, -0.65px 0 0 #000, -0.56px -0.32px 0 #000, -0.33px -0.56px 0 #000, 0 -0.65px 0 #000, 0.33px -0.56px 0 #000, 0.56px -0.33px 0 #000, 1.25px 0 0 #000, 1.15px 0.48px 0 #000, 0.88px 0.88px 0 #000, 0.48px 1.15px 0 #000, 0 1.25px 0 #000, -0.48px 1.15px 0 #000, -0.88px 0.88px 0 #000, -1.15px 0.48px 0 #000, -1.25px 0 0 #000, -1.15px -0.48px 0 #000, -0.88px -0.88px 0 #000, -0.48px -1.15px 0 #000, 0 -1.25px 0 #000, 0.48px -1.15px 0 #000, 0.88px -0.88px 0 #000, 1.15px -0.48px 0 #000',
                 }}
             >
                 {parenSplit.translations.map((line, index) => (
@@ -4303,6 +4298,8 @@ const MessageItem = React.memo(({
             </div>
         )}
         </div>
+        {parenSplit && <div ref={translationSpacerRef} aria-hidden="true" style={{ height: 0 }} />}
+        </>
     );
 }, (prev, next) => {
     return prev.msg.id === next.msg.id &&
