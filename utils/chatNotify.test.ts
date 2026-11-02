@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // node 环境里没有 Capacitor 的运行时，只测纯函数，插件整个挡掉。
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: {} }));
 
-import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeNotifyFailure, decideReplyDelivery } from './chatNotify';
+import { toNotificationBody, consumePendingNotificationTap, describeNotifyFailure, takeUnseenAttempt, recordNotifyAttempt, describeAttempt, decideReplyDelivery, traceNotify, readNotifyTrace, describeNotifyTrace } from './chatNotify';
 
 describe('私聊通知正文整理', () => {
     it('没有内容时用兜底文案', () => {
@@ -75,43 +75,105 @@ describe('通知失败原因的人话', () => {
     });
 });
 
-describe('失败记录：读一次就清，过期的不要', () => {
-    const KEY = 'sullyos.chatNotify.failure.v1';
+describe('离开期间的记录：读一次就清，过期的不要', () => {
+    const KEY = 'sullyos.chatNotify.attempt.v1';
 
-    function stubStorage() {
-        const map = new Map<string, string>();
-        (globalThis as unknown as { localStorage: Storage }).localStorage = {
-            getItem: (k: string) => (map.has(k) ? map.get(k)! : null),
-            setItem: (k: string, v: string) => { map.set(k, v); },
-            removeItem: (k: string) => { map.delete(k); },
-            clear: () => map.clear(),
-            key: () => null,
-            length: 0,
-        } as unknown as Storage;
-        return map;
-    }
+    // 用 test-setup.ts 提供的内存 localStorage，别自己造一个替换全局——
+    // 那样会盖掉同目录其他测试依赖的桩。
+    beforeEach(() => { localStorage.clear(); });
 
     it('没有记录时返回 null', () => {
-        stubStorage();
-        expect(takeNotifyFailure()).toBeNull();
+        expect(takeUnseenAttempt()).toBeNull();
+    });
+
+    it('发成功也留记录——否则「没看到弹窗」永远查不下去', () => {
+        recordNotifyAttempt({ charName: '阿糯', pageVisible: false, outcome: 'sent' });
+        expect(takeUnseenAttempt()).toMatchObject({ charName: '阿糯', outcome: 'sent' });
     });
 
     it('读一次就清空，不会每次打开都翻旧账', () => {
-        const map = stubStorage();
-        map.set(KEY, JSON.stringify({ at: Date.now(), reason: 'web-denied', charName: '阿糯' }));
-        expect(takeNotifyFailure()).toMatchObject({ reason: 'web-denied', charName: '阿糯' });
-        expect(takeNotifyFailure()).toBeNull();
+        recordNotifyAttempt({ charName: '阿糯', pageVisible: false, outcome: 'failed', reason: 'web-denied' });
+        expect(takeUnseenAttempt()).toMatchObject({ outcome: 'failed', reason: 'web-denied' });
+        expect(takeUnseenAttempt()).toBeNull();
     });
 
-    it('超过一天的旧记录不再弹出来', () => {
-        const map = stubStorage();
-        map.set(KEY, JSON.stringify({ at: Date.now() - 25 * 60 * 60 * 1000, reason: 'web-denied', charName: '阿糯' }));
-        expect(takeNotifyFailure()).toBeNull();
+    it('页面可见时产生的记录不复述：用户当时就在屏幕前', () => {
+        recordNotifyAttempt({ charName: '阿糯', pageVisible: true, outcome: 'sent' });
+        expect(takeUnseenAttempt()).toBeNull();
+    });
+
+    it('超过半天的旧记录不再弹出来', () => {
+        localStorage.setItem(KEY, JSON.stringify({ at: Date.now() - 13 * 60 * 60 * 1000, charName: '阿糯', pageVisible: false, outcome: 'failed', reason: 'web-denied' }));
+        expect(takeUnseenAttempt()).toBeNull();
     });
 
     it('存的是坏数据时不抛错，当没有记录处理', () => {
-        const map = stubStorage();
-        map.set(KEY, '{不是json');
-        expect(takeNotifyFailure()).toBeNull();
+        localStorage.setItem(KEY, '{不是json');
+        expect(takeUnseenAttempt()).toBeNull();
+    });
+});
+
+describe('链路留痕：三步卡在哪一步', () => {
+    beforeEach(() => { localStorage.clear(); });
+
+    it('什么都没记时，三行都说明「没有记录」', () => {
+        const lines = describeNotifyTrace();
+        expect(lines).toHaveLength(3);
+        expect(lines[0]).toContain('没有挂上');
+        expect(lines[1]).toContain('没有记录');
+        expect(lines[2]).toContain('没有记录');
+    });
+
+    it('监听挂上但回复没到，第②步空着', () => {
+        traceNotify('wired');
+        const lines = describeNotifyTrace();
+        expect(lines[0]).toContain('已挂上');
+        expect(lines[1]).toContain('没有记录');
+    });
+
+    it('回复到了但没发出去，第③步空着', () => {
+        traceNotify('wired');
+        traceNotify('reply', { lastReplyVisible: false });
+        const lines = describeNotifyTrace();
+        expect(lines[1]).toContain('已经黑了');
+        expect(lines[2]).toContain('没有记录');
+    });
+
+    it('三步都走完，失败也把能照做的原因带出来', () => {
+        traceNotify('wired');
+        traceNotify('reply', { lastReplyVisible: false });
+        traceNotify('send', { lastSendOk: false, lastReason: 'web-denied' });
+        const lines = describeNotifyTrace();
+        expect(lines[2]).toContain('失败');
+        expect(lines[2]).toContain(describeNotifyFailure('web-denied'));
+    });
+
+    it('留痕读得到、不清空，可以反复看', () => {
+        traceNotify('wired');
+        expect(readNotifyTrace().wiredAt).toBeTypeOf('number');
+        expect(readNotifyTrace().wiredAt).toBeTypeOf('number');
+    });
+});
+
+describe('把一次尝试说成一句人话', () => {
+    const at = new Date('2026-11-02T15:20:00+08:00').getTime();
+
+    // 三种结局必须说得不一样：用户要能分清「发出去了但被系统拦」和「压根没发」。
+    it('三种结局三句不同的话', () => {
+        const sent = describeAttempt({ at, charName: '阿糯', pageVisible: false, outcome: 'sent' });
+        const failed = describeAttempt({ at, charName: '阿糯', pageVisible: false, outcome: 'failed', reason: 'web-denied' });
+        const suppressed = describeAttempt({ at, charName: '阿糯', pageVisible: false, outcome: 'suppressed' });
+        expect(new Set([sent, failed, suppressed]).size).toBe(3);
+    });
+
+    it('带上是谁、几点，用户能对上号', () => {
+        const text = describeAttempt({ at, charName: '阿糯', pageVisible: false, outcome: 'sent' });
+        expect(text).toContain('阿糯');
+        expect(text).toContain('15:20');
+    });
+
+    it('失败时把可照做的原因带上，不是只说一句没发出去', () => {
+        const text = describeAttempt({ at, charName: '阿糯', pageVisible: false, outcome: 'failed', reason: 'web-denied' });
+        expect(text).toContain(describeNotifyFailure('web-denied'));
     });
 });

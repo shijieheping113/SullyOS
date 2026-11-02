@@ -1,6 +1,6 @@
 import HomeCompanionDebug from './HomeCompanionDebug';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowsClockwise, Broom, Check, ClipboardText, DownloadSimple, Power, Trash, Wrench, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, Bell, Broom, Check, ClipboardText, DownloadSimple, Power, Trash, Wrench, X } from '@phosphor-icons/react';
 import {
     clearDevDebugLog,
     closeDevDebug,
@@ -18,6 +18,7 @@ import {
 import { BUILD_LABEL } from '../utils/buildInfo';
 import { trackEvent } from '../utils/analytics';
 import { runBlobGc } from '../utils/blobGc';
+import { runNotifySelfCheck } from '../utils/chatNotify';
 import type { DevDebugCaptureCategory, DevDebugFlags, DevDebugFloatingPosition } from '../utils/devDebug';
 import { shareOrDownloadFile } from '../utils/shareExport';
 
@@ -159,6 +160,9 @@ const DevDebugPanel: React.FC = () => {
         | { kind: 'error'; message: string }
         | null
     >(null);
+    // 通知自检同理：一次性动作，不持久化。手机上没有控制台，「没弹通知」只能靠这里问出真实状态。
+    const [notifyCheckRunning, setNotifyCheckRunning] = useState(false);
+    const [notifyCheckLines, setNotifyCheckLines] = useState<string[] | null>(null);
     // 位置不持久化：每次出现都回默认角，拖动只在本次会话内有效（prod 刷新=失效=类似关闭，没必要存）。
     const [floatingPosition, setFloatingPosition] = useState<DevDebugFloatingPosition>(getDefaultFloatingPosition);
     const dragStateRef = useRef<{
@@ -268,8 +272,19 @@ const DevDebugPanel: React.FC = () => {
             setBlobGcRunning(false);
         }
     };
-    const copyLog = async () => {
-        const text = formatDevDebugLog();
+    const handleNotifySelfCheck = async () => {
+        if (notifyCheckRunning) return;
+        setNotifyCheckRunning(true);
+        setNotifyCheckLines(null);
+        try {
+            setNotifyCheckLines(await runNotifySelfCheck());
+        } catch (error) {
+            setNotifyCheckLines([`自检本身出错了：${error instanceof Error ? error.message : String(error)}`]);
+        } finally {
+            setNotifyCheckRunning(false);
+        }
+    };
+    const copyLog = async () => {        const text = formatDevDebugLog();
         if (!text) return;
         await navigator.clipboard.writeText(text);
         setCopied(true);
@@ -512,6 +527,31 @@ const DevDebugPanel: React.FC = () => {
                                 />
                             </>
                         )}
+                        <div className="h-px bg-white/10" />
+
+                        {/* 通知自检：手机上没有控制台，「没弹通知」只能靠这里问出真实状态。
+                            会真发一条通知，不是只读配置。 */}
+                        <div className="h-px bg-white/10" />
+                        <div className="py-3">
+                            <div className="flex">
+                                <LogActionButton
+                                    onClick={handleNotifySelfCheck}
+                                    disabled={notifyCheckRunning}
+                                    icon={<Bell size={13} weight="bold" />}
+                                    label={notifyCheckRunning ? '检查中…' : '通知自检'}
+                                />
+                            </div>
+                            {notifyCheckLines && (
+                                <div className="mt-2 text-[11px] leading-relaxed text-white/55">
+                                    {notifyCheckLines.map((line, index) => (
+                                        <React.Fragment key={index}>
+                                            {index > 0 && <br />}
+                                            {line}
+                                        </React.Fragment>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                         <div className="h-px bg-white/10" />
 
                         {/* 孤儿图片 GC：手动跑一轮（默认 72h 新鲜豁免）。SDK 宁可留孤儿绝不删活图，

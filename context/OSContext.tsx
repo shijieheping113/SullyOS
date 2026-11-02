@@ -102,7 +102,7 @@ import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeNotifyFailure, describeNotifyFailure, decideReplyDelivery } from '../utils/chatNotify';
+import { notifyChatReply, primeNotificationPermission, installNotificationTapHandler, consumePendingNotificationTap, takeUnseenAttempt, describeAttempt, recordNotifyAttempt, traceNotify, decideReplyDelivery } from '../utils/chatNotify';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
@@ -2227,17 +2227,38 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
       // 系统通知的正文要读刚落库的那条回复，所以抽成异步：别让一次 DB 读拖住
       // chatReplyArrivedHandler（它还要负责刷新当前页面的消息列表）。
+      // 不管发成没发成，都留一条「这次回复到达时是怎么处理的」，连同「当时页面
+      // 是不是被看着」——用户回来时 OSContext 会据此说清卡在哪一环，而不是只剩
+      // 一句「又没弹」。
       const notifyReplyInBackground = async (charId: string, charName: string) => {
+          const char = charactersRef.current.find(c => c.id === charId);
           try {
-              const recent = await DB.getRecentMessagesByCharId(charId, 10);
-              const lastAssistant = [...recent].reverse().find(m => m.role === 'assistant' && m.type === 'text');
-              await notifyChatReply({
+              // 正文要读刚落库的那条，但读库不能挡住发送：后台被冻过之后，一次 IndexedDB
+              // 读有可能半天不回来。宁可先发一条没有正文的通知，也不能因为等正文而不发。
+              const body = await Promise.race([
+                  DB.getRecentMessagesByCharId(charId, 10).then(recent => {
+                      const lastAssistant = [...recent].reverse().find(m => m.role === 'assistant' && m.type === 'text');
+                      return ChatParser.sanitize(lastAssistant?.content || '');
+                  }).catch(() => ''),
+                  new Promise<string>(resolve => window.setTimeout(() => resolve(''), 500)),
+              ]);
+              const result = await notifyChatReply({
                   charId,
                   charName,
-                  body: ChatParser.sanitize(lastAssistant?.content || ''),
+                  body,
+                  avatarRef: char?.avatar,
               });
+              recordNotifyAttempt({
+                  charName,
+                  pageVisible: false,
+                  outcome: result.ok ? 'sent' : 'failed',
+                  reason: result.reason,
+              });
+              traceNotify('send', { lastSendOk: result.ok, lastReason: result.reason });
           } catch (err) {
               console.warn('[OS] 私聊回复通知发送失败', err);
+              recordNotifyAttempt({ charName, pageVisible: false, outcome: 'failed', reason: 'web-error' });
+              traceNotify('send', { lastSendOk: false, lastReason: 'web-error' });
           }
       };
 
@@ -2256,7 +2277,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 「正开着这个聊天」不等于「人看着这个聊天」：按了手机 home 键 / 熄屏之后，
           // 页面里照样停在聊天页，可屏幕上根本没有它。这种时候必须发系统通知——
           // 以前只看「开的是哪个页面」，于是从聊天页直接大退就一点动静都没有。
-          const delivery = decideReplyDelivery({ isChattingWithThisChar, pageVisible: document.visibilityState === 'visible' });
+          const pageVisible = document.visibilityState === 'visible';
+          const delivery = decideReplyDelivery({ isChattingWithThisChar, pageVisible });
+          // 留痕：证明「回复事件确实到了」，并记下那一刻屏幕是什么状态。
+          // 自检里这一行没有时间戳 = 事件压根没派发到这里，问题在更前面。
+          traceNotify('reply', { lastReplyVisible: pageVisible });
           if (delivery === 'silent') return;
 
           if (!isChattingWithThisChar) {
@@ -2340,6 +2365,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
       };
 
+      // 留痕：证明这几条监听确实挂上了。自检里①没有时间戳，就是这段代码没跑到。
+      traceNotify('wired');
       window.addEventListener('active-msg-received', handler);
       window.addEventListener('battery-reminder-landed', batteryLandedHandler);
       window.addEventListener('active-msg-process-failed', inboxFailHandler);
@@ -2383,7 +2410,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
   }, [sendProactiveNativeNotification]);
 
-  // ─── 系统通知：点击跳回聊天 + 通知权限 + 失败回放 ───
+  // ─── 系统通知：点击跳回聊天 + 通知权限 + 离开期间的交代 ───
   // 这三件事跟「当前打开哪个 App」无关，所以挂载就跑、不等数据加载：
   // 冷启动点通知进来时，点击监听必须在用户看到界面之前就位。
   useEffect(() => {
@@ -2400,20 +2427,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // 权限：原生上电后直接问；网页必须等用户第一次触摸，浏览器才肯弹框。
       const stopPriming = primeNotificationPermission();
 
-      // 上次那条没弹出来 → 这次用大白话说清原因。手机端没有控制台，
-      // 不说的话用户只知道「又没弹」，永远分不清是权限、连不上、还是页面被冻住。
-      const failureTimer = window.setTimeout(() => {
-          const failure = takeNotifyFailure();
-          if (!failure) return;
-          showError(
-              '消息通知没发出去',
-              `上一次 ${failure.charName} 回消息时，这条通知没弹出来：${describeNotifyFailure(failure.reason)}。`,
-          );
-      }, 2600);
+      // 上次离开屏幕时有回复到达 → 回来后说清当时怎么处理的。手机端没有控制台，
+      // 不说的话用户只知道「又没弹」，永远分不清是权限、通道、还是页面被冻住。
+      // 注意：这段必须在「回到前台」时也跑一次。以前只在挂载时跑，而从聊天页按
+      // home 键再回来页面根本没重新加载，于是说明框永远不会出现——前几轮「什么都
+      // 没有」就是这么来的。
+      const reportUnseenAttempt = () => {
+          const attempt = takeUnseenAttempt();
+          if (!attempt) return;
+          showError('离开时的消息通知', describeAttempt(attempt));
+      };
+
+      const onVisibleForNotify = () => {
+          if (document.visibilityState !== 'visible') return;
+          // 稍等一下：跟解锁 / 回前台的动画抢焦点会看不清。
+          window.setTimeout(reportUnseenAttempt, 900);
+      };
+
+      // 冷启动（页面被系统丢弃后重开）也要补一次：记录可能还躺在账本上。
+      const mountTimer = window.setTimeout(reportUnseenAttempt, 2600);
+      document.addEventListener('visibilitychange', onVisibleForNotify);
 
       return () => {
           cancelled = true;
-          window.clearTimeout(failureTimer);
+          window.clearTimeout(mountTimer);
+          document.removeEventListener('visibilitychange', onVisibleForNotify);
           stopPriming();
           dispose?.();
       };

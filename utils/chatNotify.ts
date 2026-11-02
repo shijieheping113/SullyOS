@@ -14,28 +14,50 @@
  * 两边最后都汇到同一个事件 `active-msg-open`，由 OSContext 里现成的监听切换页面。
  *
  * 发不出去时不能一声不响：手机端没有控制台，用户只能靠「怎么没弹」反过来猜。
- * 所以每次失败都记一条原因，下次打开 App 由 OSContext 用一句人话说出来。
+ * 所以整条链路分三段留痕（监听挂上 / 回复到达 / 通知发出），每段带时间戳，
+ * 回到前台时由 OSContext 用一句人话说清卡在哪一环。
  */
 
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { resolveRefToDataUrl } from './blobRef';
 
 /** 通知正文上限。安卓侧太长的正文会被系统截断，宁可自己先收干净。 */
 const BODY_MAX_LENGTH = 80;
 
-/** 网页通知等 Service Worker 就绪的最长时间，超时就不发（不能把整条链路卡住）。 */
+/** 自检探 Service Worker 时最多等多久（只用于自检，真正发通知不设超时）。 */
 const SW_READY_TIMEOUT_MS = 3000;
 
-/** 失败记录的存放处。超过这个时长的旧账不再翻，免得几天前的事也弹出来。 */
-const FAILURE_STORAGE_KEY = 'sullyos.chatNotify.failure.v1';
-const FAILURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * 「上一次离开屏幕时到底发生了什么」的存放处。
+ *
+ * 只记失败原因是不够的——失败记录解释不了「连失败记录都没有」这种情况
+ * （回复是在用户回来之后才生成的、或者压根没走到发送那一步）。所以改成
+ * 只要走到发送这一步就留一条，连同「当时页面是不是被看着」一起记下来，
+ * 下次回到前台由 OSContext 用一句人话说清。超过这个时长的旧账不再翻。
+ */
+const ATTEMPT_STORAGE_KEY = 'sullyos.chatNotify.attempt.v1';
+const ATTEMPT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * 链路留痕：一条回复要走三步才可能弹出通知——
+ *   ① 监听器挂上了（程序愿意听这个消息）
+ *   ② 回复真的到了（事件确实被派发、被收到）
+ *   ③ 通知发了（走完发送，成功或失败）
+ *
+ * 用户看到的只有「没弹」。卡在哪一步，光看结果永远分不出来——之前就是这么
+ * 原地打转的。所以每一步都留一个时间戳，自检时一次全摊开：哪一步没时间戳，
+ * 就是那一步断的。
+ */
+const TRACE_STORAGE_KEY = 'sullyos.chatNotify.trace.v1';
+const TRACE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 export interface ChatReplyNotification {
     charId: string;
     charName: string;
     body: string;
-    /** 网页通知用的图标地址（已解析成可直接加载的地址）。原生不读这个字段。 */
-    iconUrl?: string;
+    /** 角色头像的原始引用（blobref 令牌 / URL）。原生不读，网页用它当通知图标。 */
+    avatarRef?: string;
 }
 
 /** 没发出去的具体原因。每种都给得出一条能照着做的提示。 */
@@ -69,6 +91,11 @@ export function toNotificationBody(raw: string | undefined | null, fallback: str
     return cleaned.length > BODY_MAX_LENGTH ? `${cleaned.slice(0, BODY_MAX_LENGTH)}…` : cleaned;
 }
 
+function clockOf(at?: number): string {
+    if (!at) return '';
+    return new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 // ─── 失败原因的人话 ───
 
 /**
@@ -95,40 +122,82 @@ export function describeNotifyFailure(reason: NotifyFailureReason): string {
     }
 }
 
-interface NotifyFailureRecord {
+// ─── 离开期间的记录 ───
+
+/** 这一次通知的结局：发出去了 / 发失败了 / 判断成不该发（没走发送）。 */
+export type NotifyOutcome = 'sent' | 'failed' | 'suppressed';
+
+export interface NotifyAttempt {
+    /** 回复到达的时刻。 */
     at: number;
-    reason: NotifyFailureReason;
     charName: string;
+    /** 回复到达那一刻，页面是不是正在被用户看着。 */
+    pageVisible: boolean;
+    outcome: NotifyOutcome;
+    reason?: NotifyFailureReason;
 }
 
-function saveFailure(reason: NotifyFailureReason, charName: string): void {
-    try {
-        const record: NotifyFailureRecord = { at: Date.now(), reason, charName };
-        localStorage.setItem(FAILURE_STORAGE_KEY, JSON.stringify(record));
-    } catch { /* 隐私模式不让写，记不上就算了，不能因为记日志把通知链路搞崩 */ }
-}
-
-/** 发成功一次就把旧账清掉，免得下次打开还翻出早就不成立的失败。 */
-function clearFailure(): void {
-    try { localStorage.removeItem(FAILURE_STORAGE_KEY); } catch { /* 同上 */ }
+interface StoredAttempt extends NotifyAttempt {
+    /** 已经跟用户说过一次了，别反复弹。 */
+    acknowledged?: boolean;
 }
 
 /**
- * 取走「上次通知没发出去」那条记录（读一次就清空）。
- * 过期的不返回——几天前的失败再弹出来只会让人莫名其妙。
+ * 记一条「这次回复到达时的处理结果」。
+ *
+ * 只在页面不可见（用户已经离开屏幕）时调用——页面可见的那些情况用户当场就在
+ * 屏幕前，回来再复述一遍只是打扰，所以写入前会先被调用点挡掉。
  */
-export function takeNotifyFailure(): NotifyFailureRecord | null {
+export function recordNotifyAttempt(attempt: Omit<NotifyAttempt, 'at'>): void {
     try {
-        const raw = localStorage.getItem(FAILURE_STORAGE_KEY);
+        const record: StoredAttempt = { at: Date.now(), ...attempt };
+        localStorage.setItem(ATTEMPT_STORAGE_KEY, JSON.stringify(record));
+    } catch { /* 隐私模式不让写，记不上就算了，不能因为记日志把通知链路搞崩 */ }
+}
+
+/**
+ * 取走「用户离开屏幕期间发生过、还没跟他解释过」的那一条（读一次就清空）。
+ *
+ * 返回 null 的两种情况：没有记录；记录本身是页面可见时产生的（用户当时就在看）。
+ * 过期的也不返回——半天前的失败再弹出来只会让人莫名其妙。
+ */
+export function takeUnseenAttempt(): NotifyAttempt | null {
+    try {
+        const raw = localStorage.getItem(ATTEMPT_STORAGE_KEY);
         if (!raw) return null;
-        localStorage.removeItem(FAILURE_STORAGE_KEY);
-        const record = JSON.parse(raw) as NotifyFailureRecord;
-        if (!record || typeof record.at !== 'number' || typeof record.reason !== 'string') return null;
-        if (Date.now() - record.at > FAILURE_MAX_AGE_MS) return null;
-        return record;
+        localStorage.removeItem(ATTEMPT_STORAGE_KEY);
+        const record = JSON.parse(raw) as StoredAttempt;
+        if (!record || typeof record.at !== 'number' || typeof record.outcome !== 'string') return null;
+        if (record.acknowledged) return null;
+        if (Date.now() - record.at > ATTEMPT_MAX_AGE_MS) return null;
+        // 页面可见时产生的那条不用复述：用户当时就在屏幕前。
+        if (record.pageVisible) return null;
+        return {
+            at: record.at,
+            charName: record.charName,
+            pageVisible: record.pageVisible,
+            outcome: record.outcome,
+            reason: record.reason,
+        };
     } catch {
         return null;
     }
+}
+
+/**
+ * 把一次尝试翻成人话。这段话唯一的用途是让用户（和隔着一层屏幕的排查者）
+ * 分清三件完全不同的事：真的发出去了 / 发的时候被拦了 / 程序压根没打算发。
+ */
+export function describeAttempt(attempt: NotifyAttempt): string {
+    const clock = clockOf(attempt.at);
+    const head = `你离开屏幕的这段时间里，${attempt.charName} 在 ${clock} 回了一条消息。`;
+    if (attempt.outcome === 'sent') {
+        return `${head}这条的系统通知确实已经发出去了。要是你还是没看到弹窗，那是手机或浏览器把通知拦住了（静音模式、通知被系统关掉、或浏览器后台被限制）。`;
+    }
+    if (attempt.outcome === 'failed') {
+        return `${head}通知没发出去：${describeNotifyFailure(attempt.reason || 'web-error')}。`;
+    }
+    return `${head}但程序当时以为你还在看着屏幕，所以没发系统通知，只在页面里飘了一下小卡片。`;
 }
 
 // ─── 该不该发 ───
@@ -154,8 +223,8 @@ export function decideReplyDelivery(input: { isChattingWithThisChar: boolean; pa
 /**
  * 确保有通知权限。原生和网页都走这里。
  *
- * 原生这边以前只「检查」不「申请」，用户从没点过允许就永远收不到通知——
- * 这是本次要补的第一件事。并发调用共用同一个请求，避免连弹两次系统弹窗。
+ * 原生这边以前只「检查」不「申请」，用户从没点过允许就永远收不到通知。
+ * 并发调用共用同一个请求，避免连弹两次系统弹窗。
  */
 let permissionRequest: Promise<NotifyResult> | null = null;
 
@@ -199,7 +268,6 @@ async function requestPermissionOnce(): Promise<NotifyResult> {
  * 原生：上电后稍等一下直接问，系统弹窗不看手势。
  * 网页：安卓 Chrome / iOS Safari 只认「用户点了一下」之后的申请，
  *       定时器里申请会被静默丢掉（连框都不弹），所以等第一次触摸。
- *       这条以前写成定时器，等于在手机上永远申请不到。
  */
 export function primeNotificationPermission(): () => void {
     if (typeof window === 'undefined') return () => {};
@@ -218,13 +286,13 @@ export function primeNotificationPermission(): () => void {
 
 // ─── 发送 ───
 
-/** 网页通知：走 Service Worker。拿不到 registration 就不发，不抛错。 */
-async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
+/** 自检专用：探一次后台通道，超时就当没起来（真发送不设超时，见 sendWeb）。 */
+async function probeServiceWorker(timeoutMs = SW_READY_TIMEOUT_MS): Promise<ServiceWorkerRegistration | null> {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
     try {
         return await Promise.race([
             navigator.serviceWorker.ready,
-            new Promise<null>(resolve => setTimeout(() => resolve(null), SW_READY_TIMEOUT_MS)),
+            new Promise<null>(resolve => setTimeout(() => resolve(null), timeoutMs)),
         ]);
     } catch {
         return null;
@@ -233,17 +301,15 @@ async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration
 
 /**
  * 发一条「角色回复了」的系统通知。
- * 返回结果里带失败原因，调用方可以据此决定要不要退回到页内提示。
+ * 返回结果里带失败原因，调用方可以据此记录、或退回到页内提示。
+ * 这里不落「尝试记录」——那次记录由调用方带着「当时页面可见吗」一起写，
+ * 只有调用方知道回复到达那一刻用户在看什么。
  */
 export async function notifyChatReply(payload: ChatReplyNotification): Promise<NotifyResult> {
     const body = toNotificationBody(payload.body, `${payload.charName} 回复了消息`);
-    const result = Capacitor.isNativePlatform()
-        ? await sendNative(payload, body)
-        : await sendWeb(payload, body);
-
-    if (result.ok) clearFailure();
-    else if (result.reason) saveFailure(result.reason, payload.charName);
-    return result;
+    return Capacitor.isNativePlatform()
+        ? sendNative(payload, body)
+        : sendWeb(payload, body);
 }
 
 async function sendNative(payload: ChatReplyNotification, body: string): Promise<NotifyResult> {
@@ -269,15 +335,34 @@ async function sendNative(payload: ChatReplyNotification, body: string): Promise
     }
 }
 
+/**
+ * 网页通知：走 Service Worker 的 `showNotification`。
+ *
+ * 这一段是照着「主动消息 1.0 那条在你手机上确实弹得出来」的写法抄的，没有另发明一套。
+ * 之前那版多绕了三道，每一道都能让它无声无息地死掉：
+ *   ① 和 `serviceWorker.ready` 赛跑，超时 3 秒就放弃 —— 刚从后台回来时正好超时；
+ *   ② 发送前又做一遍异步权限协商 —— 白白多一次等待；
+ *   ③ 图标写死相对路径，不解析角色头像。
+ * 现在：权限只看一眼现成状态，不协商；`ready` 直接等，不设超时；图标走和主动消息
+ * 同一个解析函数。宁可等，也不要因为「等不及」而假装发过。
+ */
 async function sendWeb(payload: ChatReplyNotification, body: string): Promise<NotifyResult> {
-    const permission = await resolveNotificationPermission();
-    if (!permission.ok) return permission;
-    const registration = await getServiceWorkerRegistration();
-    if (!registration) return { ok: false, reason: 'sw-unavailable' };
+    if (typeof window === 'undefined') return { ok: false, reason: 'web-unsupported' };
+    if (typeof Notification === 'undefined') {
+        return { ok: false, reason: window.isSecureContext === false ? 'web-insecure' : 'web-unsupported' };
+    }
+    if (Notification.permission !== 'granted') return { ok: false, reason: 'web-denied' };
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return { ok: false, reason: 'sw-unavailable' };
+    }
     try {
+        const registration = await navigator.serviceWorker.ready;
+        // 令牌是个非空字符串，`avatar || 默认图标` 这种写法会让默认图标那条兜底永远轮不到，
+        // 结果一个图标都没有还不报错。所以先解析成能加载的地址，拿到空串才用默认图标。
+        const icon = (await resolveRefToDataUrl(payload.avatarRef || '')) || './icons/icon-192.png';
         await registration.showNotification(payload.charName, {
             body,
-            icon: payload.iconUrl || './icons/icon-192.png',
+            icon,
             badge: './icons/icon-192.png',
             // 用唯一 tag 而不是按角色固定：同 tag 的通知浏览器会静默替换，后一条就不响了。
             // 连着来几条就叠几条，跟微信一样。
@@ -289,6 +374,122 @@ async function sendWeb(payload: ChatReplyNotification, body: string): Promise<No
         console.warn('[ChatNotify] 网页通知发送失败', err);
         return { ok: false, reason: 'web-error' };
     }
+}
+
+// ─── 链路留痕 ───
+
+export interface NotifyTrace {
+    wiredAt?: number;
+    lastReplyAt?: number;
+    lastReplyVisible?: boolean;
+    lastSendAt?: number;
+    lastSendOk?: boolean;
+    lastReason?: NotifyFailureReason;
+}
+
+function readTraceRaw(): NotifyTrace {
+    try {
+        const raw = localStorage.getItem(TRACE_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw) as NotifyTrace;
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+export function traceNotify(
+    step: 'wired' | 'reply' | 'send',
+    extra: Omit<NotifyTrace, 'wiredAt' | 'lastReplyAt' | 'lastSendAt'> = {},
+): void {
+    try {
+        const next: NotifyTrace = { ...readTraceRaw(), ...extra };
+        if (step === 'wired') next.wiredAt = Date.now();
+        if (step === 'reply') next.lastReplyAt = Date.now();
+        if (step === 'send') next.lastSendAt = Date.now();
+        localStorage.setItem(TRACE_STORAGE_KEY, JSON.stringify(next));
+    } catch { /* 记不上不影响主流程 */ }
+}
+
+/** 读链路留痕（不清空：自检要能反复看）。全部过期就整条作废。 */
+export function readNotifyTrace(): NotifyTrace {
+    const trace = readTraceRaw();
+    const newest = Math.max(trace.wiredAt || 0, trace.lastReplyAt || 0, trace.lastSendAt || 0);
+    if (!newest || Date.now() - newest > TRACE_MAX_AGE_MS) return {};
+    return trace;
+}
+
+/** 把留痕翻成三行人话，直接展示，用户念出来就能定位。 */
+export function describeNotifyTrace(trace: NotifyTrace = readNotifyTrace()): string[] {
+    const lines: string[] = [];
+    lines.push(trace.wiredAt
+        ? `① 通知监听：已挂上（${clockOf(trace.wiredAt)}）`
+        : '① 通知监听：没有挂上 —— 这一段代码根本没跑到，问题在更前面');
+    lines.push(trace.lastReplyAt
+        ? `② 收到回复：${clockOf(trace.lastReplyAt)}（当时屏幕${trace.lastReplyVisible ? '亮着、你在看' : '已经黑了 / 你退出了'}）`
+        : '② 收到回复：没有记录 —— 从上次打开页面到现在，没有一条回复走到这里');
+    if (trace.lastSendAt) {
+        lines.push(trace.lastSendOk
+            ? `③ 发通知：成功（${clockOf(trace.lastSendAt)}）`
+            : `③ 发通知：失败（${clockOf(trace.lastSendAt)}）—— ${describeNotifyFailure(trace.lastReason || 'web-error')}`);
+    } else {
+        lines.push('③ 发通知：没有记录 —— 收到回复之后没走到发送这一步');
+    }
+    return lines;
+}
+
+// ─── 自检 ───
+
+function permissionText(permission: string): string {
+    if (permission === 'granted') return '已允许';
+    if (permission === 'denied') return '被拒绝了（要去浏览器设置里手动开回来）';
+    return '还没问过（点一下屏幕应该会弹框）';
+}
+
+/**
+ * 一键自检：把通知这条链路上的每一环都问一遍，再真发一条试试。
+ *
+ * 为什么需要它：真机排查只能靠「有没有弹」反推，而「没弹」有五六种完全不同的
+ * 原因，靠猜会一直原地打转。这里直接给出每一环的真实状态，用户念一遍就够了。
+ * 返回的每一行都是人话，直接展示，不做二次翻译。
+ */
+export async function runNotifySelfCheck(): Promise<string[]> {
+    if (typeof window === 'undefined') return ['这个环境里没有浏览器，测不了'];
+
+    const lines: string[] = [];
+    const isNative = Capacitor.isNativePlatform();
+    lines.push(`运行环境：${isNative ? '装好的 App' : '浏览器里打开的网页'}`);
+
+    if (!isNative) {
+        // 通知 API 只在安全环境里存在：https 或 localhost。
+        lines.push(`安全连接：${window.isSecureContext ? '是' : '不是（不是 https，浏览器不给发通知的资格）'}`);
+        if (typeof Notification === 'undefined') {
+            lines.push('浏览器通知能力：没有');
+        } else {
+            lines.push(`通知权限：${permissionText(Notification.permission)}`);
+        }
+        const sw = await probeServiceWorker();
+        lines.push(`后台通道：${sw ? '已就绪' : '没起来（刷新一次页面再试）'}`);
+    }
+
+    const permission = await resolveNotificationPermission();
+    if (!permission.ok) {
+        lines.push(`权限确认：没有 —— ${describeNotifyFailure(permission.reason || 'web-denied')}`);
+    } else {
+        lines.push('权限确认：有');
+        const sent = await notifyChatReply({
+            charId: 'self-check',
+            charName: '通知自检',
+            body: '看到这一条，就说明通知通道是通的',
+        });
+        lines.push(sent.ok
+            ? '试发一条：已经发出去了（去看通知栏 / 锁屏有没有）'
+            : `试发一条：失败 —— ${describeNotifyFailure(sent.reason || 'web-error')}`);
+    }
+
+    // 上次离开屏幕时那一条走了多远：三步里哪一步缺时间戳，就是断在哪一步。
+    lines.push(...describeNotifyTrace());
+    return lines;
 }
 
 // ─── 点击跳回聊天 ───
@@ -321,5 +522,5 @@ export async function installNotificationTapHandler(): Promise<() => void> {
         window.dispatchEvent(new CustomEvent('active-msg-open', { detail: { charId } }));
     });
 
-    return () => { void handle.remove(); };
+    return () => { handle.remove(); };
 }
