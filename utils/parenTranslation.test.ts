@@ -89,6 +89,37 @@ describe('paren：日文（中文）', () => {
     it('上一行日文、下一行中文，不拆', () => {
         expect(splitParenTranslation('待って\n等一下', 'paren')).toBeNull();
     });
+
+    it('夹在中间的假名注音不挡路 —— 注音后面还挂着罗马字，也照样认出译文', () => {
+        const split = splitParenTranslation('俺が言い掛かりつけただけだから、相手してよ(バオバオ)baobao（纯粹是我没话找话挑刺，理理我嘛宝宝）', 'paren');
+        expect(split?.original).toBe('俺が言い掛かりつけただけだから、相手してよ(バオバオ)baobao');
+        expect(split?.translations).toEqual(['纯粹是我没话找话挑刺，理理我嘛宝宝']);
+    });
+
+    it('假名注音紧贴在译文前面时穿过去，注音原样留在气泡', () => {
+        const split = splitParenTranslation('そう言った（バオバオ）（他是这么说的）', 'paren');
+        expect(split?.original).toBe('そう言った（バオバオ）');
+        expect(split?.translations).toEqual(['他是这么说的']);
+    });
+
+    it('单字旁注紧贴在译文前面时穿过去，旁注原样留在气泡', () => {
+        const one = splitParenTranslation('そう言った（笑）（他是这么说的）', 'paren');
+        expect(one?.original).toBe('そう言った（笑）');
+        expect(one?.translations).toEqual(['他是这么说的']);
+
+        // 连着几对单字旁注，整串都能穿过去。
+        const two = splitParenTranslation('そう言った（笑）（汗）（他是这么说的）', 'paren');
+        expect(two?.original).toBe('そう言った（笑）（汗）');
+        expect(two?.translations).toEqual(['他是这么说的']);
+    });
+
+    it('两个字的旁注不算单字，但夹在日文中间时照样不挡路', () => {
+        // 只锁住「两字穿不过去」这一条：它不紧贴译文时不挡路，紧贴译文的那种写法
+        // 会把旁注当译文摘下去，属已知的错位问题，不在这里断言，免得把错的样子钉死。
+        const split = splitParenTranslation('彼は（笑声）そう言った（他是这么说的）', 'paren');
+        expect(split?.original).toBe('彼は（笑声）そう言った');
+        expect(split?.translations).toEqual(['他是这么说的']);
+    });
 });
 
 describe('quoted：「日文（中文）」', () => {

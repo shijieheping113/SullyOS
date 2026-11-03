@@ -109,27 +109,65 @@ function findOutermostParens(text: string): ParenSpan[] {
     return spans;
 }
 
+/** 字符数按眼睛看到的算：emoji、生僻字各算一个，不按字节数。 */
+function charCount(text: string): number {
+    return Array.from(text).length;
+}
+
+/**
+ * 这对括号能不能整对穿过去 —— 它只是注音或旁注，不构成断句。
+ *
+ * 两类：括号里是假名（(バオバオ)，模型给「宝宝」加的读音），
+ * 或者括号里只剩一个字符（(笑)(汗)）。
+ * 一段中文译文、一句较长的动作描写都不算，照旧当断句停下。
+ */
+function isSkippableParen(inner: string): boolean {
+    const trimmed = inner.trim();
+    if (!trimmed) return false;
+    if (hasKana(trimmed)) return true;
+    return charCount(trimmed) === 1;
+}
+
+/** 把能穿过去的括号整对挖掉，其余原样留着。用来只看「真正在说的那句」。 */
+function dropSkippableParens(text: string): string {
+    const spans = findOutermostParens(text);
+    let out = '';
+    let cursor = 0;
+    for (let n = 0; n < spans.length; n++) {
+        const span = spans[n];
+        if (!isSkippableParen(span.inner)) continue;
+        out += text.slice(cursor, span.start);
+        cursor = span.end + 1;
+    }
+    return out + text.slice(cursor);
+}
+
 /**
  * 括号前这段是不是紧贴的日文。
  * 句号、问号、感叹号、省略号和空格可以夹在中间。
  * 最后一个字可以是汉字。整段里要能看见假名。
- * 再往前若已经是句号隔开的中文，或是另一个括号，就不算紧贴。
+ * 再往前若是句号隔开的中文、或一对既不是注音也不是单字的括号，就不算紧贴。
  */
-function hasTightJapaneseBefore(text: string, parenStart: number): boolean {
-    let end = parenStart - 1;
-    while (end >= 0 && isSpace(text.charAt(end))) end--;
-    if (end < 0 || isNewline(text.charAt(end)) || isCloseParen(text.charAt(end))) return false;
+function hasTightJapaneseBefore(parenHead: string): boolean {
+    // 先把左边那段里「假名注音、单字旁注」整对挖掉，再判断紧不紧贴。
+    // 不挖的话，(バオバオ)baobao（…）这种会被那对括号截成 baobao——
+    // 罗马字里没有假名，整句就当没对上，气泡下面也就不出中文了。
+    const head = dropSkippableParens(parenHead);
+
+    let end = head.length - 1;
+    while (end >= 0 && isSpace(head.charAt(end))) end--;
+    if (end < 0 || isNewline(head.charAt(end)) || isCloseParen(head.charAt(end))) return false;
 
     let quoteDepth = 0;
     let j = end;
     for (; j >= 0; j--) {
-        const ch = text.charAt(j);
+        const ch = head.charAt(j);
         if (ch === '」') quoteDepth++;
         else if (ch === '「') quoteDepth = Math.max(0, quoteDepth - 1);
         if (quoteDepth === 0 && (isNewline(ch) || isOpenParen(ch) || isCloseParen(ch))) break;
     }
     const left = j < 0 ? 0 : j + 1;
-    const segment = stripTrailingSpaceAndPunct(text.slice(left, parenStart));
+    const segment = stripTrailingSpaceAndPunct(head.slice(left));
     if (!segment || isCloseParen(segment.charAt(segment.length - 1))) return false;
 
     let depth = 0;
@@ -212,7 +250,7 @@ export function splitParenTranslation(raw: string, format: ParenTranslationForma
         const span = spans[n];
         if (!isChineseTranslation(span.inner)) continue;
         if (utteranceContinues(text, span.end)) continue;
-        if (!hasTightJapaneseBefore(text, span.start)) continue;
+        if (!hasTightJapaneseBefore(text.slice(0, span.start))) continue;
         const wrapped = quoteClosesRightAfter(text, span.start, span.end);
         const afterQuote = isParenRightAfterQuote(text, span.start);
         if (format === 'paren') {
