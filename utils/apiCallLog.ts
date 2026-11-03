@@ -97,6 +97,22 @@ export interface ApiCallLogEntry extends ApiCallMeta {
      * fire-and-forget 记录路径里扫一遍请求体算出，不占请求主链路。
      */
     promptBreakdown?: PromptBlockStat[];
+    /**
+     * 这一次请求有没有开思考（从请求体的 thinking / reasoning_effort 等字段认出）。
+     * 旧记录没有这个字段——界面不硬编「关」，免得把「当时没记」说成「当时关了」。
+     */
+    thinkingEnabled?: boolean;
+    /**
+     * 思考强度。开思考且没带 reasoning_effort 时记 `default`（跟心象「默认」档一致）；
+     * low / medium / high 原样；别的上游值原样留下。关思考或旧记录为空。
+     */
+    thinkingEffort?: string;
+    /**
+     * 响应里实际抠到的推理文本字数（reasoning_content / reasoning / thinking、
+     * 分块 thinking、正文里的 `<think>` 等）。只存字数不存原文。
+     * 0 = 看过响应但没有推理文本；旧记录 / 没拿到响应体 → 空。
+     */
+    reasoningChars?: number;
 }
 
 /** 输入构成里的一块：system prompt 的一个 ### 段落，或聚合后的聊天历史。 */
@@ -271,6 +287,173 @@ function extractModel(body: unknown): string {
         try { parsed = JSON.parse(body); } catch { return ''; }
     }
     return typeof parsed?.model === 'string' ? parsed.model : '';
+}
+
+/** 把 body 收成对象；解析失败返回 null。 */
+function parseRequestBody(body: unknown): Record<string, any> | null {
+    if (!body) return null;
+    if (typeof body === 'string') {
+        try {
+            const parsed = JSON.parse(body);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+    return typeof body === 'object' ? (body as Record<string, any>) : null;
+}
+
+/**
+ * 从请求体认出「开没开思考」和「强度档」。
+ * 对齐心象发参：开思考会带 thinking / extra_body.thinking；默认档不传 reasoning_effort。
+ */
+export function extractThinkingFromBody(body: unknown): {
+    thinkingEnabled: boolean;
+    thinkingEffort?: string;
+} {
+    const parsed = parseRequestBody(body);
+    if (!parsed) return { thinkingEnabled: false };
+
+    const thinkingObj = parsed.thinking ?? parsed.extra_body?.thinking;
+    const effortRaw = parsed.reasoning_effort;
+    let enabled = false;
+
+    if (thinkingObj && typeof thinkingObj === 'object') {
+        const type = String((thinkingObj as any).type || '').toLowerCase();
+        if (type === 'disabled' || type === 'none') {
+            enabled = false;
+        } else {
+            // type=enabled、或只有 budget_tokens、或对象在但没写 type —— 都当开着
+            enabled = true;
+        }
+    }
+    if (typeof effortRaw === 'string' && effortRaw.trim()) enabled = true;
+    if (parsed.enable_thinking === true) enabled = true;
+
+    if (!enabled) return { thinkingEnabled: false };
+
+    if (typeof effortRaw === 'string' && effortRaw.trim()) {
+        return { thinkingEnabled: true, thinkingEffort: effortRaw.trim() };
+    }
+    // 开了思考但没带 reasoning_effort → 心象「默认」档
+    return { thinkingEnabled: true, thinkingEffort: 'default' };
+}
+
+/** 调用记录界面用的强度文案。 */
+export function formatThinkingEffortLabel(effort?: string): string {
+    if (!effort) return '—';
+    if (effort === 'default') return '默认';
+    if (effort === 'low') return '轻';
+    if (effort === 'medium') return '中';
+    if (effort === 'high') return '重';
+    return effort;
+}
+
+/** 正文里成对 / 未闭合的 think 标签内容。 */
+function collectInlineThinkBlocks(content: string): string {
+    if (!content) return '';
+    const parts: string[] = [];
+    const thinkPat = /<(think|thinking|thought)>([\s\S]*?)<\/\1>/gi;
+    let tm: RegExpExecArray | null;
+    while ((tm = thinkPat.exec(content)) !== null) {
+        const t = tm[2].trim();
+        if (t) parts.push(t);
+    }
+    if (!/<\/(?:think|thinking|thought)>/i.test(content)) {
+        const openOnly = content.match(/<(?:think|thinking|thought)>([\s\S]*$)/i);
+        if (openOnly && openOnly[1].trim()) parts.push(openOnly[1].trim());
+    }
+    return parts.join('\n\n');
+}
+
+/** 从一条 message 上抠推理文本（字段 + 分块 + 内联标签）。 */
+function collectReasoningFromMessage(message: any): string {
+    if (!message || typeof message !== 'object') return '';
+    const parts: string[] = [];
+    const field = message.reasoning_content ?? message.reasoning ?? message.thinking;
+    if (typeof field === 'string' && field.trim()) parts.push(field);
+    const content = message.content;
+    if (Array.isArray(content)) {
+        for (const block of content) {
+            if (block?.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
+                parts.push(block.thinking);
+            }
+        }
+    } else if (typeof content === 'string') {
+        const inline = collectInlineThinkBlocks(content);
+        if (inline) parts.push(inline);
+    }
+    return parts.join('\n\n').trim();
+}
+
+/**
+ * 从完整 JSON 响应里量推理字数。没有 choices/message 结构时返回 undefined（不是 0）。
+ */
+export function extractReasoningCharsFromResponse(response: unknown): number | undefined {
+    if (!response || typeof response !== 'object') return undefined;
+    const choice = (response as any).choices?.[0];
+    if (!choice) return undefined;
+    const message = choice.message ?? choice.delta;
+    if (!message) return 0;
+    return collectReasoningFromMessage(message).length;
+}
+
+/**
+ * SSE 原文兜底：按与 safeApi 流式拼装相同的字段，累加推理增量字数。
+ * 不是 SSE 形态时返回 undefined。
+ */
+export function extractReasoningCharsFromSseText(text: string): number | undefined {
+    if (!text || !text.trimStart().startsWith('data:')) return undefined;
+    /** 与 SseAssembler 一致：正文增量也要攒，才能数 `` 内嵌思考。 */
+    let contentAcc = '';
+    let reasoningAcc = '';
+    for (const line of text.split(/\r?\n/)) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let chunk: any;
+        try { chunk = JSON.parse(payload); } catch { continue; }
+        const choice = chunk?.choices?.[0];
+        if (!choice) continue;
+        if (choice.delta) {
+            if (typeof choice.delta.content === 'string') {
+                contentAcc += choice.delta.content;
+            } else if (Array.isArray(choice.delta.content)) {
+                for (const block of choice.delta.content) {
+                    if (block?.type === 'text' && typeof block.text === 'string') {
+                        contentAcc += block.text;
+                    } else if (block?.type === 'thinking' && typeof block.thinking === 'string') {
+                        reasoningAcc += block.thinking;
+                    }
+                }
+            }
+            const dr = choice.delta.reasoning_content ?? choice.delta.reasoning ?? choice.delta.thinking;
+            if (typeof dr === 'string') reasoningAcc += dr;
+        } else if (choice.message) {
+            return collectReasoningFromMessage(choice.message).length;
+        }
+    }
+    return collectReasoningFromMessage({
+        reasoning_content: reasoningAcc,
+        content: contentAcc,
+    }).length;
+}
+
+/**
+ * 综合 JSON 响应与 SSE 原文，给出本条调用的推理字数。
+ * 两边都看不了时返回 undefined（旧路径 / clone 失败）。
+ */
+export function resolveReasoningChars(response: unknown, responseText?: string): number | undefined {
+    const fromJson = extractReasoningCharsFromResponse(response);
+    const fromSse = typeof responseText === 'string' && responseText
+        ? extractReasoningCharsFromSseText(responseText)
+        : undefined;
+    if (fromJson !== undefined && fromSse !== undefined) {
+        return Math.max(fromJson, fromSse);
+    }
+    if (fromJson !== undefined) return fromJson;
+    if (fromSse !== undefined) return fromSse;
+    return undefined;
 }
 
 /**
@@ -1010,6 +1193,8 @@ export function recordApiCall(input: {
             if (scanned.usage) responseForExtract = { usage: scanned.usage };
         }
         const usage = extractApiTokenUsage(responseForExtract);
+        const thinking = extractThinkingFromBody(input.body);
+        const reasoningChars = resolveReasoningChars(input.response, input.responseText);
         const entry: ApiCallLogEntry = {
             id: input.requestId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             timestamp: Date.now(),
@@ -1024,6 +1209,9 @@ export function recordApiCall(input: {
             totalTokens: usage.total,
             durationMs: input.durationMs,
             promptBreakdown: buildPromptBreakdown(input.body),
+            thinkingEnabled: thinking.thinkingEnabled,
+            thinkingEffort: thinking.thinkingEffort,
+            reasoningChars,
             appId: meta.appId,
             appName: meta.appName,
             charId: meta.charId,

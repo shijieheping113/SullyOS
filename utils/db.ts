@@ -3484,7 +3484,20 @@ export const DB = {
                   const defined = Object.fromEntries(
                       Object.entries(entry || {}).filter(([, value]) => value !== undefined),
                   );
-                  cur[duplicateIndex] = { ...existing, ...defined, id: existing.id };
+                  // 同一条请求 safeFetchJson 与全局 clone 各记一笔：SSE 那笔曾漏数正文里的
+                  // ``，会写 reasoningChars=0，不能把已拼好的 JSON 那笔正确字数盖掉。
+                  const mergedReasoning = (() => {
+                      const prev = existing?.reasoningChars;
+                      const next = defined.reasoningChars;
+                      if (typeof prev !== 'number' || typeof next !== 'number') return next ?? prev;
+                      return Math.max(prev, next);
+                  })();
+                  cur[duplicateIndex] = {
+                      ...existing,
+                      ...defined,
+                      ...(mergedReasoning !== undefined ? { reasoningChars: mergedReasoning } : {}),
+                      id: existing.id,
+                  };
               } else {
                   cur.unshift(entry);
               }

@@ -4,6 +4,7 @@ import { DB } from '../../utils/db';
 import {
     API_REQUEST_CAPTURE_EVENT,
     formatApiRequestCaptureTxt,
+    formatThinkingEffortLabel,
     getApiRequestCaptureSectionContent,
     getApiRequestCaptureSectionSource,
     isApiRequestCaptureArmed,
@@ -275,6 +276,25 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                     <Field label="App" value={e.appName} />
                                     <Field label="角色" value={e.charName} />
                                     <Field label="用途" value={e.purpose} />
+                                    {e.thinkingEnabled !== undefined && (
+                                        <Field label="思考" value={e.thinkingEnabled ? '开' : '关'} />
+                                    )}
+                                    {e.thinkingEnabled && (
+                                        <Field label="思考强度" value={formatThinkingEffortLabel(e.thinkingEffort)} />
+                                    )}
+                                    {e.reasoningChars !== undefined && (
+                                        e.thinkingEnabled === true && e.reasoningChars === 0 ? (
+                                            <div className="flex items-baseline gap-1.5 min-w-0">
+                                                <span className="text-[10px] text-amber-500 shrink-0">推理输出</span>
+                                                <span className="font-semibold text-amber-600" title="请求开了思考，但响应里没抠到推理文本">无</span>
+                                            </div>
+                                        ) : (
+                                            <Field
+                                                label="推理输出"
+                                                value={e.reasoningChars > 0 ? `${e.reasoningChars.toLocaleString('en-US')} 字` : '无'}
+                                            />
+                                        )
+                                    )}
                                     <div className="col-span-2">
                                         {/* 模型/实际后端两行不截断（break-all 换行）：截断会把「为什么黄了」的
                                             关键差异（后缀 -c、渠道标签）藏进省略号里，用户看着两行一样却标黄一头雾水 */}

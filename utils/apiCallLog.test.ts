@@ -5,7 +5,12 @@ import {
     captureApiRequestOnce,
     coreModelName,
     extractApiTokenUsage,
+    extractReasoningCharsFromResponse,
+    extractReasoningCharsFromSseText,
+    extractThinkingFromBody,
     formatApiRequestCaptureTxt,
+    formatThinkingEffortLabel,
+    resolveReasoningChars,
     getApiCallAmbientContext,
     getApiRequestCaptureSectionContent,
     getApiRequestCaptureSectionSource,
@@ -530,3 +535,87 @@ it('没有标准收尾的世界书文本仍按标题拆分，所有消息分区�
     expect(parts.map(s => getApiRequestCaptureSectionContent(capture, s)).join('')).toBe(content);
     expect(JSON.stringify(capture.payload)).toContain('末尾标记');
 });
+
+describe('extractThinkingFromBody', () => {
+    it('没开思考', () => {
+        expect(extractThinkingFromBody({ model: 'x', messages: [] })).toEqual({ thinkingEnabled: false });
+    });
+
+    it('开思考且无 reasoning_effort → 默认', () => {
+        expect(extractThinkingFromBody({
+            thinking: { type: 'enabled', budget_tokens: 4000 },
+            extra_body: { thinking: { type: 'enabled', budget_tokens: 4000 } },
+        })).toEqual({ thinkingEnabled: true, thinkingEffort: 'default' });
+    });
+
+    it('开思考并带 medium', () => {
+        expect(extractThinkingFromBody({
+            thinking: { type: 'enabled', budget_tokens: 4000 },
+            reasoning_effort: 'medium',
+        })).toEqual({ thinkingEnabled: true, thinkingEffort: 'medium' });
+    });
+
+    it('文案档位', () => {
+        expect(formatThinkingEffortLabel('default')).toBe('默认');
+        expect(formatThinkingEffortLabel('low')).toBe('轻');
+        expect(formatThinkingEffortLabel('medium')).toBe('中');
+        expect(formatThinkingEffortLabel('high')).toBe('重');
+    });
+});
+
+describe('resolveReasoningChars', () => {
+    it('JSON 响应里有 reasoning_content', () => {
+        expect(extractReasoningCharsFromResponse({
+            choices: [{ message: { content: '你好', reasoning_content: '先想一下' } }],
+        })).toBe('先想一下'.length);
+    });
+
+    it('JSON 响应有 choices 但没推理 → 0', () => {
+        expect(extractReasoningCharsFromResponse({
+            choices: [{ message: { content: '你好' } }],
+        })).toBe(0);
+    });
+
+    it('正文里的 think 标签也算', () => {
+        expect(extractReasoningCharsFromResponse({
+            choices: [{ message: { content: '<think>内心独白</think>\n外面说' } }],
+        })).toBe('内心独白'.length);
+    });
+
+    it('SSE 增量累加', () => {
+        const sse = [
+            'data: {"choices":[{"delta":{"reasoning_content":"第一"}}]}',
+            'data: {"choices":[{"delta":{"reasoning":"第二"}}]}',
+            'data: [DONE]',
+        ].join('\n');
+        expect(extractReasoningCharsFromSseText(sse)).toBe('第一第二'.length);
+    });
+
+    it('SSE 正文里的 think 标签也算', () => {
+        const open = '<think>';
+        const close = '</think>';
+        const sse = [
+            `data: {"choices":[{"delta":{"content":"${open}内心"}}]}`,
+            `data: {"choices":[{"delta":{"content":"独白${close}\\n外面说"}}]}`,
+            'data: [DONE]',
+        ].join('\n');
+        expect(extractReasoningCharsFromSseText(sse)).toBe('内心独白'.length);
+    });
+
+    it('JSON 与 SSE 取较大值', () => {
+        const json = { choices: [{ message: { content: '你好', reasoning_content: '短' } }] };
+        const sse = [
+            'data: {"choices":[{"delta":{"reasoning_content":"第一"}}]}',
+            'data: {"choices":[{"delta":{"reasoning":"第二"}}]}',
+            'data: [DONE]',
+        ].join('\n');
+        expect(resolveReasoningChars(json, sse)).toBe('第一第二'.length);
+    });
+
+    it('没响应材料 → undefined', () => {
+        expect(resolveReasoningChars(undefined)).toBeUndefined();
+        expect(resolveReasoningChars(undefined, 'not-sse')).toBeUndefined();
+    });
+});
+
+
