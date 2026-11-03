@@ -2324,6 +2324,7 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
         makerKind: startedSession.makerKind,
         chatContextSnapshot: liveChatContext,
         thinkingEnabled: !!character.showThinkingChain,
+        thinkingEffort: character.thinkingChainEffort,
         turnContext: turnMemoryContext,
       });
       const parsedFiles = parseArtifactBlocks(reply.content);

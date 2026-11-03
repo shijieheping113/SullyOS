@@ -43,6 +43,8 @@ import QixiEventCardView from './QixiEventCard';
 import {SERIF, resolveThinkingChainStyle, type ThinkingChainStyleId, type ThinkingChainStyleSpec} from '../../utils/psycheAppearance';
 export {THINKING_CHAIN_PRESETS,resolveThinkingChainStyle} from '../../utils/psycheAppearance';
 export type {ThinkingChainStyleId,ThinkingChainStyleSpec} from '../../utils/psycheAppearance';
+import { webGoogleTranslate } from '../../utils/webGoogleTranslate';
+import { isGlobalTranslateEnabled, subscribeGlobalTranslateEnabled } from '../../utils/globalTranslateSettings';
 import {ChatCardSurface} from './ChatCardSurface';
 // 心象卡片的「破格」装饰：溢出卡片边框的风格化元素。
 // 必须渲染在卡片（overflow-hidden）的兄弟层、且父容器 relative + 不裁剪，才能真的探出边框。
@@ -147,17 +149,29 @@ export const PsycheDecor: React.FC<{ spec: ThinkingChainStyleSpec; compact?: boo
 // 思考链卡片：可视化 metadata.thinkingChain。
 // 内容来源：useChatAI 抽取的 LLM reasoning_content + <think>/<thinking>/<thought>。
 // 多风格通过 resolveThinkingChainStyle() 统一渲染；齿轮触发 onOpenSettings 进入设置弹窗。
+// 心象翻译：聚焦淡字「译」；译文仅界面；「替换」才写回 thinkingChain（见施工单一期）。
 export const ThinkingChainBlock: React.FC<{
     chain: string;
     initiallyExpanded?: boolean;
     styleId?: ThinkingChainStyleId;
     customColors?: { bg?: string; accent?: string; text?: string };
     onOpenSettings?: () => void;
-}> = ({ chain, styleId, customColors, onOpenSettings, initiallyExpanded=false }) => {
+    /** 点「替换」：父级写库并刷新消息；未提供则隐藏「替换」 */
+    onReplaceThinkingChain?: (translated: string) => void | Promise<void>;
+}> = ({ chain, styleId, customColors, onOpenSettings, initiallyExpanded=false, onReplaceThinkingChain }) => {
     const [expanded, setExpanded] = useState(initiallyExpanded);
+    const [focused, setFocused] = useState(false);
     const [copyState, setCopyState] = useState<'idle' | 'ready' | 'ok' | 'error'>('idle');
+    const [translation, setTranslation] = useState<string | null>(null);
+    const [showingTranslation, setShowingTranslation] = useState(false);
+    const [translateBusy, setTranslateBusy] = useState(false);
+    const [translateHint, setTranslateHint] = useState('');
+    const [uiLockedAfterReplace, setUiLockedAfterReplace] = useState(false);
+    const [globalTranslateOn, setGlobalTranslateOn] = useState(() => isGlobalTranslateEnabled());
+    const rootRef = useRef<HTMLDivElement | null>(null);
     const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pointerIdRef = useRef<number | null>(null);
     const pointerTypeRef = useRef<React.PointerEvent<HTMLDivElement>['pointerType'] | ''>('');
     const pointerStartRef = useRef({ x: 0, y: 0 });
@@ -165,8 +179,10 @@ export const ThinkingChainBlock: React.FC<{
     const suppressNextClickRef = useRef(false);
     const trimmed = (chain || '').trim();
     const spec = resolveThinkingChainStyle(styleId, customColors);
-    const firstLine = trimmed.replace(/\s+/g, ' ').slice(0, 38);
-    const hasMore = trimmed.length > 38;
+    const displayText = globalTranslateOn && showingTranslation && translation ? translation : trimmed;
+    const firstLine = displayText.replace(/\s+/g, ' ').slice(0, 38);
+    const hasMore = displayText.length > 38;
+    const showTranslateChrome = globalTranslateOn && expanded && focused && !uiLockedAfterReplace;
 
     const clearCopyTimer = () => {
         if (copyTimerRef.current) {
@@ -175,25 +191,54 @@ export const ThinkingChainBlock: React.FC<{
         }
     };
 
+    // 原文变了（新消息 / 已替换写回）→ 清界面译态；本会话点过替换则继续锁淡字。
+    useEffect(() => {
+        setTranslation(null);
+        setShowingTranslation(false);
+        setTranslateBusy(false);
+        setTranslateHint('');
+    }, [trimmed]);
+
+    useEffect(() => subscribeGlobalTranslateEnabled(setGlobalTranslateOn), []);
+
     useEffect(() => () => {
         clearCopyTimer();
         if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+        if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     }, []);
+
+    useEffect(() => {
+        if (!focused) return;
+        const onDoc = (e: PointerEvent) => {
+            if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+                setFocused(false);
+            }
+        };
+        document.addEventListener('pointerdown', onDoc, true);
+        return () => document.removeEventListener('pointerdown', onDoc, true);
+    }, [focused]);
 
     if (!trimmed) return null;
 
+    const flashHint = (text: string) => {
+        setTranslateHint(text);
+        if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+        hintTimerRef.current = setTimeout(() => setTranslateHint(''), 2200);
+    };
+
     const copyThinkingChain = async () => {
+        const toCopy = displayText;
         let success = false;
         try {
             if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
-            await navigator.clipboard.writeText(trimmed);
+            await navigator.clipboard.writeText(toCopy);
             success = true;
         } catch {
             // iOS PWA / 非安全上下文可能拒绝 Clipboard API，保留 textarea 兜底。
             let textarea: HTMLTextAreaElement | null = null;
             try {
                 textarea = document.createElement('textarea');
-                textarea.value = trimmed;
+                textarea.value = toCopy;
                 textarea.setAttribute('readonly', '');
                 textarea.style.position = 'fixed';
                 textarea.style.opacity = '0';
@@ -236,6 +281,7 @@ export const ThinkingChainBlock: React.FC<{
         e.stopPropagation();
         pointerTypeRef.current = e.pointerType;
         if (e.button !== 0) return;
+        try { document.getSelection()?.removeAllRanges(); } catch { /* ignore */ }
         pointerIdRef.current = e.pointerId;
         pointerStartRef.current = { x: e.clientX, y: e.clientY };
         longPressReadyRef.current = false;
@@ -269,8 +315,7 @@ export const ThinkingChainBlock: React.FC<{
         if (pointerIdRef.current !== e.pointerId) return;
         pointerIdRef.current = null;
         clearCopyTimer();
-        // iOS 弹出原生选区时可能先派发 pointercancel，随后仍会派发 touchend。
-        // 此时保留 ready，让 touchend 仍可在真实用户手势中执行复制。
+        // iOS 可能先 pointercancel 再 touchend；已 ready 时留给 touchend 松手复制。
         if (e.pointerType !== 'touch' || !longPressReadyRef.current) resetLongPress();
     };
 
@@ -281,7 +326,67 @@ export const ThinkingChainBlock: React.FC<{
             e.preventDefault();
             return;
         }
-        setExpanded(v => !v);
+        setExpanded(v => {
+            const next = !v;
+            setFocused(next);
+            return next;
+        });
+    };
+
+    const handleBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        e.stopPropagation();
+        if (suppressNextClickRef.current) {
+            suppressNextClickRef.current = false;
+            e.preventDefault();
+            return;
+        }
+        if (!expanded) {
+            setExpanded(true);
+            setFocused(true);
+            return;
+        }
+        setFocused(true);
+    };
+
+    const runTranslate = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!globalTranslateOn || translateBusy || uiLockedAfterReplace) return;
+        setTranslateBusy(true);
+        setTranslateHint('');
+        try {
+            const text = await webGoogleTranslate(trimmed);
+            setTranslation(text);
+            setShowingTranslation(true);
+            setFocused(true);
+        } catch (err) {
+            flashHint(err instanceof Error ? err.message : '翻译失败，请再试一次');
+        } finally {
+            setTranslateBusy(false);
+        }
+    };
+
+    const toggleOriginalOrTranslation = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!translation) return;
+        setShowingTranslation(v => !v);
+        setFocused(true);
+    };
+
+    const runReplace = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!translation || !onReplaceThinkingChain || translateBusy) return;
+        try {
+            await onReplaceThinkingChain(translation);
+            setUiLockedAfterReplace(true);
+            setFocused(false);
+            setTranslation(null);
+            setShowingTranslation(false);
+        } catch (err) {
+            flashHint(err instanceof Error ? err.message : '替换失败');
+        }
     };
 
     const copyStatusLabel = copyState === 'ok'
@@ -292,40 +397,49 @@ export const ThinkingChainBlock: React.FC<{
                 ? '请用系统复制'
                 : expanded ? spec.silenceLabel : spec.listenLabel;
 
+    const fadeActionClass = 'text-[11px] tracking-[0.12em] opacity-45 hover:opacity-80 active:opacity-100 transition-opacity select-none';
+
     return (
         <div
-            className="sully-psyche relative mb-2 w-full max-w-full select-text cursor-pointer group"
+            ref={rootRef}
+            className="sully-psyche relative mb-2 w-full max-w-full cursor-pointer group"
             role="button"
             tabIndex={0}
-            aria-label="心象：点击展开，长按复制全文"
-            title="长按复制心象全文"
+            aria-label="心象：点击展开，长按复制当前显示文字"
+            title="长按复制当前显示文字"
             onClick={handleClick}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerCancel}
+            onSelectStart={(e) => { e.preventDefault(); }}
             onTouchEnd={(e) => {
                 e.stopPropagation();
                 finishLongPressCopy();
             }}
             onContextMenu={(e) => {
                 e.stopPropagation();
-                // 触屏保留 Safari 原生蓝色选区与复制菜单，作为剪贴板权限受限时的兜底。
-                if (pointerTypeRef.current !== 'mouse') return;
                 e.preventDefault();
-                suppressNextClickRef.current = false;
-                void copyThinkingChain();
+                // 触屏／鼠标一律拦系统选区菜单，避免抢松手复制；剪贴板失败靠「请用系统复制」提示。
+                if (pointerTypeRef.current === 'mouse') {
+                    suppressNextClickRef.current = false;
+                    void copyThinkingChain();
+                }
             }}
             onKeyDown={(e) => {
                 if (e.key !== 'Enter' && e.key !== ' ') return;
                 e.preventDefault();
-                setExpanded(v => !v);
+                setExpanded(v => {
+                    const next = !v;
+                    setFocused(next);
+                    return next;
+                });
             }}
             style={{
                 touchAction: 'pan-y',
-                userSelect: 'text',
-                WebkitUserSelect: 'text',
-                WebkitTouchCallout: 'default',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+                WebkitTouchCallout: 'none',
             }}
         >
             <div
@@ -413,6 +527,7 @@ export const ThinkingChainBlock: React.FC<{
                     <div
                         className={`sully-psyche-preview relative mt-1.5 text-[12px] leading-snug truncate ${spec.italic ? 'italic' : ''}`}
                         style={{ color: spec.text, fontFamily: spec.fontFamily }}
+                        onClick={handleBodyClick}
                     >
                         <span style={{ color: spec.accent, marginRight: 2 }}>{spec.quoteLeft}</span>
                         {firstLine}{hasMore ? '…' : ''}
@@ -436,12 +551,61 @@ export const ThinkingChainBlock: React.FC<{
                                 fontFamily: spec.fontFamily,
                                 borderLeft: `1px solid ${spec.border}`,
                                 textShadow: spec.glow ? '0 0 6px rgba(0, 0, 0, 0.4)' : undefined,
+                                userSelect: 'none',
+                                WebkitUserSelect: 'none',
                             }}
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={handleBodyClick}
                         >
-                            {trimmed}
+                            {displayText}
                         </div>
                     </div>
+                )}
+
+                {showTranslateChrome && (
+                    <div
+                        className="relative mt-1.5 flex items-center gap-3 pl-0.5"
+                        onClick={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                    >
+                        {!translation ? (
+                            <button
+                                type="button"
+                                className={fadeActionClass}
+                                style={{ color: spec.subtext }}
+                                disabled={translateBusy}
+                                onClick={runTranslate}
+                            >
+                                {translateBusy ? '译…' : '译'}
+                            </button>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    className={fadeActionClass}
+                                    style={{ color: spec.subtext }}
+                                    onClick={toggleOriginalOrTranslation}
+                                >
+                                    {showingTranslation ? '原文' : '译文'}
+                                </button>
+                                {onReplaceThinkingChain && (
+                                    <button
+                                        type="button"
+                                        className="text-[11px] tracking-[0.12em] opacity-30 hover:opacity-70 active:opacity-90 transition-opacity select-none"
+                                        style={{ color: spec.subtext }}
+                                        onClick={runReplace}
+                                    >
+                                        替换
+                                    </button>
+                                )}
+                            </>
+                        )}
+                        {translateHint && (
+                            <span className="text-[10px] opacity-70 truncate" style={{ color: spec.subtext }}>{translateHint}</span>
+                        )}
+                    </div>
+                )}
+                {!showTranslateChrome && translateHint && (
+                    <div className="relative mt-1 text-[10px] opacity-70 pl-0.5" style={{ color: spec.subtext }}>{translateHint}</div>
                 )}
             </div>
             {/* 破格装饰渲染在卡片外层（卡片自身 overflow-hidden 裁不掉它） */}
@@ -1340,6 +1504,8 @@ interface MessageItemProps {
         styleId?: ThinkingChainStyleId;
         customColors?: { bg?: string; accent?: string; text?: string };
         onOpenSettings?: () => void;
+        /** 心象「替换」：把译文写入该条消息的 metadata.thinkingChain */
+        onReplaceThinkingChain?: (messageId: number, translated: string) => void | Promise<void>;
     };
 }
 
@@ -2098,6 +2264,9 @@ const MessageItem = React.memo(({
                     styleId={thinkingChainOptions?.styleId}
                     customColors={thinkingChainOptions?.customColors}
                     onOpenSettings={thinkingChainOptions?.onOpenSettings}
+                    onReplaceThinkingChain={thinkingChainOptions?.onReplaceThinkingChain
+                        ? (translated) => thinkingChainOptions.onReplaceThinkingChain!(m.id, translated)
+                        : undefined}
                 />
             </div>
         </div>
@@ -4327,6 +4496,8 @@ const MessageItem = React.memo(({
            prev.gameDuel?.aiValue === next.gameDuel?.aiValue &&
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
+           prev.msg.metadata?.thinkingChain === next.msg.metadata?.thinkingChain &&
+           prev.thinkingChainOptions?.onReplaceThinkingChain === next.thinkingChainOptions?.onReplaceThinkingChain &&
            prev.msg.metadata?.sarModuleSurface?.surface === next.msg.metadata?.sarModuleSurface?.surface &&
            // 用户语音记号 metadata.stt（含 transcript）变了要重渲染，否则补完字气泡不刷新。
            (prev.msg.metadata as any)?.stt === (next.msg.metadata as any)?.stt &&

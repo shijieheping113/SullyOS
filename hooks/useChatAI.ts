@@ -57,6 +57,7 @@ import { AMSG2_TOOL_NAMES, buildAmsg2Tools, createAmsg2ToolSession, executeAmsg2
 import { AMSG2_EMPTY_REPLY_PROMPT, AMSG2_WRAP_UP_PROMPT, createAmsg2StallTracker, extractToolRoundLeadIn, mergeToolRoundLeadIns } from '../utils/amsg2ToolLoop';
 import { buildLimitsBrief, resolveAmsgLimits } from '../utils/amsgLimits';
 import { shouldSendThinkingParams } from '../utils/thinkingGate';
+import { applyThinkingParams } from '../utils/thinkingEffort';
 import { buildClaudeProxyCompatibilityBody, shouldRetryClaudeProxyCompatibility } from '../utils/claudeProxyCompat';
 import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
 import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply';
@@ -1124,19 +1125,8 @@ export const useChatAI = ({
                 amsg2ToolsInjected,
                 model: baseReqBody.model || '',
             })) {
-                const m: string = baseReqBody.model || '';
-                if (/^claude-/i.test(m) && !/-thinking$/i.test(m)) {
-                    baseReqBody.model = `${m}-thinking`;
-                }
-                baseReqBody.thinking = { type: 'enabled', budget_tokens: 4000 };
-                baseReqBody.reasoning_effort = 'medium';
-                baseReqBody.extra_body = { ...(baseReqBody.extra_body || {}), thinking: { type: 'enabled', budget_tokens: 4000 } };
-                // 开思考时不要带采样参数: Claude 系（含各种中转 claude-*）在 thinking 启用时
-                // 只接受 temperature=1，传 0.85 会被 400 ("temperature may only be set to 1 when
-                // thinking is enabled")。删掉让服务端用默认即可——对其它模型(非 Claude)也安全:
-                // 它们开思考时同样不需要我们指定温度，回退默认不影响行为。
-                delete baseReqBody.temperature;
-                delete baseReqBody.top_p;
+                // 强度见角色 thinkingChainEffort；budget 恒 4000。未写字段按 medium。
+                applyThinkingParams(baseReqBody, (char as any).thinkingChainEffort);
             }
             // 流式时显式要求 usage 统计随末尾 chunk 一起返回，否则 token 徽标拿不到数据
             if (userStream) {

@@ -4881,11 +4881,24 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         }
     }, [displayMessages]);
 
+    // 心象「替换」：只改 metadata.thinkingChain，上下文仍按原字段走。
+    const handleReplaceThinkingChain = useCallback(async (messageId: number, translated: string) => {
+        const next = String(translated || '').trim();
+        if (!next) throw new Error('没有可替换的译文');
+        await DB.updateMessageMetadata(messageId, (prev) => ({ ...(prev || {}), thinkingChain: next }));
+        setMessages((prev) => prev.map((m) => (
+            m.id === messageId
+                ? { ...m, metadata: { ...(m.metadata || {}), thinkingChain: next } }
+                : m
+        )));
+    }, []);
+
     // 稳定的思维链配置对象：只在角色/样式变化时重建，避免每次渲染新建对象击穿 MessageItem.memo。
     const thinkingChainOptions = useMemo(() => ({
         ...resolvePsycheAppearance(osTheme, char),
         onOpenSettings: () => setShowThinkingChainModal(true),
-    }), [char?.thinkingChainStyle, char?.thinkingChainCustomColors, osTheme.chatPsyche]);
+        onReplaceThinkingChain: handleReplaceThinkingChain,
+    }), [char?.thinkingChainStyle, char?.thinkingChainCustomColors, osTheme.chatPsyche, handleReplaceThinkingChain]);
 
     // 工具痕迹那行灰字要贴着气泡走，所以把气泡自带的组间距（MessageItem 里那组
     // mb-3 / mb-6 / mb-8）抵掉大半。组内的气泡本来就挨着，不用抵。
@@ -6153,6 +6166,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     onClose={() => setShowThinkingChainModal(false)}
                     value={{
                         enabled: !!(char as any).showThinkingChain,
+                        effort: (char as any).thinkingChainEffort,
                         styleId: ((char as any).thinkingChainStyle as any) || 'echo',
                         customColors: {
                             bg: (char as any).thinkingChainCustomColors?.bg || '#1f2937',
@@ -6165,6 +6179,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     onChange={(next) => {
                         const patch: any = {};
                         if (next.enabled !== undefined) patch.showThinkingChain = next.enabled;
+                        if (next.effort !== undefined) patch.thinkingChainEffort = next.effort;
                         if (next.styleId !== undefined) patch.thinkingChainStyle = next.styleId;
                         if (next.customColors !== undefined) patch.thinkingChainCustomColors = next.customColors;
                         if (next.customPrompt !== undefined) patch.thinkingChainCustomPrompt = next.customPrompt;

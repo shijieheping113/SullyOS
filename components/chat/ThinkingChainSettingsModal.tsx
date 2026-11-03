@@ -1,8 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import type {ThinkingChainStyleId} from '../../utils/psycheAppearance';
+import {
+    THINKING_EFFORT_OPTIONS,
+    normalizeThinkingChainEffort,
+    type ThinkingChainEffort,
+} from '../../utils/thinkingEffort';
 
 interface ThinkingChainSettingsValue {
     enabled: boolean;
+    /** 思考强度；未写按 medium */
+    effort?: ThinkingChainEffort;
     styleId: ThinkingChainStyleId;
     customColors: { bg: string; accent: string; text: string };
     customPrompt: string;
@@ -97,6 +104,33 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                             <div className={`shrink-0 ml-3 w-10 h-6 rounded-full p-1 transition-colors flex items-center ${value.enabled ? 'bg-indigo-500' : 'bg-slate-200'}`}>
                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${value.enabled ? 'translate-x-4' : ''}`} />
                             </div>
+                        </div>
+                    </section>
+
+                    {/* 2. 思考强度 */}
+                    <section className={value.enabled ? '' : 'opacity-45 pointer-events-none'}>
+                        <h3 className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-2">思考强度</h3>
+                        <p className="text-[10.5px] text-slate-400 mb-2.5 leading-relaxed">
+                            想多久／多用力。默认＝不指定强度，交给模型；中＝以前一直在用的。额度上限统一，只改强度档。
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            {THINKING_EFFORT_OPTIONS.map((opt) => {
+                                const active = normalizeThinkingChainEffort(value.effort) === opt.id;
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() => onChange({ effort: opt.id })}
+                                        className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${active ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                                        title={opt.hint}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="text-[9.5px] text-slate-400 mt-1.5">
+                            {THINKING_EFFORT_OPTIONS.find((o) => o.id === normalizeThinkingChainEffort(value.effort))?.hint}
                         </div>
                     </section>
 

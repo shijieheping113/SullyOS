@@ -40,6 +40,7 @@ import { getDateVoiceGuide } from '../utils/datePrompts';
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee, PlugsConnected } from '@phosphor-icons/react';
 import BatteryReminderSettingsCard from '../components/settings/BatteryReminderSettingsCard';
 import ChatNotifySettingsCard from '../components/settings/ChatNotifySettingsCard';
+import GlobalTranslateSettingsCard from '../components/settings/GlobalTranslateSettingsCard';
 import { readBatteryReminderEnabled, writeBatteryReminderEnabled } from '../utils/batteryReminder';
 import { loadMcpServers, saveMcpServers, createMcpServer, testMcpConnection, resetMcpSession, getMcpUseNativeTools, setMcpUseNativeTools, type McpServerConfig } from '../utils/mcpClient';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
@@ -3890,6 +3891,9 @@ const Settings: React.FC = () => {
         {/* ───────── 私聊回复通知（开关 + 自检） ─────────
             放这儿是紧挨着主动消息那两块：用户眼里这些都是「会不会弹窗」，分开找会找不到。 */}
         <ChatNotifySettingsCard />
+
+        {/* ───────── 全局翻译（谷歌本地 → 目前只心象） ───────── */}
+        <GlobalTranslateSettingsCard />
 
         {/* ───────── 主动消息 2.0（定时推送） ───────── */}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">

@@ -78,6 +78,7 @@ import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import {HOME_SECRETS_UPDATED} from '../utils/homeSecrets';
 import { CHAT_GEN_EVENTS, setChatViewSnapshot, isEmbeddedChatVisible } from '../utils/chatGenEvents';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { applyThinkingParams } from '../utils/thinkingEffort';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
@@ -2805,17 +2806,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 思考链开启时显式向后端请求 extended thinking — 与 useChatAI 同步,
               // 不同代理认不同入口,全都试一遍,代理不识别的会自动忽略
               if (payload.flags.thinkingActive) {
-                  const m: string = reqBody.model || '';
-                  if (/^claude-/i.test(m) && !/-thinking$/i.test(m)) {
-                      reqBody.model = `${m}-thinking`;
-                  }
-                  reqBody.thinking = { type: 'enabled', budget_tokens: 4000 };
-                  reqBody.reasoning_effort = 'medium';
-                  reqBody.extra_body = { ...(reqBody.extra_body || {}), thinking: { type: 'enabled', budget_tokens: 4000 } };
-                  // 开思考时不带采样参数: Claude 系在 thinking 启用时只接受 temperature=1，
-                  // 传 0.85 会被 400。删掉用服务端默认；对非 Claude 模型同样安全。
-                  delete reqBody.temperature;
-                  delete reqBody.top_p;
+                  // 与 useChatAI 同源：budget 恒 4000；强度读角色 thinkingChainEffort（未写＝medium）
+                  applyThinkingParams(reqBody, (char as any).thinkingChainEffort);
               }
               const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                   method: 'POST', headers,

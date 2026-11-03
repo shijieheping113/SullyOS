@@ -3286,6 +3286,13 @@ export interface CharacterProfile {
    */
   showThinkingChain?: boolean;
   /**
+   * 心象思考强度（per-character）。
+   * - 未写：按 medium 发参（与历史硬编码一致）
+   * - default：开 thinking + budget 4000，不传 reasoning_effort
+   * - low / medium / high：传对应 reasoning_effort，budget 仍 4000
+   */
+  thinkingChainEffort?: 'default' | 'low' | 'medium' | 'high';
+  /**
    * 思考链卡片视觉风格（per-character）。
    * - 'echo' (default)：暗紫底 + 暖金描边「回响」二次元卡牌
    * - 'whisper'：米色羊皮纸「心声」轻盈版

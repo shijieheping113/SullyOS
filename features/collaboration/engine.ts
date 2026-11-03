@@ -6,6 +6,7 @@ import { CollaborationStore } from './store';
 import type { CollaborationApiProfile, CollaborationAttachment, CollaborationContextMessage, CollaborationMakerKind, CollaborationMessage } from './types';
 import { parseCollaborationReply, visibleCollaborationStreamText, type ParsedCollaborationReply } from './reasoning';
 import {buildMcpOpenAITools,buildMcpSystemBlock} from '../../utils/mcpToolBridge';
+import { applyThinkingParams } from '../../utils/thinkingEffort';
 import {completeCollaborationWithMcp} from './mcp';
 
 export const isCollaborationApiConfigured = (profile: CollaborationApiProfile): boolean => (
@@ -21,6 +22,8 @@ export interface RunCollaborationTurnInput {
   makerKind?: CollaborationMakerKind;
   chatContextSnapshot?: CollaborationContextMessage[];
   thinkingEnabled?: boolean;
+  /** 心象思考强度；未传按 medium（与私聊一致） */
+  thinkingEffort?: 'default' | 'low' | 'medium' | 'high';
   turnContext?: string;
   characterId?: string;
   userName?: string;
@@ -96,6 +99,7 @@ export const runCollaborationTurn = async ({
   makerKind,
   chatContextSnapshot,
   thinkingEnabled,
+  thinkingEffort,
   turnContext,
   characterId,
   userName,
@@ -123,12 +127,7 @@ export const runCollaborationTurn = async ({
       :'本轮没有对当前角色启用且已发现工具的 MCP 服务器。不要假装执行工具或声称访问过外部资料；需要时说明可在设置的 MCP 管理中连接并启用。'});
   }
   if (thinkingEnabled && !mcpActive) {
-    const model = String(requestBody.model || '');
-    if (/^claude-/i.test(model) && !/-thinking$/i.test(model)) requestBody.model = `${model}-thinking`;
-    requestBody.thinking = { type: 'enabled', budget_tokens: 4000 };
-    requestBody.reasoning_effort = 'medium';
-    requestBody.extra_body = { thinking: { type: 'enabled', budget_tokens: 4000 } };
-    delete requestBody.temperature;
+    applyThinkingParams(requestBody, thinkingEffort);
   }
   const request = (body: Record<string,unknown>) => safeFetchJson(
     `${baseUrl}/chat/completions`,
