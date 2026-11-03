@@ -8,9 +8,96 @@
  * Used by both the main chat flow (hooks/useChatAI.ts) and the proactive
  * message flow (context/OSContext.tsx) so the prompt stays in one place.
  *
- * The caller is responsible for the showThinkingChain gate and for
- * appending any user-supplied thinkingChainCustomPrompt.
+ * Modes:
+ * - default：内置中文第一人称心象 + 可选追加
+ * - custom：短外壳（只定思考写在哪）+ 用户全文规则，不注入内置心象
  */
+
+export type ThinkingChainPromptMode = 'default' | 'custom';
+
+/** 自定义规则插在哪：靠前=稳定 system；靠后=临时状态后、「回到你自己」前。 */
+export type ThinkingChainPromptPlacement = 'front' | 'back';
+
+/** 未写字段按 default，与线上一致。 */
+export const normalizeThinkingChainPromptMode = (raw: unknown): ThinkingChainPromptMode =>
+  raw === 'custom' ? 'custom' : 'default';
+
+/** 未写按 front（现在的拼法）；只有显式 back 才挪位。 */
+export const normalizeThinkingChainPromptPlacement = (raw: unknown): ThinkingChainPromptPlacement =>
+  raw === 'back' ? 'back' : 'front';
+
+/**
+ * 自定义全文是否走「靠后」位。
+ * 仅 custom 且正文非空且 placement=back；否则一律走原来的靠前拼法。
+ */
+export const shouldPlaceThinkingPromptAtBack = (input: {
+  mode?: unknown;
+  customPrompt?: string;
+  placement?: unknown;
+}): boolean => {
+  if (normalizeThinkingChainPromptPlacement(input.placement) !== 'back') return false;
+  if (normalizeThinkingChainPromptMode(input.mode) !== 'custom') return false;
+  return !!String(input.customPrompt || '').trim();
+};
+
+/**
+ * 展开用户自定义规则里的常见占位符。
+ * 认 {{user}} / {{char}}（大小写不敏感）以及 {{userName}} / {{charName}}。
+ */
+export function expandThinkingPromptMacros(
+  text: string,
+  names: { userName: string; charName: string },
+): string {
+  const user = String(names.userName || '用户');
+  const char = String(names.charName || '角色');
+  return String(text || '')
+    .replace(/\{\{\s*user(?:Name)?\s*\}\}/gi, user)
+    .replace(/\{\{\s*char(?:Name)?\s*\}\}/gi, char);
+}
+
+/**
+ * 自定义思考的短外壳。
+ * 只定「思考写在哪、回复不要再抄一遍」。语言、人称、步骤全在用户规则里。
+ */
+export function buildCustomThinkingShell(charName: string, userName: string): string {
+  return `思考按下方规则写。语言、人称、步骤、标签都以那些规则为准。
+
+有原生思考通道时，思考写在那个通道里。
+思考若写在同一条消息里，只用规则指定的那一种标签，写一次，放在回复前面。
+回复正文不要再复述这段思考。
+
+思考结束后，按本 prompt 其它位置的角色要求，写 ${charName} 对 ${userName} 说出口的话。
+
+【用户思考规则】`;
+}
+
+/**
+ * 拼装注入 system 的思考段。
+ * custom 且正文非空 → 外壳 + 宏展开后的用户规则；否则走默认心象（可追加）。
+ */
+export function buildThinkingChainSystemSection(input: {
+  charName: string;
+  userName: string;
+  mode?: unknown;
+  customPrompt?: string;
+}): string {
+  const userName = (input.userName && String(input.userName).trim()) || '用户';
+  const charName = String(input.charName || '角色');
+  const extra = String(input.customPrompt || '').trim();
+  const mode = normalizeThinkingChainPromptMode(input.mode);
+
+  if (mode === 'custom' && extra) {
+    const body = expandThinkingPromptMacros(extra, { userName, charName });
+    return `${buildCustomThinkingShell(charName, userName)}\n${body}`;
+  }
+
+  let out = buildThinkingChainPrompt(charName, userName);
+  if (extra) {
+    out += `\n\n## 用户对内心独白的额外要求\n${expandThinkingPromptMacros(extra, { userName, charName })}`;
+  }
+  return out;
+}
+
 export function buildThinkingChainPrompt(charName: string, userName: string): string {
     return `═══════════════════════════════════════════
 【以下规则仅适用于 THINKING 阶段】

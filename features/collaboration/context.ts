@@ -2,7 +2,7 @@ import type { CharacterProfile, Emoji, EmojiCategory, GroupProfile, Message, Rea
 import { ContextBuilder } from '../../utils/context';
 import { buildChatRequestPayload } from '../../utils/chatRequestPayload';
 import { ChatPrompts } from '../../utils/chatPrompts';
-import { buildThinkingChainPrompt } from '../../utils/thinkingChainPrompt';
+import { buildThinkingChainSystemSection } from '../../utils/thinkingChainPrompt';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
 import { injectMemoryPalace } from '../../utils/memoryPalace/pipeline';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
@@ -32,8 +32,17 @@ format: docx
 
 const collaborationThinkingPrompt = (char: CharacterProfile, user: UserProfile): string => {
   if (!char.showThinkingChain) return '';
-  const custom = (char.thinkingChainCustomPrompt || '').trim();
-  return `\n\n${buildThinkingChainPrompt(char.name, user.name)}${custom ? `\n\n### 用户追加的心象规则\n${custom}` : ''}`;
+  const c = char as CharacterProfile & {
+    thinkingChainCustomPrompt?: string;
+    thinkingChainPromptMode?: 'default' | 'custom';
+  };
+  // 协同这条旁路仍整段塞进 system；靠后位由主聊天 payload 管，这里只拼内容。
+  return `\n\n${buildThinkingChainSystemSection({
+    charName: char.name,
+    userName: user.name,
+    mode: c.thinkingChainPromptMode,
+    customPrompt: c.thinkingChainCustomPrompt,
+  })}`;
 };
 
 const collaborationRichOutputPrompt = (
@@ -213,6 +222,8 @@ export const buildLiveCollaborationChatContext = async ({
     thinkingChain: {
       enabled: !!(char as CharacterProfile & { showThinkingChain?: boolean }).showThinkingChain,
       customPrompt: (char as CharacterProfile & { thinkingChainCustomPrompt?: string }).thinkingChainCustomPrompt,
+      mode: (char as CharacterProfile & { thinkingChainPromptMode?: 'default' | 'custom' }).thinkingChainPromptMode,
+      placement: (char as CharacterProfile & { thinkingChainPromptPlacement?: 'front' | 'back' }).thinkingChainPromptPlacement,
     },
     stripImages: true,
   });

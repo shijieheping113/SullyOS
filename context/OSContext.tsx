@@ -79,6 +79,7 @@ import {HOME_SECRETS_UPDATED} from '../utils/homeSecrets';
 import { CHAT_GEN_EVENTS, setChatViewSnapshot, isEmbeddedChatVisible } from '../utils/chatGenEvents';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { applyThinkingParams } from '../utils/thinkingEffort';
+import { extractInlineThinkTags, stripInlineThinkTags } from '../utils/inlineThinkTags';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
@@ -2777,7 +2778,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   // translationConfig / mcdMiniSnap 是 chat-app 会话级 UI 状态，主动消息触发时
                   // 不存在；保持 undefined 即可，与"用户当时根本没在 chat 界面"的语义一致
                   htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
-                  thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
+                  thinkingChain: {
+                    enabled: !!(char as any).showThinkingChain,
+                    customPrompt: (char as any).thinkingChainCustomPrompt,
+                    mode: (char as any).thinkingChainPromptMode,
+                    placement: (char as any).thinkingChainPromptPlacement,
+                  },
                   visionApiConfig: currentApiConfig.visionApi,
               });
               const systemPrompt = payload.systemPrompt;
@@ -2821,21 +2827,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               let pendingThinkingChain: string | null = null;
               if (payload.flags.thinkingActive) {
                   const lastReasoning = (data?.choices?.[0]?.message?.reasoning_content || '').trim();
-                  const thinkBlocks: string[] = [];
-                  const thinkPat = /<(think|thinking|thought)>([\s\S]*?)<\/\1>/gi;
-                  let tm: RegExpExecArray | null;
-                  while ((tm = thinkPat.exec(aiContent)) !== null) {
-                      const t = tm[2].trim();
-                      if (t) thinkBlocks.push(t);
-                  }
-                  if (!/<\/(?:think|thinking|thought)>/i.test(aiContent)) {
-                      const openOnly = aiContent.match(/<(?:think|thinking|thought)>([\s\S]*$)/i);
-                      if (openOnly && openOnly[1].trim()) thinkBlocks.push(openOnly[1].trim());
-                  }
-                  const chain = [lastReasoning, ...thinkBlocks].filter(s => !!s).join('\n\n').trim();
+                  const inlineThink = extractInlineThinkTags(aiContent);
+                  const chain = [lastReasoning, inlineThink].filter(s => !!s).join('\n\n').trim();
                   if (chain) pendingThinkingChain = chain;
               }
-              aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '');
+              aiContent = stripInlineThinkTags(aiContent);
               aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
               aiContent = aiContent.replace(/^[\w一-龥]+:\s*/, '');
               aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();

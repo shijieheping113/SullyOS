@@ -42,6 +42,7 @@ import { extractPublishedNoteId, ownedPostToNote } from './xhsFreeRoamOwnership'
 import { selectOwnedPostsForReference } from './xhsOwnedPostReference';
 import { safeFetchJson } from './safeApi';
 import { extractHtmlBlocks } from './htmlPrompt';
+import { extractInlineThinkTags, stripInlineThinkTags } from './inlineThinkTags';
 import {
     AgenticToolCtx,
     resolveXhsConfig,
@@ -96,9 +97,8 @@ export function buildReplySnapshotContent(msg: { type?: string; content: string;
 /** 第一遍粗洗 — 剥 <think> / 时间戳 / 历史里漏出的 [聊天]/[通话]/[约会] / 表情包反向 tag */
 const normalizeAiContent = (raw: string): string => {
     let cleaned = normalizeAssistantActionFormatting(raw || '');
-    // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>
-    cleaned = cleaned.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
-    cleaned = cleaned.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');
+    // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>（最外层）
+    cleaned = stripInlineThinkTags(cleaned);
     cleaned = cleaned.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
     cleaned = cleaned.replace(/^[\w一-龥]+:\s*/, '');
     // Strip source tags leaked from history context, including model-mutated forms such as [聊chat].
@@ -826,18 +826,8 @@ export async function applyAssistantPostProcessing(
             || dataObj?.choices?.[0]?.message?.reasoning_content
             || ''
         ).trim();
-        const thinkBlocks: string[] = [];
-        const thinkPat = /<(think|thinking|thought)>([\s\S]*?)<\/\1>/gi;
-        let tm: RegExpExecArray | null;
-        while ((tm = thinkPat.exec(lastRaw)) !== null) {
-            const t = tm[2].trim();
-            if (t) thinkBlocks.push(t);
-        }
-        if (!/<\/(?:think|thinking|thought)>/i.test(lastRaw)) {
-            const openOnly = lastRaw.match(/<(?:think|thinking|thought)>([\s\S]*$)/i);
-            if (openOnly && openOnly[1].trim()) thinkBlocks.push(openOnly[1].trim());
-        }
-        const chain = [lastReasoning, ...thinkBlocks].filter(s => !!s).join('\n\n').trim();
+        const inlineThink = extractInlineThinkTags(lastRaw);
+        const chain = [lastReasoning, inlineThink].filter(s => !!s).join('\n\n').trim();
         return chain || null;
     };
 

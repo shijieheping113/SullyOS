@@ -5,11 +5,21 @@ import {
     normalizeThinkingChainEffort,
     type ThinkingChainEffort,
 } from '../../utils/thinkingEffort';
+import {
+    normalizeThinkingChainPromptMode,
+    normalizeThinkingChainPromptPlacement,
+    type ThinkingChainPromptMode,
+    type ThinkingChainPromptPlacement,
+} from '../../utils/thinkingChainPrompt';
 
 interface ThinkingChainSettingsValue {
     enabled: boolean;
     /** 思考强度；未写按 medium */
     effort?: ThinkingChainEffort;
+    /** 提示词模式；未写按 default */
+    promptMode?: ThinkingChainPromptMode;
+    /** 自定义规则位置；未写按 front。选回 front 即拆掉靠后。 */
+    promptPlacement?: ThinkingChainPromptPlacement;
     styleId: ThinkingChainStyleId;
     customColors: { bg: string; accent: string; text: string };
     customPrompt: string;
@@ -30,6 +40,10 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
     if (!isOpen) return null;
 
     const commitPrompt = () => onChange({ customPrompt: draftPrompt });
+    const promptMode = normalizeThinkingChainPromptMode(value.promptMode);
+    const isCustom = promptMode === 'custom';
+    const promptPlacement = normalizeThinkingChainPromptPlacement(value.promptPlacement);
+    const isBack = promptPlacement === 'back';
 
     return (
         <div
@@ -45,7 +59,7 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                     <div className="flex items-center justify-between">
                         <div>
                             <h2 className="text-base font-bold text-slate-800">心象 · 设置</h2>
-                            <p className="text-[11px] text-slate-400 mt-0.5">显示与追加提示词；卡片风格在「个性装扮 → 心象」调整</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5">显示、强度与思考提示词；卡片风格在「个性装扮 → 心象」调整</p>
                         </div>
                         <button
                             onClick={() => { commitPrompt(); onClose(); }}
@@ -67,7 +81,10 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                             正因如此——**它的本质决定了它不会像角色台词那样鲜活**，更像看一个演员在化妆间的喃喃自语，而不是舞台上的台词。这个功能本来就是给"喜欢看大模型思维链"的用户准备的彩蛋，**不一定适合每个人**。
                         </p>
                         <p className="mt-2">
-                            还有一点同样由这个本质决定:思维链**不进入上下文**,也**不会成为角色真实回复的一部分**——它只反映当前模型这一轮的思考瞬间。所以**下一轮,角色不会记得自己上一轮在想什么**,ta 只会基于真正发出去的那段回复(以及对话历史)往下走。
+                            还有一点同样由这个本质决定:思维链**不进入下一轮上下文**——下一轮角色不会记得上一轮心象里写了什么，只会基于说出口的回复往下走。
+                        </p>
+                        <p className="mt-2">
+                            <b>默认心象</b>偏展示：内置中文第一人称碎语，主要改思考长什么样。<b>自定义思考</b>会替换那套内置规则，用你写的步骤塑造**本轮**思考，从而影响本轮回复；听话程度仍看模型与渠道，不是 100% 铁律。
                         </p>
                         <p className="mt-2">
                             如果你看到思考链觉得跳戏 / 影响沉浸感 / 觉得太"AI"——直接关掉就好，不会有任何损失，角色回复本身完全不受影响。
@@ -84,11 +101,11 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                         <div className="mt-2.5 pt-2.5 border-t border-amber-200/60">
                             <div className="font-bold text-amber-700 mb-1 text-[11.5px]">思考链一直是英文怎么办？</div>
                             <p>
-                                这通常**不是模型本身的问题**——同一个模型走官方渠道（Anthropic / OpenAI / 智谱直连等）能正常保持中文，是中转 API 把 system prompt 截短或改写造成的。可以试：
+                                默认模式下这通常**不是模型本身的问题**——中转截短 system 时更常见。可以试：
                             </p>
                             <ul className="list-disc pl-4 space-y-0.5 mt-1">
-                                <li>下面「追加提示词」里再加一条肘击：「thinking 必须中文，禁止英文」</li>
-                                <li>直接在聊天里跟角色说一句「用中文想」</li>
+                                <li>默认模式的「追加」里再加：「thinking 必须中文，禁止英文」</li>
+                                <li>或改用「自定义思考」，自己写语言规则</li>
                                 <li>换一个跑得动官克的渠道</li>
                             </ul>
                         </div>
@@ -111,7 +128,7 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                     <section className={value.enabled ? '' : 'opacity-45 pointer-events-none'}>
                         <h3 className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-2">思考强度</h3>
                         <p className="text-[10.5px] text-slate-400 mb-2.5 leading-relaxed">
-                            想多久／多用力。默认＝不指定强度，交给模型；中＝以前一直在用的。额度上限统一，只改强度档。
+                            想多久／多用力。默认＝不指定强度，交给模型；中＝以前一直在用的。自定义长规则时建议别开太轻。
                         </p>
                         <div className="flex flex-wrap gap-2">
                             {THINKING_EFFORT_OPTIONS.map((opt) => {
@@ -134,20 +151,70 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                         </div>
                     </section>
 
-                    {/* 3. 追加提示词 */}
-                    <section>
-                        <h3 className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-2">追加提示词</h3>
-                        <p className="text-[10.5px] text-slate-400 mb-2 leading-relaxed">
-                            原生提示词（让模型用角色第一人称、中文意识流思考）保持不变；这里写的内容**追加在最后**作为「用户对内心独白的额外要求」。
-                        </p>
+                    {/* 3. 提示词模式 */}
+                    <section className={value.enabled ? '' : 'opacity-45 pointer-events-none'}>
+                        <h3 className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-2">思考提示词</h3>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            <button
+                                type="button"
+                                onClick={() => onChange({ promptMode: 'default' })}
+                                className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${!isCustom ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                            >
+                                默认心象
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onChange({ promptMode: 'custom' })}
+                                className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${isCustom ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                            >
+                                自定义思考
+                            </button>
+                        </div>
+                        {isCustom ? (
+                            <p className="text-[10.5px] text-slate-400 mb-2 leading-relaxed">
+                                替换内置心象规则。系统只加很短的一句：思考按你下面的规则写，回复里不要再抄一遍。可用 <code className="text-[10px]">{'{{user}}'}</code> / <code className="text-[10px]">{'{{char}}'}</code>。留空会退回默认心象。
+                            </p>
+                        ) : (
+                            <p className="text-[10.5px] text-slate-400 mb-2 leading-relaxed">
+                                原生提示词（角色第一人称、跟用户消息同语言的意识流）保持不变；这里写的内容**追加在最后**作为额外要求。
+                            </p>
+                        )}
                         <textarea
                             value={draftPrompt}
                             onChange={e => setDraftPrompt(e.target.value)}
                             onBlur={commitPrompt}
-                            placeholder="比如：思考时偶尔切到日语 / 多写一些感官细节 / 想到用户时用昵称…"
-                            className="w-full h-28 bg-slate-50 rounded-xl p-3 text-[12px] resize-none border border-slate-200 focus:outline-none focus:border-indigo-300"
+                            placeholder={isCustom
+                                ? '粘贴完整思考规则，例如 <thinking_rules> 与优先级说明…'
+                                : '比如：思考时偶尔切到日语 / 多写一些感官细节 / 想到用户时用昵称…'}
+                            className={`w-full bg-slate-50 rounded-xl p-3 text-[12px] resize-none border border-slate-200 focus:outline-none focus:border-indigo-300 ${isCustom ? 'h-48' : 'h-28'}`}
                         />
-                        <div className="text-[9.5px] text-slate-400 mt-1">留空 = 仅使用原生提示词。</div>
+                        <div className="text-[9.5px] text-slate-400 mt-1">
+                            {isCustom ? '自定义为空 = 自动用回默认心象。' : '留空 = 仅使用原生提示词。'}
+                        </div>
+                        {isCustom && (
+                            <div className="mt-3">
+                                <h4 className="text-[10.5px] font-bold text-slate-400 mb-1.5">规则放哪</h4>
+                                <div className="flex flex-wrap gap-2 mb-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => onChange({ promptPlacement: 'front' })}
+                                        className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${!isBack ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                                    >
+                                        靠前
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => onChange({ promptPlacement: 'back' })}
+                                        className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${isBack ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
+                                    >
+                                        靠后
+                                    </button>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-relaxed">
+                                    靠前＝跟角色说明捆在一起（原来那样）。靠后＝临时状态之后、「回到你自己」之前，不抢角色锚点。选回「靠前」或改回「默认心象」即拆掉靠后。
+                                </p>
+                            </div>
+                        )}
                     </section>
                 </div>
             </div>

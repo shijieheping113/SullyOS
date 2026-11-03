@@ -6167,6 +6167,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     value={{
                         enabled: !!(char as any).showThinkingChain,
                         effort: (char as any).thinkingChainEffort,
+                        promptMode: (char as any).thinkingChainPromptMode,
+                        promptPlacement: (char as any).thinkingChainPromptPlacement,
                         styleId: ((char as any).thinkingChainStyle as any) || 'echo',
                         customColors: {
                             bg: (char as any).thinkingChainCustomColors?.bg || '#1f2937',
@@ -6180,6 +6182,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         const patch: any = {};
                         if (next.enabled !== undefined) patch.showThinkingChain = next.enabled;
                         if (next.effort !== undefined) patch.thinkingChainEffort = next.effort;
+                        if (next.promptMode !== undefined) patch.thinkingChainPromptMode = next.promptMode;
+                        if (next.promptPlacement !== undefined) patch.thinkingChainPromptPlacement = next.promptPlacement;
                         if (next.styleId !== undefined) patch.thinkingChainStyle = next.styleId;
                         if (next.customColors !== undefined) patch.thinkingChainCustomColors = next.customColors;
                         if (next.customPrompt !== undefined) patch.thinkingChainCustomPrompt = next.customPrompt;

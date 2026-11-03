@@ -26,7 +26,10 @@ import { renderConversationEngagementGuidance } from './memoryPalace/conversatio
 import type { ConversationEngagementAnalysis } from './memoryPalace/conversationEngagement';
 import type { DeepEngagementAnalysis } from './memoryPalace/deepEngagement';
 import { buildHtmlPrompt } from './htmlPrompt';
-import { buildThinkingChainPrompt } from './thinkingChainPrompt';
+import {
+    buildThinkingChainSystemSection,
+    shouldPlaceThinkingPromptAtBack,
+} from './thinkingChainPrompt';
 import { buildMcdMiniAppContextBlock } from './mcdToolBridge';
 import type { McdMiniAppSnapshot } from './mcdToolBridge';
 import { buildLuckinMiniAppContextBlock, buildLuckinChatSystemBlock } from './luckinToolBridge';
@@ -104,7 +107,14 @@ export interface BuildChatPayloadInput {
     // 模式开关
     translationConfig?: TranslationConfig | { enabled: boolean; sourceLang: string; targetLang: string };
     htmlMode?: { enabled: boolean; customPrompt?: string };
-    thinkingChain?: { enabled: boolean; customPrompt?: string };
+    thinkingChain?: {
+        enabled: boolean;
+        customPrompt?: string;
+        /** default=内置心象；custom=薄外壳+全文规则。未写按 default。 */
+        mode?: 'default' | 'custom';
+        /** front=稳定 system；back=临时状态后、角色锚点前。未写按 front。 */
+        placement?: 'front' | 'back';
+    };
     /** 可选识图 API：开启后先把图片持久化转写为 [图片：描述]，主模型只接收文字。 */
     visionApiConfig?: VisionApiConfig;
     mcdMiniSnap?: McdMiniAppSnapshot;
@@ -451,14 +461,24 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 6. 思考链提示词 ───────────────────────────────────
+    // 默认／靠前：拼进稳定 system。自定义+靠后：等临时状态齐了，插在「回到你自己」前。
     const thinkingActive = !input.appPrompt && !!thinkingChain?.enabled;
-    if (thinkingActive) {
-        const userName = (userProfile?.name && userProfile.name.trim()) || '用户';
-        systemPrompt += `\n\n${buildThinkingChainPrompt(char.name, userName)}`;
-        const extra = (thinkingChain?.customPrompt || '').trim();
-        if (extra) {
-            systemPrompt += `\n\n## 用户对内心独白的额外要求\n${extra}`;
-        }
+    const userNameForThinking = (userProfile?.name && userProfile.name.trim()) || '用户';
+    const thinkingSection = thinkingActive
+        ? buildThinkingChainSystemSection({
+            charName: char.name,
+            userName: userNameForThinking,
+            mode: thinkingChain?.mode,
+            customPrompt: thinkingChain?.customPrompt,
+        })
+        : '';
+    const thinkingAtBack = thinkingActive && shouldPlaceThinkingPromptAtBack({
+        mode: thinkingChain?.mode,
+        customPrompt: thinkingChain?.customPrompt,
+        placement: thinkingChain?.placement,
+    });
+    if (thinkingActive && !thinkingAtBack) {
+        systemPrompt += `\n\n${thinkingSection}`;
     }
 
     const messagesWithWorldbookDepth = parts.history;
@@ -542,6 +562,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 
     // 「关于对方的表达」+「回到你自己」必须是易变尾段的最后内容：修复旧版把双语/HTML/
     // 思考链/点单块拼在钢印之后、模型开口前最后读到的是格式说明书的问题。
+    // 自定义思考「靠后」：插在临时状态之后、钢印之前，不抢角色锚点。
+    if (thinkingAtBack && thinkingSection) {
+        volatileTail += `\n\n${thinkingSection}`;
+    }
     if (input.appPrompt?.scene) volatileTail += input.appPrompt.scene;
     volatileTail += parts.recencyTail;
     if (sarModuleBlock) volatileTail += sarModuleBlock;

@@ -3314,7 +3314,19 @@ export interface CharacterProfile {
     accent?: string;   // 边框/标题点缀
     text?: string;     // 正文颜色
   };
-  /** 用户追加的思考提示词（不替换原生，只在最后追加一段「用户额外要求」） */
+  /**
+   * 心象提示词模式。
+   * - 未写 / default：内置中文第一人称心象；thinkingChainCustomPrompt 只追加
+   * - custom：不注入内置心象；薄外壳 + thinkingChainCustomPrompt 全文（可覆盖语言/人称）
+   */
+  thinkingChainPromptMode?: 'default' | 'custom';
+  /**
+   * 自定义思考插入位置（仅 custom 且正文非空时生效）。
+   * - 未写 / front：跟现在一样，在稳定 system 里
+   * - back：临时状态之后、「回到你自己」之前；不抢角色锚点
+   */
+  thinkingChainPromptPlacement?: 'front' | 'back';
+  /** 追加（default 模式）或全文自定义思考规则（custom 模式） */
   thinkingChainCustomPrompt?: string;
   /**
    * 心象卡片的自定义 CSS（叠加在任意风格之上，机制同气泡工坊 customCss）。
