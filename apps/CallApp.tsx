@@ -10,7 +10,6 @@ import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, getMiniMaxParamVersion, prepareMiniMaxSpeechText, VALID_EMOTIONS, stripEmotionTags, VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
-import { replaceVoiceTagSpeech } from '../utils/chatVoiceTagFormat';
 import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
 import { canSynthesizeSpeech, cleanTextForTtsProvider, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
@@ -40,9 +39,11 @@ import CallUpdateAnnouncement from '../components/call/CallUpdateAnnouncement';
 import { deleteAvatarModel, inspectAvatarFile, saveAvatarModel } from '../utils/avatarModelStore';
 import { getLive2DAIActions, prewarmLive2DModelSource, saveLive2DModelFromFiles, saveLive2DModelFromZip, upgradeLive2DAutoPermissions, type Live2DAvatarConfig } from '../utils/live2dModelStore';
 import { preloadLive2DRuntime } from '../utils/live2dCore';
-import { buildThinkingChainPrompt } from '../utils/thinkingChainPrompt';
+import { buildThinkingChainSystemSection } from '../utils/thinkingChainPrompt';
+import { applyThinkingParams } from '../utils/thinkingEffort';
 import { parseCallAssistantMessage, stripCallTextFormatting, type ParsedCallReply } from '../utils/callReplyFormat';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
+import { rewriteCallBilingualText, wrapSpokenWithOriginalChinese, inferChatVoiceEmotionFromSpoken } from '../utils/chatVoiceTagFormat';
 import {
   buildAvatarPerformancePrompt,
   DEFAULT_AVATAR_PERFORMANCE,
@@ -347,7 +348,16 @@ const extractVoiceTag = (text: string): { display: string; speech: string; voice
   const rawEmotion = (match[1] || '').trim().toLowerCase();
   const emotion = VALID_EMOTIONS.has(rawEmotion) ? rawEmotion : undefined;
   const voiceText = match[2].trim();
-  const display = text.replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '').trim();
+  // 标签外正文：有 <字幕> 时只取内文给界面看，不要把「<字幕>」字面量漏出去。
+  let outside = text.replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '').trim();
+  const subBlocks = [...outside.matchAll(/<字幕>([\s\S]*?)<\/字幕>/g)].map(m => (m[1] || '').trim()).filter(Boolean);
+  if (subBlocks.length) {
+    const rest = outside.replace(/<字幕>[\s\S]*?<\/字幕>/g, '').replace(/<\/?字幕>/g, '').trim();
+    outside = [rest, ...subBlocks].filter(Boolean).join('\n').trim();
+  } else {
+    outside = outside.replace(/<\/?字幕>/g, '').trim();
+  }
+  const display = outside;
   return { display, speech: voiceText, voiceText, emotion };
 };
 /** 开场白的输入种子。开场白生成 与「换个说法」共用同一份，避免两处写歪、也避免
@@ -705,6 +715,8 @@ const CallApp: React.FC = () => {
   const [translateVisible, setTranslateVisible] = useState(true);
   const [editingBubble, setEditingBubble] = useState<CallBubble | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [editingChinese, setEditingChinese] = useState('');
+  const [editingSpeech, setEditingSpeech] = useState('');
   const [editAsReread, setEditAsReread] = useState(false);
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
   const [generatingAudioBubbleId, setGeneratingAudioBubbleId] = useState<string | null>(null);
@@ -2542,12 +2554,14 @@ ${sentencePlan}`;
         : '';
       const messages = await buildHistoryMessages(input, skipDbId, touchContext, reroll);
       const thinkingPrompt = selectedChar?.showThinkingChain
-        ? [
-            buildThinkingChainPrompt(selectedChar.name, userName),
-            selectedChar.thinkingChainCustomPrompt?.trim()
-              ? `【用户追加的 THINKING 要求】\n${selectedChar.thinkingChainCustomPrompt.trim()}`
-              : '',
-          ].filter(Boolean).join('\n\n')
+        ? buildThinkingChainSystemSection({
+            charName: selectedChar.name,
+            userName,
+            mode: selectedChar.thinkingChainPromptMode,
+            appendPrompt: selectedChar.thinkingChainAppendPrompt,
+            customPrompt: selectedChar.thinkingChainCustomPrompt,
+            fieldsSplit: !!selectedChar.thinkingChainPromptFieldsSplit,
+          })
         : '';
       // 模型专属动作白名单：Live2D 用用户授权的 actions；VRM 用加载时枚举出的
       // 自定义表情（星星眼/黑脸这类，预设之外的全部可用）。
@@ -2597,11 +2611,8 @@ ${sentencePlan}`;
         nextSystemPrompt: string,
         maxRetries: number,
         purpose: string,
-      ) => safeFetchJson(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: textAbort.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey || 'sk-none'}` },
-        body: JSON.stringify({
+      ) => {
+        const reqBody: Record<string, any> = {
           model: apiConfig.model,
           messages: [{ role: 'system', content: nextSystemPrompt }, ...nextMessages],
           temperature: 0.85,
@@ -2609,7 +2620,16 @@ ${sentencePlan}`;
           // 上游打回，包成 502 / bad_response_status_code。与私聊 (useChatAI.ts) 对齐。
           max_tokens: 8000,
           stream: liveSpeech ? true : false,
-        }),
+        };
+        // 与聊天同源：开心跳时显式请求思考通道，减轻自定义规则写进正文
+        if (selectedChar?.showThinkingChain) {
+          applyThinkingParams(reqBody, selectedChar.thinkingChainEffort);
+        }
+        return safeFetchJson(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        signal: textAbort.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey || 'sk-none'}` },
+        body: JSON.stringify(reqBody),
       }, maxRetries, 0, { appName: '电话', charId: selectedChar?.id, charName: selectedChar?.name, purpose }, sentenceStream ? {
         onDelta: (_delta, fullText) => {
           receivedTextDelta = true;
@@ -2627,6 +2647,7 @@ ${sentencePlan}`;
           catch (error) { speechError = error as Error; streamingVoice.stop(); }
         },
       } : undefined);
+      };
       let chatData: any;
       try {
         // safeFetchJson never retries billable chat completions automatically.
@@ -3381,6 +3402,11 @@ ${sentencePlan}`;
           ...(pendingUserVoiceUrlRef.current ? { audioUrl: pendingUserVoiceUrlRef.current } : {}),
         };
     pendingUserVoiceUrlRef.current = null; // 挂上气泡即清：重试/编辑沿用气泡上已有的 audioUrl
+    // 先标 busy，再清草稿/挂气泡：否则 await 存库期间会出现「草稿空了、还没 connecting」
+    // 的空档，界面会闪一下「上一句话还没得到回复」。
+    setCallState('connecting');
+    setTraceId('');
+    setErrorMessage('');
     if (isRetry && newSnapshotRef) {
       setBubbles(previous => previous.map(bubble => bubble.id === userBubble.id ? userBubble : bubble));
     } else if (!isRetry) {
@@ -3451,9 +3477,6 @@ ${sentencePlan}`;
       }
     }
     if (!callStartedAt) setCallStartedAt(Date.now());
-    setCallState('connecting');
-    setTraceId('');
-    setErrorMessage('');
     let assistantText = '';
     let assistantThinkingChain: string | undefined;
     let turnSpeechEmotion: string | undefined;
@@ -3585,6 +3608,7 @@ ${sentencePlan}`;
   };
   const sendingBusy = ['connecting', 'thinking'].includes(callState);
   const pendingCallRetryText = getPendingReplyText(bubbles);
+  const showPendingRetryHint = !!pendingCallRetryText && !draftInput.trim() && !isListening && !sendingBusy;
   const displayCallState: CallState = isAudioPlaying ? 'speaking' : callState;
   useEffect(() => {
     loadCallRecords(selectedCharId);
@@ -3624,49 +3648,74 @@ ${sentencePlan}`;
     setEditAsReread(!!reread);
     if (reread) {
       const parsed = extractVoiceTag(bubble.text);
-      setEditingText((parsed.voiceText && parsed.voiceText.trim()) || bubble.text);
+      const speech = (parsed.voiceText && parsed.voiceText.trim()) || bubble.text;
+      const subtitle = bubble.text.match(/<字幕>([\s\S]*?)<\/字幕>/)?.[1]?.trim();
+      const chinese = subtitle
+        || (parsed.display || '').replace(/<\/?字幕>/g, '').trim();
+      setEditingSpeech(speech);
+      setEditingChinese(chinese);
+      setEditingText('');
     } else {
       setEditingText(bubble.text);
+      setEditingSpeech('');
+      setEditingChinese('');
     }
   };
   const saveEditedBubble = async () => {
     if (!editingBubble) return;
-    const next = editingText.trim();
-    if (!next) return addToast('内容不能为空', 'error');
     const target = editingBubble;
     const reread = editAsReread && target.role === 'assistant';
-    let stored = next;
+    let stored = '';
+    let speechChanged = false;
     if (reread) {
-      // 只替换 <语音> 标签里的那半，标签外的原文（中文字幕/对照）照旧保留。
-      // ⚠️ 判据必须是「有没有成对的标签」，**不能**是「替换完和原文一不一样」：
-      //    用户点重读、一个字都没改时，两者完全相同——旧写法会跳过写回，
-      //    于是把「纯口白」当成新内容写进气泡，标签外的中文字幕当场被覆盖掉。
-      const swapped = replaceVoiceTagSpeech(target.text, next);
-      if (swapped !== null) stored = swapped;
+      const speech = editingSpeech.trim();
+      const chinese = editingChinese.trim();
+      if (!speech) return addToast('朗读原文不能为空', 'error');
+      const previousSpeech = (extractVoiceTag(target.text).voiceText || target.text).trim();
+      speechChanged = speech !== previousSpeech;
+      const rewritten = rewriteCallBilingualText(target.text, speech, chinese);
+      if (rewritten !== null) stored = rewritten;
+      else if (chinese) stored = wrapSpokenWithOriginalChinese(speech, chinese, inferChatVoiceEmotionFromSpoken(speech));
+      else stored = speech;
+    } else {
+      const next = editingText.trim();
+      if (!next) return addToast('内容不能为空', 'error');
+      stored = next;
     }
-    setBubbles(prev => prev.map(b => b.id === target.id ? { ...b, text: stored, ...(reread ? { audioUrl: undefined } : {}) } : b));
+    setBubbles(prev => prev.map(b => b.id === target.id ? {
+      ...b,
+      text: stored,
+      ...(reread && speechChanged ? { audioUrl: undefined } : {}),
+    } : b));
     if (target.dbId) await DB.updateMessage(target.dbId, stored);
     setEditingBubble(null);
     setEditingText('');
+    setEditingSpeech('');
+    setEditingChinese('');
     setEditAsReread(false);
     if (!reread) {
       addToast('已更新发言', 'success');
       trackEvent('修改自己的通话发言');
       return;
     }
+    if (!speechChanged) {
+      addToast('已更新对照', 'success');
+      trackEvent('编辑通话中文对照');
+      return;
+    }
     stopPlayback();
     addToast('正在按新稿合成…', 'info');
     trackEvent('编辑后重读通话语音');
     const rereadSeq = nextAudioSeq();
+    const speechForMs = editingSpeech.trim();
     const url = await ensureCallBubbleAudio({ ...target, text: stored, audioUrl: undefined }, true, rereadSeq);
     if (!url) {
       addToast('合成失败，字已改好', 'info');
       return;
     }
     if (rereadSeq !== audioSeqRef.current) return;   // 期间被静音/挂断 ⇒ 不播
-    // 时长估算按「念出来的那半」算（合成用的也是 next）：拿整条 stored 算会把标签外
-    // 的中文字幕一起数进去，估出来的时长偏长 → 进度圈和跟读节奏都被拖慢。
-    playAudio(url, target.performanceTimeline, estimateSpeechMs(next), true, undefined, rereadSeq);
+    // 时长估算按「念出来的那半」算：拿整条 stored 会把中文字幕一起数进去。
+    playAudio(url, target.performanceTimeline, estimateSpeechMs(speechForMs), true, undefined, rereadSeq);
     setSpeakingTrack({ bubbleId: target.id, p: 0, t: 0 });
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
@@ -4512,7 +4561,7 @@ ${sentencePlan}`;
           draftInput={draftInput}
           sendingBusy={sendingBusy}
           placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
-          pendingRetry={!!pendingCallRetryText && !draftInput.trim() && !isListening && !sendingBusy}
+          pendingRetry={showPendingRetryHint}
           errorMessage={errorMessage}
           generatingId={generatingAudioBubbleId}
           rerollingId={rerollingBubbleId}
@@ -4613,8 +4662,21 @@ ${sentencePlan}`;
         {editingBubble && (
           <div className="absolute inset-0 bg-black/60 flex items-end z-50">
             <div className="w-full border-t border-white/10 p-5 space-y-3 bg-[#2c2c2e]">
-              <div className="text-sm text-white/70">{editAsReread ? '编辑朗读原文（不是中文译文）' : '改一下刚才说的话'}</div>
-              <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus style={{ colorScheme: 'dark' }} />
+              <div className="text-sm text-white/70">{editAsReread ? '编辑对照与朗读原文' : '改一下刚才说的话'}</div>
+              {editAsReread ? (
+                <>
+                  <div>
+                    <div className="text-[10px] text-white/45 mb-1 px-0.5">中文对照</div>
+                    <textarea value={editingChinese} onChange={(e) => setEditingChinese(e.target.value)} className="w-full h-20 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="屏幕上看到的中文……" autoFocus style={{ colorScheme: 'dark' }} />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-white/45 mb-1 px-0.5">朗读原文</div>
+                    <textarea value={editingSpeech} onChange={(e) => setEditingSpeech(e.target.value)} className="w-full h-20 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="真正念出来的那半……" style={{ colorScheme: 'dark' }} />
+                  </div>
+                </>
+              ) : (
+                <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus style={{ colorScheme: 'dark' }} />
+              )}
               <div className="flex gap-2">
                 <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70">算了</button>
                 <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white" style={{ backgroundColor: accentColor }}>就这样</button>
@@ -5046,6 +5108,7 @@ ${sentencePlan}`;
                   {generatingAudioBubbleId === bubble.id ? '生成语音…' : bubble.audioUrl ? '重播语音' : '播放语音'}
                 </button>
                 {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">下载</button>}
+                <button onClick={() => startEditBubble(bubble, true)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">编辑后重读</button>
                 {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>}
               </div>
             )}
@@ -5127,7 +5190,7 @@ ${sentencePlan}`;
               </>
             )}
           </div>
-          {!sendingBusy && pendingCallRetryText && !draftInput.trim() && !isListening && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
+          {showPendingRetryHint && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
         </div>
       )}
       <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-2 pt-0.5' : 'px-7 pb-2 pt-1.5'}`} data-testid={callMode === 'video' ? 'video-call-compact-controls' : undefined}>
@@ -5289,8 +5352,21 @@ ${sentencePlan}`;
       {editingBubble && (
         <div className="absolute inset-0 bg-black/60 flex items-end z-50">
           <div className={`w-full border-t border-white/10 p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`}>
-            <div className="text-sm text-white/70">改一下刚才说的话</div>
-            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus style={{ colorScheme: 'dark' }} />
+            <div className="text-sm text-white/70">{editAsReread ? '编辑对照与朗读原文' : '改一下刚才说的话'}</div>
+            {editAsReread ? (
+              <>
+                <div>
+                  <div className="text-[10px] text-white/45 mb-1 px-0.5">中文对照</div>
+                  <textarea value={editingChinese} onChange={(e) => setEditingChinese(e.target.value)} className="w-full h-20 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="屏幕上看到的中文……" autoFocus style={{ colorScheme: 'dark' }} />
+                </div>
+                <div>
+                  <div className="text-[10px] text-white/45 mb-1 px-0.5">朗读原文</div>
+                  <textarea value={editingSpeech} onChange={(e) => setEditingSpeech(e.target.value)} className="w-full h-20 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="真正念出来的那半……" style={{ colorScheme: 'dark' }} />
+                </div>
+              </>
+            ) : (
+              <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm text-white caret-white outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus style={{ colorScheme: 'dark' }} />
+            )}
             <div className="flex gap-2">
               <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70 transition active:scale-[0.97]">算了</button>
               <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white transition active:scale-[0.97]" style={{ backgroundColor: accentColor }}>就这样</button>

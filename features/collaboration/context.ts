@@ -33,15 +33,19 @@ format: docx
 const collaborationThinkingPrompt = (char: CharacterProfile, user: UserProfile): string => {
   if (!char.showThinkingChain) return '';
   const c = char as CharacterProfile & {
+    thinkingChainAppendPrompt?: string;
     thinkingChainCustomPrompt?: string;
     thinkingChainPromptMode?: 'default' | 'custom';
+    thinkingChainPromptFieldsSplit?: boolean;
   };
   // 协同这条旁路仍整段塞进 system；靠后位由主聊天 payload 管，这里只拼内容。
   return `\n\n${buildThinkingChainSystemSection({
     charName: char.name,
     userName: user.name,
     mode: c.thinkingChainPromptMode,
+    appendPrompt: c.thinkingChainAppendPrompt,
     customPrompt: c.thinkingChainCustomPrompt,
+    fieldsSplit: !!c.thinkingChainPromptFieldsSplit,
   })}`;
 };
 
@@ -221,7 +225,9 @@ export const buildLiveCollaborationChatContext = async ({
     htmlMode: { enabled: false },
     thinkingChain: {
       enabled: !!(char as CharacterProfile & { showThinkingChain?: boolean }).showThinkingChain,
+      appendPrompt: (char as CharacterProfile & { thinkingChainAppendPrompt?: string }).thinkingChainAppendPrompt,
       customPrompt: (char as CharacterProfile & { thinkingChainCustomPrompt?: string }).thinkingChainCustomPrompt,
+      fieldsSplit: !!(char as CharacterProfile & { thinkingChainPromptFieldsSplit?: boolean }).thinkingChainPromptFieldsSplit,
       mode: (char as CharacterProfile & { thinkingChainPromptMode?: 'default' | 'custom' }).thinkingChainPromptMode,
       placement: (char as CharacterProfile & { thinkingChainPromptPlacement?: 'front' | 'back' }).thinkingChainPromptPlacement,
     },

@@ -126,6 +126,7 @@ import MemoryContextSelfCheck from '../components/chat/MemoryContextSelfCheck';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
+import { migrateThinkingChainPromptFields } from '../utils/thinkingChainPrompt';
 import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
 import { useChatAI } from '../hooks/useChatAI';
 import { MIAOMIAO_RECORD_EVENT, useMiaomiaoBox } from '../context/MiaomiaoBoxContext';
@@ -491,6 +492,22 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    // 打开心象设置时：把旧共享框一次性拆成「追加 / 全文」两个字段
+    useEffect(() => {
+        if (!showThinkingChainModal || !char) return;
+        const migrated = migrateThinkingChainPromptFields({
+            mode: (char as any).thinkingChainPromptMode,
+            appendPrompt: (char as any).thinkingChainAppendPrompt,
+            customPrompt: (char as any).thinkingChainCustomPrompt,
+            fieldsSplit: !!(char as any).thinkingChainPromptFieldsSplit,
+        });
+        if (!migrated.changed) return;
+        updateCharacter(char.id, {
+            thinkingChainAppendPrompt: migrated.thinkingChainAppendPrompt,
+            thinkingChainCustomPrompt: migrated.thinkingChainCustomPrompt,
+            thinkingChainPromptFieldsSplit: true,
+        } as any);
+    }, [showThinkingChainModal, char?.id]);
     const [innerStateOpen, setInnerStateOpen] = useState(false);
     const [innerStateTick, setInnerStateTick] = useState(0);
     const innerStateText = useMemo(
@@ -6214,6 +6231,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             accent: (char as any).thinkingChainCustomColors?.accent || '#fbbf24',
                             text: (char as any).thinkingChainCustomColors?.text || '#f1f5f9',
                         },
+                        appendPrompt: (char as any).thinkingChainAppendPrompt || '',
                         customPrompt: (char as any).thinkingChainCustomPrompt || '',
                         customCss: (char as any).thinkingChainCustomCss || '',
                     }}
@@ -6225,7 +6243,14 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         if (next.promptPlacement !== undefined) patch.thinkingChainPromptPlacement = next.promptPlacement;
                         if (next.styleId !== undefined) patch.thinkingChainStyle = next.styleId;
                         if (next.customColors !== undefined) patch.thinkingChainCustomColors = next.customColors;
-                        if (next.customPrompt !== undefined) patch.thinkingChainCustomPrompt = next.customPrompt;
+                        if (next.appendPrompt !== undefined) {
+                            patch.thinkingChainAppendPrompt = next.appendPrompt;
+                            patch.thinkingChainPromptFieldsSplit = true;
+                        }
+                        if (next.customPrompt !== undefined) {
+                            patch.thinkingChainCustomPrompt = next.customPrompt;
+                            patch.thinkingChainPromptFieldsSplit = true;
+                        }
                         if (next.customCss !== undefined) patch.thinkingChainCustomCss = next.customCss;
                         if (Object.keys(patch).length) updateCharacter(char.id, patch as any);
                     }}

@@ -27,17 +27,98 @@ export const normalizeThinkingChainPromptPlacement = (raw: unknown): ThinkingCha
   raw === 'back' ? 'back' : 'front';
 
 /**
+ * 按模式取出「用户写的那一份」提示词。
+ * - custom → 只用 customPrompt（全文）
+ * - default → 只用 appendPrompt（追加）；未分字段前若 append 空，可暂读 customPrompt（旧共享框）
+ */
+export function resolveThinkingChainUserPrompt(input: {
+  mode?: unknown;
+  appendPrompt?: string;
+  customPrompt?: string;
+  fieldsSplit?: boolean;
+}): string {
+  const mode = normalizeThinkingChainPromptMode(input.mode);
+  const append = String(input.appendPrompt || '').trim();
+  const custom = String(input.customPrompt || '').trim();
+  if (mode === 'custom') return custom;
+  if (append) return append;
+  // 旧数据尚未搬迁：默认模式的字还停在 customPrompt 里
+  if (!input.fieldsSplit && custom) return custom;
+  return '';
+}
+
+/**
+ * 一次性：把共享框时代的字归到当前模式该去的字段。
+ * - 默认：customPrompt → appendPrompt，并清空 customPrompt
+ * - 自定义：字留在 customPrompt；append 不动
+ */
+export function migrateThinkingChainPromptFields(input: {
+  mode?: unknown;
+  appendPrompt?: string;
+  customPrompt?: string;
+  fieldsSplit?: boolean;
+}): {
+  thinkingChainAppendPrompt: string;
+  thinkingChainCustomPrompt: string;
+  thinkingChainPromptFieldsSplit: true;
+  changed: boolean;
+} {
+  const append = String(input.appendPrompt || '');
+  const custom = String(input.customPrompt || '');
+  if (input.fieldsSplit) {
+    return {
+      thinkingChainAppendPrompt: append,
+      thinkingChainCustomPrompt: custom,
+      thinkingChainPromptFieldsSplit: true,
+      changed: false,
+    };
+  }
+  const mode = normalizeThinkingChainPromptMode(input.mode);
+  if (mode === 'custom') {
+    return {
+      thinkingChainAppendPrompt: append,
+      thinkingChainCustomPrompt: custom,
+      thinkingChainPromptFieldsSplit: true,
+      changed: true,
+    };
+  }
+  const appendTrim = append.trim();
+  const customTrim = custom.trim();
+  if (!appendTrim && customTrim) {
+    return {
+      thinkingChainAppendPrompt: custom,
+      thinkingChainCustomPrompt: '',
+      thinkingChainPromptFieldsSplit: true,
+      changed: true,
+    };
+  }
+  return {
+    thinkingChainAppendPrompt: append,
+    thinkingChainCustomPrompt: custom,
+    thinkingChainPromptFieldsSplit: true,
+    changed: true,
+  };
+}
+
+/**
  * 自定义全文是否走「靠后」位。
  * 仅 custom 且正文非空且 placement=back；否则一律走原来的靠前拼法。
  */
 export const shouldPlaceThinkingPromptAtBack = (input: {
   mode?: unknown;
+  appendPrompt?: string;
   customPrompt?: string;
+  fieldsSplit?: boolean;
   placement?: unknown;
 }): boolean => {
   if (normalizeThinkingChainPromptPlacement(input.placement) !== 'back') return false;
   if (normalizeThinkingChainPromptMode(input.mode) !== 'custom') return false;
-  return !!String(input.customPrompt || '').trim();
+  return !!resolveThinkingChainUserPrompt({
+    mode: 'custom',
+    appendPrompt: input.appendPrompt,
+    customPrompt: input.customPrompt,
+    fieldsSplit: true,
+  });
 };
 
 /**
@@ -71,20 +152,50 @@ export function buildCustomThinkingShell(charName: string, userName: string): st
 【用户思考规则】`;
 }
 
+/** 从角色对象抽出组装心象段要用的字段（各入口共用，避免漏传）。 */
+export function thinkingChainPayloadFromChar(char: {
+  showThinkingChain?: boolean;
+  thinkingChainPromptMode?: unknown;
+  thinkingChainPromptPlacement?: unknown;
+  thinkingChainAppendPrompt?: string;
+  thinkingChainCustomPrompt?: string;
+  thinkingChainPromptFieldsSplit?: boolean;
+}): {
+  enabled: boolean;
+  mode?: unknown;
+  placement?: unknown;
+  appendPrompt?: string;
+  customPrompt?: string;
+  fieldsSplit?: boolean;
+} {
+  return {
+    enabled: !!char.showThinkingChain,
+    mode: char.thinkingChainPromptMode,
+    placement: char.thinkingChainPromptPlacement,
+    appendPrompt: char.thinkingChainAppendPrompt,
+    customPrompt: char.thinkingChainCustomPrompt,
+    fieldsSplit: !!char.thinkingChainPromptFieldsSplit,
+  };
+}
+
 /**
  * 拼装注入 system 的思考段。
- * custom 且正文非空 → 外壳 + 宏展开后的用户规则；否则走默认心象（可追加）。
+ * custom 且全文非空 → 外壳 + 宏展开后的用户规则；否则走默认心象（可追加 append）。
  */
 export function buildThinkingChainSystemSection(input: {
   charName: string;
   userName: string;
   mode?: unknown;
+  /** 默认心象追加 */
+  appendPrompt?: string;
+  /** 自定义思考全文 */
   customPrompt?: string;
+  fieldsSplit?: boolean;
 }): string {
   const userName = (input.userName && String(input.userName).trim()) || '用户';
   const charName = String(input.charName || '角色');
-  const extra = String(input.customPrompt || '').trim();
   const mode = normalizeThinkingChainPromptMode(input.mode);
+  const extra = resolveThinkingChainUserPrompt(input);
 
   if (mode === 'custom' && extra) {
     const body = expandThinkingPromptMacros(extra, { userName, charName });

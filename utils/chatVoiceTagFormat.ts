@@ -60,6 +60,45 @@ export function replaceVoiceTagSpeech(text: string, speech: string): string | nu
     return src.replace(re, (_match, open: string, _inner: string, close: string) => open + speech + close);
 }
 
+/**
+ * 只替换第一个成对 `<字幕>…</字幕>` 内文；没有成对字幕则返回 null。
+ * 通话双栏编辑「中文对照」用它，口白标签不动。
+ */
+export function replaceVoiceTagSubtitle(text: string, chinese: string): string | null {
+    const src = text || '';
+    const re = /(<字幕>)([\s\S]*?)(<\/字幕>)/;
+    if (!re.test(src)) return null;
+    return src.replace(re, (_match, open: string, _inner: string, close: string) => open + chinese + close);
+}
+
+/**
+ * 有成对 `<语音>` 时写回双栏编辑：换口白；有 `<字幕>` 则换字幕，否则整段收成
+ * `语音 + <字幕>`（保留开标签 emotion）。无语音标签返回 null。
+ */
+export function rewriteCallBilingualText(
+    text: string,
+    speech: string,
+    chinese: string,
+): string | null {
+    const spoken = (speech || '').trim();
+    const cn = (chinese || '').trim();
+    const withSpeech = replaceVoiceTagSpeech(text, spoken);
+    if (withSpeech === null) return null;
+    const hadSubtitle = /<字幕>[\s\S]*?<\/字幕>/.test(text || '');
+    // 原文已有 <字幕>：只换内文，保持标签结构（主聊天外语泡同款）。
+    if (hadSubtitle) {
+        const withSub = replaceVoiceTagSubtitle(withSpeech, cn);
+        if (withSub !== null) return withSub;
+    }
+    const voiceBlock = withSpeech.match(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/);
+    if (!voiceBlock) return withSpeech;
+    // 通话常用「外侧纯中文 + 语音标签」：不要新塞 <字幕>，否则界面会漏出字面量标签。
+    if (!cn) return voiceBlock[0];
+    const withoutSub = withSpeech.replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim();
+    const voiceFirst = withoutSub.startsWith('<');
+    return voiceFirst ? `${voiceBlock[0]}\n${cn}` : `${cn}\n${voiceBlock[0]}`;
+}
+
 /** 猫儿修格式 / 手改模板注入：与 chatPrompts 语音段同一套开标签规则 */
 export const CHAT_VOICE_TAG_FORMAT_RULES = `
 【语音开标签 — 与主聊天一致，修语音时必须遵守】

@@ -61,7 +61,14 @@ export async function runBlockedCallHangupReply(opts: {
         realtimeConfig,
         musicSnapshot: loadMusicPlaybackSnapshot(),
         htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
-        thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
+        thinkingChain: {
+            enabled: !!(char as any).showThinkingChain,
+            appendPrompt: (char as any).thinkingChainAppendPrompt,
+            customPrompt: (char as any).thinkingChainCustomPrompt,
+            fieldsSplit: !!(char as any).thinkingChainPromptFieldsSplit,
+            mode: (char as any).thinkingChainPromptMode,
+            placement: (char as any).thinkingChainPromptPlacement,
+        },
         visionApiConfig: apiConfig.visionApi,
     });
 

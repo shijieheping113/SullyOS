@@ -3340,7 +3340,7 @@ export interface CharacterProfile {
   };
   /**
    * 心象提示词模式。
-   * - 未写 / default：内置中文第一人称心象；thinkingChainCustomPrompt 只追加
+   * - 未写 / default：内置中文第一人称心象；thinkingChainAppendPrompt 只追加
    * - custom：不注入内置心象；薄外壳 + thinkingChainCustomPrompt 全文（可覆盖语言/人称）
    */
   thinkingChainPromptMode?: 'default' | 'custom';
@@ -3350,8 +3350,14 @@ export interface CharacterProfile {
    * - back：临时状态之后、「回到你自己」之前；不抢角色锚点
    */
   thinkingChainPromptPlacement?: 'front' | 'back';
-  /** 追加（default 模式）或全文自定义思考规则（custom 模式） */
+  /** 默认心象模式下追加在内置心象后的额外要求 */
+  thinkingChainAppendPrompt?: string;
+  /** 自定义思考模式下的全文规则（不与追加共用） */
   thinkingChainCustomPrompt?: string;
+  /**
+   * 追加 / 全文已拆成两个字段。未写时按当前 mode 把旧共享框内容搬一次。
+   */
+  thinkingChainPromptFieldsSplit?: boolean;
   /**
    * 心象卡片的自定义 CSS（叠加在任意风格之上，机制同气泡工坊 customCss）。
    * 选择器限定以 .sully-psyche 开头（子元素类：-card / -title / -preview / -body），

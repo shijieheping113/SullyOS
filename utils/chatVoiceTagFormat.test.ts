@@ -3,6 +3,8 @@ import {
     formatChatVoiceOpenTag,
     inferChatVoiceEmotionFromSpoken,
     replaceVoiceTagSpeech,
+    replaceVoiceTagSubtitle,
+    rewriteCallBilingualText,
     wrapSpokenWithOriginalChinese,
 } from './chatVoiceTagFormat';
 import { parseVoiceOutput } from './minimaxTts';
@@ -67,5 +69,44 @@ describe('replaceVoiceTagSpeech（通话编辑后重读：只换念出来的那�
         expect(replaceVoiceTagSpeech('纯中文，没有标签', 'x')).toBeNull();
         expect(replaceVoiceTagSpeech('<语音>没闭合的口白', 'x')).toBeNull();
         expect(replaceVoiceTagSpeech('', 'x')).toBeNull();
+    });
+});
+
+describe('replaceVoiceTagSubtitle / rewriteCallBilingualText', () => {
+    it('只换字幕，口白与 emotion 不动', () => {
+        const src = wrapSpokenWithOriginalChinese('こんにちは', '你好', 'calm');
+        const out = replaceVoiceTagSubtitle(src, '晚安');
+        expect(out).toContain('こんにちは</语音>');
+        expect(out).toContain('<字幕>晚安</字幕>');
+        expect(parseVoiceOutput(out!).emotion).toBe('calm');
+    });
+
+    it('无字幕块 → null', () => {
+        expect(replaceVoiceTagSubtitle('<语音>あ</语音>', '中文')).toBeNull();
+    });
+
+    it('双栏写回：有字幕则换两边', () => {
+        const src = wrapSpokenWithOriginalChinese('こんにちは', '你好', 'sad');
+        const out = rewriteCallBilingualText(src, 'おやすみ', '晚安');
+        expect(parseVoiceOutput(out!).rawSpeech || parseVoiceOutput(out!).speech).toContain('おやすみ');
+        expect(parseVoiceOutput(out!).subtitle).toBe('晚安');
+        expect(parseVoiceOutput(out!).emotion).toBe('sad');
+    });
+
+    it('无字幕时用外侧纯中文，不新塞字幕标签', () => {
+        const out = rewriteCallBilingualText('<语音 emotion="calm">あ</语音>\n外侧中文', 'い', '新对照');
+        expect(out).toBe(`${formatChatVoiceOpenTag('calm')}い</语音>\n新对照`);
+        expect(out).not.toContain('<字幕>');
+    });
+
+    it('原文已有字幕时仍只换字幕内文', () => {
+        const src = wrapSpokenWithOriginalChinese('あ', '旧对照', 'calm');
+        const out = rewriteCallBilingualText(src, 'い', '新对照');
+        expect(out).toContain('<字幕>新对照</字幕>');
+        expect(parseVoiceOutput(out!).emotion).toBe('calm');
+    });
+
+    it('无语音标签 → null', () => {
+        expect(rewriteCallBilingualText('纯中文', 'speech', '中文')).toBeNull();
     });
 });

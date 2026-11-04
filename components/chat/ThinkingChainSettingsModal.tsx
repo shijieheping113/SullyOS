@@ -22,6 +22,9 @@ interface ThinkingChainSettingsValue {
     promptPlacement?: ThinkingChainPromptPlacement;
     styleId: ThinkingChainStyleId;
     customColors: { bg: string; accent: string; text: string };
+    /** 默认心象 · 追加 */
+    appendPrompt: string;
+    /** 自定义思考 · 全文 */
     customPrompt: string;
     /** 叠加在任意风格之上的自定义 CSS，选择器限定 .sully-psyche 开头 */
     customCss: string;
@@ -35,13 +38,32 @@ interface Props {
 }
 
 const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, onChange }) => {
-    const [draftPrompt, setDraftPrompt] = useState(value.customPrompt || '');
-    useEffect(() => { if (isOpen) setDraftPrompt(value.customPrompt || ''); }, [isOpen, value.customPrompt]);
-    if (!isOpen) return null;
-
-    const commitPrompt = () => onChange({ customPrompt: draftPrompt });
     const promptMode = normalizeThinkingChainPromptMode(value.promptMode);
     const isCustom = promptMode === 'custom';
+    const [draftAppend, setDraftAppend] = useState(value.appendPrompt || '');
+    const [draftCustom, setDraftCustom] = useState(value.customPrompt || '');
+    useEffect(() => {
+        if (!isOpen) return;
+        setDraftAppend(value.appendPrompt || '');
+        setDraftCustom(value.customPrompt || '');
+    }, [isOpen, value.appendPrompt, value.customPrompt]);
+    if (!isOpen) return null;
+
+    const draftPrompt = isCustom ? draftCustom : draftAppend;
+    const setDraftPrompt = (next: string) => {
+        if (isCustom) setDraftCustom(next);
+        else setDraftAppend(next);
+    };
+    const commitPrompt = () => {
+        if (isCustom) onChange({ customPrompt: draftCustom });
+        else onChange({ appendPrompt: draftAppend });
+    };
+    const switchPromptMode = (nextMode: ThinkingChainPromptMode) => {
+        if (nextMode === promptMode) return;
+        // 先把离开侧框里的字存进对应字段，再切模式（框还是同一个）
+        if (isCustom) onChange({ customPrompt: draftCustom, promptMode: nextMode });
+        else onChange({ appendPrompt: draftAppend, promptMode: nextMode });
+    };
     const promptPlacement = normalizeThinkingChainPromptPlacement(value.promptPlacement);
     const isBack = promptPlacement === 'back';
 
@@ -157,14 +179,14 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                         <div className="flex flex-wrap gap-2 mb-3">
                             <button
                                 type="button"
-                                onClick={() => onChange({ promptMode: 'default' })}
+                                onClick={() => switchPromptMode('default')}
                                 className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${!isCustom ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
                             >
                                 默认心象
                             </button>
                             <button
                                 type="button"
-                                onClick={() => onChange({ promptMode: 'custom' })}
+                                onClick={() => switchPromptMode('custom')}
                                 className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-all ${isCustom ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
                             >
                                 自定义思考

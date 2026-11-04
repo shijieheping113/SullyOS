@@ -109,7 +109,12 @@ export interface BuildChatPayloadInput {
     htmlMode?: { enabled: boolean; customPrompt?: string };
     thinkingChain?: {
         enabled: boolean;
+        /** 默认心象追加 */
+        appendPrompt?: string;
+        /** 自定义思考全文 */
         customPrompt?: string;
+        /** 追加/全文是否已拆字段 */
+        fieldsSplit?: boolean;
         /** default=内置心象；custom=薄外壳+全文规则。未写按 default。 */
         mode?: 'default' | 'custom';
         /** front=稳定 system；back=临时状态后、角色锚点前。未写按 front。 */
@@ -469,12 +474,16 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             charName: char.name,
             userName: userNameForThinking,
             mode: thinkingChain?.mode,
+            appendPrompt: thinkingChain?.appendPrompt,
             customPrompt: thinkingChain?.customPrompt,
+            fieldsSplit: thinkingChain?.fieldsSplit,
         })
         : '';
     const thinkingAtBack = thinkingActive && shouldPlaceThinkingPromptAtBack({
         mode: thinkingChain?.mode,
+        appendPrompt: thinkingChain?.appendPrompt,
         customPrompt: thinkingChain?.customPrompt,
+        fieldsSplit: thinkingChain?.fieldsSplit,
         placement: thinkingChain?.placement,
     });
     if (thinkingActive && !thinkingAtBack) {
