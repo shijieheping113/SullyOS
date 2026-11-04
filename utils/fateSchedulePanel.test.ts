@@ -100,7 +100,8 @@ describe('命运牌阵独立活动面板', () => {
     it('生成中保留内容和牌面，禁止重Roll、编辑、删除和所有小剧场按钮', async () => {
         await render(); await click('编辑活动', host.querySelector('[aria-label="本轮活动"]')!);
         await render({ isGenerating: true });
-        expect(host.textContent).toContain(current.activity); expect(host.textContent).toContain('地图');
+        expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.textContent).toContain('地图');
+        expect(host.textContent).toContain('猫爪正在牵线');
         expect(host.querySelector('.fate-panel--waiting')).not.toBeNull();
         const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
@@ -109,7 +110,7 @@ describe('命运牌阵独立活动面板', () => {
         expect(form().querySelector('fieldset')?.disabled).toBe(true);
     });
     it('失败后只恢复可点击状态，不自行换牌；成功传入新活动后才换牌', async () => {
-        await render(); await click('拨一下 · 重 Roll重 Roll 会替换本轮活动与三张牌');
+        await render(); await click('拨拨毛线 · 重 Roll换一副牌，重写本轮');
         expect(props.onReroll).toHaveBeenCalledOnce();
         await render({ isGenerating: true }); await render({ isGenerating: false });
         expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
@@ -125,8 +126,8 @@ describe('命运牌阵独立活动面板', () => {
         await render({ isViewing: true });
         expect(host.querySelector('.fate-panel')?.getAttribute('aria-busy')).toBe('true');
         expect(host.querySelector('.fate-panel--waiting')).toBeNull();
-        expect(host.textContent).toContain('进一步查看生成中'); expect(host.textContent).not.toContain('猫咪拨球中');
-        expect(host.textContent).toContain(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
+        expect(host.textContent).toContain('进一步查看生成中'); expect(host.textContent).not.toContain('猫爪正在牵线');
+        expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
         const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
         await act(async () => controls.forEach(item => item.click()));
@@ -138,7 +139,7 @@ describe('命运牌阵独立活动面板', () => {
         await act(async () => { vi.advanceTimersByTime(3_600_001); });
         expect(host.querySelector('[aria-label="本轮活动"]')?.textContent).toContain('已结束 · 待续写');
         expect(host.querySelector('[aria-label="本轮活动"]')?.textContent).toContain(current.activity);
-        expect(host.textContent).toContain('本轮结束后自动续写');
+        expect(host.querySelector('.fate-panel__continuation')?.getAttribute('title')).toBe('本轮结束后自动续写');
     });
     it('历史默认折叠，历史小剧场使用真实下标，删除必须确认', async () => {
         await render();
@@ -167,7 +168,7 @@ describe('命运牌阵独立活动面板', () => {
         await click('进一步查看'); expect(props.onPlayTheater).toHaveBeenCalledWith(0);
         await render({ schedule: null }); expect(host.querySelector('.fate-panel__card')).toBeNull();
         expect(host.textContent).toContain('还没有展开的生活片段');
-        await click('拨一下 · 生成本轮让三张因子牌展开一段生活'); expect(props.onReroll).toHaveBeenCalledOnce();
+        await click('拨拨毛线 · 生成本轮三张牌，一段新生活'); expect(props.onReroll).toHaveBeenCalledOnce();
         await render({ isGenerating: true }); expect(host.querySelector('.fate-panel__card')).toBeNull();
     });
     it('空白活动和保存错误通过alert提示，不丢失编辑内容', async () => {
@@ -193,5 +194,36 @@ describe('命运牌阵独立活动面板', () => {
         await render({ schedule: makeSchedule([previous, { ...current, startsAt: NOW - 1_000, activity: '替换后的活动' }]) });
         await click('确认删除'); expect(props.onDelete).not.toHaveBeenCalled();
         expect(host.querySelector('[role="alert"]')?.textContent).toContain('活动已经变化');
+    });
+    it('嵌入外壳时没有重复标题，独立使用仍保留标题', async () => {
+        await render({ embedded: true });
+        expect(host.querySelector('h1')).toBeNull();
+        expect(host.querySelector('.fate-panel--embedded')).not.toBeNull();
+        expect(host.querySelector('.fate-panel__header')).toBeNull();
+        await render({ embedded: false }); expect(host.querySelector('h1')?.textContent).toBe('命运牌阵');
+    });
+    it('编辑在本轮活动原位替换正文，没有下方重复表单', async () => {
+        await render();
+        const article = host.querySelector('[aria-label="本轮活动"]')!;
+        await click('编辑活动', article);
+        expect(form().closest('article')).toBe(article);
+        expect(host.querySelectorAll('form')).toHaveLength(1);
+        expect(article.querySelector('.fate-panel__description')).toBeNull();
+        expect(article.querySelector('h3')?.textContent).toBe('编辑活动');
+        await click('取消编辑', article);
+        expect(article.querySelector('h3')?.textContent).toBe(current.activity);
+    });
+    it('历史编辑留在历史活动原位置，保存使用历史下标', async () => {
+        await render();
+        const history = host.querySelector('.fate-panel__history') as HTMLDetailsElement;
+        await act(async () => { history.open = true; });
+        const article = history.querySelector('article')!;
+        await click('编辑活动', article);
+        expect(form().closest('article')).toBe(article);
+        expect(host.querySelectorAll('form')).toHaveLength(1);
+        expect(article.querySelector('.fate-panel__description')).toBeNull();
+        expect(history.open).toBe(true);
+        await fill('活动名称', '把信读完'); await click('保存活动', form());
+        expect(props.onEdit).toHaveBeenCalledWith(0, expect.objectContaining({ activity: '把信读完', startsAt: previous.startsAt, endsAt: previous.endsAt, theater: undefined }));
     });
 });

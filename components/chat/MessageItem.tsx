@@ -5,6 +5,7 @@ import { avatarDecorationImageStyle, isAnniversaryFrame } from '../../utils/anni
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 const AivenFishSaleReceipt = React.lazy(() => import('../../apps/vrWorld/AivenFishSaleReceipt').then(module => ({ default: module.AivenFishSaleReceipt })));
 import { Message, ChatTheme } from '../../types';
+import FateTheaterCard from '../schedule/FateTheaterCard';
 import { DB } from '../../utils/db';
 import { phoneFieldToText } from '../../utils/phoneEvidence';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
@@ -3106,6 +3107,10 @@ const MessageItem = React.memo(({
         const tMeta: any = m.metadata || {};
         const t: any = tMeta.theater || {};
         const lines: any[] = Array.isArray(t.lines) ? t.lines : [];
+        // 展示按发送时保存的来源模式，不跟随用户之后切换的日程设置。
+        if (tMeta.scheduleMode === 'fate') {
+            return commonLayout(<FateTheaterCard activity={tMeta.activity || '生活片段'} slotTime={tMeta.slotTime} endTime={tMeta.endTime} location={tMeta.location} lines={lines} exposed={tMeta.exposed !== false} factors={Array.isArray(tMeta.fateFactors) ? tMeta.fateFactors : undefined} tendencyName={tMeta.fateTendencyName} />);
+        }
         const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
         const HUE = 262;
         const accent = `hsl(${HUE},75%,72%)`;

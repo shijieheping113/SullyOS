@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import './FateSchedulePanel.css';
 
 export interface FateSchedulePanelProps {
+    embedded?: boolean;
     schedule: DailySchedule | null;
     character: CharacterProfile | null;
     onEdit?: (index: number, slot: ScheduleSlot) => void | Promise<void>;
@@ -85,7 +86,7 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
                         <span className="fate-panel__card-role">{index === 0 ? '主因子' : `副因子${index}`}</span>
                         <CardDrawing index={index} />
                         <strong>{factor.name}</strong>
-                        <span className="fate-panel__card-hint">{expanded === index ? '收起含义' : '翻看含义'}</span>
+                        <span className="fate-panel__card-hint">{expanded === index ? '收起含义' : '翻翻牌底'}</span>
                     </button>
                 ))}
             </div>
@@ -96,7 +97,7 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
             {slot.fate && <div className="fate-panel__context">
                 <div><span className="fate-panel__label">本轮倾向</span><strong>{slot.fate.tendency.name}</strong><p>{slot.fate.tendency.meaning}</p></div>
                 <div><span className="fate-panel__label">人物方向</span><strong>{PEOPLE[slot.fate.peopleDirection] || '未记录'}</strong></div>
-                <details className="fate-panel__rationale"><summary>设计说明</summary><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></details>
+                <details className="fate-panel__rationale"><summary>命运之神的小算盘</summary><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></details>
             </div>}
         </section>
     );
@@ -112,12 +113,16 @@ interface SlotSnapshot {
 }
 interface EditDraft extends SlotSnapshot { activity: string; description: string; location: string; home: string }
 
-const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, character, onEdit, onDelete, onReroll, onPlayTheater, isGenerating = false, isViewing = false }) => {
+const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, character, onEdit, onDelete, onReroll, onPlayTheater, isGenerating = false, isViewing = false, embedded = false }) => {
     const [now, setNow] = useState(Date.now);
     const [draft, setDraft] = useState<EditDraft | null>(null);
     const [deleting, setDeleting] = useState<SlotSnapshot | null>(null);
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const editorHeadingRef = useRef<HTMLHeadingElement>(null);
+    useEffect(() => {
+        if (draft) editorHeadingRef.current?.scrollIntoView?.({ block: 'start', behavior: 'auto' });
+    }, [draft?.index, draft?.scheduleId]);
     const busy = isGenerating || isViewing;
     const writesDisabled = busy || isSaving;
     useEffect(() => {
@@ -165,42 +170,44 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         {onEdit && <button type="button" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}>编辑活动</button>}
         {onDelete && <button type="button" className="fate-panel__delete" disabled={writesDisabled} onClick={() => { setDeleting(snapshot(itemIndex)); setDraft(null); setError(''); }}>删除活动</button>}
     </div>;
+    const renderEditor = () => draft && <form className="fate-panel__editor" aria-label="编辑活动" onSubmit={event => { event.preventDefault(); saveEdit(); }}>
+        <h3 ref={editorHeadingRef}>编辑活动</h3>
+        <p className="fate-panel__muted">{range(JSON.parse(draft.original))} · 时间只读。保存后，小剧场需重新生成。</p>
+        <fieldset disabled={writesDisabled}>
+            <label>活动名称<input value={draft.activity} onChange={event => setDraft({ ...draft, activity: event.target.value })} /></label>
+            <label>活动描述<textarea rows={4} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label>
+            <label>具体地点<input value={draft.location} onChange={event => setDraft({ ...draft, location: event.target.value })} /></label>
+            <label>家园位置<select value={draft.home} onChange={event => setDraft({ ...draft, home: event.target.value })}>
+                <option value="">未设置</option><option value="__away">外出（保留具体地点）</option>
+                {draft.home && draft.home !== '__away' && !rooms.some(room => room.id === draft.home) && <option value={draft.home}>原房间已不存在，请重新选择</option>}
+                {rooms.map(room => <option key={room.id} value={room.id}>{room.name}</option>)}
+            </select></label>
+            <div className="fate-panel__actions"><button type="submit" className="fate-panel__save">{isSaving ? '正在保存…' : '保存活动'}</button><button type="button" onClick={() => { setDraft(null); setError(''); }}>取消编辑</button></div>
+        </fieldset>
+        {error && <p className="fate-panel__error" role="alert">{error}</p>}
+    </form>;
     return (
-        <div className={`fate-panel ${isGenerating ? 'fate-panel--waiting' : ''}`} aria-label="命运牌阵" aria-busy={busy || isSaving}>
-            <header className="fate-panel__header"><h1>命运牌阵</h1><span>{character?.name || '角色'}的生活片段</span></header>
+        <div className={`fate-panel ${embedded ? 'fate-panel--embedded' : ''} ${isGenerating ? 'fate-panel--waiting' : ''}`} aria-label="命运牌阵" aria-busy={busy || isSaving}>
+            {!embedded && <header className="fate-panel__header"><h1>命运牌阵</h1><span>{character?.name || '角色'}的生活片段</span></header>}
             <button className="fate-panel__draw" type="button" disabled={!onReroll || writesDisabled} onClick={() => { if (!writesDisabled) onReroll?.(); }}>
                 <CatAndYarn />
-                <span><strong>{isGenerating ? '猫咪拨球中…' : isViewing ? '进一步查看生成中…' : slot ? '拨一下 · 重 Roll' : '拨一下 · 生成本轮'}</strong>
-                    <span>{isGenerating ? '正在等待真实日程，牌面暂不更换' : isViewing ? '正在展开小剧场，活动与牌面保持不变' : slot ? '重 Roll 会替换本轮活动与三张牌' : '让三张因子牌展开一段生活'}</span></span>
+                <span><strong>{isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'}</strong>
+                    <span>{isGenerating ? '等生活落笔，原牌先留着' : isViewing ? '小剧场正在展开，原牌不变' : slot ? '换一副牌，重写本轮' : '三张牌，一段新生活'}</span></span>
             </button>
-            <p className="fate-panel__continuation" role="status">{isGenerating ? '生成中，当前内容仍保留；完成后才更新。' : isViewing ? '进一步查看生成中，请等待小剧场完成。' : '本轮结束后自动续写，不会提前排满全天。'}</p>
+            <p className="fate-panel__continuation" role="status" title="本轮结束后自动续写">{isGenerating ? '生成中，完成后才换牌。' : isViewing ? '小剧场正悄悄展开…' : '下一段，顺着线来。'}</p>
 
             {slot ? <>
                 <article className="fate-panel__activity" aria-label="本轮活动">
+                    {draft?.index === index ? renderEditor() : <>
                     <div className="fate-panel__timing"><span>{slotState(slot, now)}</span><span>{range(slot)} · 角色当地时间</span></div>
                     <h3>{slot.activity}</h3>
                     <p className="fate-panel__location">{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
                     {slot.description && <p className="fate-panel__description">{slot.description}</p>}
                     {actions(slot, index)}
+                    </>}
                 </article>
                 <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} />
-            </> : <div className="fate-panel__empty"><h3>还没有展开的生活片段</h3><p>轻点猫咪与毛线球，等待真实日程与三张因子牌。生成失败时可以再次轻点重试。</p></div>}
-
-            {draft && <form className="fate-panel__editor" aria-label="编辑活动" onSubmit={event => { event.preventDefault(); saveEdit(); }}>
-                <h3>编辑活动</h3>
-                <p className="fate-panel__muted">{range(JSON.parse(draft.original))} · 时间只读，保存不会改变起止时间。编辑后需重新生成小剧场。</p>
-                <fieldset disabled={writesDisabled}>
-                    <label>活动名称<input value={draft.activity} onChange={event => setDraft({ ...draft, activity: event.target.value })} /></label>
-                    <label>活动描述<textarea rows={4} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label>
-                    <label>具体地点<input value={draft.location} onChange={event => setDraft({ ...draft, location: event.target.value })} /></label>
-                    <label>家园位置<select value={draft.home} onChange={event => setDraft({ ...draft, home: event.target.value })}>
-                        <option value="">未设置</option><option value="__away">外出（保留具体地点）</option>
-                        {draft.home && draft.home !== '__away' && !rooms.some(room => room.id === draft.home) && <option value={draft.home}>原房间已不存在，请重新选择</option>}
-                        {rooms.map(room => <option key={room.id} value={room.id}>{room.name}</option>)}
-                    </select></label>
-                    <div className="fate-panel__actions"><button type="submit" className="fate-panel__save">{isSaving ? '正在保存…' : '保存活动'}</button><button type="button" onClick={() => { setDraft(null); setError(''); }}>取消编辑</button></div>
-                </fieldset>
-            </form>}
+            </> : <div className="fate-panel__empty"><h3>还没有展开的生活片段</h3><p>拨拨毛线，等三张牌落下。生成失败可以再试一次。</p></div>}
             {deleting && <div className="fate-panel__confirm" role="group" aria-label="删除活动确认">
                 <p>删除活动：{JSON.parse(deleting.original).activity}？日程与小剧场记录都会删除。</p>
                 <div className="fate-panel__actions"><button type="button" disabled={writesDisabled} className="fate-panel__delete" onClick={async () => {
@@ -211,14 +218,16 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
                     finally { setIsSaving(false); }
                 }}>{isSaving ? '正在删除…' : '确认删除'}</button><button type="button" disabled={writesDisabled} onClick={() => { setDeleting(null); setError(''); }}>取消删除</button></div>
             </div>}
-            {error && <p className="fate-panel__error" role="alert">{error}</p>}
+            {error && !draft && <p className="fate-panel__error" role="alert">{error}</p>}
 
-            {history.length > 0 && <details className="fate-panel__history"><summary>历史片段 · {history.length}</summary>
+            {history.length > 0 && <details className="fate-panel__history"><summary>走过的小路 · {history.length}</summary>
                 <div className="fate-panel__history-list">{history.map(({ slot: past, index: pastIndex }) => <article key={`${pastIndex}:${past.startsAt}`}>
+                    {draft?.index === pastIndex ? renderEditor() : <>
                     <span className="fate-panel__muted">{range(past)} · {slotState(past, now)}</span>
                     <h3>{past.activity}</h3><p className="fate-panel__location">{past.location || '地点未记录'}</p>
                     {past.description && <p className="fate-panel__description">{past.description}</p>}
                     {actions(past, pastIndex)}
+                    </>}
                     <details><summary>查看本轮牌阵</summary><FateCards slot={past} identity={`${schedule?.id}:${past.startsAt}:${JSON.stringify(past.fate)}`} /></details>
                 </article>)}</div>
             </details>}

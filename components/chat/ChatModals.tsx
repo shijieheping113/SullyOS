@@ -4,8 +4,7 @@ import Modal from '../os/Modal';
 import TokenImg from '../os/TokenImg';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
-import FateScheduleSettings from '../schedule/FateScheduleSettings';
-import FateSchedulePanel from '../schedule/FateSchedulePanel';
+import FateScheduleSuite from '../schedule/FateScheduleSuite';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import ChatInputSettings from './ChatInputSettings';
 import ChatSettingsSection from './ChatSettingsSection';
@@ -1396,8 +1395,19 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             {/* Schedule Modal */}
             <Modal
-                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程/情绪`} onClose={() => setModalType('none')}
+                isOpen={modalType === 'schedule'}
+                appearance={activeCharacter?.scheduleMode === 'fate' ? 'fate' : undefined}
+                title={<h1 className="fate-dialog__mode" aria-label="日程模式"><button type="button" disabled={isScheduleGenerating || isScheduleViewing || !onUpdateIncomingCall} aria-pressed={activeCharacter?.scheduleMode !== 'fate'} onClick={() => onUpdateIncomingCall?.({ scheduleMode: 'classic' })}>原版日程</button><button type="button" disabled={isScheduleGenerating || isScheduleViewing || !onUpdateIncomingCall} aria-pressed={activeCharacter?.scheduleMode === 'fate'} onClick={() => onUpdateIncomingCall?.({ scheduleMode: 'fate' })}>命运牌阵</button></h1>}
+                onClose={() => setModalType('none')}
             >
+                {activeCharacter?.scheduleMode === 'fate' && onUpdateIncomingCall ? <FateScheduleSuite
+                    key={activeCharacter.id} character={activeCharacter} schedule={scheduleData?.mode === 'fate' ? scheduleData : null}
+                    enabled={!!isScheduleFeatureEnabled} onToggle={onToggleScheduleFeature} onChange={onUpdateIncomingCall}
+                    onEdit={onScheduleEdit} onDelete={onScheduleDelete} onReroll={onScheduleReroll} onPlayTheater={onPlayTheater}
+                    isGenerating={isScheduleGenerating} isViewing={isScheduleViewing} apiPresets={apiPresets || []}
+                    onSaveEmotion={config => onUpdateIncomingCall({ emotionFeatureEnabled: config.enabled, emotionConfig: config })}
+                    onClearBuffs={onClearBuffs || (() => {})} onAddApiPreset={onAddApiPreset}
+                /> :
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
                     {/* 日程独立开关 */}
                     {onToggleScheduleFeature && (
@@ -1426,17 +1436,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
                     {isScheduleFeatureEnabled && (
                         <>
-                            {activeCharacter && onUpdateIncomingCall && (
-                                <details open={activeCharacter.scheduleMode !== 'fate'} className="mb-4">
-                                <summary className="text-xs text-slate-600 cursor-pointer py-2">日程模式与牌阵设置</summary>
-                                <FateScheduleSettings
-                                    key={activeCharacter.id}
-                                    char={activeCharacter}
-                                    onChange={onUpdateIncomingCall}
-                                    isGenerating={isScheduleGenerating}
-                                />
-                                </details>
-                            )}
                             {/* Schedule Style Selector */}
                             {onScheduleStyleChange && activeCharacter?.scheduleMode !== 'fate' && (
                                 <div className="mb-4">
@@ -1477,18 +1476,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 </div>
                             )}
 
-                            {activeCharacter?.scheduleMode === 'fate' ? <FateSchedulePanel
-                                key={activeCharacter.id}
-                                schedule={scheduleData?.mode === 'fate' ? scheduleData : null}
-                                character={activeCharacter}
-                                onEdit={onScheduleEdit}
-                                onDelete={onScheduleDelete}
-                                onReroll={onScheduleReroll}
-                                onPlayTheater={onPlayTheater}
-                                isViewing={isScheduleViewing}
-                                isGenerating={isScheduleGenerating}
-                            /> : <><ScheduleCard
-                                schedule={scheduleData || null}
+                            <ScheduleCard
+                                schedule={scheduleData?.mode === 'fate' ? null : scheduleData || null}
                                 character={activeCharacter}
                                 compact={false}
                                 onEdit={onScheduleEdit}
@@ -1500,7 +1489,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             />
                             <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
                                 点击日程项可编辑 · 长按可删除
-                            </p></>}
+                            </p>
 
                         </>
                     )}
@@ -1521,7 +1510,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     onClearBuffs={onClearBuffs}
                                 />
                             )}
-                </div>
+                </div>}
             </Modal>
         </>
     );

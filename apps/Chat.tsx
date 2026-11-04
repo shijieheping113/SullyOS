@@ -33,6 +33,7 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
+import FateTheaterPlayer from '../components/schedule/FateTheaterPlayer';
 import { buildSARMemoryBoundaryInstruction, formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
 import { getRoomLabel } from '../utils/memoryPalace/types';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
@@ -3047,7 +3048,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
     // 小剧场：点某个时段的播放按钮。有缓存直接放；没有则先生成再放（forceRegenerate=重演）。
     const runTheater = async (index: number, forceRegenerate: boolean) => {
-        if (!char || !scheduleData) return;
+        if (!char || !scheduleData || isTheaterGenerating || isScheduleGenerating) return;
         const slot = scheduleData.slots[index];
         if (!slot) return;
         trackEvent('打开日程小剧场', { mode: forceRegenerate ? 'replay' : 'play' });
@@ -3098,6 +3099,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 emoji: slot.emoji,
                 date: scheduleData.date,
                 exposed,
+                ...(scheduleData.mode === 'fate' ? { scheduleMode: 'fate', endTime: slot.endTime, location: slot.location, fateFactors: slot.fate?.factors, fateTendencyName: slot.fate?.tendency.name } : {}),
             },
         });
         // 关掉播放器 + 日程 modal，回到聊天看到卡片（但不强行触发回复）
@@ -5426,15 +5428,15 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
              {/* 小剧场播放器：窥视某个日程时段的角色行为演出 */}
              {theaterSlotIdx !== null && scheduleData && createPortal(
-                <TheaterPlayer
-                    character={char}
-                    slot={scheduleData.slots[theaterSlotIdx] || null}
-                    lines={scheduleData.slots[theaterSlotIdx]?.theater?.lines || null}
-                    isGenerating={isTheaterGenerating}
-                    onReplay={() => runTheater(theaterSlotIdx, true)}
-                    onSendCard={(exposed) => handleSendTheaterCard(theaterSlotIdx, exposed)}
-                    onClose={() => setTheaterSlotIdx(null)}
-                />,
+                React.createElement(scheduleData.mode === 'fate' ? FateTheaterPlayer : TheaterPlayer, {
+                    character: char,
+                    slot: scheduleData.slots[theaterSlotIdx] || null,
+                    lines: scheduleData.slots[theaterSlotIdx]?.theater?.lines || null,
+                    isGenerating: isTheaterGenerating,
+                    onReplay: () => runTheater(theaterSlotIdx, true),
+                    onSendCard: (exposed: boolean) => handleSendTheaterCard(theaterSlotIdx, exposed),
+                    onClose: () => setTheaterSlotIdx(null),
+                }),
                 document.body,
              )}
 
