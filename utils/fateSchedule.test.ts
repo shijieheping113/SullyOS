@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_FATE_FACTORS } from './fateFactors';
-import { buildPeopleDirectionPrompt, countFateFactors, drawPeopleDirection, hasActiveFateSlot, sampleFateFactors } from './fateSchedule';
+import { buildPeopleDirectionPrompt, countFateFactors, drawPeopleDirection, getFateRerollTarget, hasActiveFateSlot, omitRerolledFateSlot, sampleFateFactors, validateFateDescription } from './fateSchedule';
 import { getScheduleMode, isEmotionFeatureOn, isScheduleFeatureOn } from './scheduleFeature';
 import type { DailySchedule } from '../types';
 
 describe('命运牌阵抽取与分时段判断', () => {
+    it('重 Roll 从材料移除当前轮，保留更早活动且不修改原记录', () => {
+        const schedule = { slots: [
+            { startsAt: 1000, endsAt: 2000, activity: '真实更早活动' },
+            { startsAt: 2000, endsAt: 4000, activity: '被否掉的活动' },
+        ] } as DailySchedule;
+        const target = getFateRerollTarget(schedule, 3000);
+        const result = omitRerolledFateSlot([schedule], target);
+        expect(result[0].slots.map(s => s.activity)).toEqual(['真实更早活动']);
+        expect(schedule.slots).toHaveLength(2);
+        expect(getFateRerollTarget(schedule, 5000)).toBe(target);
+    });
+    it('短描述上限按文字长度检查，超长拒绝而不是截掉内容', () => {
+        expect(() => validateFateDescription('字'.repeat(80))).not.toThrow();
+        expect(() => validateFateDescription('字'.repeat(81))).toThrow('超过80字');
+    });
     it('人物方向按 45/25/20/10 的边界抽取', () => {
         expect(drawPeopleDirection(() => 0)).toBe('free');
         expect(drawPeopleDirection(() => .4499)).toBe('free');

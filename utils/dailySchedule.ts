@@ -68,7 +68,9 @@ export async function getDailyScheduleForChar(
     const yesterday = new Date(wall);
     yesterday.setDate(yesterday.getDate() - 1);
     const previous = await DB.getDailySchedule(`fate:${char.id}`, getLocalDateKey(yesterday));
-    const carry = previous?.slots.filter(slot => typeof slot.endsAt === 'number' && slot.endsAt > at.getTime());
+    const carry = previous?.slots.filter(slot => typeof slot.endsAt === 'number' && slot.endsAt > at.getTime()
+        && !current?.fateReplacedStarts?.includes(slot.startsAt!)
+        && !current?.slots.some(saved => typeof saved.startsAt === 'number' && saved.startsAt >= (slot.startsAt || 0) && saved.startsAt < slot.endsAt!));
     if (!carry?.length) return current;
     return {
         ...(current || { id: `fate:${char.id}_${today}`, charId: char.id, date: today, generatedAt: at.getTime(), mode: 'fate' as const }),
@@ -92,5 +94,7 @@ export async function getRecentScheduleHistory(
     const rows = await Promise.all(dates.map(async date => Promise.all([
         DB.getDailySchedule(char.id, date), DB.getDailySchedule(`fate:${char.id}`, date),
     ])));
-    return rows.flat().filter((row): row is DailySchedule => !!row);
+    const history = rows.flat().filter((row): row is DailySchedule => !!row);
+    const replaced = new Set(history.reduce<number[]>((all, row) => all.concat(row.fateReplacedStarts || []), []));
+    return history.map(row => ({ ...row, slots: row.slots.filter(slot => !replaced.has(slot.startsAt!)) }));
 }

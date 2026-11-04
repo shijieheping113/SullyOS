@@ -44,9 +44,24 @@ interface FateDraw { date: string; tendency: FateTendency; factors: FateFactor[]
 const pendingDraws = new Map<string, FateDraw>();
 export function clearPendingFateDraw(charId: string): void { pendingDraws.delete(charId); }
 
-export function buildFateTask(char: CharacterProfile, draw: FateDraw, history: DailySchedule[], chat: string, now: Date): string {
+/** 重 Roll 始终针对发起时选中的一轮，而不是请求结束时随时间变化的当前轮。 */
+export function getFateRerollTarget(schedule: DailySchedule | null, at: number): ScheduleSlot | undefined {
+    const slots = schedule?.slots || [];
+    return slots.find(s => typeof s.startsAt === 'number' && typeof s.endsAt === 'number' && s.startsAt <= at && at < s.endsAt)
+        || slots.filter(s => typeof s.startsAt === 'number' && s.startsAt <= at).slice(-1)[0];
+}
+export function omitRerolledFateSlot(history: DailySchedule[], target?: ScheduleSlot): DailySchedule[] {
+    if (!target) return history;
+    return history.map(day => ({ ...day, slots: day.slots.filter(slot => slot.startsAt !== target.startsAt) }));
+}
+export function validateFateDescription(description: string): void {
+    if (Array.from(description).length > 80) throw new Error('日程描述超过80字，未替换本轮；请重试，当前日程已保留。');
+}
+
+export function buildFateTask(char: CharacterProfile, draw: FateDraw, history: DailySchedule[], chat: string, now: Date, reroll = false): string {
     const recent = history.map(day => ({ date: day.date, activities: day.slots.map(s => ({ time: s.startTime, activity: s.activity, location: s.location, description: s.description, kind: s.fate?.activityKind, scene: s.fate?.sceneKind, development: s.fate?.development })) }));
     return `你是命运之神，负责续写角色生活，不是角色本人。人物设定、世界书、记忆是创作资料；本次输出任务是日程，不是代角色回复聊天。
+${reroll ? '本次是重 Roll：重新设计本轮活动，不是往后续写。被替换的日程已从活动材料中排除，不视为发生过；保留聊天明确确定的事实及更早日程。从当前处境重新创作，成功结果替换本轮。' : '本次是到期续写或首次生成：承接已知处境，从当前时刻展开一轮新的活动。'}
 角色：${char.name}。角色当地日期：${draw.date}，现在 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}。
 ${chat}
 最近七天与今天实际保存的日程（缺失不代表角色没有生活；安排不是所有活动都已完成的证明）：
@@ -68,7 +83,9 @@ ${buildPeopleDirectionPrompt(draw.people)}
 恋爱、暧昧、吸引、欲望与亲密可自然存在，不把生活写成只有健康工作；涉及亲密的内容仅限明确成年的双方自愿关系，以非露骨的感受、氛围、亲昵和关系变化表现，不代替用户决定或实施行为。
 ${char.scheduleStyle === 'mindful' ? '此角色使用意识系：尊重角色自述的存在形态，不虚构不具备的身体与物理能力，生活变化可以是思绪与真实交流的发展。' : ''}
 
-从现在开始写一项正在展开的生活片段，覆盖未来60—180分钟，由你选合理时长。不补过去，不排全天。描述2—3句，交代具体动作、场景、进入活动的变化和当前进展；有具体质感和所有因子的作用，但把角色完整内心、后续选择和最终结局留给聊天与进一步查看。不要提前声称未来结果已经完成，不写完整小故事，不要求围绕用户，不强迫联系用户。
+从现在开始设计一项活动，覆盖未来60—180分钟，由你选合理时长。不补过去，不排全天。
+日程描述是简短的场景提要，用朴实、直接的第三人称写1—2个短句，目标30—60字，最多80字。只交代活动和进入活动的一处变化，让读者知道在哪、做什么、有什么不同。人物按需要点明姓名或身份，具体地点单独填写。描述保留尚可发展的空间，动作演出、完整对话、感官描摹、内心分析、后续选择与结局留给进一步查看和聊天。
+三个因子共同影响活动构思，不要求短描述逐个解释或逐个制造转折；组合如何作用写在rationale里，用一句面向用户的设计说明，最多100字，不写内心推理。活动服务于角色自己的生活，用户相关内容只在已知关系和当前情境适合时自然出现。
 仅输出JSON：{"durationMinutes":60到180的整数,"activity":"具体活动名","description":"一小段正在展开的生活","location":"具体地点","emoji":"一个表情","homePosition":{"kind":"home","roomId":"所列真实房间ID"}或{"kind":"away"},"rationale":"简短说明因子组合怎样符合处境，不输出内心推理","activityKind":"活动类别","sceneKind":"场景类别","development":"事件发展类型"}。
 ${buildHomeSchedulePrompt(char).replace(/每个 slots 项/g, '输出对象').replace(/每条日程/g, '本轮日程')}`;
 }
@@ -82,6 +99,7 @@ export async function generateFateSchedule(
     const existing = await getDailyScheduleForChar(char, at);
     if (!force && hasActiveFateSlot(existing, at.getTime())) return existing;
     const date = getScheduleDateKey(char, at);
+    const rerollTarget = force ? getFateRerollTarget(existing, at.getTime()) : undefined;
     const history = await getRecentScheduleHistory(char, at);
     const settings = loadFateSettings(char.id);
     let draw = pendingDraws.get(char.id);
@@ -96,7 +114,7 @@ export async function generateFateSchedule(
     }
     const api = char.scheduleApi?.baseUrl ? char.scheduleApi : mainApi;
     if (!api.baseUrl || !api.model) throw new Error('请先填写日程模型，或在总设置填写主模型。');
-    const prompt = buildFateTask(char, draw, history, chat, getScheduleWallClock(char, at));
+    const prompt = buildFateTask(char, draw, omitRerolledFateSlot(history, rerollTarget), chat, getScheduleWallClock(char, at), force);
     const request = await ContextBuilder.buildCharacterRequest({ char: { ...char, scheduleFeatureEnabled: false }, user, includeDetailedMemories: true, timeOptions: { worldbookMessages: messages } }, [{ role: 'user', content: prompt }]);
     const response = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
@@ -107,6 +125,7 @@ export async function generateFateSchedule(
     const data = extractJson(extractContent(await safeResponseJson(response)));
     const duration = data?.durationMinutes;
     if (!Number.isInteger(duration) || duration < 60 || duration > 180 || typeof data.activity !== 'string' || !data.activity.trim() || typeof data.description !== 'string' || !data.description.trim() || typeof data.location !== 'string' || !data.location.trim()) throw new Error('日程内容或时长不完整，未保存；重试会沿用本轮抽牌。');
+    validateFateDescription(data.description.trim());
     const homePosition = parseHomePosition(data.homePosition, char);
     if (buildHomeSchedulePrompt(char) && !homePosition) throw new Error('日程缺少有效家园位置，原日程已保留。');
     // 请求期间用户编辑过的日程以最新版本为准，不把传入快照整份覆盖回去。
@@ -114,6 +133,10 @@ export async function generateFateSchedule(
     const now = Date.now();
     if (getScheduleDateKey(char, new Date(now)) !== date) throw new Error('生成期间角色当地已经跨天，请重试生成当前日程。');
     if (!force && hasActiveFateSlot(latest, now)) return latest;
+    if (rerollTarget) {
+        const liveTarget = latest?.slots.find(s => s.startsAt === rerollTarget.startsAt);
+        if (!liveTarget || JSON.stringify(liveTarget) !== JSON.stringify(rerollTarget)) throw new Error('生成期间本轮日程已被编辑或删除，未覆盖修改，请重新重 Roll。');
+    }
     const end = now + duration * 60_000;
     const clock = (stamp: number) => { const wall = getScheduleWallClock(char, new Date(stamp)); return `${String(wall.getHours()).padStart(2, '0')}:${String(wall.getMinutes()).padStart(2, '0')}`; };
     const slot: ScheduleSlot = {
@@ -123,11 +146,12 @@ export async function generateFateSchedule(
         fate: { tendency: draw.tendency, factors: draw.factors, peopleDirection: draw.people, rationale: typeof data.rationale === 'string' ? data.rationale : '', activityKind: String(data.activityKind || data.activity), sceneKind: String(data.sceneKind || data.location), development: String(data.development || ''), usageDate: date },
     };
     const base = latest || existing;
-    const slots = (base?.slots || []).filter(s => !force || !s.startsAt || !s.endsAt || s.startsAt > now || s.endsAt <= now);
+    const slots = (base?.slots || []).filter(s => !rerollTarget || s.startsAt !== rerollTarget.startsAt);
     const schedule: DailySchedule = {
         id: `fate:${char.id}_${date}`, charId: char.id, date, mode: 'fate', generatedAt: now,
         slots: [...slots, slot].sort((a, b) => (a.startsAt || 0) - (b.startsAt || 0)),
         coverImage: base?.coverImage,
+        fateReplacedStarts: Array.from(new Set([...(base?.fateReplacedStarts || []), ...(rerollTarget?.startsAt !== undefined ? [rerollTarget.startsAt] : [])])),
         fateDraws: [...(base?.fateDraws || []).filter(d => d.date === date), { date, factorIds: draw.factors.map(f => f.id) }],
     };
     await DB.saveDailySchedule(schedule);

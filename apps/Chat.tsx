@@ -3108,12 +3108,12 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     };
 
     const generateDailySchedule = async (targetChar: typeof char, forceRegenerate: boolean = false) => {
-        if (!targetChar || isScheduleGenerating) return;
+        if (!targetChar || isScheduleGenerating || isTheaterGenerating) return;
         setIsScheduleGenerating(true);
         try {
             const result = await generateDailyScheduleForChar(targetChar, userProfile, apiConfig, forceRegenerate);
             if (result) {
-                setScheduleData(result);
+                if (activeCharIdRef.current === targetChar.id) setScheduleData(result);
                 // 跨天后台重新生成也要刷云端：不刷的话角色到点照着昨天的作息表说话
                 markAmsgStateDirty({ char: targetChar, userProfile, groups, realtimeConfig });
             }
@@ -5388,6 +5388,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 onToggleVoiceFavorite={selectedMessage ? () => handleToggleVoiceFavorite(selectedMessage) : undefined}
                 scheduleData={scheduleData}
                 isScheduleGenerating={isScheduleGenerating}
+                isScheduleViewing={isTheaterGenerating}
                 onScheduleEdit={handleScheduleEdit}
                 onScheduleDelete={handleScheduleDelete}
                 onScheduleReroll={() => generateDailySchedule(char, true)}

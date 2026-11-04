@@ -9,7 +9,7 @@ vi.mock('./db', () => ({
 }));
 
 import { DB } from './db';
-import { getDailyScheduleForChar, getLocalDailySchedule } from './dailySchedule';
+import { getDailyScheduleForChar, getLocalDailySchedule, getRecentScheduleHistory } from './dailySchedule';
 import type { CharacterProfile, DailySchedule } from '../types';
 
 const originalTimeZone = process.env.TZ;
@@ -38,6 +38,26 @@ const schedule = (date: string, generatedAt: number): DailySchedule => ({
 });
 
 describe('local daily schedule compatibility', () => {
+    it('后续重 Roll 的历史材料也排除跨午夜被否掉的活动', async () => {
+        const at = new Date('2026-07-20T16:30:00.000Z');
+        const oldStart = at.getTime() - 3600000;
+        getSchedule.mockImplementation(async (id, date) => {
+            if (id === 'fate:char-1' && date === '2026-07-20') return { ...schedule(date, oldStart), slots: [{ startTime: '23:30', startsAt: oldStart, activity: '被否掉的跨夜活动' }] };
+            if (id === 'fate:char-1' && date === '2026-07-21') return { ...schedule(date, at.getTime()), slots: [{ startTime: '00:30', startsAt: at.getTime(), activity: '重 Roll 后活动' }], fateReplacedStarts: [oldStart] };
+            return null;
+        });
+        const result = await getRecentScheduleHistory({ id: 'char-1' }, at);
+        expect(JSON.stringify(result)).not.toContain('被否掉的跨夜活动');
+        expect(JSON.stringify(result)).toContain('重 Roll 后活动');
+    });
+    it('跨午夜重 Roll 后不重新混入昨天被替换的活动', async () => {
+        const at = new Date('2026-07-20T16:30:00.000Z');
+        const old = { ...schedule('2026-07-20', at.getTime()), mode: 'fate' as const, slots: [{ startTime: '23:30', activity: '被替换', startsAt: at.getTime() - 3600000, endsAt: at.getTime() + 3600000 }] };
+        const replacement = { ...schedule('2026-07-21', at.getTime()), mode: 'fate' as const, slots: [{ startTime: '00:15', activity: '新一轮', startsAt: at.getTime() - 900000, endsAt: at.getTime() + 7200000 }] };
+        getSchedule.mockResolvedValueOnce(replacement).mockResolvedValueOnce(old);
+        const result = await getDailyScheduleForChar({ id: 'char-1', scheduleMode: 'fate' }, at);
+        expect(result?.slots.map(s => s.activity)).toEqual(['新一轮']);
+    });
     const losAngelesChar = {
         id: 'char-1',
         customTimezoneEnabled: true,

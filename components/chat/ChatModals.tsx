@@ -5,6 +5,7 @@ import TokenImg from '../os/TokenImg';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import FateScheduleSettings from '../schedule/FateScheduleSettings';
+import FateSchedulePanel from '../schedule/FateSchedulePanel';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import ChatInputSettings from './ChatInputSettings';
 import ChatSettingsSection from './ChatSettingsSection';
@@ -151,6 +152,7 @@ interface ChatModalsProps {
     // Schedule
     scheduleData?: DailySchedule | null;
     isScheduleGenerating?: boolean;
+    isScheduleViewing?: boolean;
     onScheduleEdit?: (index: number, slot: ScheduleSlot) => void;
     onScheduleDelete?: (index: number) => void;
     onScheduleReroll?: () => void;
@@ -299,7 +301,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceAutoPlay, onToggleChatVoiceAutoPlay, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable, voiceCollectable, onToggleVoiceFavorite, voiceFavorited,
-    scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
+    scheduleData, isScheduleGenerating, isScheduleViewing, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
     isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
@@ -1425,12 +1427,15 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {isScheduleFeatureEnabled && (
                         <>
                             {activeCharacter && onUpdateIncomingCall && (
+                                <details open={activeCharacter.scheduleMode !== 'fate'} className="mb-4">
+                                <summary className="text-xs text-slate-600 cursor-pointer py-2">日程模式与牌阵设置</summary>
                                 <FateScheduleSettings
                                     key={activeCharacter.id}
                                     char={activeCharacter}
                                     onChange={onUpdateIncomingCall}
                                     isGenerating={isScheduleGenerating}
                                 />
+                                </details>
                             )}
                             {/* Schedule Style Selector */}
                             {onScheduleStyleChange && activeCharacter?.scheduleMode !== 'fate' && (
@@ -1472,7 +1477,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 </div>
                             )}
 
-                            <ScheduleCard
+                            {activeCharacter?.scheduleMode === 'fate' ? <FateSchedulePanel
+                                key={activeCharacter.id}
+                                schedule={scheduleData?.mode === 'fate' ? scheduleData : null}
+                                character={activeCharacter}
+                                onEdit={onScheduleEdit}
+                                onDelete={onScheduleDelete}
+                                onReroll={onScheduleReroll}
+                                onPlayTheater={onPlayTheater}
+                                isViewing={isScheduleViewing}
+                                isGenerating={isScheduleGenerating}
+                            /> : <><ScheduleCard
                                 schedule={scheduleData || null}
                                 character={activeCharacter}
                                 compact={false}
@@ -1485,7 +1500,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             />
                             <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
                                 点击日程项可编辑 · 长按可删除
-                            </p>
+                            </p></>}
 
                         </>
                     )}

@@ -1,0 +1,100 @@
+.fate-panel {
+    --fate-ink: #293647;
+    --fate-muted: #59636f;
+    --fate-rose: #85495d;
+    --fate-paper: #fffefd;
+    color: var(--fate-ink);
+    background: #f5edef;
+    padding: 20px 16px;
+    border-radius: 22px;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    isolation: isolate;
+}
+.fate-panel *, .fate-panel *::before, .fate-panel *::after { box-sizing: border-box; }
+.fate-panel h1, .fate-panel h3, .fate-panel p { margin: 0; color: inherit; }
+.fate-panel button, .fate-panel input, .fate-panel textarea, .fate-panel select { font: inherit; }
+.fate-panel button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.fate-panel button:disabled { cursor: not-allowed; opacity: .58; }
+.fate-panel button:focus-visible, .fate-panel summary:focus-visible, .fate-panel input:focus-visible, .fate-panel textarea:focus-visible, .fate-panel select:focus-visible { outline: 2px solid var(--fate-rose); outline-offset: 3px; }
+.fate-panel__header { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; align-items: baseline; }
+.fate-panel__header h1 { font-family: Georgia, 'Noto Serif SC', 'Songti SC', serif; font-size: 22px; font-weight: 600; }
+.fate-panel__header > span { color: var(--fate-muted); font-size: 13px; }
+.fate-panel__draw { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 0 2px; text-align: left; border: 0; background: transparent; color: var(--fate-ink); }
+.fate-panel__cat { flex: 0 0 42%; width: 42%; max-width: 180px; stroke: var(--fate-ink); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.fate-panel__draw > span { min-width: 0; display: grid; gap: 5px; }
+.fate-panel__draw strong { font-size: 14px; font-weight: 650; color: var(--fate-rose); }
+.fate-panel__draw > span > span { font-size: 13px; color: var(--fate-muted); }
+.fate-panel__draw:not(:disabled):hover .fate-panel__yarn { transform: rotate(12deg); }
+.fate-panel__draw:not(:disabled):active { transform: translateY(1px); }
+.fate-panel__yarn { transform-origin: 156px 69px; transition: transform .25s ease; }
+.fate-panel__paw { transform-origin: 93px 78px; }
+.fate-panel--waiting .fate-panel__paw { animation: fate-panel-paw 1.25s ease-in-out infinite; }
+.fate-panel--waiting .fate-panel__yarn { animation: fate-panel-yarn 1.25s ease-in-out infinite; }
+.fate-panel .fate-panel__draw:disabled { opacity: 1; }
+.fate-panel .fate-panel__continuation { color: var(--fate-muted); font-size: 13px; margin: 4px 0 18px; }
+.fate-panel__activity { padding: 18px 16px 12px; background: var(--fate-paper); border-radius: 14px; }
+.fate-panel__timing { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; margin-bottom: 12px; font-size: 12px; color: var(--fate-muted); font-variant-numeric: tabular-nums; }
+.fate-panel__timing > span:first-child { color: var(--fate-rose); font-size: 13px; font-weight: 600; }
+.fate-panel__activity h3 { font-size: 21px; line-height: 1.4; font-weight: 650; }
+.fate-panel .fate-panel__location { font-size: 13px; color: var(--fate-rose); margin-top: 6px; }
+.fate-panel .fate-panel__description { white-space: pre-wrap; margin-top: 12px; font-size: 14px; line-height: 1.85; }
+.fate-panel__actions { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 12px; }
+.fate-panel__actions button { background: transparent; color: var(--fate-ink); border: 0; padding: 9px 4px; min-height: 40px; font-size: 13px; }
+.fate-panel__actions button:not(:disabled):hover { text-decoration: underline; text-underline-offset: 4px; }
+.fate-panel__actions .fate-panel__delete { color: #9a4258; margin-left: auto; }
+/* 三张牌共享可用宽度：主牌 1.12 份，两张副牌各 1 份，间距共 16px。 */
+.fate-panel__deck { display: grid; grid-template-columns: 1.12fr 1fr 1fr; gap: 8px; align-items: stretch; margin-top: 22px; }
+.fate-panel__card { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 10px 7px 12px; border: 1px solid #cdbec5; background: var(--fate-paper); border-radius: 9px; color: var(--fate-ink); transition: transform .2s ease, background .2s ease; }
+.fate-panel__card::after { content: ''; position: absolute; inset: 4px; border: 1px solid #e6dade; border-radius: 5px; pointer-events: none; }
+.fate-panel__card--lead { border-color: var(--fate-rose); background: #fff9fa; }
+.fate-panel__card--open { background: #eddde2; transform: translateY(-4px); }
+.fate-panel__card:not(:disabled):hover { transform: translateY(-4px); }
+.fate-panel__card-role { font-size: 13px; color: var(--fate-rose); }
+.fate-panel__card-art { width: 64px; max-width: 100%; height: 68px; margin: 7px 0; stroke: var(--fate-rose); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+.fate-panel__card strong { font-size: 14px; line-height: 1.5; font-weight: 600; text-align: center; margin: auto 0 8px; }
+.fate-panel__card--lead strong { font-size: 16px; }
+.fate-panel__card-hint { font-size: 13px; color: var(--fate-muted); }
+.fate-panel__meaning { padding: 14px; margin-top: 12px; background: #eadce1; border-radius: 10px; }
+.fate-panel__meaning strong { font-size: 14px; }
+.fate-panel__meaning p { margin-top: 6px; white-space: pre-wrap; }
+.fate-panel__context { margin-top: 18px; display: grid; gap: 14px; }
+.fate-panel__context strong { font-size: 14px; font-weight: 600; }
+.fate-panel__label { display: block; color: var(--fate-muted); font-size: 13px; margin-bottom: 3px; }
+.fate-panel__context p { font-size: 13px; line-height: 1.8; margin-top: 4px; white-space: pre-wrap; }
+.fate-panel summary { cursor: pointer; min-height: 40px; padding: 8px 0; font-size: 13px; }
+.fate-panel__rationale summary { color: var(--fate-rose); }
+.fate-panel__rationale[open] { padding-bottom: 4px; }
+.fate-panel__editor, .fate-panel__confirm { margin-top: 20px; padding: 16px; background: var(--fate-paper); border-radius: 14px; }
+.fate-panel__editor h3 { font-size: 16px; margin-bottom: 6px; }
+.fate-panel__editor fieldset { border: 0; padding: 0; margin: 16px 0 0; min-width: 0; }
+.fate-panel__editor label { display: grid; gap: 6px; font-size: 13px; margin-top: 12px; }
+.fate-panel__editor input, .fate-panel__editor textarea, .fate-panel__editor select { width: 100%; min-width: 0; padding: 10px; color: var(--fate-ink); background: white; border: 1px solid #d6cbd0; border-radius: 8px; font-size: 16px; }
+.fate-panel__editor textarea { resize: vertical; }
+.fate-panel__editor :disabled { background: #f2eff0; color: #68646c; }
+.fate-panel__actions .fate-panel__save { background: var(--fate-ink); color: white; padding: 9px 16px; border-radius: 8px; }
+.fate-panel .fate-panel__error { margin-top: 12px; padding: 12px; border-radius: 8px; background: #f8dfe4; color: #842e46; font-size: 13px; }
+.fate-panel .fate-panel__muted { color: var(--fate-muted); font-size: 13px; }
+.fate-panel__empty { padding: 20px 16px; background: var(--fate-paper); border-radius: 14px; }
+.fate-panel__empty h3 { font-size: 17px; margin-bottom: 8px; }
+.fate-panel__empty p { color: var(--fate-muted); font-size: 13px; }
+.fate-panel__history { margin-top: 22px; }
+.fate-panel__history > summary { color: var(--fate-ink); font-weight: 600; }
+.fate-panel__history-list { display: grid; gap: 12px; margin-top: 8px; }
+.fate-panel__history-list > article { background: #fffafc; border-radius: 12px; padding: 14px; }
+.fate-panel__history-list h3 { margin-top: 6px; font-size: 16px; }
+@keyframes fate-panel-paw { 0%, 100% { transform: rotate(0); } 45% { transform: rotate(-14deg); } }
+@keyframes fate-panel-yarn { 0%, 100% { transform: translateX(0) rotate(0); } 45% { transform: translateX(7px) rotate(23deg); } }
+@media (max-width: 360px) {
+    .fate-panel { padding: 16px 12px; }
+    .fate-panel__deck { gap: 6px; }
+    .fate-panel__card { padding-left: 5px; padding-right: 5px; }
+    .fate-panel__card strong { font-size: 13px; }
+    .fate-panel__card--lead strong { font-size: 14px; }
+    .fate-panel__activity { padding: 16px 12px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .fate-panel *, .fate-panel *::before, .fate-panel *::after { animation: none !important; transition: none !important; }
+    .fate-panel__card:hover, .fate-panel__card--open, .fate-panel__draw:hover .fate-panel__yarn { transform: none; }
+}

@@ -22,6 +22,7 @@ import { DB } from './db';
 import { safeResponseJson, extractContent } from './safeApi';
 import { isScheduleFeatureOn } from './scheduleGenerator';
 import { isEmotionFeatureOn } from './scheduleFeature';
+import { getDailyScheduleForChar } from './dailySchedule';
 import { getFlowNarrativeKey } from './scheduleInjection';
 import { DATE_STYLE_PRESETS } from './datePrompts';
 
@@ -220,8 +221,12 @@ export async function generateSlotTheater(
         const theater: SlotTheater = { lines, generatedAt: Date.now() };
 
         // 写回对应 slot（不可变更新，保持其余 slot 引用稳定）
-        const newSlots = schedule.slots.map((s, i) => (i === slotIndex ? { ...s, theater } : s));
-        const updated: DailySchedule = { ...schedule, slots: newSlots };
+        const base = schedule.mode === 'fate' ? await getDailyScheduleForChar(char) : schedule;
+        if (!base) return null;
+        const targetIndex = schedule.mode === 'fate' ? base.slots.findIndex(s => s.startsAt === slot.startsAt && s.activity === slot.activity && s.description === slot.description && s.location === slot.location) : slotIndex;
+        if (targetIndex < 0) return null;
+        const newSlots = base.slots.map((s, i) => (i === targetIndex ? { ...s, theater } : s));
+        const updated: DailySchedule = { ...base, slots: newSlots };
         await DB.saveDailySchedule(updated);
         return updated;
     } catch (e) {

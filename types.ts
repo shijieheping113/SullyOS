@@ -872,6 +872,8 @@ export interface DailySchedule {
   mode?: 'classic' | 'fate';
   /** 命运因子成功使用台账；重新生成不抹去已经使用的次数。 */
   fateDraws?: { date: string; factorIds: string[] }[];
+  /** 已被重 Roll 替换的起始标识，用于排除跨午夜旧记录的再次读取。 */
+  fateReplacedStarts?: number[];
     coverImage?: string;  // 用户自定义角色看板图 (持久化)
     /**
      * 按时段生成的意识流独白。
