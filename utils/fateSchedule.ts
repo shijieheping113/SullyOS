@@ -55,7 +55,7 @@ export function omitRerolledFateSlot(history: DailySchedule[], target?: Schedule
     return history.map(day => ({ ...day, slots: day.slots.filter(slot => slot.startsAt !== target.startsAt) }));
 }
 export function validateFateDescription(description: string): void {
-    if (Array.from(description).length > 80) throw new Error('日程描述超过80字，未替换本轮；请重试，当前日程已保留。');
+    if (Array.from(description).length > 120) throw new Error('日程描述超过120字，未替换本轮；请重试，当前日程已保留。');
 }
 
 export function buildFateTask(char: CharacterProfile, draw: FateDraw, history: DailySchedule[], chat: string, now: Date, reroll = false): string {
@@ -133,7 +133,7 @@ export async function generateFateSchedule(
     if (!Number.isInteger(duration) || duration < 60 || duration > 180 || typeof data.activity !== 'string' || !data.activity.trim() || typeof data.description !== 'string' || !data.description.trim() || typeof data.location !== 'string' || !data.location.trim()) throw new Error('日程内容或时长不完整，未保存；重试会沿用本轮抽牌。');
     validateFateDescription(data.description.trim());
     const homePosition = parseHomePosition(data.homePosition, char);
-    if (buildHomeSchedulePrompt(char) && !homePosition) throw new Error('日程缺少有效家园位置，原日程已保留。');
+    // 与普通日程一致：有家园名单但模型没给出有效房间时照常保存，位置留空，不丢整轮。
     // 请求期间用户编辑过的日程以最新版本为准，不把传入快照整份覆盖回去。
     const latest = await getDailyScheduleForChar(char);
     const now = Date.now();

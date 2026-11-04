@@ -187,21 +187,32 @@ describe('generateFateSchedule 重 Roll 请求与保存', () => {
         expect(stored).toEqual(original);
     });
 
-    it('81字描述拒绝整次生成，日程不变且不保存', async () => {
+    it('121字描述拒绝整次生成，日程不变且不保存', async () => {
         const original = structuredClone(stored);
-        fetchMock.mockResolvedValueOnce(completion('超长结果', '字'.repeat(81)));
-        await expect(generate()).rejects.toThrow('日程描述超过80字');
+        fetchMock.mockResolvedValueOnce(completion('超长结果', '字'.repeat(121)));
+        await expect(generate()).rejects.toThrow('日程描述超过120字');
         expect(mocks.save).not.toHaveBeenCalled();
         expect(dispatch).not.toHaveBeenCalled();
         expect(stored).toEqual(original);
     });
 
-    it('恰好80个字符的描述完整保存，表情按一个字符计算', async () => {
-        const description = '字'.repeat(79) + '🌿';
+    it('恰好120个字符的描述完整保存，表情按一个字符计算', async () => {
+        const description = '字'.repeat(119) + '🌿';
         fetchMock.mockResolvedValueOnce(completion('长度合格结果', description));
         await generate();
         expect(stored.slots[1].description).toBe(description);
         expect(mocks.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('有家园名单但模型没给有效房间时照常保存，位置留空', async () => {
+        const homeChar = { ...char, homeDefinition: { kind: 'real', notes: '' }, home3D: { rooms: [{ id: 'bedroom', name: '卧室', level: 0 }] } } as CharacterProfile;
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+            durationMinutes: 90, activity: '回家补觉', description: '他回到卧室，把窗帘拉上，倒头睡了一会儿。', location: '卧室',
+            emoji: '🌿', homePosition: { kind: 'home', roomId: '不存在的房间' }, rationale: '结合现有安排展开新的活动。',
+        }) } }] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+        await generateFateSchedule(homeChar, user, api, chat, messages, true);
+        expect(mocks.save).toHaveBeenCalledTimes(1);
+        expect(stored.slots[1]).toMatchObject({ activity: '回家补觉', location: '卧室', homePosition: undefined });
     });
 
     it('生成期间用户编辑目标活动则拒绝覆盖，保留用户填写的内容', async () => {

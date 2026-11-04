@@ -39,8 +39,8 @@ describe('命运牌阵抽取与分时段判断', () => {
         expect(getFateRerollTarget(schedule, 5000)).toBe(target);
     });
     it('短描述上限按文字长度检查，超长拒绝而不是截掉内容', () => {
-        expect(() => validateFateDescription('字'.repeat(80))).not.toThrow();
-        expect(() => validateFateDescription('字'.repeat(81))).toThrow('超过80字');
+        expect(() => validateFateDescription('字'.repeat(120))).not.toThrow();
+        expect(() => validateFateDescription('字'.repeat(121))).toThrow('超过120字');
     });
     it('人物方向按 45/25/20/10 的边界抽取', () => {
         expect(drawPeopleDirection(() => 0)).toBe('free');
