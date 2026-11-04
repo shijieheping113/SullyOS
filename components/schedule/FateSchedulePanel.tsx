@@ -158,7 +158,7 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         } catch { setError('活动保存失败，填写内容已保留，请重试。'); }
         finally { setIsSaving(false); }
     };
-    const toggle = onToggle && <button type="button" className="fate-panel__toggle" role="switch" aria-checked="true" aria-label="切换命运日程" title="关闭命运日程" disabled={writesDisabled} onClick={onToggle}><span aria-hidden="true" /></button>;
+    const toggle = onToggle && <button type="button" className="fate-panel__toggle" aria-label="切换命运日程" title="关闭命运日程" disabled={writesDisabled} onClick={onToggle}>关闭</button>;
     const actions = (item: ScheduleSlot, itemIndex: number, withToggle = false) => <div className="fate-panel__actions" aria-label="活动操作">
         {onPlayTheater && <button type="button" aria-label={item.theater ? '重看小剧场' : '进一步查看'} title={item.theater ? '重看小剧场' : '进一步查看'} disabled={writesDisabled || (validStamp(item.startsAt) && item.startsAt > now)} onClick={() => onPlayTheater(itemIndex)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 12c6-9 14-9 20 0-6 9-14 9-20 0Z"/><circle cx="12" cy="12" r="3"/></svg><span className="fate-panel__action-name">{item.theater ? '重看小剧场' : '进一步查看'}</span></button>}
         {onEdit && <button type="button" aria-label="编辑活动" title="编辑活动" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 16 10-11 4 4L9 20H4l1-4Zm8-9 4 4M4 22h16"/></svg><span className="fate-panel__action-name">编辑活动</span></button>}
@@ -188,7 +188,7 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     return (
         <div className={`fate-panel ${embedded ? 'fate-panel--embedded' : ''} ${isGenerating ? 'fate-panel--waiting' : ''}`} aria-label="命运牌阵" aria-busy={busy || isSaving}>
             {!embedded && <header className="fate-panel__header"><h1>命运牌阵</h1><span>{character?.name || '角色'}的生活片段</span></header>}
-            <div className="fate-panel__toolbar"><span>{character?.name || '角色'}的生活线</span><button type="button" className="fate-panel__history-trigger" aria-label={`打开今日历史，共${history.length}项`} title="今日历史" onClick={() => setHistoryPage(0)}><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M4 5c4-2 8-1 10 1v18c-2-2-6-3-10-1V5Zm20 0c-4-2-8-1-10 1v18c2-2 6-3 10-1V5Z"/><path d="M7 9h4m-4 4h4m7-4h3m-3 4h3"/></svg></button></div>
+            <div className="fate-panel__toolbar"><button type="button" className="fate-panel__history-trigger" aria-label={`打开今日历史，共${history.length}项`} title="今日历史" onClick={() => setHistoryPage(0)}><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M4 5c4-2 8-1 10 1v18c-2-2-6-3-10-1V5Zm20 0c-4-2-8-1-10 1v18c2-2 6-3 10-1V5Z"/><path d="M7 9h4m-4 4h4m7-4h3m-3 4h3"/></svg></button></div>
             {(isGenerating || isViewing) && <p className="fate-panel__continuation" role="status">{isGenerating ? '生成中，完成后才换牌。' : '小剧场正在生成。'}</p>}
 
             {slot ? <>

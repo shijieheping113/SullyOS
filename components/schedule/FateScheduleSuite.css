@@ -1,5 +1,5 @@
 .fate-dialog { --fate-ink:#293647; --fate-muted:#59636f; --fate-rose:#85495d; color:var(--fate-ink); background:#f5edef; }
-.fate-dialog.fate-dialog { position:relative;max-width:420px;height:auto;max-height:min(88dvh,780px);border:1px solid #b991a4;border-radius:9px;flex-shrink:1; }
+.fate-dialog.fate-dialog { position:relative;max-width:420px;height:auto;max-height:min(92dvh,820px);border:1px solid #b991a4;border-radius:9px;flex-shrink:1; }
 .fate-dialog::after { content:'';position:absolute;inset:5px;border:1px solid #ddc3cf;border-radius:5px;pointer-events:none;z-index:1; }
 .fate-dialog__corners { position:absolute;inset:12px;pointer-events:none;color:#bd95a6;z-index:2; }
 .fate-dialog__corners svg { position:absolute;width:38px;height:38px;fill:none;stroke:currentColor;stroke-width:.8;opacity:.8; }
