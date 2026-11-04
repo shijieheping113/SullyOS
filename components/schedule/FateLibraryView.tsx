@@ -3,7 +3,7 @@ import type { CharacterProfile } from '../../types';
 import type { FateFactor } from '../../utils/fateFactors';
 import { defaultFateSettings, loadFateSettings, saveFateSettings, type FateSettings, type FateTendency } from '../../utils/fateSettings';
 import './FateSettingsViews.css';
-import FateTarotArt from './FateTarotArt';
+import FateTarotArt, { FatePatronArt } from './FateTarotArt';
 import FateOverlay from './FateOverlay';
 import './FateLibraryView.css';
 
@@ -119,7 +119,7 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
         <div className="fate-settings-summary"><span>匹配 {filtered.length} 张</span><button type="button" disabled={busy} onClick={() => { if (leaveDraft()) { setDraft({ name: '', meaning: '', category: '自定义' }); setExpanded(null); setError(''); setNotice(''); } }}>添加{noun}</button></div>
         {!selected && !draft && error && <p role="alert" className="fate-settings-error">{error}</p>}{notice && <p role="status" className="fate-settings-meta">{notice}</p>}
         <div className="fate-book-page" key={`${kind}-${currentPage}-${query}-${category}-${status}`} aria-label={`第${currentPage}页牌面`}>{filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map(item => <button type="button" className="fate-book-card" key={item.id} aria-label={`查看${item.name}`} onClick={event => { event.currentTarget.focus(); setExpanded(item.id); setError(''); }}>
-            <FateTarotArt factor={item} /><span className="fate-book-name">{item.name}</span>{disabledIds.includes(item.id) && <span className="fate-book-meta">已停用</span>}
+            {kind === 'tendencies' ? <FatePatronArt tendencyId={item.id} /> : <FateTarotArt factor={item} />}<span className="fate-book-name">{item.name}</span>{disabledIds.includes(item.id) && <span className="fate-book-meta">已停用</span>}
         </button>)}</div>
         {!filtered.length && <p className="fate-settings-empty">没有找到，换个词试试。</p>}
         <nav className="fate-book-paging" aria-label="牌册翻页"><button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>上一页</button><span aria-live="polite">第 {currentPage} / {totalPages} 页</span><button type="button" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>下一页</button></nav>
@@ -127,7 +127,7 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
         {(selected || draft) && <FateOverlay title={draft ? `${draft.id ? '编辑' : '添加'}${noun}` : selected!.name} className="fate-book-overlay" onClose={closeOverlay}>
             {error && <p className="fate-book-error" role="alert">{error}</p>}
             {draft ? editor() : selected && <>
-                <button type="button" className="fate-book-card fate-book-enlarged" aria-label={`放回${selected.name}`} disabled={busy} onClick={closeOverlay}><FateTarotArt factor={selected} /><span className="fate-book-name">{selected.name}</span><span className="fate-book-meta">点击放回</span></button>
+                <button type="button" className="fate-book-card fate-book-enlarged" aria-label={`放回${selected.name}`} disabled={busy} onClick={closeOverlay}>{kind === 'tendencies' ? <FatePatronArt tendencyId={selected.id} /> : <FateTarotArt factor={selected} />}<span className="fate-book-name">{selected.name}</span><span className="fate-book-meta">点击放回</span></button>
                 <p className="fate-book-meaning">{selected.meaning}</p>
                 <p className="fate-book-meta">{'category' in selected ? String(selected.category) : '倾向'} · {disabledIds.includes(selected.id) ? '已停用' : '已启用'}</p>
                 <div className="fate-book-actions"><button type="button" disabled={busy} onClick={() => { setDraft({ ...selected, category: (selected as FateFactor).category || '自定义' }); setError(''); }}>编辑{noun}</button><button type="button" disabled={busy} onClick={() => toggle(selected)}>{disabledIds.includes(selected.id) ? '恢复启用' : '停用'}{selected.name}</button></div>

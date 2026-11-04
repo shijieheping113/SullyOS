@@ -33,7 +33,7 @@ function button(label: string, scope: ParentNode = host): HTMLButtonElement {
     return found!;
 }
 async function click(label: string, scope: ParentNode = host) { await act(async () => button(label, scope).click()); }
-function form(): HTMLFormElement { return host.querySelector('form')!; }
+function form(): HTMLFormElement { return document.body.querySelector('form')!; }
 async function fill(label: string, value: string) {
     const field = Array.from(form().querySelectorAll('label')).find(item => item.firstChild?.textContent === label)!.querySelector('input,textarea,select') as HTMLInputElement;
     await act(async () => { field.value = value; Simulate.change(field); });
@@ -47,7 +47,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
 
 describe('命运牌阵独立活动面板', () => {
-    it('猫咪与正文同在活动内并列，因子位于活动下方，没有嵌套spread牌框', async () => {
+    it('顶部左猫右神、下方整行正文和因子，没有占星操作图', async () => {
         await render();
         expect(host.textContent).not.toContain('换一副牌，重写本轮');
         expect(host.textContent).not.toContain('下一段，顺着线来');
@@ -55,27 +55,29 @@ describe('命运牌阵独立活动面板', () => {
         const activity = host.querySelector('[aria-label="本轮活动"]')!;
         const companion = activity.querySelector('.fate-panel__companion')!;
         const copy = activity.querySelector('.fate-panel__copy')!;
-        expect(companion.parentElement).toBe(activity);
+        const figures = activity.querySelector('.fate-panel__figures')!;
+        expect(companion.parentElement).toBe(figures);
         expect(copy.parentElement).toBe(activity);
-        expect(companion.nextElementSibling).toBe(copy);
+        expect(companion.nextElementSibling?.className).toBe('fate-panel__patron');
+        expect(figures.parentElement).toBe(activity);
+        expect(activity.querySelector('.fate-panel__orbit-map')).toBeNull();
         expect(companion.querySelector('.fate-panel__cat')).toBeTruthy();
         const reading = activity.nextElementSibling!;
         expect(reading.classList.contains('fate-panel__reading')).toBe(true);
         expect(reading.querySelectorAll('.fate-panel__card')).toHaveLength(3);
         expect(activity.querySelector('h3')?.nextElementSibling?.className).toBe('fate-panel__timing');
     });
-    it('正文先显示本轮命运之神与倾向图形，再显示活动标题、时间和内容', async () => {
+    it('神像位于顶部，正文从活动标题开始，时间和状态同排', async () => {
         await render();
         const copy = host.querySelector('[aria-label="本轮活动"] .fate-panel__copy')!;
-        const patron = copy.querySelector('[aria-label="本轮命运之神"]')!;
-        expect(copy.firstElementChild).toBe(patron);
-        expect(patron.textContent).toContain('本轮命运之神');
+        const patron = host.querySelector('.fate-panel__figures .fate-panel__patron')!;
         expect(patron.textContent).toContain(current.fate!.tendency.name);
         expect(patron.querySelector('.fate-patron-art')?.getAttribute('data-fate-art')).toBe('认知');
-        const title = patron.nextElementSibling!;
+        const title = copy.firstElementChild!;
         expect(title.tagName).toBe('H3');
         expect(title.textContent).toBe(current.activity);
         expect(title.nextElementSibling?.className).toBe('fate-panel__timing');
+        expect(copy.querySelector('.fate-panel__timing .fate-panel__state')?.textContent).toBe('正在进行');
         expect(copy.querySelector('.fate-panel__description')?.textContent).toBe(current.description);
     });
     it('根据真实时间展示当前活动、三张真实因子牌、倾向和人物方向', async () => {
@@ -87,25 +89,27 @@ describe('命运牌阵独立活动面板', () => {
         expect(activity.textContent).toContain('10:00 — 12:00');
         expect(activity.textContent).toContain(current.description);
         expect(host.querySelectorAll('.fate-panel__deck')[0].querySelectorAll('button')).toHaveLength(3);
-        expect(host.textContent).toContain('经历与发现'); expect(host.textContent).toContain('新接触');
-        expect(host.querySelector('.fate-panel__rationale')?.getAttribute('aria-expanded')).toBe('false');
+        expect(host.textContent).toContain('经历与发现');
+        expect(host.querySelector('.fate-panel__patron')?.getAttribute('aria-expanded')).toBe('false');
     });
-    it('三个行为按钮附在左侧占星区域，小算盘小窗打开关闭不移动触发按钮', async () => {
+    it('三个行为图标在正文下方，点顶部神像看小算盘并返回原神像', async () => {
         await render();
-        const orbit = host.querySelector('.fate-panel__companion [aria-label="占星操作"]')!;
-        expect(orbit.querySelectorAll('button')).toHaveLength(3);
-        expect(orbit.querySelector('.fate-panel__orbit-map')).toBeTruthy();
-        const trigger = button('命运之神的小算盘');
+        const actions = host.querySelector('.fate-panel__copy [aria-label="活动操作"]')!;
+        expect(actions.querySelectorAll('button')).toHaveLength(3);
+        expect(actions.previousElementSibling?.className).toBe('fate-panel__description');
+        const trigger = button('查看经历与发现的小算盘');
         const parent = trigger.parentElement;
-        await click('命运之神的小算盘');
+        await click('查看经历与发现的小算盘');
         const dialog = document.body.querySelector('.fate-calculation')!;
         expect(dialog.textContent).toContain(current.fate!.rationale);
+        expect(dialog.textContent).toContain('新接触');
         expect(dialog.querySelector('.fate-patron-art')).toBeTruthy();
         expect(dialog.querySelectorAll('.fate-calculation__factors>div')).toHaveLength(3);
         expect(trigger.parentElement).toBe(parent);
         await act(async () => (dialog.querySelector('[aria-label="关闭命运之神的小算盘"]') as HTMLButtonElement).click());
         expect(document.body.querySelector('.fate-calculation')).toBeNull();
         expect(trigger.parentElement).toBe(parent);
+        expect(document.activeElement).toBe(trigger);
     });
     it('点击实际因子牌展开和收起含义', async () => {
         await render();
@@ -150,8 +154,8 @@ describe('命运牌阵独立活动面板', () => {
         expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.textContent).toContain('地图');
         expect(host.querySelector('[role="status"]')?.textContent).toBe('生成中，完成后才换牌。');
         expect(host.querySelector('.fate-panel--waiting')).not.toBeNull();
-        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale'));
-        expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
+        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale') && !item.classList.contains('fate-panel__patron'));
+        expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled || item.classList.contains('fate-panel__history-trigger'))).toBe(true);
         await act(async () => controls.forEach(item => item.click()));
         expect(props.onEdit).not.toHaveBeenCalled(); expect(props.onReroll).not.toHaveBeenCalled(); expect(props.onPlayTheater).not.toHaveBeenCalled(); expect(props.onDelete).not.toHaveBeenCalled();
         expect(form().querySelector('fieldset')?.disabled).toBe(true);
@@ -175,8 +179,8 @@ describe('命运牌阵独立活动面板', () => {
         expect(host.querySelector('.fate-panel--waiting')).toBeNull();
         expect(host.querySelector('[role="status"]')?.textContent).toBe('小剧场正在生成。'); expect(host.textContent).not.toContain('猫爪正在牵线');
         expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
-        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale'));
-        expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
+        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale') && !item.classList.contains('fate-panel__patron'));
+        expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled || item.classList.contains('fate-panel__history-trigger'))).toBe(true);
         await act(async () => controls.forEach(item => item.click()));
         expect(props.onEdit).not.toHaveBeenCalled(); expect(props.onReroll).not.toHaveBeenCalled(); expect(props.onDelete).not.toHaveBeenCalled(); expect(props.onPlayTheater).not.toHaveBeenCalled();
         await render({ isViewing: false }); expect(form().querySelector('fieldset')?.disabled).toBe(false);
@@ -188,11 +192,14 @@ describe('命运牌阵独立活动面板', () => {
         expect(host.querySelector('[aria-label="本轮活动"]')?.textContent).toContain(current.activity);
         expect(host.querySelector('.fate-panel__continuation')).toBeNull();
     });
-    it('历史默认折叠，历史小剧场使用真实下标，删除必须确认', async () => {
+    it('书本入口打开今日历史并翻页，历史小剧场使用真实下标，删除必须确认', async () => {
         await render();
-        const history = host.querySelector('.fate-panel__history') as HTMLDetailsElement;
-        expect(history.open).toBe(false); expect(history.textContent).toContain('窗边读信');
-        await act(async () => { history.open = true; });
+        expect(host.querySelector('.fate-panel__history-page')).toBeNull();
+        await click('打开今日历史，共1项');
+        const history = document.body.querySelector('.fate-panel__history-page')!;
+        expect(history.textContent).toContain('窗边读信');
+        expect(button('上一页', history).disabled).toBe(true);
+        expect(button('下一页', history).disabled).toBe(true);
         await click('重看小剧场', history); expect(props.onPlayTheater).toHaveBeenCalledWith(0);
         await click('删除活动', history); expect(props.onDelete).not.toHaveBeenCalled();
         expect(host.querySelector('[aria-label="删除活动确认"]')?.textContent).toContain('窗边读信');
@@ -209,6 +216,24 @@ describe('命运牌阵独立活动面板', () => {
         await click('确认删除');
         expect(props.onDelete).toHaveBeenCalledTimes(2);
         expect(host.querySelector('[aria-label="删除活动确认"]')).toBeNull();
+    });
+    it('右上书本按保存时间翻阅多项历史，查看仍使用原记录下标', async () => {
+        const oldest = { ...previous, activity: '最早活动', startsAt: NOW - 20_000_000 };
+        await render({ schedule: makeSchedule([oldest, previous, current]) });
+        expect(host.querySelector('.fate-panel__toolbar .fate-panel__history-trigger')).toBeTruthy();
+        await click('打开今日历史，共2项');
+        expect(document.body.querySelector('.fate-panel__history-page h3')?.textContent).toBe(previous.activity);
+        await click('下一页', document.body);
+        expect(document.body.querySelector('.fate-panel__history-page h3')?.textContent).toBe('最早活动');
+        await click('重看小剧场', document.body.querySelector('.fate-panel__history-page')!);
+        expect(props.onPlayTheater).toHaveBeenCalledWith(0);
+        await click('上一页', document.body);
+        expect(document.body.querySelector('.fate-panel__history-page h3')?.textContent).toBe(previous.activity);
+    });
+    it('没有历史时书本入口明确说明没有更早记录', async () => {
+        await render({ schedule: makeSchedule([current]) });
+        await click('打开今日历史，共0项');
+        expect(document.body.querySelector('.fate-panel__history-overlay')?.textContent).toContain('今天还没有更早的活动记录。');
     });
     it('空态只发出生成请求，不伪造因子或活动', async () => {
         await render({ schedule: makeSchedule([{ ...current, theater: undefined }]) });
@@ -262,14 +287,14 @@ describe('命运牌阵独立活动面板', () => {
     });
     it('历史编辑留在历史活动原位置，保存使用历史下标', async () => {
         await render();
-        const history = host.querySelector('.fate-panel__history') as HTMLDetailsElement;
-        await act(async () => { history.open = true; });
-        const article = history.querySelector('article')!;
+        await click('打开今日历史，共1项');
+        const history = document.body.querySelector('.fate-panel__history-page')!;
+        const article = history;
         await click('编辑活动', article);
-        expect(form().closest('article')).toBe(article);
-        expect(host.querySelectorAll('form')).toHaveLength(1);
+        expect(form().closest('.fate-panel__history-page')).toBe(article);
+        expect(host.querySelectorAll('form')).toHaveLength(0);
         expect(article.querySelector('.fate-panel__description')).toBeNull();
-        expect(history.open).toBe(true);
+        expect(history.isConnected).toBe(true);
         await fill('活动名称', '把信读完'); await click('保存活动', form());
         expect(props.onEdit).toHaveBeenCalledWith(0, expect.objectContaining({ activity: '把信读完', startsAt: previous.startsAt, endsAt: previous.endsAt, theater: undefined }));
     });

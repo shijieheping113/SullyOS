@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_FATE_FACTORS } from './fateFactors';
-import { buildPeopleDirectionPrompt, countFateFactors, drawPeopleDirection, getFateRerollTarget, hasActiveFateSlot, omitRerolledFateSlot, sampleFateFactors, validateFateDescription } from './fateSchedule';
+import { buildFateTask, buildPeopleDirectionPrompt, countFateFactors, drawPeopleDirection, getFateRerollTarget, hasActiveFateSlot, omitRerolledFateSlot, sampleFateFactors, validateFateDescription } from './fateSchedule';
 import { getScheduleMode, isEmotionFeatureOn, isScheduleFeatureOn } from './scheduleFeature';
-import type { DailySchedule } from '../types';
+import type { CharacterProfile, DailySchedule } from '../types';
 
 describe('命运牌阵抽取与分时段判断', () => {
+    it('全天衔接材料带完整起止，重复活动核对剩余时间与体力而不固定外出次数', () => {
+        const history = [{ date: '2026-11-04', slots: [{ startTime: '09:00', endTime: '12:00', startsAt: 1000, endsAt: 2000, activity: '外勤调查', location: '现场' }] }] as DailySchedule[];
+        const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'discovery', name: '经历与发现', meaning: '发现变化' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, history, '', new Date('2026-11-04T13:00:00'));
+        expect(task).toContain('"endTime":"12:00"');
+        expect(task).toContain('"startsAt":1000,"endsAt":2000');
+        expect(task).toContain('一天里再次安排同类活动，需要符合角色身份、确切动机、剩余时间和体力');
+        expect(task).toContain('准备、路程和收尾只在实际影响可行性时纳入判断，不必逐项写进描述');
+        expect(task).toContain('未来60—180分钟');
+        expect(task).toContain('活动范围尽可能全面');
+        expect(task).not.toContain('每天只能');
+        expect(task).not.toContain('一天只能');
+    });
     it('重 Roll 从材料移除当前轮，保留更早活动且不修改原记录', () => {
         const schedule = { slots: [
             { startsAt: 1000, endsAt: 2000, activity: '真实更早活动' },

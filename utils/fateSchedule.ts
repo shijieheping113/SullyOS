@@ -59,13 +59,17 @@ export function validateFateDescription(description: string): void {
 }
 
 export function buildFateTask(char: CharacterProfile, draw: FateDraw, history: DailySchedule[], chat: string, now: Date, reroll = false): string {
-    const recent = history.map(day => ({ date: day.date, activities: day.slots.map(s => ({ time: s.startTime, activity: s.activity, location: s.location, description: s.description, kind: s.fate?.activityKind, scene: s.fate?.sceneKind, development: s.fate?.development })) }));
+    const recent = history.map(day => ({ date: day.date, activities: day.slots.map(s => ({ startTime: s.startTime, endTime: s.endTime, startsAt: s.startsAt, endsAt: s.endsAt, activity: s.activity, location: s.location, description: s.description, kind: s.fate?.activityKind, scene: s.fate?.sceneKind, development: s.fate?.development })) }));
     return `你是命运之神，负责续写角色生活，不是角色本人。人物设定、世界书、记忆是创作资料；本次输出任务是日程，不是代角色回复聊天。
 ${reroll ? '本次是重 Roll：重新设计本轮活动，不是往后续写。被替换的日程已从活动材料中排除，不视为发生过；保留聊天明确确定的事实及更早日程。从当前处境重新创作，成功结果替换本轮。' : '本次是到期续写或首次生成：承接已知处境，从当前时刻展开一轮新的活动。'}
 角色：${char.name}。角色当地日期：${draw.date}，现在 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}。
 ${chat}
 最近七天与今天实际保存的日程（缺失不代表角色没有生活；安排不是所有活动都已完成的证明）：
-${JSON.stringify(recent)}
+ ${JSON.stringify(recent)}
+
+先把角色今天已经发生的活动连成一条连续生活，再决定本轮活动。结合每项活动的起止时间、地点、事情进度、往返路程和身体状态，判断角色现在实际能做什么。已经结束的日程只证明记录中明确发生的内容；尚未结束的安排不当作已经完成。
+涉及外勤、旅行、赴约、运动、家务或其他占用时间精力的活动时，把当天已经投入的时间、必要往返和后续已有约定一起考虑；这些不是全部。一天里再次安排同类活动，需要符合角色身份、确切动机、剩余时间和体力；时间不足时，合理延续手头事情、就近活动、休息或处理后续。准备、路程和收尾只在实际影响可行性时纳入判断，不必逐项写进描述。
+命运因子影响现实生活中的细节、阻碍、机会和感受，活动安排以角色当天实际可行的生活为准。正常的工作延续、休息和重复作息同样可以承载命运变化。
 
 本轮牌阵倾向：${draw.tendency.name}，${draw.tendency.meaning}
 主因子：${draw.factors[0].name}——${draw.factors[0].meaning}
@@ -83,7 +87,7 @@ ${buildPeopleDirectionPrompt(draw.people)}
 恋爱、暧昧、吸引、欲望与亲密可自然存在，不把生活写成只有健康工作；涉及亲密的内容仅限明确成年的双方自愿关系，以非露骨的感受、氛围、亲昵和关系变化表现，不代替用户决定或实施行为。
 ${char.scheduleStyle === 'mindful' ? '此角色使用意识系：尊重角色自述的存在形态，不虚构不具备的身体与物理能力，生活变化可以是思绪与真实交流的发展。' : ''}
 
-从现在开始设计一项活动，覆盖未来60—180分钟，由你选合理时长。不补过去，不排全天。
+输出前核对当天活动的前后衔接，确认角色有时间到达、有时间完成，工作安排与身份相符，再输出本轮日程。从现在开始设计一项活动，覆盖未来60—180分钟，由你选合理时长。不补过去，不排全天。
 日程描述是简短的场景提要，用朴实、直接的第三人称写1—2个短句，目标30—60字，最多80字。只交代活动和进入活动的一处变化，让读者知道在哪、做什么、有什么不同。人物按需要点明姓名或身份，具体地点单独填写。描述保留尚可发展的空间，动作演出、完整对话、感官描摹、内心分析、后续选择与结局留给进一步查看和聊天。
 三个因子共同影响活动构思，不要求短描述逐个解释或逐个制造转折；组合如何作用写在rationale里，用一句面向用户的设计说明，最多100字，不写内心推理。活动服务于角色自己的生活，用户相关内容只在已知关系和当前情境适合时自然出现。
 仅输出JSON：{"durationMinutes":60到180的整数,"activity":"具体活动名","description":"一小段正在展开的生活","location":"具体地点","emoji":"一个表情","homePosition":{"kind":"home","roomId":"所列真实房间ID"}或{"kind":"away"},"rationale":"简短说明因子组合怎样符合处境，不输出内心推理","activityKind":"活动类别","sceneKind":"场景类别","development":"事件发展类型"}。

@@ -49,7 +49,9 @@ describe('真实情绪成为可点击星星', () => {
     it.each([0, 1, 2, 6])('%i 种情绪只画对应真实星点，不再盘下堆列表', async count => {
         await render({ char: makeChar(count) });
         expect(stars()).toHaveLength(count);
-        expect(host.querySelector('.fate-sky-center')?.textContent).toBe(`小满${count} 种情绪`);
+        expect(host.querySelector('.fate-sky-identity')?.textContent).toBe(`小满${count} 种情绪`);
+        expect(host.querySelector('.fate-sky-chart .fate-sky-identity')).toBeNull();
+        expect(host.querySelector('.fate-sky-center')).toBeNull();
         expect(host.querySelector('.fate-astrolabe')).toBeTruthy();
         expect(host.querySelector('.fate-settings-buffs')).toBeNull();
         expect(document.body.querySelector('[role="dialog"]')).toBeNull();
@@ -122,7 +124,7 @@ describe('真实情绪成为可点击星星', () => {
         await selectStar(0);
         await render({ char: { ...makeChar(15), id: 'second-character', name: '小夏' } });
         expect(host.querySelector('.fate-sky-pages')?.textContent).toContain('第 1 / 3 页');
-        expect(host.querySelector('.fate-sky-center')?.textContent).toContain('小夏');
+        expect(host.querySelector('.fate-sky-identity')?.textContent).toContain('小夏');
         expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     });
 });

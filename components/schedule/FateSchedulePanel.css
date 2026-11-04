@@ -1,6 +1,7 @@
-.fate-panel{--fate-ink:#3e3540;--fate-muted:#705863;--fate-rose:#85495d;--fate-paper:#fbf5f6;color:var(--fate-ink);background:#f5edef;padding:16px;font-size:14px;line-height:1.65;overflow-wrap:anywhere;isolation:isolate}
+.fate-panel{--fate-ink:#51434b;--fate-muted:#79616e;--fate-rose:#85495d;--fate-paper:#f8f0f3;position:relative;color:var(--fate-ink);background:#f5edef;padding:22px 25px 18px;font-size:14px;line-height:1.65;overflow-wrap:anywhere;isolation:isolate}
 .fate-panel *,.fate-panel *::before,.fate-panel *::after{box-sizing:border-box}
-.fate-panel.fate-panel--embedded{padding:0}
+.fate-panel.fate-panel--embedded{padding:10px 8px;border:0;border-radius:0;background:transparent}
+.fate-panel__toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px;color:var(--fate-muted);font-size:12px}
 .fate-panel h1,.fate-panel h3,.fate-panel p{margin:0;color:inherit}
 .fate-panel button,.fate-panel input,.fate-panel textarea,.fate-panel select{font:inherit}
 .fate-panel button{cursor:pointer;-webkit-tap-highlight-color:transparent}
@@ -9,11 +10,12 @@
 .fate-panel__header{display:flex;gap:8px;justify-content:space-between;align-items:baseline;margin-bottom:16px}
 .fate-panel__header h1{font-family:'Songti SC',SimSun,serif;font-size:21px;font-weight:500}
 .fate-panel__header>span{font-size:12px;color:var(--fate-muted)}
-/* 猫咪与日程同一排；只有下方真实因子是小牌，日程正文没有第二层牌框。 */
-.fate-panel__activity{display:grid;grid-template-columns:96px minmax(0,1fr);gap:0 14px;padding:12px 0 0;align-items:start;font-weight:400}
-.fate-panel__companion{align-self:center;min-width:0;display:flex;flex-direction:column;align-items:center;gap:12px}
+/* 顶部左右等宽图像，正文占满整行；只有三张因子拥有小牌框。 */
+.fate-panel__activity{display:block;padding:12px 0 0;font-weight:400}
+.fate-panel__figures{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:end;padding:0}
+.fate-panel__companion{min-width:0;display:flex;flex-direction:column;align-items:center}
 .fate-panel__draw{width:100%;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:0;border:0;background:transparent;color:var(--fate-rose)}
-.fate-panel__cat{display:block;width:116px;max-width:calc(100% + 12px);height:82px;stroke:var(--fate-ink);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.fate-panel__cat{display:block;width:132px;max-width:100%;height:100px;stroke:var(--fate-rose);stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}
 .fate-panel__draw strong{display:block;font-size:11px;font-weight:400;line-height:1.6}
 .fate-panel__draw:disabled{opacity:1}
 .fate-panel__yarn{transform-origin:156px 69px;transition:transform .25s}
@@ -22,32 +24,32 @@
 .fate-panel--waiting .fate-panel__paw{animation:fate-panel-paw 1.25s ease-in-out infinite}
 .fate-panel--waiting .fate-panel__yarn{animation:fate-panel-yarn 1.25s ease-in-out infinite}
 .fate-panel__copy{min-width:0;text-align:left}
-.fate-panel__patron{display:flex;align-items:center;gap:7px;margin-bottom:12px;color:var(--fate-rose)}
-.fate-panel__patron .fate-patron-art{width:43px;height:48px}
-.fate-panel__patron .fate-tarot-art__arch{display:none}
-.fate-panel__patron>div{min-width:0;display:grid;gap:1px}
-.fate-panel__patron span{font-size:11px;color:var(--fate-muted);font-weight:400}
-.fate-panel__patron strong{font-family:'Songti SC',SimSun,serif;font-size:15px;font-weight:500}
-.fate-panel__activity h3{font-family:'Songti SC',SimSun,serif;font-size:21px;font-weight:500;line-height:1.45}
-.fate-panel__timing{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:7px 0 0;font-size:11px;color:var(--fate-muted);font-variant-numeric:tabular-nums}
+.fate-panel__patron{display:flex;align-items:center;flex-direction:column;gap:8px;margin:0;padding:0;border:0;background:transparent;color:var(--fate-rose);min-width:0;cursor:pointer}
+.fate-panel__patron .fate-patron-art{width:94px;height:100px}
+.fate-panel__patron span{font:inherit;font-size:12px;line-height:1.6;color:var(--fate-rose)}
+.fate-panel__patron[aria-expanded=true] .fate-patron-art{animation:fate-patron-awaken .55s ease-out both}
+.fate-panel__divider{position:relative;width:58%;height:1px;margin:14px auto;background:#d8b8c8}
+.fate-panel__divider span{position:absolute;left:50%;top:50%;width:5px;height:5px;background:#f5edef;border:1px solid #b88ba0;transform:translate(-50%,-50%) rotate(45deg)}
+.fate-panel__activity h3{font:inherit;font-size:24px;font-weight:400;line-height:1.45}
+.fate-panel__timing{display:flex;justify-content:space-between;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:9px 0 0;font-size:11px;color:var(--fate-muted);font-variant-numeric:tabular-nums}
 .fate-panel__timing>span:first-child{font-size:12px;color:var(--fate-rose)}
 .fate-panel .fate-panel__location{font-size:12px;color:var(--fate-muted);margin-top:2px}
-.fate-panel .fate-panel__description{font-size:14px;line-height:1.9;font-weight:400;white-space:pre-wrap;margin-top:10px}
-.fate-panel .fate-panel__state{font-size:11px;color:var(--fate-muted);margin-top:7px}
+.fate-panel .fate-panel__description{font-size:14px;line-height:1.95;font-weight:400;white-space:pre-wrap;margin-top:14px}
+.fate-panel .fate-panel__state{font-size:11px;color:var(--fate-muted)}
 .fate-panel__actions{display:flex;flex-wrap:wrap;gap:4px 12px;grid-column:1/-1;justify-content:flex-end;margin-top:9px}
 .fate-panel__actions button{border:0;padding:6px 0;min-height:34px;background:transparent;color:var(--fate-ink);font-size:12px}
 .fate-panel__actions button:first-child{color:var(--fate-rose)}
 .fate-panel__actions button:hover:not(:disabled){text-decoration:underline;text-underline-offset:3px}
 .fate-panel__actions .fate-panel__delete{color:var(--fate-muted)}
-.fate-panel__deck{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0 0;align-items:stretch}
+.fate-panel__deck{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin:10px 0 0;align-items:stretch}
 .fate-panel__card{position:relative;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 5px 9px;border:1px solid #cdb2be;background:var(--fate-paper);border-radius:5px;color:var(--fate-ink);transition:transform .2s,background .2s}
 .fate-panel__card::after{content:'';position:absolute;inset:4px;border:1px solid #e5d3dc;border-radius:2px;pointer-events:none}
 .fate-panel__card--lead{border-color:#a7778c;background:#fff9fa}
 .fate-panel__card--open{background:#ebdae2;transform:translateY(-3px)}
 .fate-panel__card:not(:disabled):hover{transform:translateY(-3px)}
 .fate-panel__card-role{font-size:11px;color:var(--fate-rose)}
-.fate-panel .fate-panel__card-art{width:62px;height:70px;margin:1px 0}
-.fate-panel__card strong{font-family:'Songti SC',SimSun,serif;font-size:15px;font-weight:500;text-align:center;line-height:1.45;margin:auto 0 0}
+.fate-panel .fate-panel__card-art{width:56px;height:62px;margin:1px 0}
+.fate-panel__card strong{font:inherit;font-size:14px;font-weight:400;text-align:center;line-height:1.45;margin:auto 0 0}
 .fate-panel__card-hint{font-size:11px;color:var(--fate-muted)}
 .fate-panel__meaning{padding:10px;margin-top:8px;background:#ecdee4;font-size:13px;border-radius:4px}
 .fate-panel__meaning p{margin-top:4px;white-space:pre-wrap}
@@ -58,15 +60,6 @@
 .fate-panel summary{cursor:pointer;min-height:32px;padding:5px 0;font-size:12px}
 .fate-panel .fate-panel__rationale{display:flex;align-items:center;justify-content:flex-end;gap:4px;max-width:100%;text-align:right;border:0;background:transparent;color:var(--fate-rose);font-size:11px;padding:5px 0;min-height:36px;font-weight:400}
 .fate-panel__rationale>svg{width:22px;height:22px;stroke:currentColor;stroke-width:1;flex:none}
-.fate-panel__orbit{position:relative;width:100px;height:101px;flex:none}
-.fate-panel__orbit-map{position:absolute;width:100%;height:100%;inset:0;stroke:#b68b9e;stroke-width:.65}
-.fate-panel__orbit-map>path{opacity:.6}
-.fate-panel__orbit>button{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 3px;border:0;background:#f5edef;border-radius:50%;color:#85495d;width:34px;height:36px;font-size:11px;font-weight:400;line-height:1.2}
-.fate-panel__orbit>button>svg{width:17px;height:17px;stroke:currentColor;stroke-width:1.1;stroke-linecap:round;stroke-linejoin:round}
-.fate-panel__orbit>button:nth-of-type(1){left:33px;top:-4px}
-.fate-panel__orbit>button:nth-of-type(2){left:0;bottom:1px}
-.fate-panel__orbit>button:nth-of-type(3){right:0;bottom:1px}
-.fate-panel__orbit>button:hover:not(:disabled){background:#eadbe2}
 .fate-calculation__patron{display:flex;align-items:center;gap:12px;padding:0 0 12px}
 .fate-calculation__patron>.fate-patron-art{width:70px;height:80px}
 .fate-calculation__patron>div{min-width:0}
@@ -94,11 +87,21 @@
 .fate-panel__empty{display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;align-items:center;padding:24px 0}
 .fate-panel__empty h3{font-size:17px;line-height:1.5}
 .fate-panel__empty p{font-size:12px;color:var(--fate-muted);margin-top:8px}
-.fate-panel__history{margin-top:14px}
-.fate-panel__history-list{display:grid;gap:14px;padding-top:6px}
-.fate-panel__history-list>article{border-top:1px solid #ddc5d0;padding-top:12px}
-.fate-panel__history-list h3{font-size:16px}
+.fate-panel__history-trigger{display:flex;align-items:center;justify-content:center;margin:0;padding:6px;border:0;background:transparent;color:var(--fate-rose);width:36px;min-height:36px;flex:none}
+.fate-panel__history-trigger svg{width:25px;height:25px;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.fate-panel__history-trigger small{font-size:11px;color:var(--fate-muted)}
+.fate-panel__history-page h3{font-family:'Songti SC',SimSun,serif;font-size:19px;font-weight:500;margin-top:8px}
+.fate-panel__history-paging{display:flex;justify-content:space-between;margin-top:22px}
+.fate-panel__history-actions .fate-panel__actions{justify-content:flex-start}
+.fate-panel__history-paging button{min-height:38px;padding:6px 12px;border:1px solid #cdb2be;background:#fbf5f6;color:var(--fate-rose)}
+.fate-panel__actions button:has(svg){width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:0}
+.fate-panel__actions button svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.fate-panel__action-name{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.fate-panel__location{display:flex;align-items:center;gap:4px}
+.fate-panel__location svg{width:15px;height:15px;stroke:currentColor;stroke-width:1.4;flex:none}
+.fate-panel .fate-panel__date{text-align:center;font-size:11px;color:var(--fate-muted);margin:10px 0 0}
+@keyframes fate-patron-awaken{0%{transform:translateY(0) scale(1)}35%{transform:translateY(-5px) scale(1.06)}65%{transform:translateY(1px) scale(.99)}100%{transform:translateY(0) scale(1)}}
 @keyframes fate-panel-paw{0%,100%{transform:rotate(0)}45%{transform:rotate(-14deg)}}
 @keyframes fate-panel-yarn{0%,100%{transform:translateX(0) rotate(0)}45%{transform:translateX(7px) rotate(23deg)}}
-@media(max-width:360px){.fate-panel__activity{grid-template-columns:82px minmax(0,1fr);gap:0 9px}.fate-panel__activity h3{font-size:19px}.fate-panel__cat{width:96px;height:74px}.fate-panel__orbit{width:84px;height:94px}.fate-panel__orbit>button:nth-of-type(1){left:25px}.fate-panel__deck{gap:6px}.fate-panel__card-art{width:54px;height:62px}.fate-panel__card strong{font-size:14px}.fate-panel__context{grid-template-columns:1fr}.fate-panel .fate-panel__rationale{justify-self:end}.fate-panel__patron .fate-patron-art{width:34px;height:40px}}
+@media(max-width:360px){.fate-panel{padding-left:16px;padding-right:16px}.fate-panel.fate-panel--embedded{padding-left:8px;padding-right:8px}.fate-panel__activity h3{font-size:22px}.fate-panel__figures{gap:12px}.fate-panel__cat{height:88px}.fate-panel__patron .fate-patron-art{height:88px;width:82px}.fate-panel__deck{gap:6px}.fate-panel .fate-panel__card-art{width:50px;height:58px}.fate-panel__context{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.fate-panel *,.fate-panel *::before,.fate-panel *::after{animation:none!important;transition:none!important}.fate-panel__card:hover,.fate-panel__card--open,.fate-panel__draw:hover .fate-panel__yarn{transform:none}}

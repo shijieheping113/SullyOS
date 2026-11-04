@@ -3,9 +3,9 @@
 .fate-sky-view .fate-sky-chart{position:relative;isolation:isolate;display:grid;grid-template-columns:36% 28% 36%;grid-template-rows:repeat(3,1fr);height:280px;max-width:440px;margin:0 auto;align-items:center}
 .fate-sky-view .fate-sky-art{position:absolute;inset:0;z-index:-1;display:grid;place-items:center;pointer-events:none}
 .fate-sky-view .fate-sky-art .fate-astrolabe{width:256px;height:256px;max-width:100%;margin:0;opacity:.55}
-.fate-sky-view .fate-sky-center{grid-column:2;grid-row:2;min-width:0;text-align:center;background:var(--fate-settings-ground);padding:6px 0}
-.fate-sky-view .fate-sky-center p{font-family:'Songti SC',SimSun,serif;font-size:19px;line-height:1.35;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.fate-sky-view .fate-sky-center>span{display:block;font-size:12px;color:var(--fate-settings-muted);margin-top:5px}
+.fate-sky-view .fate-sky-identity{display:flex;justify-content:center;align-items:baseline;flex-wrap:wrap;gap:10px;text-align:center;margin:4px 0 10px;background:transparent}
+.fate-sky-view .fate-sky-identity p{font:inherit;font-size:16px;line-height:1.5;overflow-wrap:anywhere;margin:0}
+.fate-sky-view .fate-sky-identity>span{font-size:12px;color:var(--fate-settings-muted)}
 .fate-sky-view button.fate-sky-star{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;min-width:0;width:100%;height:84px;padding:4px 5px;border-radius:0;background:transparent;color:var(--fate-settings-accent);text-align:center}
 .fate-sky-view button.fate-sky-star:hover:not(:disabled),.fate-sky-view button.fate-sky-star[aria-pressed=true],.fate-sky-view button.fate-sky-star:active{background:transparent;box-shadow:none}
 .fate-sky-view button.fate-sky-star[aria-pressed=true] svg{outline:1px solid currentColor;outline-offset:4px;border-radius:50%}
@@ -31,4 +31,4 @@
 .fate-sky-view .fate-sky-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--fate-settings-muted);padding-top:4px}
 .fate-sky-view .fate-sky-tools button{font-size:12px;background:transparent;min-height:40px;padding:4px;border-radius:0;flex:none}
 .fate-sky-view .fate-emotion-model{margin-top:8px}
-@media(max-width:360px){.fate-sky-view .fate-sky-center p{font-size:16px}.fate-sky-view .fate-sky-label{font-size:13px}}
+@media(max-width:360px){.fate-sky-view .fate-sky-label{font-size:13px}}

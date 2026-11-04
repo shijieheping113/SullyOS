@@ -55,7 +55,7 @@ function CatAndYarn() {
     );
 }
 
-function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string }) {
+function FateCards({ slot, identity, rationaleOpen, onRationaleClose }: { slot: ScheduleSlot; identity: string; rationaleOpen?: boolean; onRationaleClose?: () => void }) {
     const [expanded, setExpanded] = useState<number | null>(null);
     const [showRationale, setShowRationale] = useState(false);
     const factors = slot.fate?.factors || [];
@@ -72,7 +72,6 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
                         <span className="fate-panel__card-role">{index === 0 ? '主因子' : `副因子${index}`}</span>
                         <FateTarotArt factor={factor} className="fate-panel__card-art" />
                         <strong>{factor.name}</strong>
-                        <span className="fate-panel__card-hint">{expanded === index ? '收起含义' : '查看含义'}</span>
                     </button>
                 ))}
             </div>
@@ -80,14 +79,14 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
             {expanded !== null && factors[expanded] && <div className="fate-panel__meaning" role="region" aria-label={`${factors[expanded].name}的含义`}>
                 <strong>{factors[expanded].name}</strong><p>{factors[expanded].meaning}</p>
             </div>}
-            {slot.fate && <div className="fate-panel__context">
+            {slot.fate && rationaleOpen === undefined && <div className="fate-panel__context">
                 <div><span className="fate-panel__label">人物方向</span><strong>{PEOPLE[slot.fate.peopleDirection] || '未记录'}</strong></div>
                 <button type="button" className="fate-panel__rationale" aria-haspopup="dialog" aria-expanded={showRationale} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setShowRationale(true); }}><svg viewBox="0 0 26 22" fill="none" aria-hidden="true"><path d="M4 3h18v16H4V3Zm0 5h18M8 8v11m5-11v11m5-11v11M7 12h2m3 3h2m3-4h2m-12 6h2"/></svg><span>命运之神的小算盘</span></button>
             </div>}
-            {showRationale && slot.fate && <FateOverlay title="命运之神的小算盘" onClose={() => setShowRationale(false)} className="fate-calculation">
+            {(rationaleOpen ?? showRationale) && slot.fate && <FateOverlay title="命运之神的小算盘" onClose={() => { setShowRationale(false); onRationaleClose?.(); }} className="fate-calculation">
                 <div className="fate-calculation__patron"><FatePatronArt tendencyId={slot.fate.tendency.id} /><div><span>本轮命运之神</span><h3>{slot.fate.tendency.name}</h3><p>{slot.fate.tendency.meaning}</p></div></div>
                 <div className="fate-calculation__factors">{factors.map((factor, index) => <div key={`${factor.id}:${index}`}><FateTarotArt factor={factor} /><div><span>{index === 0 ? '主因子' : '副因子'}</span><strong>{factor.name}</strong><p>{factor.meaning}</p></div></div>)}</div>
-                <section className="fate-calculation__result"><span>牌阵怎样落进生活</span><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></section>
+                <section className="fate-calculation__result"><span>人物方向 · {PEOPLE[slot.fate.peopleDirection] || '未记录'}</span><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></section>
             </FateOverlay>}
         </section>
     );
@@ -109,6 +108,8 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     const [deleting, setDeleting] = useState<SlotSnapshot | null>(null);
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [historyPage, setHistoryPage] = useState<number | null>(null);
+    const [rationaleOpen, setRationaleOpen] = useState(false);
     const editorHeadingRef = useRef<HTMLHeadingElement>(null);
     useEffect(() => {
         if (draft) editorHeadingRef.current?.scrollIntoView?.({ block: 'start', behavior: 'auto' });
@@ -119,10 +120,11 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         const timer = window.setInterval(() => setNow(Date.now()), 15_000);
         return () => window.clearInterval(timer);
     }, []);
-    useEffect(() => { setDraft(null); setDeleting(null); setError(''); }, [character?.id, schedule?.id]);
+    useEffect(() => { setDraft(null); setDeleting(null); setError(''); setHistoryPage(null); setRationaleOpen(false); }, [character?.id, schedule?.id]);
     const slots = schedule?.slots || [];
     const index = primaryIndex(slots, now);
     const slot = slots[index];
+    useEffect(() => { setRationaleOpen(false); }, [slot?.startsAt, slot?.fate]);
     const rooms = character?.home3D?.rooms || [];
     const homeRoomId = slot?.homePosition?.kind === 'home' ? slot.homePosition.roomId : undefined;
     const history = slots.map((item, itemIndex) => ({ slot: item, index: itemIndex })).filter(item => item.index !== index).sort((a, b) => (b.slot.startsAt || 0) - (a.slot.startsAt || 0));
@@ -155,11 +157,10 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         } catch { setError('活动保存失败，填写内容已保留，请重试。'); }
         finally { setIsSaving(false); }
     };
-    const actions = (item: ScheduleSlot, itemIndex: number, orbit = false) => <div className={orbit ? 'fate-panel__orbit' : 'fate-panel__actions'} aria-label={orbit ? '占星操作' : undefined}>
-        {orbit && <svg className="fate-panel__orbit-map" viewBox="0 0 112 100" fill="none" aria-hidden="true"><circle cx="56" cy="47" r="31"/><circle cx="56" cy="47" r="22"/><path d="m56 12 31 54H25l31-54Zm0 70L25 28h62L56 82ZM56 35l3 9 9 3-9 3-3 9-3-9-9-3 9-3 3-9Z"/></svg>}
-        {onPlayTheater && <button type="button" aria-label={item.theater ? '重看小剧场' : '进一步查看'} title={item.theater ? '重看小剧场' : '进一步查看'} disabled={writesDisabled || (validStamp(item.startsAt) && item.startsAt > now)} onClick={() => onPlayTheater(itemIndex)}>{orbit ? <><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 12c6-9 14-9 20 0-6 9-14 9-20 0Z"/><circle cx="12" cy="12" r="3"/></svg><span>查看</span></> : item.theater ? '重看小剧场' : '进一步查看'}</button>}
-        {onEdit && <button type="button" aria-label="编辑活动" title="编辑活动" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}>{orbit ? <><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 16 10-11 4 4L9 20H4l1-4Zm8-9 4 4M4 22h16"/></svg><span>编辑</span></> : '编辑活动'}</button>}
-        {onDelete && <button type="button" aria-label="删除活动" title="删除活动" className="fate-panel__delete" disabled={writesDisabled} onClick={() => { setDeleting(snapshot(itemIndex)); setDraft(null); setError(''); }}>{orbit ? <><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6m4-6v6"/></svg><span>删除</span></> : '删除活动'}</button>}
+    const actions = (item: ScheduleSlot, itemIndex: number) => <div className="fate-panel__actions" aria-label="活动操作">
+        {onPlayTheater && <button type="button" aria-label={item.theater ? '重看小剧场' : '进一步查看'} title={item.theater ? '重看小剧场' : '进一步查看'} disabled={writesDisabled || (validStamp(item.startsAt) && item.startsAt > now)} onClick={() => onPlayTheater(itemIndex)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 12c6-9 14-9 20 0-6 9-14 9-20 0Z"/><circle cx="12" cy="12" r="3"/></svg><span className="fate-panel__action-name">{item.theater ? '重看小剧场' : '进一步查看'}</span></button>}
+        {onEdit && <button type="button" aria-label="编辑活动" title="编辑活动" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 16 10-11 4 4L9 20H4l1-4Zm8-9 4 4M4 22h16"/></svg><span className="fate-panel__action-name">编辑活动</span></button>}
+        {onDelete && <button type="button" aria-label="删除活动" title="删除活动" className="fate-panel__delete" disabled={writesDisabled} onClick={() => { setDeleting(snapshot(itemIndex)); setDraft(null); setError(''); setHistoryPage(null); }}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6m4-6v6"/></svg><span className="fate-panel__action-name">删除活动</span></button>}
     </div>;
     const renderEditor = () => draft && <form className="fate-panel__editor" aria-label="编辑活动" onSubmit={event => { event.preventDefault(); saveEdit(); }}>
         <h3 ref={editorHeadingRef}>编辑活动</h3>
@@ -184,23 +185,26 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     return (
         <div className={`fate-panel ${embedded ? 'fate-panel--embedded' : ''} ${isGenerating ? 'fate-panel--waiting' : ''}`} aria-label="命运牌阵" aria-busy={busy || isSaving}>
             {!embedded && <header className="fate-panel__header"><h1>命运牌阵</h1><span>{character?.name || '角色'}的生活片段</span></header>}
+            <div className="fate-panel__toolbar"><span>{character?.name || '角色'}的生活线</span><button type="button" className="fate-panel__history-trigger" aria-label={`打开今日历史，共${history.length}项`} title="今日历史" onClick={() => setHistoryPage(0)}><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M4 5c4-2 8-1 10 1v18c-2-2-6-3-10-1V5Zm20 0c-4-2-8-1-10 1v18c2-2 6-3 10-1V5Z"/><path d="M7 9h4m-4 4h4m7-4h3m-3 4h3"/></svg></button></div>
             {(isGenerating || isViewing) && <p className="fate-panel__continuation" role="status">{isGenerating ? '生成中，完成后才换牌。' : '小剧场正在生成。'}</p>}
 
             {slot ? <>
                 <article className="fate-panel__activity" aria-label="本轮活动">
                     {draft?.index === index ? renderEditor() : <>
-                    <div className="fate-panel__companion">{drawButton}{actions(slot, index, true)}</div>
+                    <div className="fate-panel__figures"><div className="fate-panel__companion">{drawButton}</div>
+                    <button type="button" className="fate-panel__patron" disabled={!slot.fate} aria-haspopup="dialog" aria-expanded={rationaleOpen} aria-label={`查看${slot.fate?.tendency.name || '命运之神'}的小算盘`} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setRationaleOpen(true); }}><FatePatronArt tendencyId={slot.fate?.tendency.id} /><span>{slot.fate?.tendency.name || '未记录'}</span></button></div>
+                    <div className="fate-panel__divider" aria-hidden="true"><span /></div>
                     <div className="fate-panel__copy">
-                    <div className="fate-panel__patron" aria-label="本轮命运之神"><FatePatronArt tendencyId={slot.fate?.tendency.id} /><div><span>本轮命运之神</span><strong>{slot.fate?.tendency.name || '未记录'}</strong></div></div>
                     <h3>{slot.activity}</h3>
-                    <div className="fate-panel__timing"><span>{range(slot)}</span><span>角色当地时间</span></div>
-                    <p className="fate-panel__location">{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
+                    <div className="fate-panel__timing"><span>{range(slot)}</span><span className="fate-panel__state">{slotState(slot, now)}</span></div>
+                    <p className="fate-panel__location"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
                     {slot.description && <p className="fate-panel__description">{slot.description}</p>}
-                    <p className="fate-panel__state">{slotState(slot, now)}</p>
+                    {actions(slot, index)}
                     </div>
                     </>}
                 </article>
-                <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} />
+                <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} rationaleOpen={rationaleOpen} onRationaleClose={() => setRationaleOpen(false)} />
+                <p className="fate-panel__date">{schedule?.date} · 角色当地时间</p>
             </> : <div className="fate-panel__empty">{drawButton}<div><h3>还没有展开的生活片段</h3><p>抽取三张因子牌，生成本轮日程。</p></div></div>}
             {deleting && <div className="fate-panel__confirm" role="group" aria-label="删除活动确认">
                 <p>删除活动：{JSON.parse(deleting.original).activity}？日程与小剧场记录都会删除。</p>
@@ -214,19 +218,38 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
             </div>}
             {error && !draft && <p className="fate-panel__error" role="alert">{error}</p>}
 
-            {history.length > 0 && <details className="fate-panel__history"><summary>走过的小路 · {history.length}</summary>
-                <div className="fate-panel__history-list">{history.map(({ slot: past, index: pastIndex }) => <article key={`${pastIndex}:${past.startsAt}`}>
-                    {draft?.index === pastIndex ? renderEditor() : <>
-                    <span className="fate-panel__muted">{range(past)} · {slotState(past, now)}</span>
-                    <h3>{past.activity}</h3><p className="fate-panel__location">{past.location || '地点未记录'}</p>
-                    {past.description && <p className="fate-panel__description">{past.description}</p>}
-                    {actions(past, pastIndex)}
-                    </>}
-                    <details><summary>查看本轮牌阵</summary><FateCards slot={past} identity={`${schedule?.id}:${past.startsAt}:${JSON.stringify(past.fate)}`} /></details>
-                </article>)}</div>
-            </details>}
+            {historyPage !== null && <FateOverlay title={history.length ? `今日历史 · ${historyPage + 1} / ${history.length}` : '今日历史'} onClose={() => setHistoryPage(null)} className="fate-panel__history-overlay">
+                {history[historyPage] && <HistoryPage key={historyPage} item={history[historyPage]} page={historyPage} pageCount={history.length} onPage={setHistoryPage} range={range} state={slotState} now={now} draftIndex={draft?.index} renderEditor={renderEditor} actions={actions} scheduleId={schedule?.id} />}
+                {!history.length && <p>今天还没有更早的活动记录。</p>}
+            </FateOverlay>}
         </div>
     );
 };
+
+function HistoryPage({ item, page, pageCount, onPage, range: formatRange, state, now, draftIndex, renderEditor, actions, scheduleId }: {
+    item: { slot: ScheduleSlot; index: number };
+    page: number;
+    pageCount: number;
+    onPage: (page: number) => void;
+    range: (slot: ScheduleSlot) => string;
+    state: (slot: ScheduleSlot, now: number) => string;
+    now: number;
+    draftIndex?: number;
+    renderEditor: () => React.ReactNode;
+    actions: (item: ScheduleSlot, index: number) => React.ReactNode;
+    scheduleId?: string;
+}) {
+    const { slot: past, index: pastIndex } = item;
+    return <article className="fate-panel__history-page">
+                    {draftIndex === pastIndex ? renderEditor() : <>
+                    <span className="fate-panel__muted">{formatRange(past)} · {state(past, now)}</span>
+                    <h3>{past.activity}</h3><p className="fate-panel__location">{past.location || '地点未记录'}</p>
+                    {past.description && <p className="fate-panel__description">{past.description}</p>}
+                    <div className="fate-panel__history-actions">{actions(past, pastIndex)}</div>
+                    </>}
+                    <details><summary>查看本轮牌阵</summary><FateCards slot={past} identity={`${scheduleId}:${past.startsAt}:${JSON.stringify(past.fate)}`} /></details>
+                    <nav className="fate-panel__history-paging" aria-label="今日历史翻页"><button type="button" disabled={page === 0} onClick={() => onPage(page - 1)}>上一页</button><button type="button" disabled={page >= pageCount - 1} onClick={() => onPage(page + 1)}>下一页</button></nav>
+    </article>;
+}
 
 export default FateSchedulePanel;

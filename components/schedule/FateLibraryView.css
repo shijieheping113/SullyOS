@@ -21,7 +21,7 @@
 .fate-book-root.fate-settings-view .fate-book-card,.fate-book-overlay.fate-overlay__window .fate-book-card{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:136px;padding:10px;background:#f8f0f3;border:1px solid #b992a3;border-radius:4px;color:#85495d}
 .fate-book-root .fate-book-card::after,.fate-book-overlay .fate-book-card::after{content:'';position:absolute;inset:4px;border:1px solid #deccd4;pointer-events:none}
 .fate-book-root.fate-settings-view .fate-book-card{height:100px;min-height:100px;padding:7px;gap:2px}
-.fate-book-root .fate-book-card .fate-tarot-art{height:56px;width:52px;flex:none}
+.fate-book-root .fate-book-card .fate-tarot-art,.fate-book-root .fate-book-card .fate-patron-art{height:56px;width:52px;flex:none}
 .fate-book-root .fate-book-card .fate-book-name{font-size:14px}
 .fate-book-root .fate-book-card .fate-book-meta{position:absolute;right:8px;top:6px;font-size:12px}
 .fate-book-name{font-family:'Songti SC',SimSun,serif;font-size:16px;line-height:1.4;text-align:center;overflow-wrap:anywhere}
@@ -33,7 +33,7 @@
 .fate-book-overlay .fate-book-actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
 .fate-book-overlay.fate-overlay__window .fate-book-actions button{background:#e6d2dc;color:#683c50;border:1px solid #cdb2be}
 .fate-book-overlay.fate-overlay__window .fate-book-enlarged{width:180px;min-height:228px;margin:0 auto 18px}
-.fate-book-overlay .fate-book-enlarged .fate-tarot-art{width:120px;height:145px}
+.fate-book-overlay .fate-book-enlarged .fate-tarot-art,.fate-book-overlay .fate-book-enlarged .fate-patron-art{width:120px;height:145px}
 .fate-book-overlay .fate-book-meaning{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.8;margin:12px 0}
 .fate-book-overlay .fate-book-error{background:#eed9df;color:#80394b;padding:10px;font-size:14px}
 .fate-book-overlay button:disabled{cursor:default;opacity:.65}

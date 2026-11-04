@@ -65,12 +65,12 @@ export default function FateEmotionView({ char, apiPresets, onSave, onClearBuffs
         <section className="fate-emotion-current fate-sky-region" aria-label="当前情绪星盘">
             <div className="fate-sky-chart">
                 <div className="fate-sky-art"><FateAstrolabe /></div>
-                <div className="fate-sky-center"><p>{char.name}</p><span>{buffs.length} 种情绪</span></div>
                 {visibleBuffs.map((buff, index) => <button type="button" className="fate-sky-star" key={buff.id} data-slot={index} data-intensity={buff.intensity} aria-label={`${buff.label}，强度 ${buff.intensity} / 3`} aria-pressed={selectedBuff?.id === buff.id} aria-haspopup="dialog" aria-controls={selectedBuff?.id === buff.id ? detailId : undefined} onClick={event => { event.currentTarget.focus(); setSelection({ characterId: char.id, buffId: selectedBuff?.id === buff.id ? null : buff.id }); }}>
                     <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 3 10 10 3-10 3-3 10-3-10-10-3 10-3Z" /></svg>
                     <span className="fate-sky-label">{buff.label}</span>
                 </button>)}
             </div>
+            <div className="fate-sky-identity"><p>{char.name}</p><span>{buffs.length} 种情绪</span></div>
             {pageCount > 1 && <nav className="fate-sky-pages" aria-label="情绪星页"><button type="button" disabled={page === 0} onClick={() => { setSkyPage(page - 1); setSelection({ characterId: char.id, buffId: null }); }}>上一星页</button><span aria-live="polite">第 {page + 1} / {pageCount} 页</span><button type="button" disabled={page === pageCount - 1} onClick={() => { setSkyPage(page + 1); setSelection({ characterId: char.id, buffId: null }); }}>下一星页</button></nav>}
             <div className="fate-sky-tools"><p className="fate-sky-hint">{buffs.length ? '点星星查看情绪' : '还没有情绪，聊聊天再来看看。'}</p>{!!buffs.length && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`清除${char.name}的全部 ${buffs.length} 个当前情绪？清除后无法恢复。`)) void perform(onClearBuffs, '当前情绪已清除。', '清除情绪失败，请重试。'); }}>清除情绪</button>}</div>
             {selectedBuff && <FateOverlay title={selectedBuff.label} className="fate-sky-window" onClose={() => setSelection({ characterId: char.id, buffId: null })}><div id={detailId} className="fate-sky-detail"><span className="fate-sky-emoji" aria-hidden="true">{selectedBuff.emoji}</span><div className="fate-sky-copy"><p className="fate-sky-description">{selectedBuff.description || '没有记录情绪描述。'}</p><div className="fate-sky-strength"><span className="fate-emotion-dots" aria-hidden="true">{[1, 2, 3].map(level => <i key={level} data-lit={level <= selectedBuff.intensity} />)}</span><span>强度 {selectedBuff.intensity} / 3</span></div></div></div></FateOverlay>}

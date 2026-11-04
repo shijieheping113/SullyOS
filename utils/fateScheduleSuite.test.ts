@@ -44,8 +44,21 @@ describe('整套命运窗口', () => {
     it('只有显式命运外观改变窗口，其他窗口保持原样', async () => {
         await act(async () => root.render(React.createElement(Modal, { isOpen: true, title: '原版', onClose: () => {}, children: React.createElement('p', null, '原内容') })));
         expect(host.querySelector('.fate-dialog')).toBeNull();
+        expect(host.querySelector('.fate-dialog__corners')).toBeNull();
         await act(async () => root.render(React.createElement(Modal, { isOpen: true, appearance: 'fate', title: React.createElement('div', null, '原版 / 命运牌阵'), onClose: () => {}, children: React.createElement('p', null, '命运内容') })));
         expect(host.querySelector('.fate-dialog')).toBeTruthy();
         expect(host.querySelector('h3')).toBeNull();
+    });
+    it('只有整个命运窗口有四角花纹，切换三个页面都不在内容内另造外框', async () => {
+        await act(async () => root.render(React.createElement(Modal, { isOpen: true, appearance: 'fate', title: '命运牌阵', onClose: () => {}, children: React.createElement(Suite, props) })));
+        const frame = host.querySelector('.fate-dialog')!;
+        const corners = host.querySelector('.fate-dialog__corners')!;
+        expect(corners.parentElement).toBe(frame);
+        expect(corners.querySelectorAll('svg')).toHaveLength(4);
+        expect(host.querySelector('.fate-panel__corners')).toBeNull();
+        expect(host.querySelector('.fate-dialog__body .fate-dialog__corners')).toBeNull();
+        await click('牌库'); expect(host.querySelector('.fate-dialog__corners')).toBe(corners);
+        await click('情绪'); expect(host.querySelector('.fate-dialog__corners')).toBe(corners);
+        await click('日程'); expect(host.querySelectorAll('.fate-dialog__corners')).toHaveLength(1);
     });
 });

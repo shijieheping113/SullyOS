@@ -1,8 +1,14 @@
 .fate-dialog { --fate-ink:#293647; --fate-muted:#59636f; --fate-rose:#85495d; color:var(--fate-ink); background:#f5edef; }
 .fate-dialog.fate-dialog { position:relative;max-width:420px;height:auto;max-height:min(88dvh,780px);border:1px solid #b991a4;border-radius:9px;flex-shrink:1; }
 .fate-dialog::after { content:'';position:absolute;inset:5px;border:1px solid #ddc3cf;border-radius:5px;pointer-events:none;z-index:1; }
+.fate-dialog__corners { position:absolute;inset:12px;pointer-events:none;color:#bd95a6;z-index:2; }
+.fate-dialog__corners svg { position:absolute;width:38px;height:38px;fill:none;stroke:currentColor;stroke-width:.8;opacity:.8; }
+.fate-dialog__corners svg:nth-child(1) { top:0;left:0; }
+.fate-dialog__corners svg:nth-child(2) { top:0;right:0;transform:rotate(90deg); }
+.fate-dialog__corners svg:nth-child(3) { bottom:0;right:0;transform:rotate(180deg); }
+.fate-dialog__corners svg:nth-child(4) { bottom:0;left:0;transform:rotate(270deg); }
 .fate-dialog>div:last-child>button { border:0; min-height:44px; cursor:pointer; }
-.fate-dialog .fate-dialog__body { flex:0 1 auto;min-height:0;overflow-y:auto;padding:0 20px 10px; }
+.fate-dialog .fate-dialog__body { flex:0 1 auto;min-height:0;overflow-y:auto;padding:0 12px 10px; }
 .fate-dialog button,.fate-dialog input,.fate-dialog textarea,.fate-dialog select { font:inherit; }
 .fate-dialog__mode { display:flex; justify-content:center; align-items:center; gap:20px; margin:0; padding:0; font-size:13px; font-weight:500; }
 .fate-dialog__mode button { flex:none; position:relative; min-height:38px; padding:6px 2px; border:0; border-radius:0; background:transparent; color:#59636f; cursor:pointer; }
@@ -10,13 +16,14 @@
 .fate-dialog__mode button[aria-pressed="true"]::after { content:''; position:absolute; bottom:0; left:calc(50% - 2px); width:4px; height:4px; background:#85495d; transform:rotate(45deg); }
 .fate-dialog__mode button:disabled { cursor:wait; opacity:.65; }
 .fate-dialog button:focus-visible { outline:2px solid #85495d; outline-offset:3px; }
-.fate-suite { font-size:14px; line-height:1.65; min-width:0; overflow-wrap:anywhere; }
+.fate-suite { position:relative;font-size:14px; line-height:1.65; min-width:0; overflow-wrap:anywhere; }
+.fate-suite:has(.fate-suite__switch-row) .fate-suite__tabs { padding-right:88px;gap:8px; }
 .fate-suite__tabs { display:flex; gap:16px; margin-bottom:2px; }
 .fate-suite__tabs button { position:relative; min-height:42px; flex:1; border:0; padding:8px 0; background:transparent; color:#59636f; font-size:14px; cursor:pointer; }
 .fate-suite__tabs button[aria-pressed="true"] { color:#85495d; font-weight:650; }
 .fate-suite__tabs button[aria-pressed="true"]::after { content:''; width:20px; height:3px; border-radius:2px; background:#85495d; position:absolute; bottom:0; left:calc(50% - 10px); }
-.fate-suite__switch-row { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0; }
-.fate-suite__switch-row>span { font-size:13px; color:#59636f; }
+.fate-suite__switch-row { position:absolute;top:5px;right:0;display:flex;align-items:center;margin:0; }
+.fate-suite__switch-row>span { display:none; }
 .fate-suite__switch-row button { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:#59636f; min-height:32px; font-size:12px; cursor:pointer; }
 .fate-suite__switch-row button>span { width:30px; height:18px; background:#cbbbc1; border-radius:12px; position:relative; }
 .fate-suite__switch-row button>span::after { content:''; position:absolute; width:12px; height:12px; top:3px; left:3px; background:#f5edef; border-radius:50%; }
@@ -26,6 +33,6 @@
 .fate-suite__rest h2 { font-size:20px; margin:0 0 12px; }
 .fate-suite__rest p { color:#59636f; margin:0 0 20px; }
 .fate-suite__rest button { min-height:44px; padding:8px 16px; border:0; border-radius:12px; background:#ead9df; color:#6e354b; cursor:pointer; }
-.fate-dialog>div:first-child { padding-top:12px; padding-bottom:2px; }
+.fate-dialog>.fate-dialog__corners+div { padding-top:12px; padding-bottom:2px; }
 .fate-dialog>div:last-child { padding:2px 20px 9px; }
 .fate-dialog>div:last-child>button { background:transparent; font-size:13px; min-height:36px; padding:6px; font-weight:400; }

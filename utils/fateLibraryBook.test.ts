@@ -39,7 +39,12 @@ describe('命运六张翻页牌册', () => {
         await click('下一页'); expect(names()).toEqual(defaultFateSettings().factors.slice(6, 12).map(item => item.name));
         await click('上一页'); expect(names()).toEqual(first);
         await click('倾向 · 6'); expect(names()).toEqual(defaultFateSettings().tendencies.map(item => item.name));
+        expect(Array.from(host.querySelectorAll('.fate-patron-art')).map(node => node.getAttribute('data-fate-patron'))).toEqual(defaultFateSettings().tendencies.map(item => item.id));
+        expect(host.querySelector('.fate-book-card .fate-tarot-art')).toBeNull();
         expect(host.textContent).toContain('第 1 / 1 页');
+        const firstGod = defaultFateSettings().tendencies[0];
+        await click(`查看${firstGod.name}`);
+        expect(document.body.querySelector('.fate-book-enlarged .fate-patron-art')?.getAttribute('data-fate-patron')).toBe(firstGod.id);
     });
     it('分类单一网格入口，全部20类可选，搜索和筛选返回第一页', async () => {
         await render(); expect(host.querySelector('select[aria-label="分类筛选"]')).toBeNull();
