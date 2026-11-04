@@ -85,25 +85,33 @@ describe('replaceVoiceTagSubtitle / rewriteCallBilingualText', () => {
         expect(replaceVoiceTagSubtitle('<语音>あ</语音>', '中文')).toBeNull();
     });
 
-    it('双栏写回：有字幕则换两边', () => {
+    it('双栏写回：归一成外侧中文 + 语音，丢掉字幕标签', () => {
         const src = wrapSpokenWithOriginalChinese('こんにちは', '你好', 'sad');
         const out = rewriteCallBilingualText(src, 'おやすみ', '晚安');
-        expect(parseVoiceOutput(out!).rawSpeech || parseVoiceOutput(out!).speech).toContain('おやすみ');
-        expect(parseVoiceOutput(out!).subtitle).toBe('晚安');
+        expect(out).toBe(`晚安\n${formatChatVoiceOpenTag('sad')}おやすみ</语音>`);
+        expect(out).not.toContain('<字幕>');
         expect(parseVoiceOutput(out!).emotion).toBe('sad');
+        expect(parseVoiceOutput(out!).display).toBe('晚安');
     });
 
     it('无字幕时用外侧纯中文，不新塞字幕标签', () => {
         const out = rewriteCallBilingualText('<语音 emotion="calm">あ</语音>\n外侧中文', 'い', '新对照');
-        expect(out).toBe(`${formatChatVoiceOpenTag('calm')}い</语音>\n新对照`);
+        expect(out).toBe(`新对照\n${formatChatVoiceOpenTag('calm')}い</语音>`);
         expect(out).not.toContain('<字幕>');
     });
 
-    it('原文已有字幕时仍只换字幕内文', () => {
-        const src = wrapSpokenWithOriginalChinese('あ', '旧对照', 'calm');
-        const out = rewriteCallBilingualText(src, 'い', '新对照');
-        expect(out).toContain('<字幕>新对照</字幕>');
-        expect(parseVoiceOutput(out!).emotion).toBe('calm');
+    it('外侧与字幕并存时保存只留编辑框那一份中文', () => {
+        const src = '呜哇！怎么又长出来了！\n<语音 emotion="calm">Wow!</语音>\n<字幕>呜哇！怎么又长出来了！</字幕>';
+        const out = rewriteCallBilingualText(src, 'Wow!', '只留这一份');
+        expect(out).toBe(`只留这一份\n${formatChatVoiceOpenTag('calm')}Wow!</语音>`);
+        expect(out).not.toContain('<字幕>');
+        expect(out!.match(/只留这一份/g)?.length).toBe(1);
+    });
+
+    it('中文清空时只留语音块', () => {
+        const src = '旧中文\n<语音>あ</语音>\n<字幕>旧中文</字幕>';
+        const out = rewriteCallBilingualText(src, 'あ', '');
+        expect(out).toBe('<语音>あ</语音>');
     });
 
     it('无语音标签 → null', () => {

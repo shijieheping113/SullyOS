@@ -11,6 +11,7 @@ import { trackEvent } from '../../utils/analytics';
 import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
 import { DiceGlyph } from './ChatGameCard';
 import { useEmojiThumbnailCache } from '../../utils/useEmojiThumbnailCache';
+import { CHAT_TEXTAREA_MAX_PX, useAutoGrowTextarea } from '../../utils/autoGrowTextarea';
 
 const EMOJI_PAGE_SIZE = 40;
 const ACTION_PAGE_SIZE = 8;
@@ -135,6 +136,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const [cameraOpen, setCameraOpen] = useState(false);
     useEffect(() => setCameraOpen(false), [activeCharacterId]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    useAutoGrowTextarea(textareaRef, input, CHAT_TEXTAREA_MAX_PX);
     const sendButtonRef = useRef<HTMLButtonElement>(null);
     const suggestionsRef = useRef<HTMLDivElement>(null);
     const [isInputFocused, setIsInputFocused] = useState(false);
@@ -823,7 +825,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     <button aria-label="聊天功能" aria-expanded={showPanel === 'actions'} onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={`sully-chat-actions-button ${actionButtonClass}`}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
-                    <div className={`sully-chat-input-wrap flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                    <div className={`sully-chat-input-wrap flex-1 min-w-0 flex items-end px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <textarea
                             ref={textareaRef}
                             rows={1}
@@ -838,9 +840,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint={enterToSend ? 'send' : 'enter'}
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`sully-chat-textarea flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            className={`sully-chat-textarea flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                             placeholder="Message..."
-                            style={{ height: 'auto' }}
                         />
                         <button type="button" aria-label="打开表情包" hidden={compactHome && !compactHomeEmojiPicker} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />

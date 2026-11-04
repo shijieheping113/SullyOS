@@ -15,6 +15,7 @@ import { estimateLinesTotalMs, resolveSpeakingLineProgress } from '../../utils/c
 import { buildLineTimings, lineProgressAt, mapLineAcross, resolveLineIndexByTimeline, type SpeechTimeline } from '../../utils/callSpeechTimeline';
 import { splitBilingualLines } from '../../utils/callSpeechLines';
 import { dockMicOnArm, dockMicOnCancel, dockMicOnDown, dockMicOnUp, type DockMicPhase } from '../../utils/dockMicHold';
+import { CALL_TEXTAREA_MAX_PX, useAutoGrowTextarea } from '../../utils/autoGrowTextarea';
 import './voicePhoneB.css';
 
 export type VoicePhoneBubble = {
@@ -98,7 +99,7 @@ type Props = {
   generatingId: string | null;
   rerollingId: string | null;
   playingUserId: string | null;
-  draftInputRef: React.RefObject<HTMLInputElement | null>;
+  draftInputRef: React.RefObject<HTMLTextAreaElement | null>;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   renderLine: (text: string) => React.ReactNode;
   splitSpeakLines: (text: string) => string[];
@@ -136,6 +137,7 @@ type Props = {
 };
 
 const VoicePhoneB: React.FC<Props> = (props) => {
+  useAutoGrowTextarea(props.draftInputRef, props.draftInput, CALL_TEXTAREA_MAX_PX);
   const [theme, setTheme] = useState(readTheme);
   const cycleTheme = () => {
     const i = THEMES.indexOf(theme);
@@ -1002,13 +1004,19 @@ const VoicePhoneB: React.FC<Props> = (props) => {
               <Microphone size={16} weight="fill" />
             </button>
           ) : null}
-          <input
-            ref={props.draftInputRef as React.RefObject<HTMLInputElement>}
+          <textarea
+            ref={props.draftInputRef as React.RefObject<HTMLTextAreaElement>}
+            rows={1}
             value={props.draftInput}
             onChange={(event) => props.onDraft(event.target.value)}
             placeholder={props.placeholder}
+            enterKeyHint="send"
             onKeyDown={(event) => {
-              if (event.key === 'Enter') props.onSend();
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                props.onSend();
+              }
             }}
           />
           <button type="button" className="vb-side right" aria-label="发送" onClick={props.onSend} disabled={props.sendingBusy}>

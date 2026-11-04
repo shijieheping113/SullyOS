@@ -514,7 +514,8 @@
   position: relative;
   display: block;
   width: 100%;
-  height: 44px;
+  min-height: 44px;
+  height: auto;
   border: 0;
   border-radius: 22px;
   background: var(--vb-field);
@@ -528,25 +529,35 @@
   padding: 8px 44px;
   background: rgba(255,59,48,.16);
 }
-.sully-voice-b .vb-field input {
+/* 同时认 input / textarea：长文改成 textarea 后，旧美化写 input 的也能尽量对上项目皮肤 */
+.sully-voice-b .vb-field input,
+.sully-voice-b .vb-field textarea {
   -webkit-appearance: none;
   appearance: none;
   display: block;
   width: 100%;
-  height: 44px;
-  padding: 0 46px 0 44px;
+  min-height: 44px;
+  height: auto;
+  max-height: 120px;
+  padding: 10px 46px;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--vb-input);
   font-size: 15px;
-  line-height: 44px;
+  line-height: 1.35;
+  resize: none;
+  overflow-y: auto;
+  box-sizing: border-box;
   box-shadow: none;
+  vertical-align: middle;
 }
-.sully-voice-b .vb-field input::placeholder { color: #8e8e93; }
+.sully-voice-b .vb-field input::placeholder,
+.sully-voice-b .vb-field textarea::placeholder { color: #8e8e93; }
 .sully-voice-b .vb-side {
   position: absolute;
-  top: 6px;
+  top: auto;
+  bottom: 6px;
   width: 32px;
   height: 32px;
   border: 0;
@@ -559,9 +570,9 @@
   padding: 0;
 }
 .sully-voice-b .vb-side.left { left: 6px; }
-.sully-voice-b .vb-side.right { right: 6px; top: 6px; background: #fff; color: #1c1c1e; }
-.sully-voice-b .vb-field.rec .vb-side.right { top: 50%; margin-top: -16px; }
-.sully-voice-b .vb-field.rec .vb-side.left { top: 50%; margin-top: -16px; background: rgba(255,255,255,.14); color: #fff; }
+.sully-voice-b .vb-side.right { right: 6px; top: auto; bottom: 6px; background: #fff; color: #1c1c1e; }
+.sully-voice-b .vb-field.rec .vb-side.right { top: 50%; bottom: auto; margin-top: -16px; }
+.sully-voice-b .vb-field.rec .vb-side.left { top: 50%; bottom: auto; margin-top: -16px; background: rgba(255,255,255,.14); color: #fff; }
 .sully-voice-b .vb-side.send { background: #ff3b30; color: #fff; }
 .sully-voice-b .vb-rec-mid {
   min-width: 0;
@@ -886,7 +897,8 @@
 .sully-voice-b[data-theme="day"] .vb-card p { color: #6b5c4e; }
 .sully-voice-b[data-theme="day"] .vb-card button { color: #3d3428; background: rgba(61,52,40,.08); }
 .sully-voice-b[data-theme="day"] .vb-heart p { color: rgba(61,52,40,.55); }
-.sully-voice-b[data-theme="day"] .vb-field input::placeholder { color: #a89888; }
+.sully-voice-b[data-theme="day"] .vb-field input::placeholder,
+.sully-voice-b[data-theme="day"] .vb-field textarea::placeholder { color: #a89888; }
 .sully-voice-b[data-theme="day"] .vb-tr { color: rgba(61,52,40,.5); }
 .sully-voice-b[data-theme="day"] .vb-rec-preview { color: rgba(61,52,40,.62); }
 .sully-voice-b[data-theme="day"] .vb-field.rec .vb-side.left { color: #3d3428; }

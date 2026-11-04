@@ -44,6 +44,7 @@ import { applyThinkingParams } from '../utils/thinkingEffort';
 import { parseCallAssistantMessage, stripCallTextFormatting, type ParsedCallReply } from '../utils/callReplyFormat';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 import { rewriteCallBilingualText, wrapSpokenWithOriginalChinese, inferChatVoiceEmotionFromSpoken } from '../utils/chatVoiceTagFormat';
+import { CALL_TEXTAREA_MAX_PX, useAutoGrowTextarea } from '../utils/autoGrowTextarea';
 import {
   buildAvatarPerformancePrompt,
   DEFAULT_AVATAR_PERFORMANCE,
@@ -348,12 +349,12 @@ const extractVoiceTag = (text: string): { display: string; speech: string; voice
   const rawEmotion = (match[1] || '').trim().toLowerCase();
   const emotion = VALID_EMOTIONS.has(rawEmotion) ? rawEmotion : undefined;
   const voiceText = match[2].trim();
-  // 标签外正文：有 <字幕> 时只取内文给界面看，不要把「<字幕>」字面量漏出去。
+  // 标签外正文：有 <字幕> 时只用字幕内文当对照，不要把「<字幕>」字面量漏出去。
+  // 以前把「外侧中文」和「字幕内文」拼在一起；通话里两份经常相同 → 字幕整段说两遍、滚动也对不上。
   let outside = text.replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '').trim();
   const subBlocks = [...outside.matchAll(/<字幕>([\s\S]*?)<\/字幕>/g)].map(m => (m[1] || '').trim()).filter(Boolean);
   if (subBlocks.length) {
-    const rest = outside.replace(/<字幕>[\s\S]*?<\/字幕>/g, '').replace(/<\/?字幕>/g, '').trim();
-    outside = [rest, ...subBlocks].filter(Boolean).join('\n').trim();
+    outside = subBlocks.join('\n').trim();
   } else {
     outside = outside.replace(/<\/?字幕>/g, '').trim();
   }
@@ -1395,7 +1396,8 @@ const CallApp: React.FC = () => {
     return raw;
   }, [selectedChar?.bubbleStyle, customThemes]);
   const callScrollableRef = useRef<HTMLDivElement | null>(null);
-  const draftInputRef = useRef<HTMLInputElement | null>(null);
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  useAutoGrowTextarea(draftInputRef, draftInput, CALL_TEXTAREA_MAX_PX);
   // 输入面板默认展开，但「进入通话」时不能自动聚焦输入框——移动端一聚焦就弹
   // 键盘、把整个界面往上顶（用户反馈的「一进通话就飞上去」）。只在用户后续
   // 手动展开面板时才聚焦，初次挂载跳过。
@@ -5120,7 +5122,7 @@ ${sentencePlan}`;
       <StreamingVoiceBar state={streamingVoice.state} onStop={pauseAudio} />
       {showInputPanel && (
         <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-1.5' : 'px-4 pb-2'}`}>
-          <div className={`${callMode === 'video' ? 'rounded-[1.15rem] p-1.5' : 'rounded-2xl p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-center`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
+          <div className={`${callMode === 'video' ? 'rounded-[1.15rem] p-1.5' : 'rounded-2xl p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-end`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
             {sttSupported && !isListening && (
               <button
                 onClick={toggleStt}
@@ -5179,11 +5181,20 @@ ${sentencePlan}`;
               </>
             ) : (
               <>
-                <input
+                <textarea
                   ref={draftInputRef}
+                  rows={1}
                   value={draftInput}
                   onChange={(e) => setDraftInput(e.target.value)}
-                  className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
+                  enterKeyHint="send"
+                  onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleTurn().catch((err: any) => addToast(`发送失败：${err?.message || '未知错误'}`, 'error'));
+                    }
+                  }}
+                  className="flex-1 min-w-0 bg-transparent px-2 py-2 text-sm outline-none placeholder:text-white/35 resize-none no-scrollbar"
                   placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
                 />
                 <button onClick={() => { void handleTurn().catch((err: any) => addToast(`发送失败：${err?.message || '未知错误'}`, 'error')); }} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
