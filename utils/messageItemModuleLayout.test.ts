@@ -90,6 +90,31 @@ describe('MessageItem module layout', () => {
         expect(markup).toContain('https://example.com/char.png');
     });
 
+    it.each(moduleModes)('小剧场卡片在 %s / %s 模式跟随模块位置且没有消息外侧头像', (align, avatarMode) => {
+        const markup = renderMessage({
+            id: 6,
+            charId: 'char-1',
+            role: 'assistant',
+            type: 'theater_card',
+            content: '[小剧场]',
+            timestamp: 6,
+            metadata: {
+                scheduleMode: 'fate',
+                activity: '深夜沿河散步',
+                slotTime: '22:00',
+                endTime: '23:00',
+                location: '河岸步道',
+                exposed: true,
+                theater: { lines: [{ text: '风从河面吹过来。' }], generatedAt: 6 },
+            },
+        }, align, avatarMode);
+        expect(markup).not.toContain('alt="avatar"');
+        expect(markup).toContain(align === 'center' ? 'sully-chat-message-ai justify-center' : 'sully-chat-message-ai justify-start');
+        expect(markup).toContain(align === 'center' ? 'w-fit max-w-full mx-auto sully-html-wrap' : 'max-w-[72%] ml-12 sully-html-wrap');
+        expect(markup).toContain('命运小剧场');
+        expect(markup).toContain('深夜沿河散步');
+    });
+
     it('普通角色消息继续显示外侧头像', () => {
         const markup = renderMessage({
             id: 3,

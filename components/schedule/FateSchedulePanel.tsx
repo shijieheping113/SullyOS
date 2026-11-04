@@ -245,7 +245,7 @@ function HistoryPage({ item, page, pageCount, onPage, range: formatRange, state,
     return <article className="fate-panel__history-page">
                     {draftIndex === pastIndex ? renderEditor() : <>
                     <span className="fate-panel__muted">{formatRange(past)} · {state(past, now)}</span>
-                    <h3>{past.activity}</h3><p className="fate-panel__location">{past.location || '地点未记录'}</p>
+                    <h3>{past.activity}</h3><p className="fate-panel__location"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{past.location || '地点未记录'}</p>
                     {past.description && <p className="fate-panel__description">{past.description}</p>}
                     <div className="fate-panel__history-actions">{actions(past, pastIndex)}</div>
                     </>}

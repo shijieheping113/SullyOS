@@ -2241,8 +2241,10 @@ const MessageItem = React.memo(({
     // 音乐卡片（一起听 / 收歌单）与 HTML 卡片同为定宽模块，跟随同一套 chatModuleAlign 约定。
     // 条件与下方渲染分支一致：没有 song 元数据会落回普通气泡，不按模块排版。
     const isMusicCard = m.type === 'music_card' && !!m.metadata?.song;
-    const isModuleCard = isHtmlCard || isMusicCard;
-    // 聊天细节微调 chatModuleAlign：HTML 卡片 / 心象卡片 / 音乐卡片默认水平居中，'anchor' 才贴气泡列。
+    // 小剧场卡片也是定宽卡片，和心象一样跟随 chatModuleAlign，不再挂在气泡列左侧。
+    const isTheaterCard = m.type === 'theater_card';
+    const isModuleCard = isHtmlCard || isMusicCard || isTheaterCard;
+    // 聊天细节微调 chatModuleAlign：HTML 卡片 / 心象卡片 / 音乐卡片 / 小剧场卡片默认水平居中，'anchor' 才贴气泡列。
     // 心象居中时抽出到气泡行上方的独立行（不带 .group 类，注入的钉位 CSS 自然不命中）。
     const centerModules = moduleAlign !== 'anchor';
     // 心象卡片（思考链）：默认渲染在气泡包装层内、气泡上方；居中模式挪到独立行。
