@@ -1119,7 +1119,16 @@ export const useChatAI = ({
             // ⚠️ 工具模式(瑞幸点单/麦当劳)下绝不带 thinking/reasoning 参数: "thinking + tools" 同发
             //    Gemini 等会直接 400 INVALID_ARGUMENT —— 表现就是"开了思考链的角色一点单就报错,
             //    换个没开思考链的角色就好"。工具循环优先, 思考链这一轮让步。
-            const toolModeActive = payload.flags.luckinChatActive || payload.flags.mcdActive || payload.flags.luckinActive || payload.flags.mcpChatActive;
+            // 通用 MCP 先算好：正文兼容模式不会把 tools 写进请求体，不能仅凭 mcpChatActive
+            // 就让思考让步——否则 Gemini 等仍会自带推理（心象／推理字数都有），调用记录却永远「思考关」。
+            const mcpBuilt = payload.flags.mcpChatActive
+                ? buildMcpOpenAITools(char.id)
+                : { tools: [] as ReturnType<typeof buildMcpOpenAITools>['tools'], resolve: new Map() as ReturnType<typeof buildMcpOpenAITools>['resolve'] };
+            const mcpUseNativeTools = getMcpUseNativeTools();
+            const mcpWillInjectNativeTools = !!payload.flags.mcpChatActive
+                && mcpUseNativeTools
+                && mcpBuilt.tools.length > 0;
+            const toolModeActive = payload.flags.luckinChatActive || payload.flags.mcdActive || payload.flags.luckinActive || mcpWillInjectNativeTools;
             // 主动消息 2.0 的工具本轮会不会注入：thinking 门要先知道这件事（工具在下面才真正
             // 拼进 tools，但参数取舍必须现在就定）。角色级开关关掉的不注入——否则被用户显式
             // 关掉的功能会被角色一次工具调用重新打开。
@@ -1157,11 +1166,11 @@ export const useChatAI = ({
             // 工具清单读的是设置里持久化的发现结果, 不发网络请求。
             let mcpToolResolve: ReturnType<typeof buildMcpOpenAITools>['resolve'] | null = null;
             if (payload.flags.mcpChatActive) {
-                const { tools: mcpTools, resolve } = buildMcpOpenAITools(char.id);
+                const { tools: mcpTools, resolve } = mcpBuilt;
                 if (mcpTools.length) {
                     mcpToolResolve = resolve;
                     const mcpOnly = !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive;
-                    if (!getMcpUseNativeTools() && mcpOnly) {
+                    if (!mcpUseNativeTools && mcpOnly) {
                         // 用户已明确判断当前模型/中转不支持 tools：首轮直接走正文兼容模式。
                         const compatibilityBody = buildMcpRejectedToolsFallbackBody({
                             ...baseReqBody,
