@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import './FateSchedulePanel.css';
-import FateTarotArt from './FateTarotArt';
+import FateTarotArt, { FatePatronArt } from './FateTarotArt';
 
 export interface FateSchedulePanelProps {
     embedded?: boolean;
@@ -79,7 +79,6 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
                 <strong>{factors[expanded].name}</strong><p>{factors[expanded].meaning}</p>
             </div>}
             {slot.fate && <div className="fate-panel__context">
-                <div><span className="fate-panel__label">本轮倾向</span><strong>{slot.fate.tendency.name}</strong></div>
                 <div><span className="fate-panel__label">人物方向</span><strong>{PEOPLE[slot.fate.peopleDirection] || '未记录'}</strong></div>
                 <details className="fate-panel__rationale"><summary>命运之神的小算盘</summary><p>{slot.fate.tendency.meaning}</p><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></details>
             </div>}
@@ -170,28 +169,32 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         </fieldset>
         {error && <p className="fate-panel__error" role="alert">{error}</p>}
     </form>;
+    const drawButton = <button className="fate-panel__draw" type="button" disabled={!onReroll || writesDisabled} onClick={() => { if (!writesDisabled) onReroll?.(); }}>
+        <CatAndYarn />
+        <span><strong>{isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'}</strong></span>
+    </button>;
     return (
         <div className={`fate-panel ${embedded ? 'fate-panel--embedded' : ''} ${isGenerating ? 'fate-panel--waiting' : ''}`} aria-label="命运牌阵" aria-busy={busy || isSaving}>
             {!embedded && <header className="fate-panel__header"><h1>命运牌阵</h1><span>{character?.name || '角色'}的生活片段</span></header>}
-            <button className="fate-panel__draw" type="button" disabled={!onReroll || writesDisabled} onClick={() => { if (!writesDisabled) onReroll?.(); }}>
-                <CatAndYarn />
-                <span><strong>{isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'}</strong></span>
-            </button>
             {(isGenerating || isViewing) && <p className="fate-panel__continuation" role="status">{isGenerating ? '生成中，完成后才换牌。' : '小剧场正在生成。'}</p>}
 
-            {slot ? <div className="fate-panel__spread">
+            {slot ? <>
                 <article className="fate-panel__activity" aria-label="本轮活动">
                     {draft?.index === index ? renderEditor() : <>
-                    <div className="fate-panel__state">{slotState(slot, now)}</div>
+                    <div className="fate-panel__companion">{drawButton}</div>
+                    <div className="fate-panel__copy">
+                    <div className="fate-panel__patron" aria-label="本轮命运之神"><FatePatronArt tendencyId={slot.fate?.tendency.id} /><div><span>本轮命运之神</span><strong>{slot.fate?.tendency.name || '未记录'}</strong></div></div>
                     <h3>{slot.activity}</h3>
                     <div className="fate-panel__timing"><span>{range(slot)}</span><span>角色当地时间</span></div>
                     <p className="fate-panel__location">{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
                     {slot.description && <p className="fate-panel__description">{slot.description}</p>}
+                    <p className="fate-panel__state">{slotState(slot, now)}</p>
+                    </div>
                     {actions(slot, index)}
                     </>}
                 </article>
                 <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} />
-            </div> : <div className="fate-panel__empty"><FateTarotArt /><h3>还没有展开的生活片段</h3><p>点猫咪旁的生成本轮，抽取三张因子牌。</p></div>}
+            </> : <div className="fate-panel__empty">{drawButton}<div><h3>还没有展开的生活片段</h3><p>抽取三张因子牌，生成本轮日程。</p></div></div>}
             {deleting && <div className="fate-panel__confirm" role="group" aria-label="删除活动确认">
                 <p>删除活动：{JSON.parse(deleting.original).activity}？日程与小剧场记录都会删除。</p>
                 <div className="fate-panel__actions"><button type="button" disabled={writesDisabled} className="fate-panel__delete" onClick={async () => {

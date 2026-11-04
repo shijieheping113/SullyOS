@@ -1,52 +1,60 @@
-.fate-theater-player,.fate-theater-card{--fate-theater-paper:#f5edef;--fate-theater-ink:#3e3540;--fate-theater-rose:#85495d;background:var(--fate-theater-paper);color:var(--fate-theater-ink);font-family:inherit;overflow-wrap:anywhere;text-align:left;box-sizing:border-box;color-scheme:light}
+.fate-theater-player,.fate-theater-card{--fate-theater-paper:#f5edef;--fate-theater-ink:#3e3540;--fate-theater-rose:#85495d;color:var(--fate-theater-ink);font-family:inherit;overflow-wrap:anywhere;text-align:left;box-sizing:border-box;color-scheme:light}
 .fate-theater-player *,.fate-theater-card *{box-sizing:border-box}
-.fate-theater-player{position:fixed;inset:0;z-index:120;display:flex;justify-content:center;align-items:center;overflow:hidden;background:#e7d8df;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
-.fate-theater-reader{width:100%;max-width:500px;max-height:100%;height:860px;min-height:0;display:flex;flex-direction:column}
-.fate-theater-topbar{display:flex;align-items:center;justify-content:space-between;flex:none;font-size:12px;color:#6a4e5b;padding:0 8px 8px}
-.fate-theater-topbar .fate-theater-button{padding:4px 10px;background:transparent;font-size:13px;min-height:38px}
-.fate-theater-storycard{position:relative;background:#f5edef;border:1px solid #b892a3;border-radius:120px 120px 10px 10px;padding:18px 24px 12px;min-height:0;flex:1;display:flex;flex-direction:column;overflow:hidden}
-.fate-theater-storycard::after{content:'';position:absolute;inset:6px;border:1px solid #d4b8c5;border-radius:114px 114px 5px 5px;pointer-events:none}
-.fate-theater-header{flex:none;text-align:center;position:relative;padding:0 0 12px}
-.fate-theater-frontispiece>.fate-tarot-art{width:66px;height:75px;margin:0 auto 7px}
-.fate-theater-header h1{font-family:'Songti SC',SimSun,serif;font-size:23px;font-weight:500;line-height:1.45;margin:0 8px 6px;color:#3e3540}
-.fate-theater-context{display:flex;justify-content:center;flex-wrap:wrap;gap:4px 12px;font-size:12px;line-height:1.7;color:#705863;margin:4px 0 0;font-variant-numeric:tabular-nums}
-.fate-theater-seals{display:flex;justify-content:center;gap:12px;margin:10px 0 0}
-.fate-theater-seals>span{display:flex;gap:3px;align-items:center;font-size:11px;color:#85495d;min-width:0}
-.fate-theater-seals .fate-tarot-art{width:22px;height:25px}
-.fate-theater-reading{position:relative;flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 2px 8px;scrollbar-width:thin;scrollbar-color:#cbb0be transparent;border-top:1px solid #ddc5d0}
-.fate-theater-reading:focus-visible{outline:2px solid #85495d;outline-offset:-2px}
-.fate-theater-line{margin:0 0 18px;white-space:pre-wrap;font-size:15px;line-height:1.95}
-.fate-theater-scene{font-weight:400}
-.fate-theater-dialogue{font-family:'Songti SC',SimSun,serif;font-size:17px;font-weight:500;padding-left:12px;border-left:2px solid #c69eaf;margin:20px 0;line-height:1.9}
-.fate-theater-emotion{margin-right:8px;font-size:12px;font-weight:400;color:#85495d}
-.fate-theater-empty{margin:24px 0;font-size:14px;line-height:1.8}
-.fate-theater-ending{margin:12px 0;text-align:center;color:#85495d;font-size:18px}
-.fate-theater-controls{flex:none;position:relative;padding-top:4px}
-.fate-theater-actions{display:flex;flex-wrap:wrap;gap:6px}
-.fate-theater-actions>button{flex:1 1 110px}
-.fate-theater-button{min-width:36px;min-height:44px;border:1px solid #cba7b8;border-radius:5px;padding:8px 10px;background:transparent;color:#85495d;font-family:inherit;font-size:12px;font-weight:500;line-height:1.5;cursor:pointer;touch-action:manipulation;transition:background .15s}
+/* 全屏的只有透明遮罩，真正阅读窗口始终留出聊天背景。 */
+.fate-theater-player{position:fixed;inset:0;z-index:120;display:flex;justify-content:center;align-items:center;overflow:hidden;background:rgb(50 35 43 / .35);padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))}
+.fate-theater-reader{position:relative;width:100%;max-width:400px;height:min(68vh,540px);height:min(68dvh,540px);max-height:100%;min-height:0;background:#f5edef;border:1px solid #b991a4;border-radius:8px;display:flex;flex-direction:column;padding:10px 16px 12px;box-shadow:0 12px 40px rgb(42 27 34 / .15)}
+.fate-theater-reader::after{content:'';position:absolute;inset:4px;border:1px solid #dfc6d2;border-radius:4px;pointer-events:none}
+.fate-theater-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;font-size:11px;color:#705863;margin-bottom:8px}
+.fate-theater-topbar .fate-theater-button{border:0;background:transparent;font-size:12px;min-width:32px;min-height:32px;padding:4px 0 4px 10px}
+.fate-theater-storycard{min-height:0;flex:1;display:flex;flex-direction:column}
+.fate-theater-header{flex:none;position:relative;padding:0 0 10px}
+.fate-theater-title-row{display:flex;align-items:center;gap:8px}
+.fate-theater-title-row>.fate-patron-art{width:28px;height:34px}
+.fate-theater-title-row .fate-tarot-art__arch{display:none}
+.fate-theater-header h1{font-family:'Songti SC',SimSun,serif;font-size:19px;font-weight:500;line-height:1.45;margin:0;color:#3e3540}
+.fate-theater-context{display:flex;flex-wrap:wrap;gap:2px 8px;font-size:11px;line-height:1.7;color:#705863;margin:4px 0 0;font-variant-numeric:tabular-nums}
+.fate-theater-header .fate-theater-context{padding-left:36px}
+.fate-theater-reading{position:relative;flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 2px 4px;scrollbar-width:thin;scrollbar-color:#b996a7 transparent;border-top:1px solid #ddc5d0}
+.fate-theater-reading:focus-visible,.fate-theater-card-reading:focus-visible{outline:2px solid #85495d;outline-offset:-2px}
+.fate-theater-line{margin:0 0 12px;white-space:pre-wrap;font-size:13px;line-height:1.85}
+.fate-theater-scene{color:#705863;font-weight:400;padding:0 2px}
+.fate-theater-dialogue{font-family:'Songti SC',SimSun,serif;font-size:15px;font-weight:500;color:#493441;padding:10px 12px;background:#ecdee4;border-radius:3px;margin:12px 0;line-height:1.8}
+.fate-theater-emotion{display:block;margin-bottom:3px;font-family:inherit;font-size:11px;font-weight:400;color:#85495d}
+.fate-theater-empty{margin:16px 0;font-size:13px;line-height:1.8}
+.fate-theater-ending{text-align:center;color:#a47389;font-size:14px;margin:10px 0 4px}
+.fate-theater-controls{flex:none;position:relative;padding-top:6px}
+.fate-theater-actions{display:flex;gap:6px}
+.fate-theater-actions>button{flex:1;min-width:0}
+.fate-theater-button{min-width:32px;min-height:36px;border:1px solid #cba7b8;border-radius:4px;padding:6px 8px;background:transparent;color:#85495d;font-family:inherit;font-size:11px;font-weight:400;line-height:1.5;cursor:pointer;touch-action:manipulation;transition:background .15s}
 .fate-theater-button:focus-visible{outline:2px solid #85495d;outline-offset:3px}
 .fate-theater-button:hover:not(:disabled){background:#ecdce3}
 .fate-theater-button:disabled{color:#735a65;background:#e9dfe3;cursor:wait}
 .fate-theater-primary{background:#85495d;border-color:#85495d;color:#fff9fa}
 .fate-theater-primary:hover:not(:disabled){background:#743d50}
-.fate-theater-replay{display:block;margin:0 auto 4px;border:0;font-size:12px;min-height:36px}
-.fate-theater-notice{margin:5px 0 0;font-size:12px;line-height:1.6;color:#85495d;text-align:center}
+.fate-theater-replay{display:block;margin:0 auto 4px;border:0;font-size:11px;min-height:30px}
+.fate-theater-notice{margin:5px 0 0;font-size:11px;line-height:1.6;color:#85495d;text-align:center}
 .fate-theater-notice:empty{display:none}
-.fate-theater-card{position:relative;width:100%;min-width:0;max-width:400px;padding:16px 20px;border:1px solid #bb96a7;border-radius:90px 90px 8px 8px}
-.fate-theater-card::after{content:'';position:absolute;inset:5px;border:1px solid #dfc6d2;border-radius:85px 85px 4px 4px;pointer-events:none}
-.fate-theater-card-crown{display:flex;align-items:center;justify-content:center;gap:12px;padding:3px 0 5px}
-.fate-theater-card-crown .fate-tarot-art{width:58px;height:66px}
-.fate-theater-card-crown>span{width:16px;height:1px;background:#c2a0b1;position:relative}
-.fate-theater-card-crown>span::after{content:'';position:absolute;width:4px;height:4px;transform:rotate(45deg);background:#a97d91;top:-2px;left:6px}
-.fate-theater-card-title{margin:0 0 9px;font-family:inherit;text-align:center;font-size:11px;line-height:1.5;font-weight:400;color:#85495d}
-.fate-theater-activity{font-family:'Songti SC',SimSun,serif;font-size:20px;line-height:1.5;text-align:center;margin:0;font-weight:500}
-.fate-theater-awareness{text-align:center;margin:12px 0 16px;color:#705863;font-size:11px;line-height:1.6}
-.fate-theater-card .fate-theater-line{font-size:14px;line-height:1.85;margin-bottom:14px}
-.fate-theater-card .fate-theater-dialogue{font-size:15px;margin:16px 0;padding-left:9px}
-.fate-theater-factors{font-size:12px;line-height:1.8;padding:4px 0}
-.fate-theater-factors p{margin:8px 0}
-.fate-theater-expand{position:relative;display:block;margin:6px auto 0;min-height:38px;border:0;font-size:12px}
-@media(max-width:360px){.fate-theater-storycard{padding:16px 18px 10px}.fate-theater-seals{gap:5px}.fate-theater-seals>span{font-size:11px}.fate-theater-card{padding:14px 16px}}
-@media(max-height:650px){.fate-theater-frontispiece>.fate-tarot-art{height:44px;width:40px}.fate-theater-header h1{font-size:19px}.fate-theater-header{padding-bottom:6px}.fate-theater-controls{max-height:40%;overflow-y:auto}.fate-theater-seals{margin-top:4px}.fate-theater-storycard{border-radius:65px 65px 8px 8px}.fate-theater-storycard::after{border-radius:59px 59px 4px 4px}}
+/* 聊天摘要是消息附件，不是缩小后的阅读页。长标题与长首段也不能撑高摘要。 */
+.fate-theater-card{position:relative;width:min(248px,calc((100vw - 24px) * .72));max-width:100%;min-width:0;background:#f5edef;padding:10px 12px 6px;border:1px solid #c5a1b2;border-radius:5px}
+.fate-theater-card::after{content:'';position:absolute;inset:3px;border:1px solid #e3cdd7;border-radius:2px;pointer-events:none}
+.fate-theater-card-heading{display:flex;align-items:center;gap:5px;margin-bottom:5px}
+.fate-theater-card-heading>.fate-tarot-art{width:18px;height:21px}
+.fate-theater-card-heading .fate-tarot-art__arch{display:none}
+.fate-theater-card-title{margin:0;font-size:11px;font-weight:400;color:#85495d;line-height:1.6}
+.fate-theater-awareness{font-size:11px;color:#705863;margin-left:auto;white-space:nowrap}
+.fate-theater-activity{font-family:'Songti SC',SimSun,serif;font-size:16px;line-height:1.5;font-weight:500;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fate-theater-card .fate-theater-context{font-size:11px;gap:1px 6px;line-height:1.6;max-height:18px;overflow:hidden;flex-wrap:nowrap}
+.fate-theater-card .fate-theater-context>span:first-child{flex:none}
+.fate-theater-card .fate-theater-context>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fate-theater-card--expanded .fate-theater-activity{white-space:normal}
+.fate-theater-card--expanded .fate-theater-context{flex-wrap:wrap;max-height:none}
+.fate-theater-card--expanded .fate-theater-context>span{white-space:normal}
+.fate-theater-excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;line-height:1.7;margin:7px 0 3px;color:#705863}
+.fate-theater-card-reading{max-height:min(40dvh,240px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#b996a7 transparent;margin-top:10px;padding-right:3px}
+.fate-theater-card-reading .fate-theater-line{font-size:12px;line-height:1.8;margin-bottom:10px}
+.fate-theater-card-reading .fate-theater-dialogue{font-size:13px;padding:8px}
+.fate-theater-factors{font-size:11px;line-height:1.8;padding:4px 0}
+.fate-theater-factors p{margin:7px 0}
+.fate-theater-expand{position:relative;display:block;margin:2px auto 0;min-height:28px;border:0;font-size:11px;padding:4px 8px}
+@media(max-height:520px){.fate-theater-reader{height:74dvh;padding:8px 12px}.fate-theater-topbar{margin-bottom:2px}.fate-theater-header{padding-bottom:5px}.fate-theater-header h1{font-size:17px}.fate-theater-replay{min-height:25px;margin:0}.fate-theater-actions>button{min-height:30px}.fate-theater-reading{padding-top:8px}}
 @media(prefers-reduced-motion:reduce){.fate-theater-player *,.fate-theater-card *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

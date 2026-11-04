@@ -167,7 +167,7 @@ describe('命运小剧场播放器', () => {
 });
 
 describe('命运小剧场私聊卡片', () => {
-    it('从保存的资料展示前几行，展开读取完整正文和因子含义，不修改原文', async () => {
+    it('折叠只显示首段摘要，展开在独立阅读区显示完整原文和因子，收起按钮在阅读区外', async () => {
         const metadata = {
             scheduleMode: 'fate',
             activity: '读书', slotTime: '14:20', endTime: '15:10', location: '窗边', lines,
@@ -177,25 +177,45 @@ describe('命运小剧场私聊卡片', () => {
         };
         const original = JSON.stringify(metadata);
         await act(async () => root.render(React.createElement(FateTheaterCard, metadata)));
-        expect(host.querySelector('.fate-theater-card-crown .fate-tarot-art')).toBeTruthy();
-        expect(host.querySelector('[aria-label="本轮因子"]')?.textContent).toContain('雨后');
-        expect(host.textContent).toContain('TA 不知情');
+        expect(host.querySelector('.fate-theater-card-heading .fate-tarot-art')).toBeTruthy();
+        expect(host.querySelector('.fate-theater-awareness')?.textContent).toBe('不知情');
         expect(host.textContent).toContain('14:20 — 15:10');
-        expect(host.textContent).not.toContain(lines[3].text);
+        expect(host.querySelector('.fate-theater-card-preview .fate-theater-excerpt')?.textContent).toBe(lines[0].text);
+        expect(host.querySelectorAll('.fate-theater-excerpt')).toHaveLength(1);
+        for (const line of lines.slice(1)) expect(host.textContent).not.toContain(line.text);
+        expect(host.textContent).not.toContain(metadata.factors[0].name);
+        expect(host.textContent).not.toContain(metadata.factors[0].meaning);
+        expect(host.textContent).not.toContain(metadata.tendencyName);
+        expect(host.querySelector('[aria-label="本时段命运资料"]')).toBeNull();
+        expect(host.querySelector('.fate-theater-card-reading')).toBeNull();
         expect(button('展开全部').getAttribute('aria-expanded')).toBe('false');
         await click('展开全部');
-        for (const line of lines) expect(host.textContent).toContain(line.text);
-        expect(host.textContent).toContain(metadata.factors[0].meaning);
-        expect(host.textContent).toContain(metadata.tendencyName);
-        expect(host.querySelector('.fate-theater-dialogue')?.textContent).toBe(lines[1].text);
+        const reading = host.querySelector('.fate-theater-card-reading')!;
+        expect(reading).toBeTruthy();
+        expect(reading.getAttribute('tabindex')).toBe('0');
+        const paragraphs = reading.querySelectorAll('.fate-theater-line');
+        expect(Array.from(paragraphs, paragraph => paragraph.textContent)).toEqual(lines.map(line => `${line.emotion || ''}${line.text}`));
+        expect(reading.textContent).toContain(metadata.factors[0].name);
+        expect(reading.textContent).toContain(metadata.factors[0].meaning);
+        expect(reading.textContent).toContain(metadata.tendencyName);
+        expect(reading.querySelector('.fate-theater-dialogue')?.textContent).toBe(lines[1].text);
+        const collapse = button('收起内容');
+        expect(collapse.getAttribute('aria-expanded')).toBe('true');
+        expect(collapse.getAttribute('aria-controls')).toBe(reading.id);
+        expect(reading.contains(collapse)).toBe(false);
+        expect(reading.nextElementSibling).toBe(collapse);
         await click('收起内容');
-        expect(host.textContent).not.toContain(lines[3].text);
+        expect(host.querySelector('.fate-theater-card-reading')).toBeNull();
+        expect(host.querySelector('.fate-theater-excerpt')?.textContent).toBe(lines[0].text);
+        for (const line of lines.slice(1)) expect(host.textContent).not.toContain(line.text);
+        expect(host.querySelector('[aria-label="本时段命运资料"]')).toBeNull();
+        expect(button('展开全部').getAttribute('aria-expanded')).toBe('false');
         expect(JSON.stringify(metadata)).toBe(original);
     });
 
     it('已察觉与无数据状态明确，不补造时间地点', async () => {
         await act(async () => root.render(React.createElement(FateTheaterCard, { activity: '', lines: [], exposed: true })));
-        expect(host.textContent).toContain('TA 已察觉你在看');
+        expect(host.querySelector('.fate-theater-awareness')?.textContent).toBe('已察觉');
         expect(host.textContent).toContain('活动未记录');
         expect(host.textContent).toContain('没有可阅读的剧场内容');
         expect(host.textContent).not.toContain('00:00');

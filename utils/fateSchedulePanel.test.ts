@@ -11,7 +11,7 @@ const current: ScheduleSlot = {
     startTime: '10:00', endTime: '12:00', startsAt: NOW - 3_600_000, endsAt: NOW + 3_600_000,
     activity: '沿海堤寻找旧灯塔', description: '走过海堤旁的旧书摊。摊主递来一幅手绘路线，灯塔藏在图纸折痕后。', location: '北岸旧书摊', homePosition: { kind: 'away' },
     fate: {
-        tendency: { id: 'discover', name: '经历与发现', meaning: '关注新见闻，让生活打开不同的可能。' },
+        tendency: { id: 'discovery', name: '经历与发现', meaning: '关注新见闻，让生活打开不同的可能。' },
         factors: [{ id: 'map', name: '地图', meaning: '寻找方向，也重新审视走过的路。' }, { id: 'fold', name: '折痕', meaning: '不起眼的细节隐藏意外线索。' }, { id: 'tide', name: '潮汐', meaning: '时机与变化推着事情向前。' }],
         peopleDirection: 'new', rationale: '地图带出路线，折痕藏住地点，潮汐决定出发时机。', activityKind: '探索', sceneKind: '海岸', development: '发现', usageDate: '2027-01-15',
     },
@@ -47,14 +47,36 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
 
 describe('命运牌阵独立活动面板', () => {
-    it('删除两句无用说明，时间位于活动名下方，保留左侧猫咪和三张牌', async () => {
+    it('猫咪与正文同在活动内并列，因子位于活动下方，没有嵌套spread牌框', async () => {
         await render();
         expect(host.textContent).not.toContain('换一副牌，重写本轮');
         expect(host.textContent).not.toContain('下一段，顺着线来');
-        expect(host.querySelector('.fate-panel__cat')).toBeTruthy();
-        expect(host.querySelectorAll('.fate-panel__spread .fate-panel__card')).toHaveLength(3);
+        expect(host.querySelector('.fate-panel__spread')).toBeNull();
         const activity = host.querySelector('[aria-label="本轮活动"]')!;
+        const companion = activity.querySelector('.fate-panel__companion')!;
+        const copy = activity.querySelector('.fate-panel__copy')!;
+        expect(companion.parentElement).toBe(activity);
+        expect(copy.parentElement).toBe(activity);
+        expect(companion.nextElementSibling).toBe(copy);
+        expect(companion.querySelector('.fate-panel__cat')).toBeTruthy();
+        const reading = activity.nextElementSibling!;
+        expect(reading.classList.contains('fate-panel__reading')).toBe(true);
+        expect(reading.querySelectorAll('.fate-panel__card')).toHaveLength(3);
         expect(activity.querySelector('h3')?.nextElementSibling?.className).toBe('fate-panel__timing');
+    });
+    it('正文先显示本轮命运之神与倾向图形，再显示活动标题、时间和内容', async () => {
+        await render();
+        const copy = host.querySelector('[aria-label="本轮活动"] .fate-panel__copy')!;
+        const patron = copy.querySelector('[aria-label="本轮命运之神"]')!;
+        expect(copy.firstElementChild).toBe(patron);
+        expect(patron.textContent).toContain('本轮命运之神');
+        expect(patron.textContent).toContain(current.fate!.tendency.name);
+        expect(patron.querySelector('.fate-patron-art')?.getAttribute('data-fate-art')).toBe('认知');
+        const title = patron.nextElementSibling!;
+        expect(title.tagName).toBe('H3');
+        expect(title.textContent).toBe(current.activity);
+        expect(title.nextElementSibling?.className).toBe('fate-panel__timing');
+        expect(copy.querySelector('.fate-panel__description')?.textContent).toBe(current.description);
     });
     it('根据真实时间展示当前活动、三张真实因子牌、倾向和人物方向', async () => {
         await render();
@@ -110,7 +132,7 @@ describe('命运牌阵独立活动面板', () => {
         await render(); await click('编辑活动', host.querySelector('[aria-label="本轮活动"]')!);
         await render({ isGenerating: true });
         expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.textContent).toContain('地图');
-        expect(host.textContent).toContain('猫爪正在牵线');
+        expect(host.querySelector('[role="status"]')?.textContent).toBe('生成中，完成后才换牌。');
         expect(host.querySelector('.fate-panel--waiting')).not.toBeNull();
         const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
@@ -135,7 +157,7 @@ describe('命运牌阵独立活动面板', () => {
         await render({ isViewing: true });
         expect(host.querySelector('.fate-panel')?.getAttribute('aria-busy')).toBe('true');
         expect(host.querySelector('.fate-panel--waiting')).toBeNull();
-        expect(host.textContent).toContain('进一步查看生成中'); expect(host.textContent).not.toContain('猫爪正在牵线');
+        expect(host.querySelector('[role="status"]')?.textContent).toBe('小剧场正在生成。'); expect(host.textContent).not.toContain('猫爪正在牵线');
         expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
         const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);

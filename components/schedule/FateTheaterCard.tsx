@@ -39,17 +39,14 @@ const FateTheaterCard: React.FC<FateTheaterCardProps> = ({
     const [expanded, setExpanded] = useState(false);
     const contentId = useId();
     const safeLines = Array.isArray(lines) ? lines : [];
-    const hasDetails = safeLines.length > 3 || !!factors?.length || !!tendencyName;
-    return <article className="fate-theater-card" aria-label="命运小剧场">
-        <div className="fate-theater-card-crown" aria-hidden="true"><span /><FateTarotArt factor={factors?.[0]} /><span /></div>
-        <h3 className="fate-theater-card-title">命运牌阵 · 小剧场</h3>
+    const hasDetails = safeLines.length > 0 || !!factors?.length || !!tendencyName;
+    return <article className={`fate-theater-card${expanded ? ' fate-theater-card--expanded' : ''}`} aria-label="命运小剧场">
+        <div className="fate-theater-card-heading"><FateTarotArt factor={factors?.[0]} /><h3 className="fate-theater-card-title">命运小剧场</h3><span className="fate-theater-awareness">{exposed ? '已察觉' : '不知情'}</span></div>
         <FateTheaterDetails activity={activity} slotTime={slotTime} endTime={endTime} location={location} />
-        {!!factors?.length && <div className="fate-theater-seals" aria-label="本轮因子">{factors.map((factor, index) => <span key={`${factor.id}:${index}`}><FateTarotArt factor={factor} /><span>{factor.name}</span></span>)}</div>}
-        <p className="fate-theater-awareness">{exposed ? 'TA 已察觉你在看' : 'TA 不知情 · 不知道你看了'}</p>
-        <div id={contentId}>
-            {safeLines.length ? (expanded ? safeLines : safeLines.slice(0, 3)).map((line, index) =>
+        <div id={contentId} className={expanded ? 'fate-theater-card-reading' : 'fate-theater-card-preview'} tabIndex={expanded ? 0 : undefined}>
+            {expanded ? safeLines.map((line, index) =>
                 <FateTheaterText key={index} line={line} />
-            ) : <p className="fate-theater-empty">没有可阅读的剧场内容。</p>}
+            ) : safeLines.length ? <p className="fate-theater-excerpt">{safeLines[0].text}</p> : <p className="fate-theater-empty">没有可阅读的剧场内容。</p>}
             {expanded && (tendencyName || !!factors?.length) && <section className="fate-theater-factors" aria-label="本时段命运资料">
                 {tendencyName && <p>倾向 · {tendencyName}</p>}
                 {factors?.map((factor, index) => <p key={`${factor.id}-${index}`}><strong>{factor.name}</strong>{factor.meaning && ` · ${factor.meaning}`}</p>)}

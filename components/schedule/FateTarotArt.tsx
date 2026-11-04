@@ -8,6 +8,12 @@ export function fateArtCategory(factor?: { id?: string; category?: string }): st
     return factor?.category || categories.get(factor?.id || '') || '自定义';
 }
 
+/** 复用牌面已有图案，让本轮倾向在日程开头有固定、可识别的图形。 */
+export function FatePatronArt({ tendencyId }: { tendencyId?: string }) {
+    const categories: Record<string, string> = { career: '秩序', relations: '关系', discovery: '认知', pleasure: '欲望', life: '修复与积累', chance: '偶然与发现' };
+    return <FateTarotArt category={categories[tendencyId || ''] || '自定义'} className="fate-patron-art" />;
+}
+
 /** 一类一幅寓意画；旧记录仅有id时也使用相同的画，不改变记录内容。 */
 export default function FateTarotArt({ factor, category, className = '' }: { factor?: { id?: string; category?: string }; category?: string; className?: string }) {
     const kind = category || fateArtCategory(factor);
