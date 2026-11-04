@@ -41,7 +41,7 @@ const FateScheduleSuite: React.FC<FateScheduleSuiteProps> = props => {
             {props.enabled ? <FateSchedulePanel embedded character={props.character} schedule={props.schedule?.mode === 'fate' ? props.schedule : null} onToggle={props.onToggle} onEdit={props.onEdit} onDelete={props.onDelete} onReroll={props.onReroll} onPlayTheater={props.onPlayTheater} isGenerating={props.isGenerating} isViewing={props.isViewing} />
                 : <div className="fate-suite__rest"><h2>毛线球先睡一会儿</h2><p>日程已关闭，情绪照自己的开关走。</p><button type="button" disabled={!props.onToggle || busy} onClick={props.onToggle}>牵起生活线</button></div>}
         </section>}
-        {tab === 'library' && <section id="fate-suite-library" aria-label="命运牌库"><FateLibraryView char={props.character} onChange={props.onChange} isBusy={busy} /></section>}
+        {tab === 'library' && <section id="fate-suite-library" aria-label="命运牌库"><FateLibraryView char={props.character} onChange={props.onChange} apiPresets={props.apiPresets} onAddApiPreset={props.onAddApiPreset} isBusy={busy} /></section>}
         {tab === 'emotion' && <section id="fate-suite-emotion" aria-label="角色情绪"><FateEmotionView char={props.character} apiPresets={props.apiPresets} onSave={props.onSaveEmotion} onClearBuffs={props.onClearBuffs} onAddApiPreset={props.onAddApiPreset} isBusy={busy} /></section>}
     </div>;
 };

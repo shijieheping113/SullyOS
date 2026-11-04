@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
+import { FATE_SLOT_MAX_MINUTES, FATE_SLOT_MIN_MINUTES, fateSlotOverlapsOthers, normalizeFateClock, resolveFateSlotTimes } from '../../utils/fateSchedule';
 import './FateSchedulePanel.css';
 import FateTarotArt, { FatePatronArt } from './FateTarotArt';
 import FateOverlay from './FateOverlay';
@@ -101,7 +102,7 @@ interface SlotSnapshot {
     original: string;
     wasPrimary: boolean;
 }
-interface EditDraft extends SlotSnapshot { activity: string; description: string; location: string; home: string }
+interface EditDraft extends SlotSnapshot { activity: string; description: string; location: string; home: string; startTime: string; endTime: string }
 
 const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, character, onEdit, onDelete, onReroll, onToggle, onPlayTheater, isGenerating = false, isViewing = false, embedded = false }) => {
     const [now, setNow] = useState(Date.now);
@@ -137,23 +138,50 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     const startEdit = (itemIndex: number) => {
         if (writesDisabled) return;
         const item = slots[itemIndex];
-        setDraft({ ...snapshot(itemIndex), activity: item.activity, description: item.description || '', location: item.location || '', home: item.homePosition?.kind === 'home' ? item.homePosition.roomId : item.homePosition?.kind === 'away' ? '__away' : '' });
+        setDraft({
+            ...snapshot(itemIndex),
+            activity: item.activity,
+            description: item.description || '',
+            location: item.location || '',
+            home: item.homePosition?.kind === 'home' ? item.homePosition.roomId : item.homePosition?.kind === 'away' ? '__away' : '',
+            startTime: item.startTime || '',
+            endTime: item.endTime || '',
+        });
         setDeleting(null);
         setError('');
     };
     const saveEdit = async () => {
-        if (!draft || !onEdit || writesDisabled) return;
+        if (!draft || !onEdit || writesDisabled || !schedule) return;
         if (!matches(draft)) { setError('日程轮次或活动内容已经变化，请取消编辑后重新打开活动。填写内容尚未保存。'); return; }
         if (!draft.activity.trim()) { setError('请填写活动名称。'); return; }
         const room = rooms.find(item => item.id === draft.home);
         if (draft.home && draft.home !== '__away' && !room) { setError('选择的家园房间已不存在，请重新选择房间或外出。'); return; }
+        const times = resolveFateSlotTimes(character, schedule.date, draft.startTime, draft.endTime);
+        if (!times.ok) { setError(times.error); return; }
         const original = slots[draft.index];
+        // 钟点没改则保留原时间戳，避免时区换算抖动；改了才写入新 startsAt/endsAt。
+        const sameClocks = times.startTime === (normalizeFateClock(original.startTime || '') || original.startTime)
+            && times.endTime === (normalizeFateClock(original.endTime || '') || original.endTime);
+        const startsAt = sameClocks && validStamp(original.startsAt) ? original.startsAt : times.startsAt;
+        const endsAt = sameClocks && validStamp(original.endsAt) ? original.endsAt : times.endsAt;
+        if (fateSlotOverlapsOthers(slots, draft.index, startsAt, endsAt)) {
+            setError('这段时间与同一天其他活动重叠了，请调整起止时间。');
+            return;
+        }
         setIsSaving(true);
         try {
-            await onEdit(draft.index, { ...original, activity: draft.activity.trim(), description: draft.description.trim() || undefined,
+            await onEdit(draft.index, {
+                ...original,
+                activity: draft.activity.trim(),
+                description: draft.description.trim() || undefined,
                 location: draft.location.trim() || room?.name || undefined,
                 homePosition: draft.home === '__away' ? { kind: 'away' } : room ? { kind: 'home', roomId: room.id } : undefined,
-                theater: undefined });
+                startTime: times.startTime,
+                endTime: times.endTime,
+                startsAt,
+                endsAt,
+                theater: undefined,
+            });
             setDraft(null); setError('');
         } catch { setError('活动保存失败，填写内容已保留，请重试。'); }
         finally { setIsSaving(false); }
@@ -167,8 +195,10 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     </div>;
     const renderEditor = () => draft && <form className="fate-panel__editor" aria-label="编辑活动" onSubmit={event => { event.preventDefault(); saveEdit(); }}>
         <h3 ref={editorHeadingRef}>编辑活动</h3>
-        <p className="fate-panel__muted">{range(JSON.parse(draft.original))} · 时间只读。保存后，小剧场需重新生成。</p>
+        <p className="fate-panel__muted">结束时间到了才会续写下一段；时长需 {FATE_SLOT_MIN_MINUTES}—{FATE_SLOT_MAX_MINUTES} 分钟。保存后，小剧场需重新生成。</p>
         <fieldset disabled={writesDisabled}>
+            <label>开始时间<input type="time" value={draft.startTime} onChange={event => setDraft({ ...draft, startTime: event.target.value })} /></label>
+            <label>结束时间<input type="time" value={draft.endTime} onChange={event => setDraft({ ...draft, endTime: event.target.value })} /></label>
             <label>活动名称<input value={draft.activity} onChange={event => setDraft({ ...draft, activity: event.target.value })} /></label>
             <label>活动描述<textarea rows={4} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label>
             <label>具体地点<input value={draft.location} onChange={event => setDraft({ ...draft, location: event.target.value })} /></label>

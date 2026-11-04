@@ -12,7 +12,7 @@ describe('命运牌阵抽取与分时段判断', () => {
         expect(task).toContain('"startsAt":1000,"endsAt":2000');
         expect(task).toContain('一天里再次安排同类活动，需要符合角色身份、确切动机、剩余时间和体力');
         expect(task).toContain('准备、路程和收尾只在实际影响可行性时纳入判断，不必逐项写进描述');
-        expect(task).toContain('未来60—180分钟');
+        expect(task).toContain('未来30—180分钟');
         expect(task).toContain('活动范围尽可能全面');
         expect(task).not.toContain('每天只能');
         expect(task).not.toContain('一天只能');

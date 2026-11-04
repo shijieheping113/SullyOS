@@ -3,10 +3,72 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { getDailyScheduleForChar, getRecentScheduleHistory } from './dailySchedule';
 import { getScheduleDateKey, getScheduleWallClock } from './scheduleTime';
+import { resolveCharTimeZone, wallClockToTimestamp } from './timezone';
 import { loadFateSettings, type FateTendency } from './fateSettings';
 import type { FateFactor } from './fateFactors';
 import { buildHomeSchedulePrompt, parseHomePosition } from './homeSchedule';
 import { extractContent, extractJson, safeResponseJson } from './safeApi';
+
+/** 命运单段活动时长上下限（分钟），生成与手工编辑共用。 */
+export const FATE_SLOT_MIN_MINUTES = 30;
+export const FATE_SLOT_MAX_MINUTES = 180;
+
+/** 接受 HH:MM 或 HH:MM:SS，规范成 HH:MM；非法返回 null。 */
+export function normalizeFateClock(value: string): string | null {
+    const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (!match) return null;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+/** 半开区间 [aStart, aEnd) 与 [bStart, bEnd) 是否重叠。 */
+export function fateSlotRangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+    return aStart < bEnd && bStart < aEnd;
+}
+
+export type ResolveFateSlotTimesResult =
+    | { ok: true; startsAt: number; endsAt: number; startTime: string; endTime: string }
+    | { ok: false; error: string };
+
+/**
+ * 把角色当地当天的开始/结束钟点换成真实时间戳。
+ * 只允许落在 dateKey 这一天内；时长须在 FATE_SLOT_MIN/MAX 分钟之间。
+ */
+export function resolveFateSlotTimes(
+    char: Pick<CharacterProfile, 'customTimezoneEnabled' | 'customTimezone'> | null | undefined,
+    dateKey: string,
+    startHHMM: string,
+    endHHMM: string,
+): ResolveFateSlotTimesResult {
+    const startTime = normalizeFateClock(startHHMM);
+    const endTime = normalizeFateClock(endHHMM);
+    if (!startTime || !endTime) return { ok: false, error: '请填写有效的开始和结束时间。' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return { ok: false, error: '日程日期无效，无法保存时间。' };
+    const tz = resolveCharTimeZone(char);
+    const startsAt = wallClockToTimestamp(`${dateKey} ${startTime}:00`, tz);
+    const endsAt = wallClockToTimestamp(`${dateKey} ${endTime}:00`, tz);
+    if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) return { ok: false, error: '时间无法换算，请重试。' };
+    if (endsAt <= startsAt) return { ok: false, error: '结束时间必须晚于开始时间。' };
+    const minutes = Math.round((endsAt - startsAt) / 60_000);
+    if (minutes < FATE_SLOT_MIN_MINUTES || minutes > FATE_SLOT_MAX_MINUTES) {
+        return { ok: false, error: `活动时长需在 ${FATE_SLOT_MIN_MINUTES}—${FATE_SLOT_MAX_MINUTES} 分钟之间。` };
+    }
+    if (getScheduleDateKey(char, new Date(startsAt)) !== dateKey || getScheduleDateKey(char, new Date(endsAt)) !== dateKey) {
+        return { ok: false, error: '只能修改当天内的时间，不能跨天。' };
+    }
+    return { ok: true, startsAt, endsAt, startTime, endTime };
+}
+
+/** 新起止是否与同表其他条目（半开区间）重叠；index 为正在编辑的那条。 */
+export function fateSlotOverlapsOthers(slots: ScheduleSlot[], index: number, startsAt: number, endsAt: number): boolean {
+    return slots.some((slot, i) => {
+        if (i === index) return false;
+        if (typeof slot.startsAt !== 'number' || typeof slot.endsAt !== 'number') return false;
+        return fateSlotRangesOverlap(startsAt, endsAt, slot.startsAt, slot.endsAt);
+    });
+}
 
 type PeopleDirection = 'free' | 'familiar' | 'new' | 'alone';
 export function drawPeopleDirection(random = Math.random): PeopleDirection {
@@ -89,10 +151,10 @@ ${buildPeopleDirectionPrompt(draw.people)}
 恋爱、暧昧、吸引、欲望与亲密可自然存在，不把生活写成只有健康工作；涉及亲密的内容仅限明确成年的双方自愿关系，以非露骨的感受、氛围、亲昵和关系变化表现，不代替用户决定或实施行为。
 ${char.scheduleStyle === 'mindful' ? '此角色使用意识系：尊重角色自述的存在形态，不虚构不具备的身体与物理能力，生活变化可以是思绪与真实交流的发展。' : ''}
 
-输出前核对当天活动的前后衔接，确认角色有时间到达、有时间完成，工作安排与身份相符，再输出本轮日程。从现在开始设计一项活动，覆盖未来60—180分钟，由你选合理时长。不补过去，不排全天。
+输出前核对当天活动的前后衔接，确认角色有时间到达、有时间完成，工作安排与身份相符，再输出本轮日程。从现在开始设计一项活动，覆盖未来30—180分钟，由你选合理时长。不补过去，不排全天。
 日程描述是简短的场景提要，用朴实、直接的第三人称写1—2个短句，目标30—60字，最多80字。只交代活动和进入活动的一处变化，让读者知道在哪、做什么、有什么不同。人物按需要点明姓名或身份，具体地点单独填写。描述保留尚可发展的空间，动作演出、完整对话、感官描摹、内心分析、后续选择与结局留给进一步查看和聊天。
 三个因子共同影响活动构思，不要求短描述逐个解释或逐个制造转折；组合如何作用写在rationale里，用一句面向用户的设计说明，最多100字，不写内心推理。活动服务于角色自己的生活，用户相关内容只在已知关系和当前情境适合时自然出现。
-仅输出JSON：{"durationMinutes":60到180的整数,"activity":"具体活动名","description":"一小段正在展开的生活","location":"具体地点","emoji":"一个表情","homePosition":{"kind":"home","roomId":"所列真实房间ID"}或{"kind":"away"},"rationale":"简短说明因子组合怎样符合处境，不输出内心推理","activityKind":"活动类别","sceneKind":"场景类别","development":"事件发展类型"}。
+仅输出JSON：{"durationMinutes":30到180的整数,"activity":"具体活动名","description":"一小段正在展开的生活","location":"具体地点","emoji":"一个表情","homePosition":{"kind":"home","roomId":"所列真实房间ID"}或{"kind":"away"},"rationale":"简短说明因子组合怎样符合处境，不输出内心推理","activityKind":"活动类别","sceneKind":"场景类别","development":"事件发展类型"}。
 ${buildHomeSchedulePrompt(char).replace(/每个 slots 项/g, '输出对象').replace(/每条日程/g, '本轮日程')}`;
 }
 
@@ -130,7 +192,7 @@ export async function generateFateSchedule(
     if (!response.ok) throw new Error(`命运牌阵生成失败（${response.status}），原日程已保留。`);
     const data = extractJson(extractContent(await safeResponseJson(response)));
     const duration = data?.durationMinutes;
-    if (!Number.isInteger(duration) || duration < 60 || duration > 180 || typeof data.activity !== 'string' || !data.activity.trim() || typeof data.description !== 'string' || !data.description.trim() || typeof data.location !== 'string' || !data.location.trim()) throw new Error('日程内容或时长不完整，未保存；重试会沿用本轮抽牌。');
+    if (!Number.isInteger(duration) || duration < FATE_SLOT_MIN_MINUTES || duration > FATE_SLOT_MAX_MINUTES || typeof data.activity !== 'string' || !data.activity.trim() || typeof data.description !== 'string' || !data.description.trim() || typeof data.location !== 'string' || !data.location.trim()) throw new Error('日程内容或时长不完整，未保存；重试会沿用本轮抽牌。');
     validateFateDescription(data.description.trim());
     const homePosition = parseHomePosition(data.homePosition, char);
     // 与普通日程一致：有家园名单但模型没给出有效房间时照常保存，位置留空，不丢整轮。

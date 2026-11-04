@@ -5,6 +5,7 @@ import { Simulate } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../types';
 import FateSchedulePanel, { type FateSchedulePanelProps } from '../components/schedule/FateSchedulePanel';
+import { resolveFateSlotTimes } from './fateSchedule';
 
 const NOW = 1_800_000_000_000;
 const current: ScheduleSlot = {
@@ -34,6 +35,10 @@ function button(label: string, scope: ParentNode = host): HTMLButtonElement {
 }
 async function click(label: string, scope: ParentNode = host) { await act(async () => button(label, scope).click()); }
 function form(): HTMLFormElement { return document.body.querySelector('form')!; }
+function fieldValue(label: string): string {
+    const field = Array.from(form().querySelectorAll('label')).find(item => item.firstChild?.textContent === label)!.querySelector('input,textarea,select') as HTMLInputElement;
+    return field.value;
+}
 async function fill(label: string, value: string) {
     const field = Array.from(form().querySelectorAll('label')).find(item => item.firstChild?.textContent === label)!.querySelector('input,textarea,select') as HTMLInputElement;
     await act(async () => { field.value = value; Simulate.change(field); });
@@ -127,13 +132,43 @@ describe('命运牌阵独立活动面板', () => {
         await click('副因子1：折痕，查看含义');
         expect(host.querySelector('.fate-panel__meaning')).toBeNull();
     });
-    it('编辑保留完整起止时间、真实外出地点和牌阵，清除小剧场', async () => {
+    it('编辑可改时间；钟点未改时保留原时间戳，清除小剧场并保留牌阵', async () => {
         await render(); await click('编辑活动', host.querySelector('[aria-label="本轮活动"]')!);
-        expect(form().textContent).toContain('时间只读'); expect(form().querySelector('input[type="time"]')).toBeNull();
+        expect(form().textContent).toContain('结束时间到了才会续写下一段');
+        expect(form().querySelectorAll('input[type="time"]')).toHaveLength(2);
         await fill('活动名称', '向灯塔出发'); await fill('活动描述', '离开书摊，沿地图找路。');
         await click('保存活动', form());
         expect(props.onEdit).toHaveBeenCalledWith(1, { ...current, activity: '向灯塔出发', description: '离开书摊，沿地图找路。', theater: undefined });
         expect(host.querySelector('form')).toBeNull();
+    });
+    it('修改结束时间后写入新 endsAt，过短时长与重叠会拦住保存', async () => {
+        const date = '2027-01-15';
+        const previousTimes = resolveFateSlotTimes(undefined, date, '08:00', '09:00');
+        const currentTimes = resolveFateSlotTimes(undefined, date, '10:00', '12:00');
+        expect(previousTimes.ok && currentTimes.ok).toBe(true);
+        if (!previousTimes.ok || !currentTimes.ok) return;
+        const now = Math.floor((currentTimes.startsAt + currentTimes.endsAt) / 2);
+        vi.setSystemTime(now);
+        const previousSlot: ScheduleSlot = { ...previous, ...previousTimes, theater: previous.theater };
+        const currentSlot: ScheduleSlot = { ...current, ...currentTimes, theater: current.theater };
+        await render({ schedule: makeSchedule([previousSlot, currentSlot]) });
+        await click('编辑活动', host.querySelector('[aria-label="本轮活动"]')!);
+        await fill('结束时间', '10:20'); await click('保存活动', form());
+        expect(props.onEdit).not.toHaveBeenCalled();
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain('30—180');
+        await fill('开始时间', '08:30'); await fill('结束时间', '09:30'); await click('保存活动', form());
+        expect(props.onEdit).not.toHaveBeenCalled();
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain('重叠');
+        await fill('开始时间', '11:00'); await fill('结束时间', '11:30'); await click('保存活动', form());
+        expect(props.onEdit).toHaveBeenCalled();
+        const saved = vi.mocked(props.onEdit!).mock.calls.at(-1)?.[1] as ScheduleSlot;
+        expect(saved.startTime).toBe('11:00');
+        expect(saved.endTime).toBe('11:30');
+        expect(saved.startsAt).not.toBe(currentTimes.startsAt);
+        expect(saved.endsAt).not.toBe(currentTimes.endsAt);
+        expect((saved.endsAt || 0) - (saved.startsAt || 0)).toBe(1_800_000);
+        expect(saved.fate).toEqual(current.fate);
+        expect(saved.theater).toBeUndefined();
     });
     it('可以编辑家园房间，并为外出保留具体地点', async () => {
         await render(); await click('编辑活动', host.querySelector('[aria-label="本轮活动"]')!);
@@ -150,12 +185,12 @@ describe('命运牌阵独立活动面板', () => {
         await render({ schedule: makeSchedule([previous, next]) }); await click('保存活动', form());
         expect(props.onEdit).not.toHaveBeenCalled();
         expect(host.querySelector('[role="alert"]')?.textContent).toContain('日程轮次或活动内容已经变化');
-        expect((form().querySelector('input') as HTMLInputElement).value).toBe('待保存的修改');
+        expect(fieldValue('活动名称')).toBe('待保存的修改');
     });
     it('生成中保留内容和牌面，禁止重Roll、编辑、删除和所有小剧场按钮', async () => {
         await render(); await click('编辑活动', host.querySelector('[aria-label="本轮活动"]')!);
         await render({ isGenerating: true });
-        expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.textContent).toContain('地图');
+        expect(fieldValue('活动名称')).toBe(current.activity); expect(host.textContent).toContain('地图');
         expect(host.querySelector('[role="status"]')?.textContent).toBe('生成中，完成后才换牌。');
         expect(host.querySelector('.fate-panel--waiting')).not.toBeNull();
         const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale') && !item.classList.contains('fate-panel__patron'));
@@ -182,7 +217,7 @@ describe('命运牌阵独立活动面板', () => {
         expect(host.querySelector('.fate-panel')?.getAttribute('aria-busy')).toBe('true');
         expect(host.querySelector('.fate-panel--waiting')).toBeNull();
         expect(host.querySelector('[role="status"]')?.textContent).toBe('小剧场正在生成。'); expect(host.textContent).not.toContain('猫爪正在牵线');
-        expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
+        expect(fieldValue('活动名称')).toBe(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
         const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale') && !item.classList.contains('fate-panel__patron'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled || item.classList.contains('fate-panel__history-trigger'))).toBe(true);
         await act(async () => controls.forEach(item => item.click()));
@@ -284,7 +319,7 @@ describe('命运牌阵独立活动面板', () => {
         await act(async () => reject(new Error('写入失败')));
         expect(host.querySelector('[role="alert"]')?.textContent).toContain('活动保存失败');
         expect(form().querySelector('fieldset')?.disabled).toBe(false);
-        expect((form().querySelector('input') as HTMLInputElement).value).toBe('尚未保存的灯塔行程');
+        expect(fieldValue('活动名称')).toBe('尚未保存的灯塔行程');
     });
     it('轮次变动后删除确认也不会删除新活动', async () => {
         await render(); await click('删除活动', host.querySelector('[aria-label="本轮活动"]')!);

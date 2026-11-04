@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { CharacterProfile } from '../../types';
+import type { APIConfig, ApiPreset, CharacterProfile } from '../../types';
 import type { FateFactor } from '../../utils/fateFactors';
 import { defaultFateSettings, loadFateSettings, saveFateSettings, type FateSettings, type FateTendency } from '../../utils/fateSettings';
 import './FateSettingsViews.css';
@@ -10,15 +10,18 @@ import './FateLibraryView.css';
 export interface FateLibraryViewProps {
     char: CharacterProfile;
     onChange: (patch: Partial<CharacterProfile>) => void;
+    apiPresets?: ApiPreset[];
+    onAddApiPreset?: (name: string, config: APIConfig) => void;
     isBusy?: boolean;
 }
 type Kind = 'factors' | 'tendencies';
 type Draft = { id?: string; name: string; meaning: string; category: string };
 const PAGE_SIZE = 6;
 
-export default function FateLibraryView({ char, onChange, isBusy = false }: FateLibraryViewProps) {
+export default function FateLibraryView({ char, onChange, apiPresets = [], onAddApiPreset, isBusy = false }: FateLibraryViewProps) {
     const currentCharacter = useRef(char.id);
     currentCharacter.current = char.id;
+    const readApi = () => ({ baseUrl: char.scheduleApi?.baseUrl || '', apiKey: char.scheduleApi?.apiKey || '', model: char.scheduleApi?.model || '' });
     const [settings, setSettings] = useState(() => loadFateSettings(char.id));
     const [kind, setKind] = useState<Kind>('factors');
     const [query, setQuery] = useState('');
@@ -30,15 +33,18 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
     const [draft, setDraft] = useState<Draft | null>(null);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
-    const [api, setApi] = useState({ baseUrl: char.scheduleApi?.baseUrl || '', apiKey: char.scheduleApi?.apiKey || '', model: char.scheduleApi?.model || '' });
+    const [api, setApi] = useState(readApi);
     const [apiDirty, setApiDirty] = useState(false);
+    const [picker, setPicker] = useState(false);
+    const [presetQuery, setPresetQuery] = useState('');
+    const [presetName, setPresetName] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const busy = isBusy || saving;
 
     useEffect(() => {
         setSettings(loadFateSettings(char.id)); setKind('factors'); setQuery(''); setCategory(''); setStatus('all');
         setPage(1); setCategoriesOpen(false); setExpanded(null); setDraft(null); setError(''); setNotice('');
-        setApi({ baseUrl: char.scheduleApi?.baseUrl || '', apiKey: char.scheduleApi?.apiKey || '', model: char.scheduleApi?.model || '' }); setApiDirty(false); setSaving(false);
+        setApi(readApi()); setApiDirty(false); setPicker(false); setPresetQuery(''); setPresetName(null); setSaving(false);
     }, [char.id]);
     useEffect(() => { setPage(1); }, [kind, query, category, status]);
     const disabledField = kind === 'factors' ? 'disabledFactorIds' : 'disabledTendencyIds';
@@ -55,6 +61,14 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const currentPage = Math.min(page, totalPages);
     const selected = settings[kind].find(item => item.id === expanded);
+    const presets = apiPresets.filter(preset => `${preset.name} ${preset.config.model}`.toLocaleLowerCase().includes(presetQuery.trim().toLocaleLowerCase()));
+    const selectedPreset = apiPresets.find(preset => preset.config.baseUrl === api.baseUrl && preset.config.apiKey === api.apiKey && preset.config.model === api.model);
+    const modelLabel = selectedPreset?.name || api.model || (api.baseUrl || api.apiKey ? '未填写模型' : '主模型');
+    const completeApi = () => {
+        const values = { baseUrl: api.baseUrl.trim(), apiKey: api.apiKey.trim(), model: api.model.trim() };
+        if (Object.values(values).some(Boolean) && !Object.values(values).every(Boolean)) { setError('请完整填写日程模型的 URL、Key 和模型名称，或全部清空。'); return null; }
+        return values;
+    };
     const persist = (next: FateSettings) => {
         try { saveFateSettings(char.id, next); setSettings(next); setError(''); setNotice('已保存，只影响后续生成。'); return true; }
         catch { setError('保存失败，填写内容还在。请检查浏览器存储空间后重试。'); setNotice(''); return false; }
@@ -94,15 +108,28 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
 
     return <section className="fate-settings-view fate-book-root" aria-label="命运资料库">
         <header className="fate-settings-heading"><h2>命运牌册</h2><span className="fate-settings-meta">{settings.factors.length} 张因子牌</span></header>
-        <details className="fate-settings-model fate-book-model"><summary>日程专用模型{apiDirty ? ' · 未保存' : ''}</summary><p className="fate-settings-meta">全部留空，用主模型。</p>
-            {(['baseUrl', 'apiKey', 'model'] as const).map((field, index) => <label key={field} className="fate-settings-field">{['URL', 'Key', '模型名称'][index]}<input type={field === 'apiKey' ? 'password' : 'text'} autoComplete={field === 'apiKey' ? 'new-password' : 'off'} value={api[field]} disabled={busy} onChange={event => { setApi({ ...api, [field]: event.target.value }); setApiDirty(true); }} /></label>)}
-            <button type="button" className="fate-settings-primary" disabled={busy || !apiDirty} onClick={async () => {
-                const values = { baseUrl: api.baseUrl.trim(), apiKey: api.apiKey.trim(), model: api.model.trim() };
-                if (Object.values(values).some(Boolean) && !Object.values(values).every(Boolean)) { setError('请完整填写日程模型的 URL、Key 和模型名称，或全部清空。'); return; }
-                const charId = char.id; setSaving(true);
+        <details className="fate-settings-model fate-book-model" open={apiDirty || picker || presetName !== null || undefined}>
+            <summary>日程专用模型<span>{modelLabel}</span>{apiDirty ? ' · 未保存' : ''}</summary>
+            <div className="fate-settings-summary"><h3>日程专用模型</h3><span className="fate-settings-meta">全部留空，用主模型</span></div>
+            <button type="button" className="fate-settings-preset-trigger" aria-label="搜索 / 选择模型预设" aria-expanded={picker} disabled={busy} onClick={() => setPicker(!picker)}>搜索 / 选择模型预设<span>{modelLabel}</span></button>
+            {picker && <div className="fate-settings-picker"><label className="fate-settings-field">搜索预设<input type="search" value={presetQuery} onChange={event => setPresetQuery(event.target.value)} placeholder="名称或模型名称" /></label><div className="fate-settings-preset-list">{presets.map(preset => <button type="button" key={preset.id} disabled={busy} onClick={() => { setApi({ baseUrl: preset.config.baseUrl, apiKey: preset.config.apiKey, model: preset.config.model }); setApiDirty(true); setPicker(false); setError(''); setNotice('预设已载入，保存后生效。'); }}><span>{preset.name}</span><span className="fate-settings-meta">{preset.config.model || '未填写模型'}</span></button>)}{!presets.length && <p className="fate-settings-empty">没有匹配的预设。</p>}</div></div>}
+            <div className="fate-settings-actions"><button type="button" disabled={busy} onClick={() => { setApi(readApi()); setApiDirty(false); setError(''); setNotice('保留当前已保存的模型。'); }}>保留当前值</button><button type="button" disabled={busy} onClick={() => { setApi({ baseUrl: '', apiKey: '', model: '' }); setApiDirty(true); setError(''); setNotice('保存后使用主模型。'); }}>留空用主模型</button></div>
+            {(['baseUrl', 'apiKey', 'model'] as const).map((field, index) => <label key={field} className="fate-settings-field">{['URL', 'Key', '模型名称'][index]}<input type={field === 'apiKey' ? 'password' : 'text'} autoComplete={field === 'apiKey' ? 'new-password' : 'off'} value={api[field]} disabled={busy} onChange={event => { setApi({ ...api, [field]: event.target.value }); setApiDirty(true); setNotice(''); }} /></label>)}
+            <div className="fate-settings-actions"><button type="button" className="fate-settings-primary" disabled={busy || !apiDirty} onClick={async () => {
+                const values = completeApi(); if (!values) return;
+                const charId = char.id; setSaving(true); setError('');
                 try { await onChange({ scheduleApi: values.baseUrl ? values : undefined }); if (charId === currentCharacter.current) { setApiDirty(false); setError(''); setNotice('日程模型已保存。'); } }
                 catch { if (charId === currentCharacter.current) setError('日程模型保存失败，填写内容还在，请重试。'); } finally { if (charId === currentCharacter.current) setSaving(false); }
-            }}>{apiDirty ? '保存日程模型' : '日程模型已保存'}</button>
+            }}>{apiDirty ? '保存日程模型' : '日程模型已保存'}</button>{onAddApiPreset && <button type="button" disabled={busy} onClick={() => setPresetName(presetName === null ? '' : null)}>保存为预设</button>}</div>
+            {presetName !== null && onAddApiPreset && <div className="fate-settings-editor"><label className="fate-settings-field">预设名称<input value={presetName} disabled={busy} onChange={event => setPresetName(event.target.value)} /></label><button type="button" disabled={busy} onClick={async () => {
+                const name = presetName.trim(); if (!name) { setError('请填写预设名称。'); return; }
+                if (apiPresets.some(preset => preset.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) { setError('预设名称重复了，请换一个名称。'); return; }
+                const values = completeApi(); if (!values) return; if (!values.baseUrl) { setError('保存预设需要完整填写 URL、Key 和模型名称。'); return; }
+                const charId = char.id; setSaving(true); setError('');
+                try { await onAddApiPreset(name, values); if (charId === currentCharacter.current) { setPresetName(null); setNotice('模型预设已保存，角色模型仍需单独保存。'); } }
+                catch { if (charId === currentCharacter.current) setError('保存失败，填写内容还在，请重试。'); }
+                finally { if (charId === currentCharacter.current) setSaving(false); }
+            }}>确认保存预设</button></div>}
         </details>
         <div className="fate-settings-tabs fate-book-tabs" aria-label="资料库种类">{(['factors', 'tendencies'] as const).map(value => <button type="button" key={value} disabled={busy} aria-pressed={kind === value} onClick={() => { if (kind !== value && leaveDraft()) { setKind(value); setDraft(null); setExpanded(null); setCategory(''); setCategoriesOpen(false); setError(''); setNotice(''); } }}>{value === 'factors' ? '因子' : '倾向'} · {settings[value].length}</button>)}</div>
         <div className="fate-settings-toolbar">

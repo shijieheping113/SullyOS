@@ -10,7 +10,18 @@ let host: HTMLDivElement;
 let root: Root;
 const char = { id: 'book', name: '小满' } as CharacterProfile;
 const onChange = vi.fn();
-async function render(isBusy = false) { await act(async () => root.render(React.createElement(FateLibraryView, { char, onChange, isBusy }))); }
+const onAddApiPreset = vi.fn();
+const presets = [
+    { id: 'p1', name: '日程轻量', config: { baseUrl: 'https://preset.test', apiKey: 'preset-key', model: 'fate-lite' } },
+    { id: 'p2', name: '别的预设', config: { baseUrl: 'https://other.test', apiKey: 'other', model: 'other-model' } },
+];
+async function render(isBusy = false, extra: { apiPresets?: typeof presets; onAddApiPreset?: typeof onAddApiPreset } = {}) {
+    await act(async () => root.render(React.createElement(FateLibraryView, {
+        char, onChange, isBusy,
+        apiPresets: extra.apiPresets ?? presets,
+        onAddApiPreset: extra.onAddApiPreset ?? onAddApiPreset,
+    })));
+}
 async function click(label: string) {
     const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(item => item.getAttribute('aria-label') === label || item.textContent === label);
     expect(button, label).toBeTruthy(); await act(async () => button!.click());
@@ -24,7 +35,7 @@ async function input(label: string, value: string) {
 const names = () => Array.from(host.querySelectorAll('.fate-book-name')).map(item => item.textContent);
 beforeEach(() => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-    localStorage.clear(); onChange.mockReset(); vi.spyOn(window, 'confirm').mockReturnValue(true);
+    localStorage.clear(); onChange.mockReset(); onAddApiPreset.mockReset(); vi.spyOn(window, 'confirm').mockReturnValue(true);
     host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); });
@@ -33,7 +44,7 @@ describe('命运六张翻页牌册', () => {
     it('每页六张，翻页内容真实不同，回页内容相同，倾向使用真实六项', async () => {
         await render(); const first = names();
         expect(first).toEqual(defaultFateSettings().factors.slice(0, 6).map(item => item.name));
-        expect(host.querySelector('.fate-settings-summary')?.textContent).toBe('匹配 320 张添加因子');
+        expect(Array.from(host.querySelectorAll('.fate-settings-summary')).find(item => item.textContent?.includes('匹配'))?.textContent).toBe('匹配 320 张添加因子');
         expect(host.textContent).not.toContain('启用 320');
         expect(host.textContent).toContain('第 1 / 54 页');
         await click('下一页'); expect(names()).toEqual(defaultFateSettings().factors.slice(6, 12).map(item => item.name));
@@ -54,7 +65,7 @@ describe('命运六张翻页牌册', () => {
         expect(Array.from(nav.querySelectorAll('button')).slice(1).map(item => item.textContent).sort()).toEqual(Array.from(new Set(defaultFateSettings().factors.map(item => item.category))).sort());
         await click('变化'); expect(host.textContent).toContain('第 1 / 3 页');
         await click('下一页'); await input('搜索因子', '转向'); expect(names()).toEqual(['转向']); expect(host.textContent).toContain('第 1 / 1 页');
-        expect(host.querySelector('.fate-settings-summary')?.textContent).toBe('匹配 1 张添加因子');
+        expect(Array.from(host.querySelectorAll('.fate-settings-summary')).find(item => item.textContent?.includes('匹配'))?.textContent).toBe('匹配 1 张添加因子');
         await input('搜索因子', ''); await click('下一页'); await input('启用状态', 'disabled');
         expect(names()).toEqual([]); expect(host.textContent).toContain('第 1 / 1 页');
     });
@@ -107,6 +118,23 @@ describe('命运六张翻页牌册', () => {
         expect((host.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('secret');
         await click('保存日程模型'); expect(onChange).toHaveBeenLastCalledWith({ scheduleApi: { baseUrl: 'https://schedule.test', apiKey: 'secret', model: 'fate' } });
         await input('URL', ''); await input('Key', ''); await input('模型名称', ''); await click('保存日程模型'); expect(onChange).toHaveBeenLastCalledWith({ scheduleApi: undefined });
+    });
+    it('可搜索选择主模型预设并保存为日程模型，也可另存预设', async () => {
+        await render();
+        await click('搜索 / 选择模型预设');
+        await input('搜索预设', '轻量');
+        expect(host.querySelectorAll('.fate-settings-preset-list button')).toHaveLength(1);
+        await click('日程轻量fate-lite');
+        expect(host.textContent).toContain('预设已载入');
+        await click('保存日程模型');
+        expect(onChange).toHaveBeenLastCalledWith({ scheduleApi: presets[0].config });
+        await click('保存为预设');
+        await input('预设名称', '牌库专用');
+        await click('确认保存预设');
+        expect(onAddApiPreset).toHaveBeenCalledWith('牌库专用', presets[0].config);
+        await click('留空用主模型');
+        await click('保存日程模型');
+        expect(onChange).toHaveBeenLastCalledWith({ scheduleApi: undefined });
     });
     it('已停用筛选中停用牌消失后仍能在浮窗放回，页码合法', async () => {
         const settings = defaultFateSettings(); settings.disabledFactorIds = ['change-turn']; saveFateSettings(char.id, settings);

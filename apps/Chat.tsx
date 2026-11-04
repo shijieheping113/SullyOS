@@ -3023,8 +3023,12 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const handleScheduleEdit = async (index: number, slot: ScheduleSlot) => {
         if (!scheduleData) return;
         const newSlots = [...scheduleData.slots];
-        newSlots[index] = scheduleData.mode === 'fate' ? { ...slot, endTime: newSlots[index].endTime, startsAt: newSlots[index].startsAt, endsAt: newSlots[index].endsAt, fate: newSlots[index].fate } : slot;
-        const updated = { ...scheduleData, slots: newSlots };
+        // 命运：时间可由面板改写（startsAt/endsAt 驱动下一段续写）；牌阵 fate 仍强制保留。
+        newSlots[index] = scheduleData.mode === 'fate' ? { ...slot, fate: newSlots[index].fate } : slot;
+        const slots = scheduleData.mode === 'fate'
+            ? newSlots.sort((a, b) => (a.startsAt || 0) - (b.startsAt || 0))
+            : newSlots;
+        const updated = { ...scheduleData, slots };
         setScheduleData(updated);
         await DB.saveDailySchedule(updated);
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
