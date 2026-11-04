@@ -2397,6 +2397,8 @@ export const DB = {
   },
 
   saveDailySchedule: async (schedule: DailySchedule): Promise<void> => {
+      // 分模式存放，仍使用已有存储，不变更备份格式。真实 charId 保持不变。
+      if (schedule.mode === 'fate') schedule = { ...schedule, id: `fate:${schedule.charId}_${schedule.date}` };
       const db = await openDB();
       return new Promise((resolve, reject) => {
           const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readwrite');

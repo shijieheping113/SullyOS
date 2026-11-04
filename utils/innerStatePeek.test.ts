@@ -34,11 +34,19 @@ describe('innerStatePeek', () => {
         expect(canShowInnerStatePeek(char)).toBe(false);
     });
 
-    it('gates off when schedule feature off', () => {
+    it('日程关闭时，独立开启的情绪仍允许查看', () => {
         localStorage.setItem(lastInnerStateKey('c1'), '有内容');
         const char = baseChar();
         char.scheduleFeatureEnabled = false;
         char.scheduleStyle = undefined;
+        char.emotionFeatureEnabled = true;
+        expect(canShowInnerStatePeek(char)).toBe(true);
+    });
+
+    it('独立关闭情绪时，即使日程开启也不允许查看', () => {
+        localStorage.setItem(lastInnerStateKey('c1'), '有内容');
+        const char = baseChar();
+        char.emotionFeatureEnabled = false;
         expect(canShowInnerStatePeek(char)).toBe(false);
     });
 
@@ -49,11 +57,11 @@ describe('innerStatePeek', () => {
         expect(canShowInnerStatePeek(char)).toBe(true);
     });
 
-    it('schedule on + 有缓存时，enabled 未写入也允许看（未显式关情绪）', () => {
+    it('旧角色未设置独立开关且未开启 emotionConfig 时不展示缓存', () => {
         localStorage.setItem(lastInnerStateKey('c1'), '旧缓存');
         const char = baseChar();
         char.emotionConfig = { api: { baseUrl: '', apiKey: '', model: '' } };
-        expect(getInnerStateDisplayText(char)).toBe('旧缓存');
+        expect(getInnerStateDisplayText(char)).toBe('');
     });
 
     it('empty storage → no peek even if emotion on', () => {

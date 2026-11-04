@@ -11,6 +11,8 @@ import { ChatPrompts } from './chatPrompts';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 import { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
 import {buildHomeSchedulePrompt, hasHomeSchedulePositions, parseHomePosition} from './homeSchedule';
+import { getScheduleMode } from './scheduleFeature';
+import { generateFateSchedule, hasActiveFateSlot } from './fateSchedule';
 
 export { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
 
@@ -224,7 +226,19 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 仅输出JSON，不要其他内容。`;
 }
 
-export async function generateDailyScheduleForChar(
+const generatingSchedules = new Map<string, Promise<DailySchedule | null>>();
+export function generateDailyScheduleForChar(
+    char: CharacterProfile, userProfile: UserProfile, apiConfig: ApiConfig, forceRegenerate = false,
+): Promise<DailySchedule | null> {
+    const key = `${char.id}:${getScheduleMode(char)}`;
+    const pending = generatingSchedules.get(key);
+    if (pending) return pending;
+    const task = generateScheduleInternal(char, userProfile, apiConfig, forceRegenerate).finally(() => generatingSchedules.delete(key));
+    generatingSchedules.set(key, task);
+    return task;
+}
+
+async function generateScheduleInternal(
     char: CharacterProfile,
     userProfile: UserProfile,
     apiConfig: ApiConfig,
@@ -241,7 +255,7 @@ export async function generateDailyScheduleForChar(
     // Check if already exists
     if (!forceRegenerate) {
         const existing = await getDailyScheduleForChar(char, baseNow);
-        if (existing) return existing;
+        if (existing && (getScheduleMode(char) !== 'fate' || hasActiveFateSlot(existing))) return existing;
     }
 
     // Preserve cover image from previous schedules
@@ -274,6 +288,10 @@ export async function generateDailyScheduleForChar(
 
 
     const chatHistoryBlock = formatChatHistoryForSchedule(historyMessages, char, userProfile, emojis);
+
+    if (getScheduleMode(char) === 'fate') {
+        return generateFateSchedule(char, userProfile, apiConfig, chatHistoryBlock, historyMessages, forceRegenerate);
+    }
 
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
 

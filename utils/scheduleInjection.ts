@@ -18,7 +18,7 @@ import type { DailySchedule, ScheduleSlot } from '../types';
  * 还挂着每个时段缓存的小剧场（整段演出台词）和 coverImage（可能是 base64 看板图），
  * 那些渲染一个字都用不到，带上去就是白占几十上百 KB 的云端状态。
  */
-export type RenderableSchedule = Pick<DailySchedule, 'slots' | 'flowNarrative'>;
+export type RenderableSchedule = Pick<DailySchedule, 'slots' | 'flowNarrative' | 'mode'>;
 
 export interface ScheduleInjectionOptions {
     /** ChatApp 主请求需要让角色看到今天的整张表；主动消息到点场景仍只看当前与下一条。 */
@@ -37,6 +37,8 @@ export interface ScheduleInjectionOptions {
      * 关掉钟点时也不教改日程：那条指令拿时段当定位符，角色看不到时刻就写不出来。
      */
     includeClock?: boolean;
+    /** 命运日程使用真实时刻判断有效期，不把角色当地钟面当绝对时刻。 */
+    atTimestamp?: number;
 }
 
 /** 意识流独白按一天三档取：早 / 午 / 晚。 */
@@ -53,8 +55,13 @@ const PRE_DAWN_END_HOUR = 5;
 export const resolveScheduleSlots = (
     schedule: RenderableSchedule | null,
     now: Date,
+    atTimestamp: number = now.getTime(),
 ): { current: ScheduleSlot | null; next: ScheduleSlot | null } => {
     if (!schedule?.slots?.length) return { current: null, next: null };
+    if (schedule.mode === 'fate') {
+        const current = schedule.slots.find(s => typeof s.startsAt === 'number' && typeof s.endsAt === 'number' && s.startsAt <= atTimestamp && atTimestamp < s.endsAt) || null;
+        return { current, next: null };
+    }
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     for (let i = schedule.slots.length - 1; i >= 0; i--) {
         const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
@@ -84,8 +91,19 @@ export const buildScheduleInjection = (
     options: ScheduleInjectionOptions = {},
 ): string => {
     if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
-    const { current: currentSlot, next: nextSlot } = resolveScheduleSlots(schedule, now);
+    const { current: currentSlot, next: nextSlot } = resolveScheduleSlots(schedule, now, options.atTimestamp ?? now.getTime());
     const withClock = options.includeClock !== false;
+    if (schedule.mode === 'fate') {
+        const stamp = options.atTimestamp ?? now.getTime();
+        const recent = schedule.slots.filter(s => typeof s.endsAt === 'number' && s.endsAt <= stamp).slice(-6);
+        let out = '角色生活日程：以下是生活场景资料，不是必须履行的待办，也不是预先知道的结局。空白时间不代表什么都没做。聊天中已确定的变化优先。\n';
+        if (recent.length) out += `今天较早的活动资料（只说明记录过的活动，不把描述里未完成的结果视为已经完成）：\n${recent.map(s => `- ${withClock ? `${s.startTime}—${s.endTime || ''} ` : ''}${s.activity}${s.location ? `（${s.location}）` : ''}：${s.description || ''}`).join('\n')}\n`;
+        if (currentSlot) {
+            out += `当前正在展开的活动：${withClock ? `${currentSlot.startTime}—${currentSlot.endTime || ''} ` : ''}${currentSlot.activity}${currentSlot.location ? `（${currentSlot.location}）` : ''}\n${currentSlot.description || ''}\n这是活动展开的背景，后续选择、感受与结果随真实对话发展，不照念日程，不把尚未完成的进展提前宣称完成。\n`;
+            if (options.includeChangeInstruction && withClock) out += `角色可以改变当前活动。需要修改时在回复末尾单独输出：[[ACTION:CHANGE_SCHEDULE | ${currentSlot.startTime} | 实际在做的活动]]，时刻原样保留。\n`;
+        } else out += '当前没有有效活动资料；不能把已经结束的活动继续称为正在进行，也不代表角色停止生活。\n';
+        return out;
+    }
     /** 报钟点时写「活动（07:00）」，不报时只留活动本身。 */
     const withTime = (text: string, startTime: string) => (withClock ? `${text}（${startTime}）` : text);
 

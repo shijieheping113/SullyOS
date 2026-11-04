@@ -25,6 +25,7 @@ const MAX_SAMPLED_SONGS = 20;
 /** 返回当前时间属于哪一个 slot */
 export const getCurrentSlot = (schedule: DailySchedule | null, at: Date = new Date()): ScheduleSlot | null => {
     if (!schedule?.slots?.length) return null;
+    if (schedule.mode === 'fate') return schedule.slots.find(s => typeof s.startsAt === 'number' && typeof s.endsAt === 'number' && s.startsAt <= Date.now() && Date.now() < s.endsAt) || null;
     const nowMin = at.getHours() * 60 + at.getMinutes();
     for (let i = schedule.slots.length - 1; i >= 0; i--) {
         const [h, m] = schedule.slots[i].startTime.split(':').map(Number);

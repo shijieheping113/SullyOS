@@ -27,6 +27,8 @@ import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCs
 import TokenImg from '../components/os/TokenImg';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
+import { getScheduleMode } from '../utils/scheduleFeature';
+import { hasActiveFateSlot } from '../utils/fateSchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { generateSlotTheater } from '../utils/theaterGenerator';
@@ -1489,20 +1491,45 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     // Auto-generate daily schedule (fire-and-forget on chat load)
     // 总开关关闭时完全跳过：不查询 DB、不调用副 API、不跑兜底
     useEffect(() => {
-        if (!char || !apiConfig.apiKey) return;
+        if (!char || (!apiConfig.apiKey && !char.scheduleApi?.apiKey)) return;
         if (!isScheduleFeatureOn(char)) {
             setScheduleData(null);
             return;
         }
         getDailyScheduleForChar(char).then(existing => {
-            if (!existing) {
+            if (!existing || (getScheduleMode(char) === 'fate' && !hasActiveFateSlot(existing))) {
                 // Generate in background, don't block chat
                 generateDailySchedule(char, false);
             } else {
                 setScheduleData(existing);
             }
         }).catch(() => {});
-    }, [activeCharacterId, char?.scheduleFeatureEnabled, char?.customTimezoneEnabled, char?.customTimezone, charDateKey]);
+    }, [activeCharacterId, char?.scheduleFeatureEnabled, char?.scheduleMode, char?.scheduleApi?.baseUrl, char?.scheduleApi?.model, char?.scheduleApi?.apiKey, char?.customTimezoneEnabled, char?.customTimezone, charDateKey]);
+
+    // 页面可运行时续写当前活动；恢复前台立即检查，不补离线的空白时间。
+    useEffect(() => {
+        if (!char || !isScheduleFeatureOn(char) || getScheduleMode(char) !== 'fate') return;
+        let cancelled = false;
+        let checking = false;
+        let retryAfter = 0;
+        const check = async () => {
+            if (cancelled || checking || document.visibilityState === 'hidden' || Date.now() < retryAfter) return;
+            checking = true;
+            try {
+                const existing = await getDailyScheduleForChar(char);
+                if (!cancelled && !hasActiveFateSlot(existing)) {
+                    retryAfter = Date.now() + 60_000;
+                    await generateDailySchedule(char, false);
+                } else if (!cancelled) setScheduleData(existing);
+            } finally { checking = false; }
+        };
+        const timer = window.setInterval(check, 30_000);
+        const restore = () => { if (document.visibilityState !== 'hidden') void check(); };
+        window.addEventListener('focus', restore);
+        document.addEventListener('visibilitychange', restore);
+        window.addEventListener('fate-schedule-updated', restore);
+        return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener('focus', restore); document.removeEventListener('visibilitychange', restore); window.removeEventListener('fate-schedule-updated', restore); };
+    }, [char?.id, char?.scheduleMode, char?.scheduleFeatureEnabled, char?.customTimezone, char?.customTimezoneEnabled, char?.scheduleApi, apiConfig]);
 
     // 每次真正打开聊天设置时从角色持久化值重新初始化；避免用户在记忆宫殿页
     // 切换全自动模式后，隐藏着的 Chat 组件仍带着旧拉杆状态。
@@ -2995,7 +3022,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const handleScheduleEdit = async (index: number, slot: ScheduleSlot) => {
         if (!scheduleData) return;
         const newSlots = [...scheduleData.slots];
-        newSlots[index] = slot;
+        newSlots[index] = scheduleData.mode === 'fate' ? { ...slot, endTime: newSlots[index].endTime, startsAt: newSlots[index].startsAt, endsAt: newSlots[index].endsAt, fate: newSlots[index].fate } : slot;
         const updated = { ...scheduleData, slots: newSlots };
         setScheduleData(updated);
         await DB.saveDailySchedule(updated);
@@ -3092,6 +3119,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             }
         } catch (e) {
             console.error('[Schedule] Generation error:', e);
+            addToast(e instanceof Error ? e.message : '日程生成失败，原日程已保留', 'error');
         } finally {
             setIsScheduleGenerating(false);
         }
@@ -3099,12 +3127,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
     const handleScheduleStyleChange = async (style: 'lifestyle' | 'mindful') => {
         if (!char) return;
-        // 与情绪/意识流强制同步：启用日程时自动启用情绪感知
-        const prevEmotion = char.emotionConfig;
-        const nextEmotion = { ...(prevEmotion || {}), enabled: true };
-        updateCharacter(char.id, { scheduleStyle: style, emotionConfig: nextEmotion });
+        updateCharacter(char.id, { scheduleStyle: style });
         // Force regenerate with new style — use updated char object
-        const updatedChar = { ...char, scheduleStyle: style, emotionConfig: nextEmotion };
+        const updatedChar = { ...char, scheduleStyle: style };
         if (!isScheduleFeatureOn(updatedChar)) return;
         setIsScheduleGenerating(true);
         try {
@@ -3124,27 +3149,16 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         if (!char) return;
         const nextEnabled = !isScheduleFeatureOn(char);
         const patch: any = { scheduleFeatureEnabled: nextEnabled };
-        if (nextEnabled) {
-            // 与 handleScheduleStyleChange 对齐：开日程 = 同步开情绪/意识流。
-            // 旧逻辑下，新角色的 emotionConfig 从未初始化（undefined），
-            // 仅切总开关而不点风格时，emotionConfig?.enabled 始终落 false，
-            // 副 API 闸门 (isScheduleFeatureOn && emotionConfig?.enabled) 永远过不去。
-            patch.emotionConfig = { ...(char.emotionConfig || {}), enabled: true };
-        } else {
-            // 关闭时顺手把 buff 注入清空，避免上一轮残留继续注入
-            patch.buffInjection = '';
-            patch.activeBuffs = [];
-        }
         updateCharacter(char.id, patch);
         if (!nextEnabled) {
             setScheduleData(null);
-            addToast('日程与情绪已关闭', 'info');
+            addToast('日程已关闭，情绪设置不变', 'info');
             return;
         }
-        addToast('日程与情绪已开启', 'success');
+        addToast('日程已开启，情绪设置不变', 'success');
         // 打开后立刻尝试生成（若今日未生成且已选风格）
         const updatedChar = { ...char, ...patch };
-        if (updatedChar.scheduleStyle) {
+        if (updatedChar.scheduleStyle || getScheduleMode(updatedChar) === 'fate') {
             const existing = await getDailyScheduleForChar(updatedChar).catch(() => null);
             if (existing) {
                 setScheduleData(existing);
@@ -5396,6 +5410,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     // API 同步到所有角色，enabled 仅写到当前角色
                     syncEmotionApiToAllCharacters(config.api);
                     updateCharacter(char.id, {
+                        emotionFeatureEnabled: config.enabled,
                         emotionConfig: {
                             enabled: config.enabled,
                             ...(config.api && config.api.baseUrl ? { api: config.api } : {}),

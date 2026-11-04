@@ -2,6 +2,7 @@ import { CharacterProfile, DailySchedule } from '../types';
 import { DB } from './db';
 import { getLocalDateKey } from './localDate';
 import { nowInTimeZone, resolveCharTimeZone } from './timezone';
+import { getScheduleMode } from './scheduleFeature';
 
 /**
  * Load a schedule for the requested calendar timezone (device time by default).
@@ -56,9 +57,40 @@ export async function getLocalDailySchedule(
 }
 
 /** 按角色自己的日历日读取日程；未开启自定义时区时保持原本的手机时间行为。 */
-export function getDailyScheduleForChar(
-    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone'>,
+export async function getDailyScheduleForChar(
+    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone' | 'scheduleMode'>,
     at: Date = new Date(),
 ): Promise<DailySchedule | null> {
-    return getLocalDailySchedule(char.id, at, resolveCharTimeZone(char));
+    if (getScheduleMode(char) !== 'fate') return getLocalDailySchedule(char.id, at, resolveCharTimeZone(char));
+    const wall = nowInTimeZone(resolveCharTimeZone(char), at);
+    const today = getLocalDateKey(wall);
+    const current = await DB.getDailySchedule(`fate:${char.id}`, today);
+    const yesterday = new Date(wall);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const previous = await DB.getDailySchedule(`fate:${char.id}`, getLocalDateKey(yesterday));
+    const carry = previous?.slots.filter(slot => typeof slot.endsAt === 'number' && slot.endsAt > at.getTime());
+    if (!carry?.length) return current;
+    return {
+        ...(current || { id: `fate:${char.id}_${today}`, charId: char.id, date: today, generatedAt: at.getTime(), mode: 'fate' as const }),
+        slots: [...carry, ...(current?.slots || [])],
+        fateDraws: [...(previous?.fateDraws || []).filter(draw => draw.date === today), ...(current?.fateDraws || [])],
+    };
+}
+
+/** 直接按日期读真实历史，不迁移、不补造。包括两种模式，以免切换后去重失去依据。 */
+export async function getRecentScheduleHistory(
+    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone'>,
+    at: Date = new Date(),
+    days = 7,
+): Promise<DailySchedule[]> {
+    const wall = nowInTimeZone(resolveCharTimeZone(char), at);
+    const dates = Array.from({ length: days + 1 }, (_, index) => {
+        const date = new Date(wall);
+        date.setDate(date.getDate() - index);
+        return getLocalDateKey(date);
+    });
+    const rows = await Promise.all(dates.map(async date => Promise.all([
+        DB.getDailySchedule(char.id, date), DB.getDailySchedule(`fate:${char.id}`, date),
+    ])));
+    return rows.flat().filter((row): row is DailySchedule => !!row);
 }

@@ -11,7 +11,7 @@ vi.mock('../context/OSContext', () => ({ useOS: mocks.useOS }));
 vi.mock('./context', () => ({ ContextBuilder: {} }));
 vi.mock('./chatContextRange', () => ({ loadCharacterContextMessages: vi.fn() }));
 vi.mock('./memoryPalace/pipeline', () => ({ injectMemoryPalace: vi.fn() }));
-vi.mock('./scheduleGenerator', () => ({ isScheduleFeatureOn: () => true }));
+vi.mock('./scheduleFeature', () => ({ isEmotionFeatureOn: () => true }));
 vi.mock('./analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('./blobRef', async importOriginal => ({
     ...await importOriginal<typeof import('./blobRef')>(), useBlobRefUrl: () => undefined,

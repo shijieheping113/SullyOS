@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { CharacterProfile, ApiPreset, APIConfig, CharacterBuff } from '../../types';
-import { isScheduleFeatureOn } from '../../utils/scheduleGenerator';
+import { isEmotionFeatureOn } from '../../utils/scheduleFeature';
 
 interface EmotionSettingsPanelProps {
     char: CharacterProfile;
@@ -60,22 +60,32 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
 
     const handleSave = () => {
         const api = url ? { baseUrl: url, apiKey: key, model } : undefined;
-        // 与日程强制同步：日程/情绪总开关开启时情绪必跑。
-        // 注意 scheduleFeatureEnabled=true 时即使还没选 scheduleStyle，也应保持情绪开启。
-        onSave({ enabled: isScheduleFeatureOn(char), api });
+        onSave({ enabled: isEmotionFeatureOn(char), api });
         setDirty(false);
     };
 
     const buffs: CharacterBuff[] = char.activeBuffs || [];
-    const scheduleOn = isScheduleFeatureOn(char);
+    const emotionOn = isEmotionFeatureOn(char);
 
     return (
         <div className="space-y-4 pt-4 border-t border-slate-100">
             <div>
-                <div className="text-xs font-bold text-slate-700 mb-1">🎭 情绪 / 意识流 API</div>
+                <div className="flex items-center justify-between gap-3 mb-1">
+                    <div className="text-xs font-bold text-slate-700">🎭 情绪 / 意识流 API</div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={emotionOn}
+                        aria-label="切换情绪开关"
+                        onClick={() => onSave({ ...char.emotionConfig, enabled: !emotionOn })}
+                        className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center flex-shrink-0 ${emotionOn ? 'bg-pink-500' : 'bg-slate-300'}`}
+                    >
+                        <span className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${emotionOn ? 'translate-x-4' : ''}`} />
+                    </button>
+                </div>
                 <div className="text-[11px] text-slate-500 leading-relaxed space-y-1">
                     <p>
-                        原版情绪 buff 就在这里。与日程<b>强制同步</b>：日程开 → 自动启用；日程关 → 一起停。
+                        原版情绪 buff 独立控制。关闭日程也能使用情绪，关闭情绪不会停止日程。
                     </p>
                     <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
                         ⚙️ 下方不填 = 自动用主 API。想细腻点就填个 <b>Claude 系列</b>模型。
@@ -83,9 +93,9 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                 </div>
             </div>
 
-            {!scheduleOn && (
+            {!emotionOn && (
                 <div className="text-[11px] text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-lg px-3 py-2">
-                    尚未选择日程风格。选择「生活系」或「意识系」后，情绪/意识流会自动启用。
+                    情绪已关闭，不再生成或使用情绪状态。日程开关保持不变。
                 </div>
             )}
 
@@ -209,7 +219,7 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                         ))}
                     </div>
                 </div>
-            ) : scheduleOn ? (
+            ) : emotionOn ? (
                 <div className="text-xs text-slate-400 text-center py-2">
                     暂无情绪状态 — 发几条消息后会自动生成
                 </div>

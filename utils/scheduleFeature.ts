@@ -15,6 +15,21 @@ export function isScheduleFeatureOn(
     return !!char.scheduleStyle;
 }
 
+/** 日程和情绪已经拆开；旧角色没有新字段时，沿用 emotionConfig.enabled。 */
+export function isEmotionFeatureOn(
+    char: Pick<CharacterProfile, 'emotionFeatureEnabled' | 'emotionConfig'> | null | undefined,
+): boolean {
+    if (!char) return false;
+    if (typeof char.emotionFeatureEnabled === 'boolean') return char.emotionFeatureEnabled;
+    return char.emotionConfig?.enabled === true;
+}
+
+export type ScheduleMode = 'classic' | 'fate';
+
+export function getScheduleMode(char: Pick<CharacterProfile, 'scheduleMode'> | null | undefined): ScheduleMode {
+    return char?.scheduleMode === 'fate' ? 'fate' : 'classic';
+}
+
 /**
  * 时段 key 的实现住在 utils/scheduleInjection.ts —— 那是日程渲染的纯叶子，
  * 浏览器和 Cloudflare Worker（主动消息到点生成）共用同一份。这里转发一道，

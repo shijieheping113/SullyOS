@@ -94,6 +94,7 @@ export const applyScheduleChanges = (
         slots[slotIndex] = {
             startTime: slot.startTime,
             activity: directive.activity.trim(),
+            ...(schedule.mode === 'fate' ? { endTime: slot.endTime, startsAt: slot.startsAt, endsAt: slot.endsAt, fate: slot.fate } : {}),
             // 原描述、地点、独白和小剧场都围绕旧活动生成，保留会立即穿帮。
             ...(slot.emoji ? { emoji: slot.emoji } : {}),
         };
@@ -128,7 +129,7 @@ export const applyScheduleChanges = (
  */
 export const applyAssistantScheduleChanges = async (
     text: string,
-    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone'>,
+    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone' | 'scheduleMode'>,
     at: Date = new Date(),
 ): Promise<AppliedScheduleChangeResult> => {
     const extracted = extractScheduleChangeDirectives(text);
@@ -150,7 +151,7 @@ export const applyAssistantScheduleChanges = async (
  */
 export const applyScheduleChangeDirectives = async (
     directives: ScheduleChangeDirective[],
-    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone'>,
+    char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone' | 'scheduleMode'>,
     at: Date = new Date(),
 ): Promise<Omit<AppliedScheduleChangeResult, keyof ExtractedScheduleChanges>> => {
     if (directives.length === 0) {

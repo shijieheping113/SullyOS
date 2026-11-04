@@ -347,7 +347,7 @@ export const ScheduleCardView: React.FC<ScheduleCardProps & {theme:OSTheme;previ
                                     {/* Time */}
                                     <div className="flex flex-col items-center w-12 flex-shrink-0">
                                         <span className={`sully-schedule-time text-xs font-mono font-bold ${isPast ? 'opacity-30' : isCurrent ? 'opacity-100' : 'opacity-60'}`}>
-                                            {slot.startTime}
+                                            {schedule?.mode === 'fate' && slot.endTime ? `${slot.startTime}–${slot.endTime}` : slot.startTime}
                                         </span>
                                         {isCurrent && (
                                             <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 animate-pulse" style={{ background: accentHsl, color: cardBg }}>

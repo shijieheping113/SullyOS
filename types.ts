@@ -840,7 +840,20 @@ export interface SlotTheater {
 }
 
 export interface ScheduleSlot {
-    startTime: string;    // "08:00"
+  startTime: string;    // "08:00"
+  endTime?: string;
+  startsAt?: number;
+  endsAt?: number;
+  fate?: {
+    tendency: { id: string; name: string; meaning: string };
+    factors: { id: string; name: string; meaning: string }[];
+    peopleDirection: 'free' | 'familiar' | 'new' | 'alone';
+    rationale: string;
+    activityKind: string;
+    sceneKind: string;
+    development: string;
+    usageDate: string;
+  };
     activity: string;     // "晨跑"
     description?: string; // "在河边慢跑"
     emoji?: string;       // "🏃"
@@ -855,7 +868,10 @@ export interface DailySchedule {
     charId: string;
     date: string;         // YYYY-MM-DD
     slots: ScheduleSlot[];
-    generatedAt: number;
+  generatedAt: number;
+  mode?: 'classic' | 'fate';
+  /** 命运因子成功使用台账；重新生成不抹去已经使用的次数。 */
+  fateDraws?: { date: string; factorIds: string[] }[];
     coverImage?: string;  // 用户自定义角色看板图 (持久化)
     /**
      * 按时段生成的意识流独白。
@@ -3203,6 +3219,8 @@ export interface CharacterProfile {
       model: string;
     };
   };
+  /** 独立控制情绪评估；未写时兼容 emotionConfig.enabled。 */
+  emotionFeatureEnabled?: boolean;
 
   // 记忆宫殿 (Memory Palace)
   memoryPalaceEnabled?: boolean;
@@ -3247,12 +3265,16 @@ export interface CharacterProfile {
    */
   scheduleStyle?: 'lifestyle' | 'mindful';
 
-  /**
-   * 日程 / 情绪 Buff 总开关。
-   * - true：启用日程生成、意识流、情绪 buff 评估与注入（消耗副 API）。
-   * - false：完全关闭，不调副 API，不注入情绪，不生成日程。
-   * - undefined：向后兼容——若 scheduleStyle 已设（老用户已隐式选风格）视为开启；否则默认关闭。
-   */
+  /** 日程生成方式：classic 保留作者原版，fate 使用命运牌阵分段生成。 */
+  scheduleMode?: 'classic' | 'fate';
+  /** 命运牌阵专用模型；留空时使用主模型。 */
+  scheduleApi?: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  };
+
+  /** 日程开关。旧字段仍保留，作为没有新设置时的兼容入口。 */
   scheduleFeatureEnabled?: boolean;
 
   /**

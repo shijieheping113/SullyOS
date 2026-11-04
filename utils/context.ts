@@ -7,7 +7,7 @@ import { CharacterProfile, UserProfile, DailySchedule, MountedWorldbook } from '
 import { normalizeUserImpression } from './impression';
 import {buildHomePetContext} from './homePetContext';
 import { buildHomeDefinitionContext } from './homeDefinitionContext';
-import { isScheduleFeatureOn } from './scheduleFeature';
+import { isScheduleFeatureOn, isEmotionFeatureOn } from './scheduleFeature';
 import { buildScheduleInjection as buildScheduleInjectionText } from './scheduleInjection';
 import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { resolveCharTimeZone, nowInTimeZone, tzAwarenessNote, interactionGapNote } from './timezone';
@@ -39,10 +39,11 @@ export const ContextBuilder = {
         return buildScheduleInjectionText(schedule, undefined, nowInTimeZone(resolveCharTimeZone(char)), {
             includeFullDay: true, includeClock: char.timeAwarenessEnabled !== false,
             includeChangeInstruction: allowScheduleChange,
+            atTimestamp: Date.now(),
         });
     },
     buildEmotionContext: (char: CharacterProfile, options?: EmotionContextOptions): string => {
-        if ((options?.surface !== 'chat' && options?.surface !== 'home') || !isScheduleFeatureOn(char) || !char.emotionConfig?.enabled) return '';
+        if ((options?.surface !== 'chat' && options?.surface !== 'home') || !isEmotionFeatureOn(char)) return '';
         return char.buffInjection ? char.buffInjection + '\n\n' : '';
     },
     /** Read-only eligibility preview: never samples probability or performs recall. */

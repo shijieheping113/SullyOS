@@ -350,7 +350,7 @@ const CheckPhone: React.FC = () => {
 
     useEffect(() => {
         if (showInner && !getInnerStateDisplayText(targetChar)) setShowInner(false);
-    }, [showInner, targetChar?.id, targetChar?.emotionConfig?.enabled, targetChar?.scheduleFeatureEnabled]);
+    }, [showInner, targetChar?.id, targetChar?.emotionFeatureEnabled, targetChar?.emotionConfig?.enabled]);
 
     // 二次确认弹窗：所有删除/移除/清空都先走这里
     const [confirmState, setConfirmState] = useState<{

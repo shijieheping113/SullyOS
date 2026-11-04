@@ -25,6 +25,10 @@ export const getCurrentScheduleSlotIndex = (
     const now = getScheduleWallClock(char, base);
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     for (let i = slots.length - 1; i >= 0; i--) {
+        if (typeof slots[i].startsAt === 'number' && typeof slots[i].endsAt === 'number') {
+            if (base.getTime() >= slots[i].startsAt! && base.getTime() < slots[i].endsAt!) return i;
+            continue;
+        }
         const [h, m] = slots[i].startTime.split(':').map(Number);
         if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
         if (currentMinutes >= h * 60 + m) return i;
