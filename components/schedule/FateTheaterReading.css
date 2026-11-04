@@ -1,0 +1,40 @@
+.fate-scene-overlay{position:fixed;inset:0;z-index:120;display:flex;align-items:center;justify-content:center;overflow:hidden;background:rgb(50 35 43 / .35);padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));box-sizing:border-box;color-scheme:light}
+.fate-scene-overlay *{box-sizing:border-box}
+.fate-scene-reader{width:100%;max-width:400px;height:auto;max-height:min(70vh,540px);max-height:min(70dvh,540px);min-height:0;display:flex;flex-direction:column;background:#f5edef;color:#293647;border:1px solid #b991a4;border-radius:8px;padding:8px 18px 12px;box-shadow:0 12px 40px rgb(42 27 34 / .15);font-family:inherit;overflow-wrap:anywhere;text-align:left}
+.fate-scene-topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;color:#85495d;font-size:12px}
+.fate-scene-header{flex-shrink:0;padding:4px 0 14px}
+.fate-scene-title{display:flex;align-items:center;gap:10px}
+.fate-scene-title>.fate-patron-art{flex-shrink:0;width:32px;height:40px}
+.fate-scene-title h1{margin:0;font-family:'Songti SC',SimSun,serif;font-size:21px;line-height:1.45;font-weight:500;color:#293647}
+.fate-scene-context{display:flex;flex-wrap:wrap;gap:2px 12px;margin:6px 0 0;font-size:12px;line-height:1.7;color:#705863;font-variant-numeric:tabular-nums}
+.fate-scene-reading{flex:0 1 auto;min-height:0;max-height:inherit;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#b996a7 transparent;padding:6px 4px 4px}
+.fate-scene-manuscript{animation:fate-scene-unfold 180ms ease-out}
+.fate-scene-passage{position:relative;margin:0 0 18px}
+.fate-scene-text{margin:0;white-space:pre-wrap;font-size:14px;line-height:1.95;font-weight:400;color:#293647}
+.fate-scene-narration:first-child .fate-scene-text{font-family:'Songti SC',SimSun,serif;font-size:16px;line-height:1.9}
+.fate-scene-dialogue{margin:24px 0;padding-left:15px}
+.fate-scene-dialogue::before{content:'“';position:absolute;left:0;top:3px;font-family:Georgia,serif;font-size:25px;line-height:1;color:#85495d}
+.fate-scene-dialogue .fate-scene-text{font-family:'Songti SC',SimSun,serif;font-size:16px;font-weight:500;line-height:1.85}
+.fate-scene-emotion{display:block;margin:0 0 4px;font-size:11px;font-weight:400;line-height:1.5;color:#85495d}
+.fate-scene-passage:last-child{margin-bottom:8px}
+.fate-scene-controls{flex-shrink:0;padding-top:6px}
+.fate-scene-actions{display:flex;gap:6px}
+.fate-scene-actions>.fate-scene-button{flex:1;min-width:0}
+.fate-scene-button{min-width:44px;min-height:44px;padding:7px 8px;border:1px solid #cba7b8;border-radius:4px;background:transparent;color:#85495d;font-family:inherit;font-size:12px;font-weight:400;line-height:1.5;cursor:pointer;touch-action:manipulation}
+.fate-scene-close{border:0}
+.fate-scene-replay{display:block;margin:0 auto 4px;border:0}
+.fate-scene-primary{background:#85495d;border-color:#85495d;color:#fff9fa}
+.fate-scene-button:hover:not(:disabled){background:#ecdce3}
+.fate-scene-primary:hover:not(:disabled){background:#743d50}
+.fate-scene-button:disabled{opacity:.6;cursor:wait}
+.fate-scene-button:focus-visible,.fate-scene-reading:focus-visible{outline:2px solid #85495d;outline-offset:2px}
+.fate-scene-reading:focus-visible{outline-offset:-2px}
+.fate-scene-notice{margin:5px 0 0;font-size:12px;line-height:1.6;color:#85495d;text-align:center}
+.fate-scene-notice:empty{display:none}
+.fate-scene-empty{margin:12px 0;font-size:14px;line-height:1.8}
+.fate-scene-waiting{text-align:center;padding:12px 0;color:#85495d;font-size:14px}
+.fate-scene-waiting p{margin:10px 0 0}
+.fate-scene-page{display:inline-flex;align-items:center;justify-content:center;width:36px;height:48px;border:1px solid #b991a4;border-radius:3px;font-size:20px}
+@keyframes fate-scene-unfold{from{opacity:.65;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@media(max-height:520px){.fate-scene-reader{padding:4px 12px 8px}.fate-scene-header{padding:0 0 6px}.fate-scene-title h1{font-size:18px}.fate-scene-title>.fate-patron-art{height:28px;width:24px}.fate-scene-topbar{font-size:11px}.fate-scene-context{margin-top:2px}.fate-scene-replay{margin-bottom:0}.fate-scene-controls{padding-top:2px}}
+@media(prefers-reduced-motion:reduce){.fate-scene-manuscript{animation:none}.fate-scene-overlay *{scroll-behavior:auto!important}}

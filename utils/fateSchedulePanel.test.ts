@@ -88,8 +88,24 @@ describe('命运牌阵独立活动面板', () => {
         expect(activity.textContent).toContain(current.description);
         expect(host.querySelectorAll('.fate-panel__deck')[0].querySelectorAll('button')).toHaveLength(3);
         expect(host.textContent).toContain('经历与发现'); expect(host.textContent).toContain('新接触');
-        expect(host.querySelector('.fate-panel__rationale')?.textContent).toContain(current.fate!.rationale);
-        expect(host.querySelector('.fate-panel__rationale')?.hasAttribute('open')).toBe(false);
+        expect(host.querySelector('.fate-panel__rationale')?.getAttribute('aria-expanded')).toBe('false');
+    });
+    it('三个行为按钮附在左侧占星区域，小算盘小窗打开关闭不移动触发按钮', async () => {
+        await render();
+        const orbit = host.querySelector('.fate-panel__companion [aria-label="占星操作"]')!;
+        expect(orbit.querySelectorAll('button')).toHaveLength(3);
+        expect(orbit.querySelector('.fate-panel__orbit-map')).toBeTruthy();
+        const trigger = button('命运之神的小算盘');
+        const parent = trigger.parentElement;
+        await click('命运之神的小算盘');
+        const dialog = document.body.querySelector('.fate-calculation')!;
+        expect(dialog.textContent).toContain(current.fate!.rationale);
+        expect(dialog.querySelector('.fate-patron-art')).toBeTruthy();
+        expect(dialog.querySelectorAll('.fate-calculation__factors>div')).toHaveLength(3);
+        expect(trigger.parentElement).toBe(parent);
+        await act(async () => (dialog.querySelector('[aria-label="关闭命运之神的小算盘"]') as HTMLButtonElement).click());
+        expect(document.body.querySelector('.fate-calculation')).toBeNull();
+        expect(trigger.parentElement).toBe(parent);
     });
     it('点击实际因子牌展开和收起含义', async () => {
         await render();
@@ -134,7 +150,7 @@ describe('命运牌阵独立活动面板', () => {
         expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.textContent).toContain('地图');
         expect(host.querySelector('[role="status"]')?.textContent).toBe('生成中，完成后才换牌。');
         expect(host.querySelector('.fate-panel--waiting')).not.toBeNull();
-        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card'));
+        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
         await act(async () => controls.forEach(item => item.click()));
         expect(props.onEdit).not.toHaveBeenCalled(); expect(props.onReroll).not.toHaveBeenCalled(); expect(props.onPlayTheater).not.toHaveBeenCalled(); expect(props.onDelete).not.toHaveBeenCalled();
@@ -159,7 +175,7 @@ describe('命运牌阵独立活动面板', () => {
         expect(host.querySelector('.fate-panel--waiting')).toBeNull();
         expect(host.querySelector('[role="status"]')?.textContent).toBe('小剧场正在生成。'); expect(host.textContent).not.toContain('猫爪正在牵线');
         expect((form().querySelector('input') as HTMLInputElement).value).toBe(current.activity); expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
-        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card'));
+        const controls = Array.from(host.querySelectorAll('button')).filter(item => !item.classList.contains('fate-panel__card') && !item.classList.contains('fate-panel__rationale'));
         expect(controls.every(item => item.disabled || item.closest('fieldset')?.disabled)).toBe(true);
         await act(async () => controls.forEach(item => item.click()));
         expect(props.onEdit).not.toHaveBeenCalled(); expect(props.onReroll).not.toHaveBeenCalled(); expect(props.onDelete).not.toHaveBeenCalled(); expect(props.onPlayTheater).not.toHaveBeenCalled();

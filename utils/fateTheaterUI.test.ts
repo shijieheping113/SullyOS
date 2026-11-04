@@ -57,27 +57,23 @@ afterEach(async () => {
 });
 
 describe('命运小剧场播放器', () => {
-    it('展示真实日程资料，逐字播放，点击正文补全，计时推进到结尾', async () => {
+    it('展示真实日程资料，所有行立即完整呈现，没有逐字控制和播放计时', async () => {
         await renderPlayer();
         expect(host.textContent).toContain('14:20 — 15:10');
         expect(host.textContent).toContain('窗边');
         expect(host.textContent).not.toContain('14:20:00');
         expect(host.textContent).not.toContain('LIVE');
-        await act(async () => vi.advanceTimersByTime(38));
-        expect(host.querySelector('.fate-theater-line')?.textContent).toBe('平静他');
-        await act(async () => (host.querySelector('[aria-label="剧场正文"]') as HTMLElement).click());
-        expect(host.textContent).toContain(lines[0].text);
-        await act(async () => vi.advanceTimersByTime(15000));
-        expect(host.textContent).toContain(lines[3].text);
-        expect(host.querySelector('[aria-label="小剧场已读完"]')).toBeTruthy();
+        expect(Array.from(host.querySelectorAll('.fate-scene-text'), item => item.textContent)).toEqual(lines.map(line => line.text));
+        expect(host.querySelector('.fate-scene-emotion')?.textContent).toBe('平静');
+        expect(host.querySelector('.fate-scene-dialogue .fate-scene-text')?.textContent).toBe(lines[1].text);
+        expect(host.textContent).not.toContain('补全当前行');
+        expect(host.textContent).not.toContain('跳到结尾');
+        await act(async () => vi.advanceTimersByTime(0));
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('可补全当前行和直接跳到结尾，保留两种发送含义与重演', async () => {
+    it('完整呈现保留两种发送含义，重演后的长正文与 emoji 不截字', async () => {
         await renderPlayer();
-        await click('补全当前行');
-        expect(host.textContent).toContain(lines[0].text);
-        await click('跳到结尾');
         expect(host.textContent).toContain(lines[3].text);
         await click('TA 不知道你看了');
         expect(props.onSendCard).toHaveBeenLastCalledWith(false);
@@ -85,10 +81,12 @@ describe('命运小剧场播放器', () => {
         expect(props.onSendCard).toHaveBeenLastCalledWith(true);
         await click('换一段重演');
         expect(props.onReplay).toHaveBeenCalledOnce();
+        await renderPlayer({ isGenerating: true });
         expect(host.textContent).not.toContain(lines[3].text);
-        await renderPlayer({ lines: [{ text: '重新写下的内容' }] });
-        await act(async () => vi.advanceTimersByTime(2000));
-        expect(host.textContent).toContain('重新写下的内容');
+        const fullLines = [{ text: '重新写下的内容\n'.repeat(100), emotion: '🌧️' }, ...lines];
+        await renderPlayer({ lines: fullLines, isGenerating: false });
+        expect(Array.from(host.querySelectorAll('.fate-scene-text'), item => item.textContent)).toEqual(fullLines.map(line => line.text));
+        expect(host.querySelector('.fate-scene-emotion')?.textContent).toBe('🌧️');
     });
 
     it.each([
@@ -120,7 +118,6 @@ describe('命运小剧场播放器', () => {
         let reject!: (error: Error) => void;
         const save = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; })).mockResolvedValue(undefined);
         await renderPlayer({ onSendCard: save });
-        await click('跳到结尾');
         await act(async () => {
             button('TA 不知道你看了').click();
             button('让 TA 发现你在看').click();
@@ -129,6 +126,8 @@ describe('命运小剧场播放器', () => {
         expect(save).toHaveBeenCalledTimes(1);
         expect(button('让 TA 发现你在看').disabled).toBe(true);
         expect(host.textContent).toContain('正在保存到聊天');
+        expect(host.textContent).not.toContain('已保存到聊天');
+        expect(button('换一段重演').disabled).toBe(true);
         await act(async () => reject(new Error('disk full')));
         expect(host.textContent).toContain('保存失败，请再试一次。');
         await click('让 TA 发现你在看');
@@ -142,7 +141,7 @@ describe('命运小剧场播放器', () => {
         document.body.append(opener);
         opener.focus();
         await renderPlayer();
-        expect(host.textContent).toContain(lines[3].text);
+        for (const line of lines) expect(host.textContent).toContain(line.text);
         await act(async () => vi.advanceTimersByTime(0));
         expect(vi.getTimerCount()).toBe(0);
         expect(document.activeElement?.getAttribute('aria-label')).toBe('关闭小剧场');
@@ -153,16 +152,46 @@ describe('命运小剧场播放器', () => {
         opener.remove();
     });
 
-    it('生成中不播放旧内容，卸载清除播放计时', async () => {
+    it('生成期间隐藏原内容，生成完成后立即显示全文，无播放计时', async () => {
         await renderPlayer();
-        await act(async () => vi.advanceTimersByTime(100));
         await renderPlayer({ isGenerating: true });
-        expect(host.textContent).not.toContain(lines[0].text);
+        for (const line of lines) expect(host.textContent).not.toContain(line.text);
+        expect(host.textContent).toContain('小剧场正在生成');
+        expect(host.querySelector('.fate-scene-text')).toBeNull();
+        await act(async () => vi.advanceTimersByTime(0));
         expect(vi.getTimerCount()).toBe(0);
-        await renderPlayer({ isGenerating: false, lines: [{ text: '新内容' }] });
+        await renderPlayer({ isGenerating: false, lines });
+        for (const line of lines) expect(host.textContent).toContain(line.text);
         await act(async () => root.render(null));
         await act(async () => vi.advanceTimersByTime(0));
         expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('Tab 和 Shift+Tab 保持焦点在小浮窗内', async () => {
+        await renderPlayer();
+        const close = button('关闭');
+        const last = button('让 TA 发现你在看');
+        const dialog = host.querySelector('[role="dialog"]')!;
+        await act(async () => dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })));
+        expect(document.activeElement).toBe(last);
+        await act(async () => dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })));
+        expect(document.activeElement).toBe(close);
+    });
+
+    it('保存完成通知等待结果，保存途中关闭并卸载仍安全', async () => {
+        let resolve!: () => void;
+        const save = vi.fn(() => new Promise<void>(done => { resolve = done; }));
+        await renderPlayer({ onSendCard: save });
+        await click('TA 不知道你看了');
+        expect(host.textContent).not.toContain('已保存到聊天');
+        await act(async () => resolve());
+        expect(host.textContent).toContain('已保存到聊天');
+        await click('让 TA 发现你在看');
+        await click('关闭');
+        expect(props.onClose).toHaveBeenCalledOnce();
+        await act(async () => root.render(null));
+        await act(async () => resolve());
+        expect(host.textContent).toBe('');
     });
 });
 

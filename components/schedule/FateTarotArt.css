@@ -2,3 +2,5 @@
 .fate-tarot-art__arch{opacity:.32;stroke-width:.7}
 .fate-tarot-art__base{opacity:.65;stroke-width:.9}
 .fate-astrolabe{display:block;width:210px;height:210px;max-width:100%;margin:auto;stroke:#85495d;stroke-width:1;stroke-linecap:round;stroke-linejoin:round}
+.fate-patron-art{display:block;width:64px;height:70px;flex:none;max-width:100%;stroke:#85495d;stroke-width:1.15;stroke-linecap:round;stroke-linejoin:round;color:#85495d}
+.fate-patron-art__halo{opacity:.4;stroke-width:.75}

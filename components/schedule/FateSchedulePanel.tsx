@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import './FateSchedulePanel.css';
 import FateTarotArt, { FatePatronArt } from './FateTarotArt';
+import FateOverlay from './FateOverlay';
 
 export interface FateSchedulePanelProps {
     embedded?: boolean;
@@ -56,8 +57,9 @@ function CatAndYarn() {
 
 function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string }) {
     const [expanded, setExpanded] = useState<number | null>(null);
+    const [showRationale, setShowRationale] = useState(false);
     const factors = slot.fate?.factors || [];
-    useEffect(() => setExpanded(null), [identity]);
+    useEffect(() => { setExpanded(null); setShowRationale(false); }, [identity]);
     return (
         <section className="fate-panel__reading" aria-label="本轮因子牌">
             <div className="fate-panel__deck">
@@ -80,8 +82,13 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
             </div>}
             {slot.fate && <div className="fate-panel__context">
                 <div><span className="fate-panel__label">人物方向</span><strong>{PEOPLE[slot.fate.peopleDirection] || '未记录'}</strong></div>
-                <details className="fate-panel__rationale"><summary>命运之神的小算盘</summary><p>{slot.fate.tendency.meaning}</p><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></details>
+                <button type="button" className="fate-panel__rationale" aria-haspopup="dialog" aria-expanded={showRationale} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setShowRationale(true); }}><svg viewBox="0 0 26 22" fill="none" aria-hidden="true"><path d="M4 3h18v16H4V3Zm0 5h18M8 8v11m5-11v11m5-11v11M7 12h2m3 3h2m3-4h2m-12 6h2"/></svg><span>命运之神的小算盘</span></button>
             </div>}
+            {showRationale && slot.fate && <FateOverlay title="命运之神的小算盘" onClose={() => setShowRationale(false)} className="fate-calculation">
+                <div className="fate-calculation__patron"><FatePatronArt tendencyId={slot.fate.tendency.id} /><div><span>本轮命运之神</span><h3>{slot.fate.tendency.name}</h3><p>{slot.fate.tendency.meaning}</p></div></div>
+                <div className="fate-calculation__factors">{factors.map((factor, index) => <div key={`${factor.id}:${index}`}><FateTarotArt factor={factor} /><div><span>{index === 0 ? '主因子' : '副因子'}</span><strong>{factor.name}</strong><p>{factor.meaning}</p></div></div>)}</div>
+                <section className="fate-calculation__result"><span>牌阵怎样落进生活</span><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></section>
+            </FateOverlay>}
         </section>
     );
 }
@@ -148,10 +155,11 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         } catch { setError('活动保存失败，填写内容已保留，请重试。'); }
         finally { setIsSaving(false); }
     };
-    const actions = (item: ScheduleSlot, itemIndex: number) => <div className="fate-panel__actions">
-        {onPlayTheater && <button type="button" disabled={writesDisabled || (validStamp(item.startsAt) && item.startsAt > now)} onClick={() => onPlayTheater(itemIndex)}>{item.theater ? '重看小剧场' : '进一步查看'}</button>}
-        {onEdit && <button type="button" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}>编辑活动</button>}
-        {onDelete && <button type="button" className="fate-panel__delete" disabled={writesDisabled} onClick={() => { setDeleting(snapshot(itemIndex)); setDraft(null); setError(''); }}>删除活动</button>}
+    const actions = (item: ScheduleSlot, itemIndex: number, orbit = false) => <div className={orbit ? 'fate-panel__orbit' : 'fate-panel__actions'} aria-label={orbit ? '占星操作' : undefined}>
+        {orbit && <svg className="fate-panel__orbit-map" viewBox="0 0 112 100" fill="none" aria-hidden="true"><circle cx="56" cy="47" r="31"/><circle cx="56" cy="47" r="22"/><path d="m56 12 31 54H25l31-54Zm0 70L25 28h62L56 82ZM56 35l3 9 9 3-9 3-3 9-3-9-9-3 9-3 3-9Z"/></svg>}
+        {onPlayTheater && <button type="button" aria-label={item.theater ? '重看小剧场' : '进一步查看'} title={item.theater ? '重看小剧场' : '进一步查看'} disabled={writesDisabled || (validStamp(item.startsAt) && item.startsAt > now)} onClick={() => onPlayTheater(itemIndex)}>{orbit ? <><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 12c6-9 14-9 20 0-6 9-14 9-20 0Z"/><circle cx="12" cy="12" r="3"/></svg><span>查看</span></> : item.theater ? '重看小剧场' : '进一步查看'}</button>}
+        {onEdit && <button type="button" aria-label="编辑活动" title="编辑活动" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}>{orbit ? <><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 16 10-11 4 4L9 20H4l1-4Zm8-9 4 4M4 22h16"/></svg><span>编辑</span></> : '编辑活动'}</button>}
+        {onDelete && <button type="button" aria-label="删除活动" title="删除活动" className="fate-panel__delete" disabled={writesDisabled} onClick={() => { setDeleting(snapshot(itemIndex)); setDraft(null); setError(''); }}>{orbit ? <><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6m4-6v6"/></svg><span>删除</span></> : '删除活动'}</button>}
     </div>;
     const renderEditor = () => draft && <form className="fate-panel__editor" aria-label="编辑活动" onSubmit={event => { event.preventDefault(); saveEdit(); }}>
         <h3 ref={editorHeadingRef}>编辑活动</h3>
@@ -181,7 +189,7 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
             {slot ? <>
                 <article className="fate-panel__activity" aria-label="本轮活动">
                     {draft?.index === index ? renderEditor() : <>
-                    <div className="fate-panel__companion">{drawButton}</div>
+                    <div className="fate-panel__companion">{drawButton}{actions(slot, index, true)}</div>
                     <div className="fate-panel__copy">
                     <div className="fate-panel__patron" aria-label="本轮命运之神"><FatePatronArt tendencyId={slot.fate?.tendency.id} /><div><span>本轮命运之神</span><strong>{slot.fate?.tendency.name || '未记录'}</strong></div></div>
                     <h3>{slot.activity}</h3>
@@ -190,7 +198,6 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
                     {slot.description && <p className="fate-panel__description">{slot.description}</p>}
                     <p className="fate-panel__state">{slotState(slot, now)}</p>
                     </div>
-                    {actions(slot, index)}
                     </>}
                 </article>
                 <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} />

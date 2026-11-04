@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import type { CharacterProfile, ApiPreset, APIConfig } from '../../types';
 import { isEmotionFeatureOn } from '../../utils/scheduleFeature';
 import './FateSettingsViews.css';
 import { FateAstrolabe } from './FateTarotArt';
+import FateOverlay from './FateOverlay';
+import './FateEmotionSky.css';
 
 export interface FateEmotionViewProps {
     char: CharacterProfile;
@@ -25,9 +27,22 @@ export default function FateEmotionView({ char, apiPresets, onSave, onClearBuffs
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [saving, setSaving] = useState(false);
+    const [skyPage, setSkyPage] = useState(0);
+    const [selection, setSelection] = useState<{ characterId: string; buffId: string | null }>(() => ({ characterId: char.id, buffId: null }));
+    const detailId = useId();
+    const buffs = char.activeBuffs || [];
+    const pageCount = Math.max(1, Math.ceil(buffs.length / 6));
+    const page = selection.characterId === char.id ? Math.min(skyPage, pageCount - 1) : 0;
+    const visibleBuffs = buffs.slice(page * 6, page * 6 + 6);
+    const selectedBuff = selection.characterId === char.id ? buffs.find(buff => buff.id === selection.buffId) : undefined;
     const emotionOn = isEmotionFeatureOn(char);
     const busy = isBusy || saving;
     useEffect(() => { setApi(readApi()); setDirty(false); setPicker(false); setQuery(''); setPresetName(null); setError(''); setNotice(''); setSaving(false); }, [char.id]);
+    useEffect(() => { setSkyPage(0); setSelection({ characterId: char.id, buffId: null }); }, [char.id]);
+    useEffect(() => {
+        setSkyPage(previous => Math.min(previous, pageCount - 1));
+        if (selection.characterId === char.id && selection.buffId && !buffs.some(buff => buff.id === selection.buffId)) setSelection({ characterId: char.id, buffId: null });
+    }, [char.id, buffs, pageCount, selection]);
     const presets = apiPresets.filter(preset => `${preset.name} ${preset.config.model}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
     const selectedPreset = apiPresets.find(preset => preset.config.baseUrl === api.baseUrl && preset.config.apiKey === api.apiKey && preset.config.model === api.model);
     const modelLabel = selectedPreset?.name || api.model || (api.baseUrl || api.apiKey ? '未填写模型' : '主模型');
@@ -43,14 +58,23 @@ export default function FateEmotionView({ char, apiPresets, onSave, onClearBuffs
         catch { if (currentCharacter.current === charId) setError(failure); return false; }
         finally { if (currentCharacter.current === charId) setSaving(false); }
     };
-    return <section className="fate-settings-view fate-emotion" aria-label="情绪设置">
+    return <section className="fate-settings-view fate-emotion fate-sky-view" aria-label="情绪设置">
         <header className="fate-settings-heading"><h2>情绪星盘</h2><button type="button" className="fate-settings-switch" role="switch" aria-label="情绪独立开关" aria-checked={emotionOn} disabled={busy} onClick={() => { void perform(() => onSave({ ...char.emotionConfig, enabled: !emotionOn }), emotionOn ? '情绪已关闭，日程保持不变。' : '情绪已开启，日程保持不变。'); }}><span /></button></header>
         <p className="fate-settings-meta">{emotionOn ? '情绪已开启' : '情绪已关闭，不再生成或使用情绪状态'}{dirty ? ' · 模型尚未保存' : ''}</p>
         {error && <p role="alert" className="fate-settings-error">{error}</p>}{notice && <p role="status" className="fate-settings-meta">{notice}</p>}
-        <div className="fate-emotion-sky"><FateAstrolabe /><p>{char.name}</p><span>{char.activeBuffs?.length ? `${char.activeBuffs.length} 种情绪正在停留` : '还没有记录下来的情绪'}</span></div>
-        <div className="fate-settings-section fate-emotion-current"><div className="fate-settings-summary"><h3>当前情绪</h3>{!!char.activeBuffs?.length && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`清除${char.name}的全部 ${char.activeBuffs?.length} 个当前情绪？清除后无法恢复。`)) void perform(onClearBuffs, '当前情绪已清除。', '清除情绪失败，请重试。'); }}>清除情绪</button>}</div>
-            {char.activeBuffs?.length ? <div className="fate-settings-buffs">{char.activeBuffs.map(buff => <div className="fate-settings-buff" key={buff.id}><div className="fate-emotion-star" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="m16 3 3 10 10 3-10 3-3 10-3-10-10-3 10-3Z" /></svg></div><div><span>{buff.emoji} {buff.label}</span>{buff.description && <p className="fate-settings-meta">{buff.description}</p>}</div><span className="fate-emotion-strength"><span className="fate-emotion-dots" aria-hidden="true">{[1, 2, 3].map(level => <i key={level} data-lit={level <= buff.intensity} />)}</span><span className="fate-settings-meta" aria-label={`强度 ${buff.intensity} / 3`}>强度 {buff.intensity} / 3</span></span></div>)}</div> : <p className="fate-settings-empty">还没有情绪，聊聊天再来看看。</p>}
-        </div>
+        <section className="fate-emotion-current fate-sky-region" aria-label="当前情绪星盘">
+            <div className="fate-sky-chart">
+                <div className="fate-sky-art"><FateAstrolabe /></div>
+                <div className="fate-sky-center"><p>{char.name}</p><span>{buffs.length} 种情绪</span></div>
+                {visibleBuffs.map((buff, index) => <button type="button" className="fate-sky-star" key={buff.id} data-slot={index} data-intensity={buff.intensity} aria-label={`${buff.label}，强度 ${buff.intensity} / 3`} aria-pressed={selectedBuff?.id === buff.id} aria-haspopup="dialog" aria-controls={selectedBuff?.id === buff.id ? detailId : undefined} onClick={event => { event.currentTarget.focus(); setSelection({ characterId: char.id, buffId: selectedBuff?.id === buff.id ? null : buff.id }); }}>
+                    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 3 10 10 3-10 3-3 10-3-10-10-3 10-3Z" /></svg>
+                    <span className="fate-sky-label">{buff.label}</span>
+                </button>)}
+            </div>
+            {pageCount > 1 && <nav className="fate-sky-pages" aria-label="情绪星页"><button type="button" disabled={page === 0} onClick={() => { setSkyPage(page - 1); setSelection({ characterId: char.id, buffId: null }); }}>上一星页</button><span aria-live="polite">第 {page + 1} / {pageCount} 页</span><button type="button" disabled={page === pageCount - 1} onClick={() => { setSkyPage(page + 1); setSelection({ characterId: char.id, buffId: null }); }}>下一星页</button></nav>}
+            <div className="fate-sky-tools"><p className="fate-sky-hint">{buffs.length ? '点星星查看情绪' : '还没有情绪，聊聊天再来看看。'}</p>{!!buffs.length && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`清除${char.name}的全部 ${buffs.length} 个当前情绪？清除后无法恢复。`)) void perform(onClearBuffs, '当前情绪已清除。', '清除情绪失败，请重试。'); }}>清除情绪</button>}</div>
+            {selectedBuff && <FateOverlay title={selectedBuff.label} className="fate-sky-window" onClose={() => setSelection({ characterId: char.id, buffId: null })}><div id={detailId} className="fate-sky-detail"><span className="fate-sky-emoji" aria-hidden="true">{selectedBuff.emoji}</span><div className="fate-sky-copy"><p className="fate-sky-description">{selectedBuff.description || '没有记录情绪描述。'}</p><div className="fate-sky-strength"><span className="fate-emotion-dots" aria-hidden="true">{[1, 2, 3].map(level => <i key={level} data-lit={level <= selectedBuff.intensity} />)}</span><span>强度 {selectedBuff.intensity} / 3</span></div></div></div></FateOverlay>}
+        </section>
         <details className="fate-settings-section fate-emotion-model" open={dirty || picker || presetName !== null || undefined}>
             <summary>情绪专用模型<span>{modelLabel}</span></summary>
             <div className="fate-settings-summary"><h3>情绪专用模型</h3><span className="fate-settings-meta">全部留空，用主模型</span></div>

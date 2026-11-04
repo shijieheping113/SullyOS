@@ -1,7 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { CharacterProfile, ScheduleSlot, TheaterLine } from '../../types';
-import { FateTheaterDetails, FateTheaterText } from './FateTheaterCard';
-import './FateTheater.css';
+import './FateTheaterReading.css';
 import { FatePatronArt } from './FateTarotArt';
 
 export interface FateTheaterPlayerProps {
@@ -16,21 +15,15 @@ export interface FateTheaterPlayerProps {
 
 const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, lines, isGenerating, onReplay, onSendCard, onClose }) => {
     const titleId = useId();
-    const [progress, setProgress] = useState({ row: 0, chars: 0, pause: 0 });
-    const [replay, setReplay] = useState(0);
     const [saving, setSaving] = useState(false);
     const [notice, setNotice] = useState('');
     const sendLock = useRef(false);
-    const timerRef = useRef<number | null>(null);
     const mounted = useRef(true);
     const closeRef = useRef<HTMLButtonElement>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const total = Array.isArray(lines) ? lines.length : 0;
     const available = !isGenerating && total > 0;
-    const finished = available && progress.row >= total;
-    const currentLine = available && !finished ? lines?.[progress.row] : undefined;
-    const characters = Array.from(currentLine?.text || '');
 
     useEffect(() => {
         mounted.current = true;
@@ -40,43 +33,11 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
     }, []);
 
     useEffect(() => {
-        setProgress({ row: 0, chars: 0, pause: 0 });
         setNotice('');
-        if (!available || !lines) return;
-        const motion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-        if (motion?.matches) {
-            setProgress({ row: total, chars: 0, pause: 0 });
-            return;
-        }
-        const timer = window.setInterval(() => setProgress(value => {
-            if (value.row >= total) return value;
-            const length = Array.from(lines[value.row]?.text || '').length;
-            if (value.chars < length) return { ...value, chars: value.chars + 1 };
-            if (value.pause < 13) return { ...value, pause: value.pause + 1 };
-            return { row: value.row + 1, chars: 0, pause: 0 };
-        }), 38);
-        timerRef.current = timer;
-        return () => { window.clearInterval(timer); timerRef.current = null; };
-    }, [lines, isGenerating, replay]);
-
-    useEffect(() => {
-        if (finished && timerRef.current !== null) {
-            window.clearInterval(timerRef.current);
-            timerRef.current = null;
-        }
-    }, [finished]);
-
-    useEffect(() => {
         const region = scrollRef.current;
-        if (region) region.scrollTop = finished ? 0 : region.scrollHeight;
-    }, [progress.row, progress.chars, finished]);
+        if (region) region.scrollTop = 0;
+    }, [lines, isGenerating]);
 
-    const finish = () => setProgress({ row: total, chars: 0, pause: 0 });
-    const advance = () => {
-        if (!available || finished) return;
-        if (progress.chars < characters.length) setProgress(value => ({ ...value, chars: characters.length }));
-        else finish();
-    };
     const sendCard = async (exposed: boolean) => {
         if (sendLock.current || !onSendCard) return;
         sendLock.current = true;
@@ -93,7 +54,7 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
         }
     };
 
-    return <div ref={dialogRef} className="fate-theater-player" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={event => {
+    return <div ref={dialogRef} className="fate-scene-overlay" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={event => {
         if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
         if (event.key === 'Tab') {
             const buttons = dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]');
@@ -104,33 +65,28 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
         }
     }}>
-        <div className="fate-theater-reader">
-            <div className="fate-theater-topbar"><span>{character?.name || '角色'}的小剧场</span><button ref={closeRef} type="button" className="fate-theater-button" onClick={onClose} aria-label="关闭小剧场">关闭</button></div>
-            <div className="fate-theater-storycard">
-            <header className="fate-theater-header">
-                <div className="fate-theater-title-row"><FatePatronArt tendencyId={slot?.fate?.tendency.id} /><h1 id={titleId}>{slot?.activity || '命运小剧场'}</h1></div>
-                <p className="fate-theater-context">{slot?.startTime && <span>{slot.startTime}{slot.endTime ? ` — ${slot.endTime}` : ''}</span>}{slot?.location && <span>{slot.location}</span>}</p>
+        <div className="fate-scene-reader">
+            <div className="fate-scene-topbar"><span>{character?.name || '角色'}的小剧场</span><button ref={closeRef} type="button" className="fate-scene-button fate-scene-close" onClick={onClose} aria-label="关闭小剧场">关闭</button></div>
+            <header className="fate-scene-header">
+                <div className="fate-scene-title"><FatePatronArt tendencyId={slot?.fate?.tendency.id} /><h1 id={titleId}>{slot?.activity || '命运小剧场'}</h1></div>
+                <p className="fate-scene-context">{slot?.startTime && <span>{slot.startTime}{slot.endTime ? ` — ${slot.endTime}` : ''}</span>}{!slot?.startTime && slot?.endTime && <span>结束 {slot.endTime}</span>}{slot?.location && <span>{slot.location}</span>}</p>
             </header>
-            <div ref={scrollRef} className="fate-theater-reading" aria-label="剧场正文" tabIndex={0} onClick={advance}>
-                {isGenerating ? <p role="status" className="fate-theater-empty">正在写下这一刻……</p> : !total ? <p role="status" className="fate-theater-empty">暂时没有剧场内容，可以重试。</p> : <>
-                    {lines?.slice(0, progress.row).map((line, index) => <FateTheaterText key={index} line={line} />)}
-                    {currentLine && <FateTheaterText line={currentLine} text={characters.slice(0, progress.chars).join('')} />}
-                    {finished && <p className="fate-theater-ending" aria-label="小剧场已读完"><span aria-hidden="true">◇</span></p>}
-                </>}
+            <div ref={scrollRef} className="fate-scene-reading" aria-label="剧场正文" tabIndex={0} aria-busy={isGenerating}>
+                {isGenerating ? <div className="fate-scene-waiting" role="status"><span className="fate-scene-page" aria-hidden="true">◇</span><p>小剧场正在生成</p></div> : !total ? <p role="status" className="fate-scene-empty">暂时没有剧场内容，可以重试。</p> : <div className="fate-scene-manuscript">
+                    {lines?.map((line, index) => <div key={index} className={`fate-scene-passage ${/[「」『』“”"]/.test(line.text || '') ? 'fate-scene-dialogue' : 'fate-scene-narration'}`}>
+                        {line.emotion && <span className="fate-scene-emotion">{line.emotion}</span>}
+                        <p className="fate-scene-text">{line.text}</p>
+                    </div>)}
+                </div>}
             </div>
-            <footer className="fate-theater-controls">
-                {available && !finished && <div className="fate-theater-actions">
-                    <button type="button" className="fate-theater-button" onClick={advance}>补全当前行</button>
-                    <button type="button" className="fate-theater-button" onClick={finish}>跳到结尾</button>
+            <footer className="fate-scene-controls">
+                <button type="button" className="fate-scene-button fate-scene-replay" disabled={saving || isGenerating} onClick={() => { setNotice(''); onReplay(); }}>{isGenerating ? '正在生成……' : available ? '换一段重演' : '重新尝试'}</button>
+                {available && onSendCard && <div className="fate-scene-actions">
+                    <button type="button" className="fate-scene-button" disabled={saving} onClick={() => void sendCard(false)}>TA 不知道你看了</button>
+                    <button type="button" className="fate-scene-button fate-scene-primary" disabled={saving} onClick={() => void sendCard(true)}>让 TA 发现你在看</button>
                 </div>}
-                <button type="button" className="fate-theater-button fate-theater-replay" disabled={saving || isGenerating} onClick={() => { setReplay(value => value + 1); onReplay(); }}>{isGenerating ? '正在生成……' : available ? '换一段重演' : '重新尝试'}</button>
-                {finished && onSendCard && <div className="fate-theater-actions">
-                    <button type="button" className="fate-theater-button" disabled={saving} onClick={() => void sendCard(false)}>TA 不知道你看了</button>
-                    <button type="button" className="fate-theater-button fate-theater-primary" disabled={saving} onClick={() => void sendCard(true)}>让 TA 发现你在看</button>
-                </div>}
-                <p className="fate-theater-notice" role="status">{saving ? '正在保存到聊天……' : notice}</p>
+                <p className="fate-scene-notice" role="status">{saving ? '正在保存到聊天……' : notice}</p>
             </footer>
-            </div>
         </div>
     </div>;
 };

@@ -23,7 +23,7 @@ describe('命运牌面图案', () => {
         ['pleasure', '欲望'],
         ['life', '修复与积累'],
         ['chance', '偶然与发现'],
-    ])('倾向%s复用已有%s牌面图形', (tendencyId, category) => {
+    ])('倾向%s有独立神像且保留%s分类资料', (tendencyId, category) => {
         const patron = document.createElement('div');
         patron.innerHTML = renderToStaticMarkup(React.createElement(FatePatronArt, { tendencyId }));
         const reused = patron.querySelector('svg')!;
@@ -31,7 +31,17 @@ describe('命运牌面图案', () => {
         factor.innerHTML = renderToStaticMarkup(React.createElement(FateTarotArt, { category }));
         expect(reused.classList.contains('fate-patron-art')).toBe(true);
         expect(reused.getAttribute('data-fate-art')).toBe(category);
-        expect(reused.innerHTML).toBe(factor.querySelector('svg')!.innerHTML);
+        expect(reused.getAttribute('data-fate-patron')).toBe(tendencyId);
+        expect(reused.innerHTML).not.toBe(factor.querySelector('svg')!.innerHTML);
+        expect(reused.querySelector('.fate-patron-art__halo')).toBeTruthy();
+    });
+    it('六尊神像持物不同，不再复制因子图案', () => {
+        const bodies = ['career', 'relations', 'discovery', 'pleasure', 'life', 'chance'].map(tendencyId => {
+            const node = document.createElement('div');
+            node.innerHTML = renderToStaticMarkup(React.createElement(FatePatronArt, { tendencyId }));
+            return node.querySelector('svg')!.innerHTML;
+        });
+        expect(new Set(bodies).size).toBe(6);
     });
     it.each([undefined, 'custom-tendency'])('未记录或自定义倾向%s复用默认图形', tendencyId => {
         const html = renderToStaticMarkup(React.createElement(FatePatronArt, { tendencyId }));

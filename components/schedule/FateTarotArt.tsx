@@ -8,10 +8,25 @@ export function fateArtCategory(factor?: { id?: string; category?: string }): st
     return factor?.category || categories.get(factor?.id || '') || '自定义';
 }
 
-/** 复用牌面已有图案，让本轮倾向在日程开头有固定、可识别的图形。 */
+/** 六种倾向各有神像：共同的星冠与面纱，持物随本轮倾向变化。 */
 export function FatePatronArt({ tendencyId }: { tendencyId?: string }) {
     const categories: Record<string, string> = { career: '秩序', relations: '关系', discovery: '认知', pleasure: '欲望', life: '修复与积累', chance: '偶然与发现' };
-    return <FateTarotArt category={categories[tendencyId || ''] || '自定义'} className="fate-patron-art" />;
+    const kind = tendencyId || 'custom';
+    const objects: Record<string, React.ReactNode> = {
+        career: <><path d="M32 78c8-3 14-3 20 0v16c-7-3-13-3-20 0V78Zm20 0c8-3 14-3 20 0v16c-7-3-13-3-20 0M52 78v16"/><path d="M52 10v9m-4-4h8M33 20l5 6 14-12 14 12 5-6"/></>,
+        relations: <><path d="M52 94C23 76 39 64 52 77c13-13 29-1 0 17Z"/><path d="M24 29c-6-10 2-17 9-9m47 9c6-10-2-17-9-9M23 27l8 8m50-8-8 8"/></>,
+        discovery: <><path d="M31 83c13-15 29-15 42 0-13 15-29 15-42 0Z"/><circle cx="52" cy="83" r="7"/><path d="M52 10v10m-5-5h10M32 21l-4-5m44 5 4-5"/></>,
+        pleasure: <><path d="M52 95c-17-2-18-14-10-23 0 8 7 7 10 13 7-9 1-12 2-18 12 13 17 26-2 28Z"/><path d="M29 24c6-13 15-7 23-14 8 7 17 1 23 14M30 23l7 7m37-7-7 7"/></>,
+        life: <><path d="M52 95V72m0 12c-15 0-20-11-17-16 11 0 19 5 17 16Zm0 6c14-1 19-10 16-16-11 0-17 6-16 16Z"/><path d="M37 23c-7-6-4-12 0-15m30 15c7-6 4-12 0-15M43 17l9-9 9 9"/></>,
+        chance: <><path d="m39 72 23-3 8 21-24 5-7-23Zm0 0 8 8 23 10m-23-10-1 15m1-15 15-11"/><circle cx="52" cy="86" r="1.5"/><circle cx="60" cy="80" r="1.5"/><path d="M38 15c4 7 9 6 14 0 5 6 10 7 14 0M29 22l8 7m38-7-8 7"/></>,
+    };
+    return <svg className="fate-patron-art" viewBox="0 0 104 112" fill="none" aria-hidden="true" data-fate-art={categories[kind] || '自定义'} data-fate-patron={kind}>
+        <circle cx="52" cy="43" r="33" className="fate-patron-art__halo"/><circle cx="52" cy="43" r="28" className="fate-patron-art__halo"/>
+        <path d="M28 67c-2-18 0-41 24-43 24 2 26 25 24 43M38 42c0-18 28-18 28 0v8c0 10-7 18-14 18s-14-8-14-18v-8Z" fill="#f5edef"/>
+        <path d="M38 42c7-1 11-4 14-11 3 7 8 10 14 11M43 48l4 1m10 0 4-1M49 58c2 2 4 2 6 0M42 64c-13 7-21 14-23 36m43-36c13 7 21 14 23 36M38 73l-9 25m37-25 9 25M29 101h46"/>
+        {objects[kind] || <><path d="m52 73 4 8 9 2-7 7 1 9-7-4-7 4 1-9-7-7 9-2 4-8ZM52 9v10m-5-5h10"/></>}
+        <path d="M14 49v8m-4-4h8m72-19v8m-4-4h8M30 107h14m16 0h14m-25 0 3-3 3 3-3 3-3-3Z"/>
+    </svg>;
 }
 
 /** 一类一幅寓意画；旧记录仅有id时也使用相同的画，不改变记录内容。 */

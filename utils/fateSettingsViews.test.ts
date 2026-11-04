@@ -18,19 +18,18 @@ const presets = [
 ] as ApiPreset[];
 async function render(element: React.ReactElement) { await act(async () => { root.render(element); }); }
 async function click(text: string) {
-    const button = Array.from(host.querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text);
+    const button = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text);
     expect(button, `找不到按钮 ${text}`).toBeTruthy();
     await act(async () => { button!.click(); });
 }
 async function input(label: string, value: string) {
-    const element = (host.querySelector(`[aria-label="${label}"]`) || Array.from(host.querySelectorAll('label')).find(item => item.firstChild?.textContent === label || item.textContent === label)?.querySelector('input,textarea,select')) as HTMLInputElement;
+    const element = (document.body.querySelector(`[aria-label="${label}"]`) || Array.from(document.body.querySelectorAll('label')).find(item => item.firstChild?.textContent === label || item.textContent === label)?.querySelector('input,textarea,select')) as HTMLInputElement;
     expect(element, `找不到输入框 ${label}`).toBeTruthy();
     const prototype = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : element.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
     await act(async () => { Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event(element.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); });
 }
 async function expand(name: string) {
-    const button = Array.from(host.querySelectorAll<HTMLButtonElement>('.fate-settings-entry-head')).find(item => item.textContent?.startsWith(name));
-    expect(button).toBeTruthy(); await act(async () => button!.click());
+    await click(`查看${name}`);
 }
 beforeEach(() => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,44 +40,50 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); });
 
 describe('命运资料库粉色页面', () => {
-    it('读取真实计数，分批载入，搜索、分类和启停筛选都生效', async () => {
+    it('读取真实计数，六张翻页，搜索、分类和启停筛选都生效', async () => {
         await render(React.createElement(FateLibraryView, { char, onChange }));
         expect(host.textContent).toContain('因子 · 320');
-        expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(24);
-        expect(host.querySelector('.fate-library-meaning')?.textContent).toBe('原本的推进方向出现值得重新考虑的偏转。');
-        expect(host.querySelector('.fate-settings-entry-head')?.getAttribute('aria-expanded')).toBe('false');
+        expect(host.querySelectorAll('.fate-book-card')).toHaveLength(6);
+        expect(host.querySelector('.fate-book-meaning')).toBeNull();
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
         expect(host.querySelector('header')?.nextElementSibling?.tagName).toBe('DETAILS');
         expect(host.querySelector('details')?.open).toBe(false);
-        await click('再看 24 项'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(48);
-        await input('分类筛选', '变化'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(16);
-        await input('搜索因子', '转向'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(1);
+        await click('下一页'); expect(host.querySelectorAll('.fate-book-card')).toHaveLength(6); expect(host.textContent).toContain('第 2 / 54 页');
+        await click('分类 · 全部分类'); await click('变化'); expect(host.querySelectorAll('.fate-book-card')).toHaveLength(6); expect(host.textContent).toContain('第 1 / 3 页');
+        await input('搜索因子', '转向'); expect(host.querySelectorAll('.fate-book-card')).toHaveLength(1);
         await expand('转向'); await click('停用转向');
         expect(loadFateSettings(char.id).disabledFactorIds).toContain('change-turn');
-        await input('启用状态', 'enabled'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(0);
-        await input('启用状态', 'disabled'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(1);
+        await click('放回转向');
+        await input('启用状态', 'enabled'); expect(host.querySelectorAll('.fate-book-card')).toHaveLength(0);
+        await input('启用状态', 'disabled'); expect(host.querySelectorAll('.fate-book-card')).toHaveLength(1);
     });
-    it('点图案分类可直接浏览对应牌册，含义无需展开即可阅读', async () => {
+    it('分类网格可浏览对应牌册，点牌浮窗显示完整含义', async () => {
         await render(React.createElement(FateLibraryView, { char, onChange }));
-        const category = Array.from(host.querySelectorAll<HTMLButtonElement>('.fate-library-suits button')).find(button => button.textContent === '机会')!;
-        await act(async () => category.click());
-        expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(16);
-        expect(host.querySelector('.fate-library-category')?.textContent).toBe('机会');
-        expect(host.querySelector('.fate-library-meaning')?.textContent).toContain('局面');
-        expect(host.querySelector('.fate-settings-entry-body')).toBeNull();
+        await click('分类 · 全部分类');
+        expect(host.querySelectorAll('.fate-book-categories button')).toHaveLength(21);
+        await click('机会');
+        expect(host.querySelectorAll('.fate-book-card')).toHaveLength(6);
+        expect(host.querySelector('.fate-book-category-trigger')?.textContent).toBe('分类 · 机会');
+        const name = host.querySelector('.fate-book-name')!.textContent!;
+        await expand(name);
+        expect(host.querySelector('[role="dialog"]')).toBeNull();
+        expect(document.querySelector('.fate-book-meaning')?.textContent).toContain('局面');
+        await click(`放回${name}`); expect(document.querySelector('[role="dialog"]')).toBeNull();
     });
     it('原位编辑保存，拒绝重复名称，失败时保留填写内容', async () => {
         await render(React.createElement(FateLibraryView, { char, onChange }));
         await expand('转向'); await click('编辑因子');
-        expect(host.querySelector('.fate-settings-entry--open .fate-settings-entry-head')).toBeNull();
-        expect(host.querySelector('.fate-settings-entry--open > .fate-settings-editor')).toBeTruthy();
+        expect(document.querySelector('[aria-label="放回转向"]')).toBeNull();
+        expect(document.querySelector('[role="dialog"] .fate-book-editor')).toBeTruthy();
         await input('含义', '让日常多一个新的方向。'); await click('保存条目');
         expect(loadFateSettings(char.id).factors[0].meaning).toBe('让日常多一个新的方向。');
+        await click('放回转向');
         await click('添加因子'); await input('名称', '转向'); await input('含义', '重复检查'); await click('保存条目');
-        expect(host.querySelector('[role="alert"]')?.textContent).toContain('名称重复');
+        expect(document.querySelector('[role="alert"]')?.textContent).toContain('名称重复');
         await input('名称', '自定义小晴天');
         vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('full'); });
-        await click('保存条目'); expect(host.querySelector('[role="alert"]')?.textContent).toContain('保存失败');
-        expect(Array.from(host.querySelectorAll('input')).some(item => item.value === '自定义小晴天')).toBe(true);
+        await click('保存条目'); expect(document.querySelector('[role="alert"]')?.textContent).toContain('保存失败');
+        expect(Array.from(document.querySelectorAll('input')).some(item => item.value === '自定义小晴天')).toBe(true);
     });
     it('恢复内置因子保留非内置条目和停用状态，取消确认不保存', async () => {
         const settings = loadFateSettings(char.id);
@@ -94,6 +99,7 @@ describe('命运资料库粉色页面', () => {
         await render(React.createElement(FateLibraryView, { char, onChange })); await click('倾向 · 6');
         await expand('事业与求索'); await click('编辑倾向'); await input('含义', '认真探索'); await click('保存条目');
         expect(loadFateSettings(char.id).tendencies[0].meaning).toBe('认真探索');
+        await click('放回事业与求索');
         await input('URL', 'https://schedule.test'); await click('保存日程模型'); expect(onChange).not.toHaveBeenCalled();
         await input('Key', 'secret'); await input('模型名称', 'schedule'); await click('保存日程模型');
         expect(host.querySelector('input[type="password"]')).toBeTruthy();
@@ -129,9 +135,13 @@ describe('情绪独立页面', () => {
         const configured = { ...char, emotionConfig: { enabled: true, api: presets[0].config }, activeBuffs: [{ id: 'buff', name: 'joy', label: '心情亮亮的', intensity: 3 }] } as CharacterProfile;
         await render(React.createElement(FateEmotionView, { char: configured, apiPresets: presets, onSave, onClearBuffs: clear, onAddApiPreset: add }));
         expect(host.querySelector('.fate-settings-preset-trigger')?.textContent).toContain('轻快模型');
-        expect(host.textContent).toContain('心情亮亮的'); expect(host.textContent).toContain('强度 3 / 3');
+        expect(host.textContent).toContain('心情亮亮的');
+        expect(host.querySelector('.fate-sky-star')?.getAttribute('data-intensity')).toBe('3');
+        await click('心情亮亮的，强度 3 / 3');
+        expect(document.body.querySelector('.fate-sky-detail')?.textContent).toContain('强度 3 / 3');
         expect(host.querySelector('.fate-astrolabe')).toBeTruthy();
-        expect(host.querySelectorAll('.fate-emotion-dots [data-lit="true"]')).toHaveLength(3);
+        expect(document.body.querySelectorAll('.fate-emotion-dots [data-lit="true"]')).toHaveLength(3);
+        await click('关闭心情亮亮的');
         expect(host.querySelector('.fate-emotion-model')?.compareDocumentPosition(host.querySelector('.fate-emotion-current')!)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
         await input('模型名称', 'other'); await click('保留当前值'); expect((host.querySelectorAll('input')[2] as HTMLInputElement).value).toBe('fast-one');
         await click('保存为预设'); await input('预设名称', '新预设'); await click('确认保存预设'); expect(add).toHaveBeenCalledWith('新预设', presets[0].config);
