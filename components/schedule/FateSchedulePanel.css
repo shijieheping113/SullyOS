@@ -12,10 +12,10 @@
 .fate-panel__header>span{font-size:12px;color:var(--fate-muted)}
 /* 顶部左右等宽图像，正文占满整行；只有三张因子拥有小牌框。 */
 .fate-panel__activity{display:block;padding:12px 0 0;font-weight:400}
-.fate-panel__figures{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:end;padding:0}
+.fate-panel__figures{display:flex;justify-content:center;padding:0 0 14px}
 .fate-panel__companion{min-width:0;display:flex;flex-direction:column;align-items:center}
-.fate-panel__draw{width:100%;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:0;border:0;background:transparent;color:var(--fate-rose)}
-.fate-panel__cat{display:block;width:132px;max-width:100%;height:100px;stroke:var(--fate-rose);stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}
+.fate-panel__draw{display:flex;align-items:center;gap:3px;text-align:center;padding:0;border:0;background:transparent;color:var(--fate-rose);min-height:36px}
+.fate-panel__cat{display:block;width:43px;max-width:100%;height:30px;stroke:var(--fate-rose);stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .fate-panel__draw strong{display:block;font-size:11px;font-weight:400;line-height:1.6}
 .fate-panel__draw:disabled{opacity:1}
 .fate-panel__yarn{transform-origin:156px 69px;transition:transform .25s}
@@ -25,16 +25,26 @@
 .fate-panel--waiting .fate-panel__yarn{animation:fate-panel-yarn 1.25s ease-in-out infinite}
 .fate-panel__copy{min-width:0;text-align:left}
 .fate-panel__patron{display:flex;align-items:center;flex-direction:column;gap:8px;margin:0;padding:0;border:0;background:transparent;color:var(--fate-rose);min-width:0;cursor:pointer}
-.fate-panel__patron .fate-patron-art{width:94px;height:100px}
+.fate-panel__patron .fate-patron-art{width:80px;height:86px}
 .fate-panel__patron span{font:inherit;font-size:12px;line-height:1.6;color:var(--fate-rose)}
 .fate-panel__patron[aria-expanded=true] .fate-patron-art{animation:fate-patron-awaken .55s ease-out both}
-.fate-panel__divider{position:relative;width:58%;height:1px;margin:14px auto;background:#d8b8c8}
-.fate-panel__divider span{position:absolute;left:50%;top:50%;width:5px;height:5px;background:#f5edef;border:1px solid #b88ba0;transform:translate(-50%,-50%) rotate(45deg)}
-.fate-panel__activity h3{font:inherit;font-size:24px;font-weight:400;line-height:1.45}
-.fate-panel__timing{display:flex;justify-content:space-between;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:9px 0 0;font-size:11px;color:var(--fate-muted);font-variant-numeric:tabular-nums}
+.fate-panel__activity h3{font:inherit;font-size:23px;font-weight:400;line-height:1.45;text-align:center}
+.fate-panel__timing{display:flex;justify-content:center;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:9px 0 0;font-size:11px;color:var(--fate-muted);font-variant-numeric:tabular-nums}
+.fate-panel__timing .fate-panel__state::before{content:'·';margin-right:6px}
 .fate-panel__timing>span:first-child{font-size:12px;color:var(--fate-rose)}
 .fate-panel .fate-panel__location{font-size:12px;color:var(--fate-muted);margin-top:2px}
 .fate-panel .fate-panel__description{font-size:14px;line-height:1.95;font-weight:400;white-space:pre-wrap;margin-top:14px}
+.fate-panel__copy>.fate-panel__location{justify-content:center;text-align:center;margin-top:7px}
+.fate-panel__controls{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:28px}
+.fate-panel__controls .fate-panel__actions{flex-wrap:nowrap;align-items:center;gap:5px;margin:0}
+.fate-panel__controls .fate-panel__actions button:has(svg){width:auto;min-width:24px;padding:2px;font-size:12px;color:var(--fate-rose)}
+.fate-panel__controls .fate-panel__actions button svg{display:none}
+.fate-panel__controls button[aria-label="重看小剧场"]::after,.fate-panel__controls button[aria-label="进一步查看"]::after{content:'查看'}
+.fate-panel__controls button[aria-label="编辑活动"]::after{content:'编辑'}
+.fate-panel__controls button[aria-label="删除活动"]::after{content:'删除'}
+.fate-panel__actions .fate-panel__toggle,.fate-panel__toggle{display:flex;align-items:center;justify-content:center;border:0;background:transparent;min-width:36px;min-height:36px;padding:4px;cursor:pointer}
+.fate-panel__toggle>span{position:relative;width:28px;height:16px;border-radius:12px;background:var(--fate-rose)}
+.fate-panel__toggle>span::after{content:'';position:absolute;right:3px;top:3px;width:10px;height:10px;background:#f5edef;border-radius:50%}
 .fate-panel .fate-panel__state{font-size:11px;color:var(--fate-muted)}
 .fate-panel__actions{display:flex;flex-wrap:wrap;gap:4px 12px;grid-column:1/-1;justify-content:flex-end;margin-top:9px}
 .fate-panel__actions button{border:0;padding:6px 0;min-height:34px;background:transparent;color:var(--fate-ink);font-size:12px}
@@ -103,5 +113,5 @@
 @keyframes fate-patron-awaken{0%{transform:translateY(0) scale(1)}35%{transform:translateY(-5px) scale(1.06)}65%{transform:translateY(1px) scale(.99)}100%{transform:translateY(0) scale(1)}}
 @keyframes fate-panel-paw{0%,100%{transform:rotate(0)}45%{transform:rotate(-14deg)}}
 @keyframes fate-panel-yarn{0%,100%{transform:translateX(0) rotate(0)}45%{transform:translateX(7px) rotate(23deg)}}
-@media(max-width:360px){.fate-panel{padding-left:16px;padding-right:16px}.fate-panel.fate-panel--embedded{padding-left:8px;padding-right:8px}.fate-panel__activity h3{font-size:22px}.fate-panel__figures{gap:12px}.fate-panel__cat{height:88px}.fate-panel__patron .fate-patron-art{height:88px;width:82px}.fate-panel__deck{gap:6px}.fate-panel .fate-panel__card-art{width:50px;height:58px}.fate-panel__context{grid-template-columns:1fr}}
+@media(max-width:360px){.fate-panel{padding-left:16px;padding-right:16px}.fate-panel.fate-panel--embedded{padding-left:8px;padding-right:8px}.fate-panel__activity h3{font-size:21px}.fate-panel__deck{gap:6px}.fate-panel .fate-panel__card-art{width:50px;height:58px}.fate-panel__context{grid-template-columns:1fr}.fate-panel__controls{gap:4px}.fate-panel__controls .fate-panel__actions{gap:2px}.fate-panel__controls .fate-panel__actions button:has(svg){font-size:11px}.fate-panel__cat{width:39px}}
 @media(prefers-reduced-motion:reduce){.fate-panel *,.fate-panel *::before,.fate-panel *::after{animation:none!important;transition:none!important}.fate-panel__card:hover,.fate-panel__card--open,.fate-panel__draw:hover .fate-panel__yarn{transform:none}}

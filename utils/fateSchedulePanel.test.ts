@@ -47,7 +47,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
 
 describe('命运牌阵独立活动面板', () => {
-    it('顶部左猫右神、下方整行正文和因子，没有占星操作图', async () => {
+    it('顶部只有居中神像，小猫重Roll和操作在正文下方，因子位于末尾', async () => {
         await render();
         expect(host.textContent).not.toContain('换一副牌，重写本轮');
         expect(host.textContent).not.toContain('下一段，顺着线来');
@@ -56,9 +56,12 @@ describe('命运牌阵独立活动面板', () => {
         const companion = activity.querySelector('.fate-panel__companion')!;
         const copy = activity.querySelector('.fate-panel__copy')!;
         const figures = activity.querySelector('.fate-panel__figures')!;
-        expect(companion.parentElement).toBe(figures);
+        const controls = activity.querySelector('.fate-panel__controls')!;
+        expect(companion.parentElement).toBe(controls);
         expect(copy.parentElement).toBe(activity);
-        expect(companion.nextElementSibling?.className).toBe('fate-panel__patron');
+        expect(companion.nextElementSibling?.className).toBe('fate-panel__actions');
+        expect(figures.querySelector('.fate-panel__patron')).toBeTruthy();
+        expect(figures.querySelector('.fate-panel__cat')).toBeNull();
         expect(figures.parentElement).toBe(activity);
         expect(activity.querySelector('.fate-panel__orbit-map')).toBeNull();
         expect(companion.querySelector('.fate-panel__cat')).toBeTruthy();
@@ -92,11 +95,12 @@ describe('命运牌阵独立活动面板', () => {
         expect(host.textContent).toContain('经历与发现');
         expect(host.querySelector('.fate-panel__patron')?.getAttribute('aria-expanded')).toBe('false');
     });
-    it('三个行为图标在正文下方，点顶部神像看小算盘并返回原神像', async () => {
+    it('三个行为和重Roll同排在正文下方，点顶部神像看小算盘并返回原神像', async () => {
         await render();
         const actions = host.querySelector('.fate-panel__copy [aria-label="活动操作"]')!;
         expect(actions.querySelectorAll('button')).toHaveLength(3);
-        expect(actions.previousElementSibling?.className).toBe('fate-panel__description');
+        expect(actions.parentElement?.className).toBe('fate-panel__controls');
+        expect(actions.parentElement?.previousElementSibling?.className).toBe('fate-panel__description');
         const trigger = button('查看经历与发现的小算盘');
         const parent = trigger.parentElement;
         await click('查看经历与发现的小算盘');
@@ -234,6 +238,27 @@ describe('命运牌阵独立活动面板', () => {
         await render({ schedule: makeSchedule([current]) });
         await click('打开今日历史，共0项');
         expect(document.body.querySelector('.fate-panel__history-overlay')?.textContent).toContain('今天还没有更早的活动记录。');
+    });
+    it('今日历史同时纳入有小剧场和没有小剧场的已保存活动', async () => {
+        const unseen = { ...previous, activity: '没查看过的备考活动', theater: undefined, startsAt: NOW - 20_000_000 };
+        await render({ schedule: makeSchedule([unseen, previous, current]) });
+        await click('打开今日历史，共2项');
+        expect(document.body.querySelector('.fate-panel__history-page h3')?.textContent).toBe(previous.activity);
+        await click('下一页', document.body);
+        expect(document.body.querySelector('.fate-panel__history-page h3')?.textContent).toBe(unseen.activity);
+        await click('进一步查看', document.body.querySelector('.fate-panel__history-page')!);
+        expect(props.onPlayTheater).toHaveBeenCalledWith(0);
+    });
+    it('功能开关只在正文下方操作行，生成中禁止切换', async () => {
+        const onToggle = vi.fn();
+        await render({ onToggle });
+        const toggle = host.querySelector('[aria-label="切换命运日程"]') as HTMLButtonElement;
+        expect(toggle.closest('.fate-panel__controls')).toBeTruthy();
+        expect(host.querySelector('.fate-panel__toolbar [role="switch"]')).toBeNull();
+        await click('切换命运日程'); expect(onToggle).toHaveBeenCalledOnce();
+        await render({ isGenerating: true });
+        expect(toggle.disabled).toBe(true);
+        await click('切换命运日程'); expect(onToggle).toHaveBeenCalledOnce();
     });
     it('空态只发出生成请求，不伪造因子或活动', async () => {
         await render({ schedule: makeSchedule([{ ...current, theater: undefined }]) });

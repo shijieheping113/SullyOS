@@ -35,11 +35,11 @@ describe('命运牌面图案', () => {
         expect(reused.innerHTML).not.toBe(factor.querySelector('svg')!.innerHTML);
         expect(reused.querySelector('.fate-patron-art__halo')).toBeTruthy();
     });
-    it('六尊神像持物不同，不再复制因子图案', () => {
+    it('六尊神像的主体轮廓各不相同，不只更换持物或身份标记', () => {
         const bodies = ['career', 'relations', 'discovery', 'pleasure', 'life', 'chance'].map(tendencyId => {
             const node = document.createElement('div');
             node.innerHTML = renderToStaticMarkup(React.createElement(FatePatronArt, { tendencyId }));
-            return node.querySelector('svg')!.innerHTML;
+            return node.querySelector('svg path')!.getAttribute('d');
         });
         expect(new Set(bodies).size).toBe(6);
     });

@@ -157,6 +157,18 @@ describe('generateFateSchedule 重 Roll 请求与保存', () => {
         expect(stored.slots.slice(0, original.length)).toEqual(original);
         expect(mocks.save).toHaveBeenCalledTimes(1);
     });
+    it('不查看小剧场连续到期续写，所有已生成活动都直接保存在当天日程', async () => {
+        expect(stored.slots.every(s => !s.theater)).toBe(true);
+        const original = structuredClone(stored.slots);
+        vi.setSystemTime(NOW + 31 * MINUTE);
+        await generate(false);
+        vi.setSystemTime(NOW + 122 * MINUTE);
+        await generate(false);
+        expect(stored.slots).toHaveLength(original.length + 2);
+        expect(stored.slots.slice(0, original.length)).toEqual(original);
+        expect(stored.slots.every(s => !s.theater)).toBe(true);
+        expect(mocks.save).toHaveBeenCalledTimes(2);
+    });
 
     it('非强制请求遇到正在进行的日程直接返回，不请求模型也不保存', async () => {
         const original = structuredClone(stored);

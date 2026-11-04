@@ -11,6 +11,7 @@ export interface FateSchedulePanelProps {
     onEdit?: (index: number, slot: ScheduleSlot) => void | Promise<void>;
     onDelete?: (index: number) => void | Promise<void>;
     onReroll?: () => void;
+    onToggle?: () => void;
     onPlayTheater?: (index: number) => void;
     isGenerating?: boolean;
     isViewing?: boolean;
@@ -102,7 +103,7 @@ interface SlotSnapshot {
 }
 interface EditDraft extends SlotSnapshot { activity: string; description: string; location: string; home: string }
 
-const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, character, onEdit, onDelete, onReroll, onPlayTheater, isGenerating = false, isViewing = false, embedded = false }) => {
+const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, character, onEdit, onDelete, onReroll, onToggle, onPlayTheater, isGenerating = false, isViewing = false, embedded = false }) => {
     const [now, setNow] = useState(Date.now);
     const [draft, setDraft] = useState<EditDraft | null>(null);
     const [deleting, setDeleting] = useState<SlotSnapshot | null>(null);
@@ -157,10 +158,12 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         } catch { setError('活动保存失败，填写内容已保留，请重试。'); }
         finally { setIsSaving(false); }
     };
-    const actions = (item: ScheduleSlot, itemIndex: number) => <div className="fate-panel__actions" aria-label="活动操作">
+    const toggle = onToggle && <button type="button" className="fate-panel__toggle" role="switch" aria-checked="true" aria-label="切换命运日程" title="关闭命运日程" disabled={writesDisabled} onClick={onToggle}><span aria-hidden="true" /></button>;
+    const actions = (item: ScheduleSlot, itemIndex: number, withToggle = false) => <div className="fate-panel__actions" aria-label="活动操作">
         {onPlayTheater && <button type="button" aria-label={item.theater ? '重看小剧场' : '进一步查看'} title={item.theater ? '重看小剧场' : '进一步查看'} disabled={writesDisabled || (validStamp(item.startsAt) && item.startsAt > now)} onClick={() => onPlayTheater(itemIndex)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 12c6-9 14-9 20 0-6 9-14 9-20 0Z"/><circle cx="12" cy="12" r="3"/></svg><span className="fate-panel__action-name">{item.theater ? '重看小剧场' : '进一步查看'}</span></button>}
         {onEdit && <button type="button" aria-label="编辑活动" title="编辑活动" disabled={writesDisabled} onClick={() => startEdit(itemIndex)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 16 10-11 4 4L9 20H4l1-4Zm8-9 4 4M4 22h16"/></svg><span className="fate-panel__action-name">编辑活动</span></button>}
         {onDelete && <button type="button" aria-label="删除活动" title="删除活动" className="fate-panel__delete" disabled={writesDisabled} onClick={() => { setDeleting(snapshot(itemIndex)); setDraft(null); setError(''); setHistoryPage(null); }}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6m4-6v6"/></svg><span className="fate-panel__action-name">删除活动</span></button>}
+        {withToggle && toggle}
     </div>;
     const renderEditor = () => draft && <form className="fate-panel__editor" aria-label="编辑活动" onSubmit={event => { event.preventDefault(); saveEdit(); }}>
         <h3 ref={editorHeadingRef}>编辑活动</h3>
@@ -178,9 +181,9 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         </fieldset>
         {error && <p className="fate-panel__error" role="alert">{error}</p>}
     </form>;
-    const drawButton = <button className="fate-panel__draw" type="button" disabled={!onReroll || writesDisabled} onClick={() => { if (!writesDisabled) onReroll?.(); }}>
+    const drawButton = <button className="fate-panel__draw" type="button" aria-label={isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'} disabled={!onReroll || writesDisabled} onClick={() => { if (!writesDisabled) onReroll?.(); }}>
         <CatAndYarn />
-        <span><strong>{isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'}</strong></span>
+        <span><strong>{isGenerating ? '牵线中…' : isViewing ? '查看生成中…' : slot ? '重 Roll' : '生成本轮'}</strong></span>
     </button>;
     return (
         <div className={`fate-panel ${embedded ? 'fate-panel--embedded' : ''} ${isGenerating ? 'fate-panel--waiting' : ''}`} aria-label="命运牌阵" aria-busy={busy || isSaving}>
@@ -191,21 +194,20 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
             {slot ? <>
                 <article className="fate-panel__activity" aria-label="本轮活动">
                     {draft?.index === index ? renderEditor() : <>
-                    <div className="fate-panel__figures"><div className="fate-panel__companion">{drawButton}</div>
+                    <div className="fate-panel__figures">
                     <button type="button" className="fate-panel__patron" disabled={!slot.fate} aria-haspopup="dialog" aria-expanded={rationaleOpen} aria-label={`查看${slot.fate?.tendency.name || '命运之神'}的小算盘`} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setRationaleOpen(true); }}><FatePatronArt tendencyId={slot.fate?.tendency.id} /><span>{slot.fate?.tendency.name || '未记录'}</span></button></div>
-                    <div className="fate-panel__divider" aria-hidden="true"><span /></div>
                     <div className="fate-panel__copy">
                     <h3>{slot.activity}</h3>
                     <div className="fate-panel__timing"><span>{range(slot)}</span><span className="fate-panel__state">{slotState(slot, now)}</span></div>
                     <p className="fate-panel__location"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
                     {slot.description && <p className="fate-panel__description">{slot.description}</p>}
-                    {actions(slot, index)}
+                    <div className="fate-panel__controls"><div className="fate-panel__companion">{drawButton}</div>{actions(slot, index, true)}</div>
                     </div>
                     </>}
                 </article>
                 <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} rationaleOpen={rationaleOpen} onRationaleClose={() => setRationaleOpen(false)} />
                 <p className="fate-panel__date">{schedule?.date} · 角色当地时间</p>
-            </> : <div className="fate-panel__empty">{drawButton}<div><h3>还没有展开的生活片段</h3><p>抽取三张因子牌，生成本轮日程。</p></div></div>}
+            </> : <div className="fate-panel__empty">{drawButton}<div><h3>还没有展开的生活片段</h3><p>抽取三张因子牌，生成本轮日程。</p></div>{toggle}</div>}
             {deleting && <div className="fate-panel__confirm" role="group" aria-label="删除活动确认">
                 <p>删除活动：{JSON.parse(deleting.original).activity}？日程与小剧场记录都会删除。</p>
                 <div className="fate-panel__actions"><button type="button" disabled={writesDisabled} className="fate-panel__delete" onClick={async () => {

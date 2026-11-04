@@ -38,8 +38,7 @@ const FateScheduleSuite: React.FC<FateScheduleSuiteProps> = props => {
                 <button type="button" key={item.id} aria-pressed={tab === item.id} aria-controls={`fate-suite-${item.id}`} onClick={() => setTab(item.id)}>{item.name}</button>)}
         </nav>
         {tab === 'schedule' && <section id="fate-suite-schedule" aria-label="命运日程">
-            <div className="fate-suite__switch-row"><span>{props.character.name}的生活线</span><button type="button" role="switch" aria-checked={props.enabled} aria-label="切换命运日程" disabled={!props.onToggle || busy} onClick={props.onToggle}><span />{props.enabled ? '牵着呢' : '歇会儿'}</button></div>
-            {props.enabled ? <FateSchedulePanel embedded character={props.character} schedule={props.schedule?.mode === 'fate' ? props.schedule : null} onEdit={props.onEdit} onDelete={props.onDelete} onReroll={props.onReroll} onPlayTheater={props.onPlayTheater} isGenerating={props.isGenerating} isViewing={props.isViewing} />
+            {props.enabled ? <FateSchedulePanel embedded character={props.character} schedule={props.schedule?.mode === 'fate' ? props.schedule : null} onToggle={props.onToggle} onEdit={props.onEdit} onDelete={props.onDelete} onReroll={props.onReroll} onPlayTheater={props.onPlayTheater} isGenerating={props.isGenerating} isViewing={props.isViewing} />
                 : <div className="fate-suite__rest"><h2>毛线球先睡一会儿</h2><p>日程已关闭，情绪照自己的开关走。</p><button type="button" disabled={!props.onToggle || busy} onClick={props.onToggle}>牵起生活线</button></div>}
         </section>}
         {tab === 'library' && <section id="fate-suite-library" aria-label="命运牌库"><FateLibraryView char={props.character} onChange={props.onChange} isBusy={busy} /></section>}

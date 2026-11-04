@@ -17,6 +17,16 @@ describe('命运牌阵抽取与分时段判断', () => {
         expect(task).not.toContain('每天只能');
         expect(task).not.toContain('一天只能');
     });
+    it('持续目标和明确聊天约定参与构思，同时保留正常生活并服从最新更改', () => {
+        const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'discovery', name: '经历与发现', meaning: '发现变化' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '角色正在备考。用户约好周六一起去天文馆。', new Date('2026-11-04T13:00:00'));
+        expect(task).toContain('角色正在备考。用户约好周六一起去天文馆。');
+        expect(task).toContain('辨认仍在持续的长期目标与已经确认的约定');
+        expect(task).toContain('阶段、已有进度、截止时间和下一步需要投入的时间');
+        expect(task).toContain('同时保留休息、饮食、人际与其他正常生活');
+        expect(task).toContain('与用户明确约好的时间和事项优先留出空间');
+        expect(task).toContain('更改、完成、取消的计划按最新事实处理');
+        expect(task).toContain('不要求每轮都安排同一目标');
+    });
     it('重 Roll 从材料移除当前轮，保留更早活动且不修改原记录', () => {
         const schedule = { slots: [
             { startsAt: 1000, endsAt: 2000, activity: '真实更早活动' },

@@ -28,6 +28,15 @@ describe('整套命运窗口', () => {
         expect(props.onToggle).not.toHaveBeenCalled();
         await click('牌库'); expect(host.textContent).toContain('牌库内容');
     });
+    it('顶栏不放日程开关，开启时只在内容操作区，关闭时只留原开启入口', async () => {
+        await render();
+        expect(host.querySelector('.fate-suite__tabs [role="switch"]')).toBeNull();
+        expect(host.querySelector('.fate-suite__switch-row')).toBeNull();
+        expect(host.querySelectorAll('[aria-label="切换命运日程"]')).toHaveLength(1);
+        props.enabled = false; await render();
+        expect(host.querySelector('[role="switch"]')).toBeNull();
+        await click('牵起生活线'); expect(props.onToggle).toHaveBeenCalledOnce();
+    });
     it('命运日程内嵌，不重复标题或原版日程表', async () => {
         await render();
         expect(host.querySelectorAll('h1')).toHaveLength(0);

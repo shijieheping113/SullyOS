@@ -17,18 +17,10 @@
 .fate-dialog__mode button:disabled { cursor:wait; opacity:.65; }
 .fate-dialog button:focus-visible { outline:2px solid #85495d; outline-offset:3px; }
 .fate-suite { position:relative;font-size:14px; line-height:1.65; min-width:0; overflow-wrap:anywhere; }
-.fate-suite:has(.fate-suite__switch-row) .fate-suite__tabs { padding-right:88px;gap:8px; }
 .fate-suite__tabs { display:flex; gap:16px; margin-bottom:2px; }
 .fate-suite__tabs button { position:relative; min-height:42px; flex:1; border:0; padding:8px 0; background:transparent; color:#59636f; font-size:14px; cursor:pointer; }
 .fate-suite__tabs button[aria-pressed="true"] { color:#85495d; font-weight:650; }
 .fate-suite__tabs button[aria-pressed="true"]::after { content:''; width:20px; height:3px; border-radius:2px; background:#85495d; position:absolute; bottom:0; left:calc(50% - 10px); }
-.fate-suite__switch-row { position:absolute;top:5px;right:0;display:flex;align-items:center;margin:0; }
-.fate-suite__switch-row>span { display:none; }
-.fate-suite__switch-row button { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:#59636f; min-height:32px; font-size:12px; cursor:pointer; }
-.fate-suite__switch-row button>span { width:30px; height:18px; background:#cbbbc1; border-radius:12px; position:relative; }
-.fate-suite__switch-row button>span::after { content:''; position:absolute; width:12px; height:12px; top:3px; left:3px; background:#f5edef; border-radius:50%; }
-.fate-suite__switch-row button[aria-checked="true"]>span { background:#85495d; }
-.fate-suite__switch-row button[aria-checked="true"]>span::after { left:15px; }
 .fate-suite__rest { padding:36px 0; }
 .fate-suite__rest h2 { font-size:20px; margin:0 0 12px; }
 .fate-suite__rest p { color:#59636f; margin:0 0 20px; }
