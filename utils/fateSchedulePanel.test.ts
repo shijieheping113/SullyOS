@@ -47,6 +47,15 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
 
 describe('命运牌阵独立活动面板', () => {
+    it('删除两句无用说明，时间位于活动名下方，保留左侧猫咪和三张牌', async () => {
+        await render();
+        expect(host.textContent).not.toContain('换一副牌，重写本轮');
+        expect(host.textContent).not.toContain('下一段，顺着线来');
+        expect(host.querySelector('.fate-panel__cat')).toBeTruthy();
+        expect(host.querySelectorAll('.fate-panel__spread .fate-panel__card')).toHaveLength(3);
+        const activity = host.querySelector('[aria-label="本轮活动"]')!;
+        expect(activity.querySelector('h3')?.nextElementSibling?.className).toBe('fate-panel__timing');
+    });
     it('根据真实时间展示当前活动、三张真实因子牌、倾向和人物方向', async () => {
         await render();
         expect(host.querySelector('h1')?.textContent).toBe('命运牌阵');
@@ -110,7 +119,7 @@ describe('命运牌阵独立活动面板', () => {
         expect(form().querySelector('fieldset')?.disabled).toBe(true);
     });
     it('失败后只恢复可点击状态，不自行换牌；成功传入新活动后才换牌', async () => {
-        await render(); await click('拨拨毛线 · 重 Roll换一副牌，重写本轮');
+        await render(); await click('拨拨毛线 · 重 Roll');
         expect(props.onReroll).toHaveBeenCalledOnce();
         await render({ isGenerating: true }); await render({ isGenerating: false });
         expect(host.querySelector('.fate-panel__deck')?.textContent).toContain('地图');
@@ -139,7 +148,7 @@ describe('命运牌阵独立活动面板', () => {
         await act(async () => { vi.advanceTimersByTime(3_600_001); });
         expect(host.querySelector('[aria-label="本轮活动"]')?.textContent).toContain('已结束 · 待续写');
         expect(host.querySelector('[aria-label="本轮活动"]')?.textContent).toContain(current.activity);
-        expect(host.querySelector('.fate-panel__continuation')?.getAttribute('title')).toBe('本轮结束后自动续写');
+        expect(host.querySelector('.fate-panel__continuation')).toBeNull();
     });
     it('历史默认折叠，历史小剧场使用真实下标，删除必须确认', async () => {
         await render();
@@ -168,7 +177,7 @@ describe('命运牌阵独立活动面板', () => {
         await click('进一步查看'); expect(props.onPlayTheater).toHaveBeenCalledWith(0);
         await render({ schedule: null }); expect(host.querySelector('.fate-panel__card')).toBeNull();
         expect(host.textContent).toContain('还没有展开的生活片段');
-        await click('拨拨毛线 · 生成本轮三张牌，一段新生活'); expect(props.onReroll).toHaveBeenCalledOnce();
+        await click('拨拨毛线 · 生成本轮'); expect(props.onReroll).toHaveBeenCalledOnce();
         await render({ isGenerating: true }); expect(host.querySelector('.fate-panel__card')).toBeNull();
     });
     it('空白活动和保存错误通过alert提示，不丢失编辑内容', async () => {

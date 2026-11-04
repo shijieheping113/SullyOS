@@ -1,6 +1,7 @@
 import React, { useId, useState } from 'react';
 import type { TheaterLine } from '../../types';
 import './FateTheater.css';
+import FateTarotArt from './FateTarotArt';
 
 export interface FateTheaterCardProps {
     activity: string;
@@ -40,8 +41,10 @@ const FateTheaterCard: React.FC<FateTheaterCardProps> = ({
     const safeLines = Array.isArray(lines) ? lines : [];
     const hasDetails = safeLines.length > 3 || !!factors?.length || !!tendencyName;
     return <article className="fate-theater-card" aria-label="命运小剧场">
-        <h3 className="fate-theater-card-title">偷看这一刻</h3>
+        <div className="fate-theater-card-crown" aria-hidden="true"><span /><FateTarotArt factor={factors?.[0]} /><span /></div>
+        <h3 className="fate-theater-card-title">命运牌阵 · 小剧场</h3>
         <FateTheaterDetails activity={activity} slotTime={slotTime} endTime={endTime} location={location} />
+        {!!factors?.length && <div className="fate-theater-seals" aria-label="本轮因子">{factors.map((factor, index) => <span key={`${factor.id}:${index}`}><FateTarotArt factor={factor} /><span>{factor.name}</span></span>)}</div>}
         <p className="fate-theater-awareness">{exposed ? 'TA 已察觉你在看' : 'TA 不知情 · 不知道你看了'}</p>
         <div id={contentId}>
             {safeLines.length ? (expanded ? safeLines : safeLines.slice(0, 3)).map((line, index) =>

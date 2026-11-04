@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import './FateSchedulePanel.css';
+import FateTarotArt from './FateTarotArt';
 
 export interface FateSchedulePanelProps {
     embedded?: boolean;
@@ -53,23 +54,6 @@ function CatAndYarn() {
     );
 }
 
-function CardDrawing({ index }: { index: number }) {
-    return (
-        <svg className="fate-panel__card-art" viewBox="0 0 72 66" fill="none" aria-hidden="true">
-            {index === 0 ? <>
-                <circle cx="36" cy="29" r="15" /><circle cx="36" cy="29" r="9" />
-                <path d="M36 7V2m0 54v-5M14 29H9m54 0h-5M20 13l-4-4m40 40-4-4M52 13l4-4M20 45l-4 4M31 59h10" />
-            </> : index === 1 ? <>
-                <path d="M46 7c-20 3-26 31-3 40C14 50 9 16 32 8M50 20l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" />
-                <path d="M25 57h26m-20 5h14M16 9v6m-3-3h6" />
-            </> : <>
-                <path d="M36 57V27m0 13C16 39 14 24 17 18c13 0 21 7 19 22Zm0 8c18-1 22-14 20-21-13-1-22 7-20 21ZM22 58c8-5 22-5 29 0" />
-                <path d="m36 5 2 7 8 2-8 2-2 8-2-8-8-2 8-2ZM55 10v6m-3-3h6" />
-            </>}
-        </svg>
-    );
-}
-
 function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string }) {
     const [expanded, setExpanded] = useState<number | null>(null);
     const factors = slot.fate?.factors || [];
@@ -84,9 +68,9 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
                         aria-label={`${index === 0 ? '主因子' : `副因子${index}`}：${factor.name}，查看含义`}
                         onClick={() => setExpanded(expanded === index ? null : index)}>
                         <span className="fate-panel__card-role">{index === 0 ? '主因子' : `副因子${index}`}</span>
-                        <CardDrawing index={index} />
+                        <FateTarotArt factor={factor} className="fate-panel__card-art" />
                         <strong>{factor.name}</strong>
-                        <span className="fate-panel__card-hint">{expanded === index ? '收起含义' : '翻翻牌底'}</span>
+                        <span className="fate-panel__card-hint">{expanded === index ? '收起含义' : '查看含义'}</span>
                     </button>
                 ))}
             </div>
@@ -95,9 +79,9 @@ function FateCards({ slot, identity }: { slot: ScheduleSlot; identity: string })
                 <strong>{factors[expanded].name}</strong><p>{factors[expanded].meaning}</p>
             </div>}
             {slot.fate && <div className="fate-panel__context">
-                <div><span className="fate-panel__label">本轮倾向</span><strong>{slot.fate.tendency.name}</strong><p>{slot.fate.tendency.meaning}</p></div>
+                <div><span className="fate-panel__label">本轮倾向</span><strong>{slot.fate.tendency.name}</strong></div>
                 <div><span className="fate-panel__label">人物方向</span><strong>{PEOPLE[slot.fate.peopleDirection] || '未记录'}</strong></div>
-                <details className="fate-panel__rationale"><summary>命运之神的小算盘</summary><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></details>
+                <details className="fate-panel__rationale"><summary>命运之神的小算盘</summary><p>{slot.fate.tendency.meaning}</p><p>{slot.fate.rationale || '本轮没有保存设计说明。'}</p></details>
             </div>}
         </section>
     );
@@ -191,23 +175,23 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
             {!embedded && <header className="fate-panel__header"><h1>命运牌阵</h1><span>{character?.name || '角色'}的生活片段</span></header>}
             <button className="fate-panel__draw" type="button" disabled={!onReroll || writesDisabled} onClick={() => { if (!writesDisabled) onReroll?.(); }}>
                 <CatAndYarn />
-                <span><strong>{isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'}</strong>
-                    <span>{isGenerating ? '等生活落笔，原牌先留着' : isViewing ? '小剧场正在展开，原牌不变' : slot ? '换一副牌，重写本轮' : '三张牌，一段新生活'}</span></span>
+                <span><strong>{isGenerating ? '猫爪正在牵线…' : isViewing ? '进一步查看生成中…' : slot ? '拨拨毛线 · 重 Roll' : '拨拨毛线 · 生成本轮'}</strong></span>
             </button>
-            <p className="fate-panel__continuation" role="status" title="本轮结束后自动续写">{isGenerating ? '生成中，完成后才换牌。' : isViewing ? '小剧场正悄悄展开…' : '下一段，顺着线来。'}</p>
+            {(isGenerating || isViewing) && <p className="fate-panel__continuation" role="status">{isGenerating ? '生成中，完成后才换牌。' : '小剧场正在生成。'}</p>}
 
-            {slot ? <>
+            {slot ? <div className="fate-panel__spread">
                 <article className="fate-panel__activity" aria-label="本轮活动">
                     {draft?.index === index ? renderEditor() : <>
-                    <div className="fate-panel__timing"><span>{slotState(slot, now)}</span><span>{range(slot)} · 角色当地时间</span></div>
+                    <div className="fate-panel__state">{slotState(slot, now)}</div>
                     <h3>{slot.activity}</h3>
+                    <div className="fate-panel__timing"><span>{range(slot)}</span><span>角色当地时间</span></div>
                     <p className="fate-panel__location">{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
                     {slot.description && <p className="fate-panel__description">{slot.description}</p>}
                     {actions(slot, index)}
                     </>}
                 </article>
                 <FateCards slot={slot} identity={`${schedule?.id}:${slot.startsAt}:${JSON.stringify(slot.fate)}`} />
-            </> : <div className="fate-panel__empty"><h3>还没有展开的生活片段</h3><p>拨拨毛线，等三张牌落下。生成失败可以再试一次。</p></div>}
+            </div> : <div className="fate-panel__empty"><FateTarotArt /><h3>还没有展开的生活片段</h3><p>点猫咪旁的生成本轮，抽取三张因子牌。</p></div>}
             {deleting && <div className="fate-panel__confirm" role="group" aria-label="删除活动确认">
                 <p>删除活动：{JSON.parse(deleting.original).activity}？日程与小剧场记录都会删除。</p>
                 <div className="fate-panel__actions"><button type="button" disabled={writesDisabled} className="fate-panel__delete" onClick={async () => {

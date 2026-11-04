@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, ApiPreset, APIConfig } from '../../types';
 import { isEmotionFeatureOn } from '../../utils/scheduleFeature';
 import './FateSettingsViews.css';
+import { FateAstrolabe } from './FateTarotArt';
 
 export interface FateEmotionViewProps {
     char: CharacterProfile;
@@ -42,11 +43,16 @@ export default function FateEmotionView({ char, apiPresets, onSave, onClearBuffs
         catch { if (currentCharacter.current === charId) setError(failure); return false; }
         finally { if (currentCharacter.current === charId) setSaving(false); }
     };
-    return <section className="fate-settings-view" aria-label="情绪设置">
-        <header className="fate-settings-heading"><h2>情绪底色</h2><button type="button" className="fate-settings-switch" role="switch" aria-label="情绪独立开关" aria-checked={emotionOn} disabled={busy} onClick={() => { void perform(() => onSave({ ...char.emotionConfig, enabled: !emotionOn }), emotionOn ? '情绪已关闭，日程保持不变。' : '情绪已开启，日程保持不变。'); }}><span /></button></header>
+    return <section className="fate-settings-view fate-emotion" aria-label="情绪设置">
+        <header className="fate-settings-heading"><h2>情绪星盘</h2><button type="button" className="fate-settings-switch" role="switch" aria-label="情绪独立开关" aria-checked={emotionOn} disabled={busy} onClick={() => { void perform(() => onSave({ ...char.emotionConfig, enabled: !emotionOn }), emotionOn ? '情绪已关闭，日程保持不变。' : '情绪已开启，日程保持不变。'); }}><span /></button></header>
         <p className="fate-settings-meta">{emotionOn ? '情绪已开启' : '情绪已关闭，不再生成或使用情绪状态'}{dirty ? ' · 模型尚未保存' : ''}</p>
         {error && <p role="alert" className="fate-settings-error">{error}</p>}{notice && <p role="status" className="fate-settings-meta">{notice}</p>}
-        <div className="fate-settings-section">
+        <div className="fate-emotion-sky"><FateAstrolabe /><p>{char.name}</p><span>{char.activeBuffs?.length ? `${char.activeBuffs.length} 种情绪正在停留` : '还没有记录下来的情绪'}</span></div>
+        <div className="fate-settings-section fate-emotion-current"><div className="fate-settings-summary"><h3>当前情绪</h3>{!!char.activeBuffs?.length && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`清除${char.name}的全部 ${char.activeBuffs?.length} 个当前情绪？清除后无法恢复。`)) void perform(onClearBuffs, '当前情绪已清除。', '清除情绪失败，请重试。'); }}>清除情绪</button>}</div>
+            {char.activeBuffs?.length ? <div className="fate-settings-buffs">{char.activeBuffs.map(buff => <div className="fate-settings-buff" key={buff.id}><div className="fate-emotion-star" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="m16 3 3 10 10 3-10 3-3 10-3-10-10-3 10-3Z" /></svg></div><div><span>{buff.emoji} {buff.label}</span>{buff.description && <p className="fate-settings-meta">{buff.description}</p>}</div><span className="fate-emotion-strength"><span className="fate-emotion-dots" aria-hidden="true">{[1, 2, 3].map(level => <i key={level} data-lit={level <= buff.intensity} />)}</span><span className="fate-settings-meta" aria-label={`强度 ${buff.intensity} / 3`}>强度 {buff.intensity} / 3</span></span></div>)}</div> : <p className="fate-settings-empty">还没有情绪，聊聊天再来看看。</p>}
+        </div>
+        <details className="fate-settings-section fate-emotion-model" open={dirty || picker || presetName !== null || undefined}>
+            <summary>情绪专用模型<span>{modelLabel}</span></summary>
             <div className="fate-settings-summary"><h3>情绪专用模型</h3><span className="fate-settings-meta">全部留空，用主模型</span></div>
             <button type="button" className="fate-settings-preset-trigger" aria-label="搜索 / 选择模型预设" aria-expanded={picker} disabled={busy} onClick={() => setPicker(!picker)}>搜索 / 选择模型预设<span>{modelLabel}</span></button>
             {picker && <div className="fate-settings-picker"><label className="fate-settings-field">搜索预设<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="名称或模型名称" /></label><div className="fate-settings-preset-list">{presets.map(preset => <button type="button" key={preset.id} disabled={busy} onClick={() => { setApi({ baseUrl: preset.config.baseUrl, apiKey: preset.config.apiKey, model: preset.config.model }); setDirty(true); setPicker(false); setError(''); setNotice('预设已载入，保存后生效。'); }}><span>{preset.name}</span><span className="fate-settings-meta">{preset.config.model || '未填写模型'}</span></button>)}{!presets.length && <p className="fate-settings-empty">没有匹配的预设。</p>}</div></div>}
@@ -59,9 +65,6 @@ export default function FateEmotionView({ char, apiPresets, onSave, onClearBuffs
                 const values = completeApi(); if (!values) return; if (!values.baseUrl) { setError('保存预设需要完整填写 URL、Key 和模型名称。'); return; }
                 if (await perform(() => onAddApiPreset(name, values), '模型预设已保存，角色模型仍需单独保存。')) setPresetName(null);
             }}>确认保存预设</button></div>}
-        </div>
-        <div className="fate-settings-section"><div className="fate-settings-summary"><h3>当前情绪</h3>{!!char.activeBuffs?.length && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`清除${char.name}的全部 ${char.activeBuffs?.length} 个当前情绪？清除后无法恢复。`)) void perform(onClearBuffs, '当前情绪已清除。', '清除情绪失败，请重试。'); }}>清除情绪</button>}</div>
-            {char.activeBuffs?.length ? <div className="fate-settings-buffs">{char.activeBuffs.map(buff => <div className="fate-settings-buff" key={buff.id}><div><span>{buff.emoji} {buff.label}</span>{buff.description && <p className="fate-settings-meta">{buff.description}</p>}</div><span className="fate-settings-meta" aria-label={`强度 ${buff.intensity} / 3`}>强度 {buff.intensity} / 3</span></div>)}</div> : <p className="fate-settings-empty">还没有情绪，聊聊天再来看看。</p>}
-        </div>
+        </details>
     </section>;
 }

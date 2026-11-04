@@ -69,7 +69,7 @@ describe('命运小剧场播放器', () => {
         expect(host.textContent).toContain(lines[0].text);
         await act(async () => vi.advanceTimersByTime(15000));
         expect(host.textContent).toContain(lines[3].text);
-        expect(host.textContent).toContain('这一刻，读完了。');
+        expect(host.querySelector('[aria-label="小剧场已读完"]')).toBeTruthy();
         expect(vi.getTimerCount()).toBe(0);
     });
 
@@ -177,6 +177,8 @@ describe('命运小剧场私聊卡片', () => {
         };
         const original = JSON.stringify(metadata);
         await act(async () => root.render(React.createElement(FateTheaterCard, metadata)));
+        expect(host.querySelector('.fate-theater-card-crown .fate-tarot-art')).toBeTruthy();
+        expect(host.querySelector('[aria-label="本轮因子"]')?.textContent).toContain('雨后');
         expect(host.textContent).toContain('TA 不知情');
         expect(host.textContent).toContain('14:20 — 15:10');
         expect(host.textContent).not.toContain(lines[3].text);

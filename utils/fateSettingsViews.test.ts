@@ -45,6 +45,8 @@ describe('命运资料库粉色页面', () => {
         await render(React.createElement(FateLibraryView, { char, onChange }));
         expect(host.textContent).toContain('因子 · 320');
         expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(24);
+        expect(host.querySelector('.fate-library-meaning')?.textContent).toBe('原本的推进方向出现值得重新考虑的偏转。');
+        expect(host.querySelector('.fate-settings-entry-head')?.getAttribute('aria-expanded')).toBe('false');
         expect(host.querySelector('header')?.nextElementSibling?.tagName).toBe('DETAILS');
         expect(host.querySelector('details')?.open).toBe(false);
         await click('再看 24 项'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(48);
@@ -55,9 +57,21 @@ describe('命运资料库粉色页面', () => {
         await input('启用状态', 'enabled'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(0);
         await input('启用状态', 'disabled'); expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(1);
     });
+    it('点图案分类可直接浏览对应牌册，含义无需展开即可阅读', async () => {
+        await render(React.createElement(FateLibraryView, { char, onChange }));
+        const category = Array.from(host.querySelectorAll<HTMLButtonElement>('.fate-library-suits button')).find(button => button.textContent === '机会')!;
+        await act(async () => category.click());
+        expect(host.querySelectorAll('.fate-settings-entry')).toHaveLength(16);
+        expect(host.querySelector('.fate-library-category')?.textContent).toBe('机会');
+        expect(host.querySelector('.fate-library-meaning')?.textContent).toContain('局面');
+        expect(host.querySelector('.fate-settings-entry-body')).toBeNull();
+    });
     it('原位编辑保存，拒绝重复名称，失败时保留填写内容', async () => {
         await render(React.createElement(FateLibraryView, { char, onChange }));
-        await expand('转向'); await click('编辑因子'); await input('含义', '让日常多一个新的方向。'); await click('保存条目');
+        await expand('转向'); await click('编辑因子');
+        expect(host.querySelector('.fate-settings-entry--open .fate-settings-entry-head')).toBeNull();
+        expect(host.querySelector('.fate-settings-entry--open > .fate-settings-editor')).toBeTruthy();
+        await input('含义', '让日常多一个新的方向。'); await click('保存条目');
         expect(loadFateSettings(char.id).factors[0].meaning).toBe('让日常多一个新的方向。');
         await click('添加因子'); await input('名称', '转向'); await input('含义', '重复检查'); await click('保存条目');
         expect(host.querySelector('[role="alert"]')?.textContent).toContain('名称重复');
@@ -116,6 +130,9 @@ describe('情绪独立页面', () => {
         await render(React.createElement(FateEmotionView, { char: configured, apiPresets: presets, onSave, onClearBuffs: clear, onAddApiPreset: add }));
         expect(host.querySelector('.fate-settings-preset-trigger')?.textContent).toContain('轻快模型');
         expect(host.textContent).toContain('心情亮亮的'); expect(host.textContent).toContain('强度 3 / 3');
+        expect(host.querySelector('.fate-astrolabe')).toBeTruthy();
+        expect(host.querySelectorAll('.fate-emotion-dots [data-lit="true"]')).toHaveLength(3);
+        expect(host.querySelector('.fate-emotion-model')?.compareDocumentPosition(host.querySelector('.fate-emotion-current')!)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
         await input('模型名称', 'other'); await click('保留当前值'); expect((host.querySelectorAll('input')[2] as HTMLInputElement).value).toBe('fast-one');
         await click('保存为预设'); await input('预设名称', '新预设'); await click('确认保存预设'); expect(add).toHaveBeenCalledWith('新预设', presets[0].config);
         await click('留空用主模型'); await click('保存情绪模型'); expect(onSave).toHaveBeenLastCalledWith({ enabled: true, api: undefined });

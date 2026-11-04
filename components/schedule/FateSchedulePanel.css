@@ -92,6 +92,47 @@
 .fate-panel--embedded .fate-panel__actions { margin-top:6px; }
 .fate-panel--embedded .fate-panel__deck { margin-top:12px; }
 .fate-panel--embedded .fate-panel__card-art { height:50px; margin:5px 0; }
+.fate-panel__spread{position:relative;padding:20px 12px 12px;border:1px solid #cdb2be;border-radius:80px 80px 12px 12px;background:#f5edef}
+.fate-panel__spread::before{content:'';position:absolute;inset:5px;border:1px solid #e0cad3;border-radius:75px 75px 8px 8px;pointer-events:none}
+.fate-panel__draw{padding:2px 4px 8px;justify-content:space-between}
+.fate-panel__draw strong{font-size:13px;font-weight:500}
+.fate-panel__cat{flex-basis:44%;max-width:156px}
+.fate-panel__activity{text-align:center;background:transparent}
+.fate-panel__activity h3{font-family:'Songti SC',SimSun,serif;font-size:22px;font-weight:600;padding:0 5px}
+.fate-panel__state{font-size:12px;color:#85495d;margin:0 0 8px}
+.fate-panel__timing{justify-content:center;gap:6px;margin:8px 0 0;font-size:12px}
+.fate-panel__timing>span:first-child{font-size:13px;font-weight:400}
+.fate-panel .fate-panel__location{font-size:12px;color:#67525e;margin-top:3px}
+.fate-panel .fate-panel__description{font-size:14px;line-height:1.9;margin:12px 5px 0;text-align:left}
+.fate-panel__activity .fate-panel__actions{justify-content:center;gap:4px}
+.fate-panel__activity .fate-panel__actions button{font-size:12px;min-height:38px;padding:6px}
+.fate-panel__activity .fate-panel__delete{margin-left:0;color:#765061}
+.fate-panel__activity .fate-panel__actions button:first-child{color:#85495d;font-weight:600}
+.fate-panel__deck{gap:7px;margin:12px 0 0;grid-template-columns:1fr 1fr 1fr;align-items:center}
+.fate-panel__card{padding:9px 5px 10px;border-radius:7px;background:#fbf5f6;min-height:162px}
+.fate-panel__card--lead{min-height:172px;background:#fff9fa}
+.fate-panel__card-role{font-size:12px}
+.fate-panel .fate-panel__card-art,.fate-panel--embedded .fate-panel__card-art{width:68px;height:78px;margin:4px 0}
+.fate-panel__card strong,.fate-panel__card--lead strong{font-family:'Songti SC',SimSun,serif;font-size:15px;margin:auto 0 4px}
+.fate-panel__card-hint{font-size:11px}
+.fate-panel__context{grid-template-columns:1fr auto;gap:8px;margin:14px 4px 0;text-align:left}
+.fate-panel__context strong{font-size:13px}
+.fate-panel__label{font-size:11px;display:inline;margin-right:5px}
+.fate-panel__rationale{grid-column:1/-1;text-align:center}
+.fate-panel__rationale summary{font-size:12px;min-height:34px;padding:5px 0}
+.fate-panel__rationale p{text-align:left}
+.fate-panel__editor{text-align:left;position:relative;z-index:1;background:transparent}
+.fate-panel__editor .fate-panel__actions button{font-size:13px;min-height:44px}
+.fate-panel__editor .fate-panel__actions button.fate-panel__save{color:#fff;background:#85495d}
+.fate-panel__draw{min-height:68px}
+.fate-panel__draw .fate-panel__cat{height:64px;width:auto;flex-basis:42%}
+.fate-panel__spread .fate-panel__activity{padding-top:4px}
+.fate-panel__spread .fate-panel__description{margin-top:10px;line-height:1.8}
+.fate-panel__spread .fate-panel__card{min-height:151px}
+.fate-panel__spread .fate-panel__card--lead{min-height:161px}
+.fate-panel__spread .fate-panel__card-art{height:70px;width:62px}
+.fate-panel__meaning{position:relative;text-align:left;margin-top:8px;padding:10px;font-size:13px}
+.fate-panel__empty .fate-tarot-art{margin:0 auto 12px}
 @keyframes fate-panel-paw { 0%, 100% { transform: rotate(0); } 45% { transform: rotate(-14deg); } }
 @keyframes fate-panel-yarn { 0%, 100% { transform: translateX(0) rotate(0); } 45% { transform: translateX(7px) rotate(23deg); } }
 @media (max-width: 360px) {

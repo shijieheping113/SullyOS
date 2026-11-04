@@ -3,6 +3,7 @@ import type { CharacterProfile } from '../../types';
 import type { FateFactor } from '../../utils/fateFactors';
 import { defaultFateSettings, loadFateSettings, saveFateSettings, type FateSettings, type FateTendency } from '../../utils/fateSettings';
 import './FateSettingsViews.css';
+import FateTarotArt from './FateTarotArt';
 
 export interface FateLibraryViewProps {
     char: CharacterProfile;
@@ -24,6 +25,7 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
     const [limit, setLimit] = useState(PAGE_SIZE);
     const [expanded, setExpanded] = useState<string | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
+    const editorHeadingRef = useRef<HTMLHeadingElement>(null);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [api, setApi] = useState({ baseUrl: char.scheduleApi?.baseUrl || '', apiKey: char.scheduleApi?.apiKey || '', model: char.scheduleApi?.model || '' });
@@ -37,6 +39,9 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
         setApi({ baseUrl: char.scheduleApi?.baseUrl || '', apiKey: char.scheduleApi?.apiKey || '', model: char.scheduleApi?.model || '' }); setApiDirty(false); setSaving(false);
     }, [char.id]);
     useEffect(() => { setLimit(PAGE_SIZE); }, [kind, query, category, status]);
+    useEffect(() => {
+        if (draft) editorHeadingRef.current?.scrollIntoView?.({ block: 'start', behavior: 'auto' });
+    }, [draft?.id, !!draft]);
     const disabledField = kind === 'factors' ? 'disabledFactorIds' : 'disabledTendencyIds';
     const disabledIds = settings[disabledField];
     const noun = kind === 'factors' ? '因子' : '倾向';
@@ -78,15 +83,15 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
         if (persist(next)) { setDraft(null); setExpanded(null); }
     };
     const editor = () => draft && <div className="fate-settings-editor">
-        <h3>{draft.id ? '编辑' : '添加'}{noun}</h3>
+        <h3 ref={editorHeadingRef}>{draft.id ? '编辑' : '添加'}{noun}</h3>
         <label className="fate-settings-field">名称<input value={draft.name} disabled={busy} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
         {kind === 'factors' && <label className="fate-settings-field">分类<input value={draft.category} disabled={busy} onChange={event => setDraft({ ...draft, category: event.target.value })} /></label>}
         <label className="fate-settings-field">含义<textarea rows={3} value={draft.meaning} disabled={busy} onChange={event => setDraft({ ...draft, meaning: event.target.value })} /></label>
         <div className="fate-settings-actions"><button type="button" className="fate-settings-primary" disabled={busy} onClick={saveEntry}>保存条目</button><button type="button" disabled={busy} onClick={() => { if (leaveDraft()) { setDraft(null); setError(''); } }}>取消编辑</button></div>
     </div>;
 
-    return <section className="fate-settings-view" aria-label="命运资料库">
-        <header className="fate-settings-heading"><h2>命运资料库</h2></header>
+    return <section className="fate-settings-view fate-library" aria-label="命运资料库">
+        <header className="fate-settings-heading"><h2>命运牌册</h2><span className="fate-settings-meta">{settings.factors.length} 张因子牌</span></header>
         <details className="fate-settings-model"><summary>日程专用模型{apiDirty ? ' · 未保存' : ''}</summary><p className="fate-settings-meta">全部留空，用主模型。</p>
             {(['baseUrl', 'apiKey', 'model'] as const).map((field, index) => <label key={field} className="fate-settings-field">{['URL', 'Key', '模型名称'][index]}<input type={field === 'apiKey' ? 'password' : 'text'} autoComplete={field === 'apiKey' ? 'new-password' : 'off'} value={api[field]} disabled={busy} onChange={event => { setApi({ ...api, [field]: event.target.value }); setApiDirty(true); }} /></label>)}
             <button type="button" className="fate-settings-primary" disabled={busy || !apiDirty} onClick={async () => {
@@ -105,14 +110,23 @@ export default function FateLibraryView({ char, onChange, isBusy = false }: Fate
                 <label><span className="fate-settings-sr">启用状态</span><select aria-label="启用状态" value={status} onChange={event => setStatus(event.target.value)}><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label>
             </div>
         </div>
+        {kind === 'factors' && <nav className="fate-library-suits" aria-label="按牌面分类浏览">
+            <button type="button" aria-pressed={!category} onClick={() => setCategory('')}><FateTarotArt /><span>全部</span></button>
+            {categories.map(value => <button type="button" key={value} aria-pressed={category === value} onClick={() => setCategory(value)}><FateTarotArt category={value} /><span>{value}</span></button>)}
+        </nav>}
         <div className="fate-settings-summary"><span>共 {settings[kind].length} 项 · 启用 {settings[kind].filter(item => !disabledIds.includes(item.id)).length} 项 · 匹配 {filtered.length} 项</span><button type="button" disabled={busy} onClick={() => { if (leaveDraft()) { setDraft({ name: '', meaning: '', category: '自定义' }); setExpanded(null); setError(''); setNotice(''); } }}>添加{noun}</button></div>
         {error && <p role="alert" className="fate-settings-error">{error}</p>}{notice && <p role="status" className="fate-settings-meta">{notice}</p>}
         {draft && !draft.id && editor()}
-        <div className="fate-settings-list">{filtered.slice(0, limit).map(item => <article className="fate-settings-entry" key={item.id}>
-            <button type="button" className="fate-settings-entry-head" aria-expanded={expanded === item.id} onClick={() => { if (draft?.id === item.id || leaveDraft()) { if (draft?.id !== item.id) setDraft(null); setExpanded(expanded === item.id ? null : item.id); } }}>
-                <span>{item.name}<span className="fate-settings-meta">{'category' in item ? String(item.category) : '倾向'}</span></span><span className="fate-settings-meta">{disabledIds.includes(item.id) ? '已停用' : '已启用'} {expanded === item.id ? '−' : '+'}</span>
+        <div className="fate-settings-list fate-library-pages">{filtered.slice(0, limit).map(item => <article className={`fate-settings-entry ${expanded === item.id ? 'fate-settings-entry--open' : ''} ${disabledIds.includes(item.id) ? 'fate-settings-entry--disabled' : ''}`} key={item.id}>
+            {draft?.id === item.id ? editor() : <>
+            <button type="button" className="fate-settings-entry-head" aria-label={`${item.name}，${expanded === item.id ? '收起' : '管理'}${noun}`} aria-expanded={expanded === item.id} onClick={() => { if (draft?.id === item.id || leaveDraft()) { if (draft?.id !== item.id) setDraft(null); setExpanded(expanded === item.id ? null : item.id); } }}>
+                <span className="fate-library-name">{item.name}</span><FateTarotArt factor={item} />
+                <span className="fate-library-category">{'category' in item ? String(item.category) : '倾向'}</span>
+                <span className="fate-library-meaning">{item.meaning}</span>
+                <span className="fate-library-state">{disabledIds.includes(item.id) ? '已停用' : expanded === item.id ? '收起管理' : '管理此牌'}</span>
             </button>
-            {expanded === item.id && <div className="fate-settings-entry-body">{draft?.id === item.id ? editor() : <><p>{item.meaning}</p><div className="fate-settings-actions"><button type="button" disabled={busy} onClick={() => { setDraft({ ...item, category: (item as FateFactor).category || '自定义' }); setError(''); }}>编辑{noun}</button><button type="button" disabled={busy} onClick={() => toggle(item)}>{disabledIds.includes(item.id) ? '恢复启用' : '停用'}{item.name}</button></div></>}</div>}
+            {expanded === item.id && <div className="fate-settings-entry-body"><div className="fate-settings-actions"><button type="button" disabled={busy} onClick={() => { setDraft({ ...item, category: (item as FateFactor).category || '自定义' }); setError(''); }}>编辑{noun}</button><button type="button" disabled={busy} onClick={() => toggle(item)}>{disabledIds.includes(item.id) ? '恢复启用' : '停用'}{item.name}</button></div></div>}
+            </>}
         </article>)}</div>
         {!filtered.length && <p className="fate-settings-empty">没有找到，换个词试试。</p>}
         <div className="fate-settings-paging"><span className="fate-settings-meta">已显示 {Math.min(limit, filtered.length)} / {filtered.length} 项</span>{filtered.length > limit && <button type="button" onClick={() => setLimit(value => value + PAGE_SIZE)}>再看 {PAGE_SIZE} 项</button>}</div>

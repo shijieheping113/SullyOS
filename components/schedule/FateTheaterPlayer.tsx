@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import type { CharacterProfile, ScheduleSlot, TheaterLine } from '../../types';
 import { FateTheaterDetails, FateTheaterText } from './FateTheaterCard';
 import './FateTheater.css';
+import FateTarotArt from './FateTarotArt';
 
 export interface FateTheaterPlayerProps {
     character: CharacterProfile | null;
@@ -67,8 +68,8 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
 
     useEffect(() => {
         const region = scrollRef.current;
-        if (region) region.scrollTop = region.scrollHeight;
-    }, [progress.row, progress.chars]);
+        if (region) region.scrollTop = finished ? 0 : region.scrollHeight;
+    }, [progress.row, progress.chars, finished]);
 
     const finish = () => setProgress({ row: total, chars: 0, pause: 0 });
     const advance = () => {
@@ -104,16 +105,19 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
         }
     }}>
         <div className="fate-theater-reader">
+            <div className="fate-theater-topbar"><span>{character?.name || '角色'} · 命运牌阵</span><button ref={closeRef} type="button" className="fate-theater-button" onClick={onClose} aria-label="关闭小剧场">关闭</button></div>
+            <div className="fate-theater-storycard">
             <header className="fate-theater-header">
-                <div className="fate-theater-heading"><h1 id={titleId}>顺着毛线偷看一会儿</h1><button ref={closeRef} type="button" className="fate-theater-button" onClick={onClose} aria-label="关闭小剧场">关闭</button></div>
-                <p className="fate-theater-person">{character?.name || '角色'}的小剧场</p>
-                <FateTheaterDetails activity={slot?.activity || ''} slotTime={slot?.startTime} endTime={slot?.endTime} location={slot?.location} />
+                <div className="fate-theater-frontispiece"><FateTarotArt factor={slot?.fate?.factors[0]} /></div>
+                <h1 id={titleId}>{slot?.activity || '命运小剧场'}</h1>
+                <p className="fate-theater-context">{slot?.startTime && <span>{slot.startTime}{slot.endTime ? ` — ${slot.endTime}` : ''}</span>}{slot?.location && <span>{slot.location}</span>}</p>
+                {!!slot?.fate?.factors.length && <div className="fate-theater-seals" aria-label="本轮因子">{slot.fate.factors.map((factor, index) => <span key={`${factor.id}:${index}`}><FateTarotArt factor={factor} /><span>{factor.name}</span></span>)}</div>}
             </header>
             <div ref={scrollRef} className="fate-theater-reading" aria-label="剧场正文" tabIndex={0} onClick={advance}>
                 {isGenerating ? <p role="status" className="fate-theater-empty">正在写下这一刻……</p> : !total ? <p role="status" className="fate-theater-empty">暂时没有剧场内容，可以重试。</p> : <>
                     {lines?.slice(0, progress.row).map((line, index) => <FateTheaterText key={index} line={line} />)}
                     {currentLine && <FateTheaterText line={currentLine} text={characters.slice(0, progress.chars).join('')} />}
-                    {finished && <p className="fate-theater-ending">这一刻，读完了。</p>}
+                    {finished && <p className="fate-theater-ending" aria-label="小剧场已读完"><span aria-hidden="true">◇</span></p>}
                 </>}
             </div>
             <footer className="fate-theater-controls">
@@ -128,6 +132,7 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
                 </div>}
                 <p className="fate-theater-notice" role="status">{saving ? '正在保存到聊天……' : notice}</p>
             </footer>
+            </div>
         </div>
     </div>;
 };
