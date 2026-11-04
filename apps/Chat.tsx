@@ -968,19 +968,36 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
             if (ttsProvider === 'elevenlabs' && (abort.signal.aborted || epoch !== voiceQueueEpoch.current || activeCharIdRef.current !== msg.charId)) return null;
             const streamPlayback = ttsProvider === 'elevenlabs' && shouldAutoPlayGeneratedVoice({ autoTriggered, autoPlayEnabled: char.chatVoiceAutoPlay });
+            const voiceMeta = {
+                appId: 'chat',
+                appName: '消息',
+                charId: char.id,
+                charName: char.name,
+                purpose: autoTriggered ? '聊天自动语音' : '聊天语音',
+            };
             let recording: StreamedVoice | undefined;
             if (streamPlayback) {
                 stopVoiceAudio(prepareChatAudio());
                 setPlayingMsgId(msg.id);
-                recording = await streamingVoice.speak(String(msg.id), spokenText, char, apiConfig, { languageBoost: voiceLang || undefined, emotion: voiceEmotion });
+                recording = await streamingVoice.speak(String(msg.id), spokenText, char, apiConfig, {
+                    languageBoost: voiceLang || undefined,
+                    emotion: voiceEmotion,
+                    meta: voiceMeta,
+                });
                 if (epoch === voiceQueueEpoch.current) setPlayingMsgId(null);
             } else if (ttsProvider === 'elevenlabs') {
-                recording = await streamElevenLabsSpeech(spokenText, char, apiConfig, { signal: abort.signal, languageBoost: voiceLang || undefined, emotion: voiceEmotion });
+                recording = await streamElevenLabsSpeech(spokenText, char, apiConfig, {
+                    signal: abort.signal,
+                    languageBoost: voiceLang || undefined,
+                    emotion: voiceEmotion,
+                    meta: voiceMeta,
+                });
             }
             const { url: blobUrl, blob } = recording ? { url: URL.createObjectURL(recording.blob), blob: recording.blob } : await synthesizeSpeechDetailed(spokenText, char, apiConfig, {
                 languageBoost: voiceLang || undefined,
                 groupId: apiConfig.minimaxGroupId || undefined,
                 emotion: voiceEmotion,
+                meta: voiceMeta,
             });
             // 转文字面板只展示实际台词，不展示当前引擎的停顿 / 表演标记。
             const displaySpoken = stripTtsMarkupForDisplay(spokenText, apiConfig);

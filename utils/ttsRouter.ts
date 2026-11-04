@@ -24,11 +24,22 @@ import { cleanTextForTtsFish, resolveFishAudioApiKey, stripFishMarkupForDisplay 
 import { TtsCacheMiss } from './ttsCache';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { supportsElevenLabsAudioTags } from './elevenLabsModels';
+import type { ApiCallMeta } from './apiCallLog';
+import { recordTtsCall } from './ttsCallLog';
 
 export type { TtsResult };
 
 // volumeDb 目前只有电话（CallApp）会传；聊天/约会/语音设计器不传，行为不变。
-type SynthOptions = { languageBoost?: string; groupId?: string; emotion?: string; skipCache?: boolean; cacheOnly?: boolean; volumeDb?: number };
+// meta：App / 用途等；与 ambient 按字段合并，不会只传角色就把 App 盖掉。
+type SynthOptions = {
+  languageBoost?: string;
+  groupId?: string;
+  emotion?: string;
+  skipCache?: boolean;
+  cacheOnly?: boolean;
+  volumeDb?: number;
+  meta?: ApiCallMeta;
+};
 
 /** 粤语并非三家所有模型都支持；在发起计费请求前给出明确错误。 */
 export const assertTtsLanguageSupported = (
@@ -47,6 +58,14 @@ export const assertTtsLanguageSupported = (
   }
 };
 
+const resolveTtsModelLabel = (char: CharacterProfile, apiConfig: APIConfig, provider: string): string => {
+  if (provider === 'fishaudio') {
+    return (char.voiceProfile?.fishModel || apiConfig.fishAudioModel || 's2.1-pro').trim() || 's2.1-pro';
+  }
+  if (provider === 'elevenlabs') return resolveElevenLabsModel(apiConfig);
+  return (char.voiceProfile?.model || 'speech-2.8-hd').trim() || 'speech-2.8-hd';
+};
+
 export async function synthesizeSpeechDetailed(
   text: string,
   char: CharacterProfile,
@@ -55,13 +74,62 @@ export async function synthesizeSpeechDetailed(
 ): Promise<TtsResult> {
   assertTtsLanguageSupported(char, apiConfig, options?.languageBoost);
   const provider = resolveTtsProvider(apiConfig);
-  if (provider === 'fishaudio') {
-    return synthesizeSpeechFishDetailed(text, char, apiConfig, options);
+  const model = resolveTtsModelLabel(char, apiConfig, provider);
+  const cleaned = cleanTextForTtsProvider(text, apiConfig);
+  const textChars = cleaned.length || text.length;
+  const started = Date.now();
+  // 纯探缓存（电波回放等）不记账，避免列表被「只读」刷满。
+  const shouldLog = !options?.cacheOnly;
+
+  const meta: ApiCallMeta = {
+    charId: char.id,
+    charName: char.name,
+    ...options?.meta,
+  };
+  // 传给底层时去掉 meta，避免各家 *Detailed 签名不认这个字段
+  const { meta: _meta, ...providerOptions } = options || {};
+
+  try {
+    let result: TtsResult;
+    if (provider === 'fishaudio') {
+      result = await synthesizeSpeechFishDetailed(text, char, apiConfig, providerOptions);
+    } else if (provider === 'elevenlabs') {
+      result = await synthesizeSpeechElevenLabsDetailed(text, char, apiConfig, providerOptions);
+    } else {
+      result = await minimaxSynthesizeDetailed(text, char, apiConfig, providerOptions);
+    }
+    if (shouldLog) {
+      recordTtsCall({
+        provider,
+        model,
+        textChars,
+        ok: true,
+        durationMs: Date.now() - started,
+        cached: !!result.cached,
+        meta,
+      });
+    }
+    return result;
+  } catch (err) {
+    if (err instanceof TtsCacheMiss || (err as { name?: string })?.name === 'TtsCacheMiss') {
+      throw err;
+    }
+    if (shouldLog) {
+      const status = typeof (err as { status?: number })?.status === 'number'
+        ? (err as { status: number }).status
+        : undefined;
+      recordTtsCall({
+        provider,
+        model,
+        textChars,
+        ok: false,
+        status,
+        durationMs: Date.now() - started,
+        meta,
+      });
+    }
+    throw err;
   }
-  if (provider === 'elevenlabs') {
-    return synthesizeSpeechElevenLabsDetailed(text, char, apiConfig, options);
-  }
-  return minimaxSynthesizeDetailed(text, char, apiConfig, options);
 }
 
 export async function synthesizeSpeech(

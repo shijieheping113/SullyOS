@@ -554,6 +554,13 @@ export const MiaomiaoBoxProvider: React.FC<{ children: React.ReactNode }> = ({ c
         languageBoost: char.chatVoiceLang || undefined,
         groupId: os.apiConfig.minimaxGroupId || undefined,
         skipCache: true,
+        meta: {
+          appId: 'miaomiao_box',
+          appName: '喵喵盒',
+          charId: char.id,
+          charName: char.name,
+          purpose: '喵喵盒语音',
+        },
       });
       const next = { ...m, voiceUrl: url, voiceSynthText: text };
       voiceMem.current.set(m.id, { voiceUrl: url, voiceSynthText: text });

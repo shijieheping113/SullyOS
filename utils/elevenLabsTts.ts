@@ -327,7 +327,7 @@ export async function synthesizeSpeechElevenLabsDetailed(
   });
   if (!options?.skipCache) {
     const cached = await getCachedTts(cacheKey);
-    if (cached) return { url: URL.createObjectURL(cached), blob: cached };
+    if (cached) return { url: URL.createObjectURL(cached), blob: cached, cached: true };
   }
   if (options?.cacheOnly) throw new TtsCacheMiss();
 

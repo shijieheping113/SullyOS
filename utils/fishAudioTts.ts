@@ -418,6 +418,18 @@ const fishFetchAudio = async (
     return await fishFetchAudioOnce(payload, apiKey, model);
   } catch (err) {
     if (!shouldRetryFish(err)) throw toFishUserError(err);
+    // 第一次已经扣过费：单独记一笔失败，router 还会再记最终那一次。
+    try {
+      const { recordTtsCall } = await import('./ttsCallLog');
+      recordTtsCall({
+        provider: 'fishaudio',
+        model,
+        textChars: typeof payload?.text === 'string' ? payload.text.length : 0,
+        ok: false,
+        status: err instanceof FishHttpError ? err.status : undefined,
+        purpose: '鱼声重试·首次',
+      });
+    } catch { /* 记账失败不影响重试 */ }
     emitAppToast(FISH_RETRY_TOAST, 'info');
     try {
       return await fishFetchAudioOnce(payload, apiKey, model);
@@ -508,7 +520,7 @@ export async function synthesizeSpeechFishDetailed(
   if (!options?.skipCache) {
     const cached = await getCachedTts(cacheKey);
     if (cached) {
-      return { url: URL.createObjectURL(cached), blob: cached };
+      return { url: URL.createObjectURL(cached), blob: cached, cached: true };
     }
   }
   if (options?.cacheOnly) throw new TtsCacheMiss();

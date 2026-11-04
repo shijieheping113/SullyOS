@@ -463,6 +463,8 @@ export interface TtsResult {
   url: string;
   /** Raw audio blob when available. Null when we fell back to the remote URL (CORS / network). */
   blob: Blob | null;
+  /** 本机缓存命中（未打服务商）；语音调用记录汇总计费次数时排除。 */
+  cached?: boolean;
 }
 
 /**
@@ -496,7 +498,7 @@ export async function synthesizeSpeechDetailed(
   if (!options?.skipCache) {
     const cached = await getCachedTts(cacheKey);
     if (cached) {
-      return { url: URL.createObjectURL(cached), blob: cached };
+      return { url: URL.createObjectURL(cached), blob: cached, cached: true };
     }
   }
   if (options?.cacheOnly) throw new TtsCacheMiss();

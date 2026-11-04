@@ -20,6 +20,8 @@ import type {
     ApiRequestCaptureSectionKind,
     PromptBlockStat,
 } from '../../utils/apiCallLog';
+import { summarizeTtsCallLog } from '../../utils/ttsCallLog';
+import type { TtsCallLogEntry } from '../../utils/ttsCallLog';
 import { trackEvent } from '../../utils/analytics';
 import { shareOrDownloadFile } from '../../utils/shareExport';
 
@@ -27,6 +29,14 @@ interface ApiCallLogModalProps {
     isOpen: boolean;
     onClose: () => void;
 }
+
+type LogTab = 'llm' | 'tts';
+
+const TTS_PROVIDER_LABEL: Record<string, string> = {
+    minimax: 'MiniMax',
+    fishaudio: '鱼声',
+    elevenlabs: 'ElevenLabs',
+};
 
 /** 把时间戳格式化成「今天 14:03:21 / 昨天 09:12 / 06-04 22:08」这种好扫的形态。 */
 function formatTime(ts: number): { day: string; time: string } {
@@ -46,7 +56,9 @@ function formatTime(ts: number): { day: string; time: string } {
 }
 
 const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) => {
+    const [tab, setTab] = useState<LogTab>('llm');
     const [entries, setEntries] = useState<ApiCallLogEntry[]>([]);
+    const [ttsEntries, setTtsEntries] = useState<TtsCallLogEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -56,13 +68,16 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [data, savedCapture] = await Promise.all([
+            const [data, savedCapture, ttsData] = await Promise.all([
                 DB.getApiCallLog(),
                 DB.getApiRequestCapture(),
+                DB.getTtsCallLog(),
             ]);
             // DB 里已按新→旧 unshift，这里再兜底排一次序
             data.sort((a: ApiCallLogEntry, b: ApiCallLogEntry) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+            ttsData.sort((a: TtsCallLogEntry, b: TtsCallLogEntry) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
             setEntries(data);
+            setTtsEntries(ttsData);
             setCapture(savedCapture);
             setCaptureArmedState(isApiRequestCaptureArmed());
             // 这一批记录里只要有一条「实际后端」跟请求的模型对不上，就记一次。
@@ -74,6 +89,7 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
             }
         } catch {
             setEntries([]);
+            setTtsEntries([]);
         } finally {
             setLoading(false);
         }
@@ -95,11 +111,18 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
     }, []);
 
     const handleClear = useCallback(async () => {
-        if (!window.confirm('确定清空所有 API 调用记录吗？此操作不可撤销。')) return;
+        if (tab === 'tts') {
+            if (!window.confirm('确定清空所有语音调用记录吗？此操作不可撤销。')) return;
+            await DB.clearTtsCallLog();
+            setTtsEntries([]);
+            trackEvent('清空语音调用记录');
+            return;
+        }
+        if (!window.confirm('确定清空所有模型调用记录吗？此操作不可撤销。')) return;
         await DB.clearApiCallLog();
         setEntries([]);
         trackEvent('清空 API 调用记录');
-    }, []);
+    }, [tab]);
 
     const handleCaptureToggle = useCallback(() => {
         setApiRequestCaptureArmed(!captureArmed);
@@ -111,6 +134,9 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
         await DB.clearApiRequestCapture();
         setCapture(null);
     }, []);
+
+    const ttsSummary = useMemo(() => summarizeTtsCallLog(ttsEntries), [ttsEntries]);
+    const clearDisabled = tab === 'tts' ? ttsEntries.length === 0 : entries.length === 0;
 
     return (
         <Modal
@@ -127,7 +153,7 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                     </button>
                     <button
                         onClick={handleClear}
-                        disabled={entries.length === 0}
+                        disabled={clearDisabled}
                         className="px-5 py-3 bg-rose-50 text-rose-500 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-40"
                     >
                         清空
@@ -135,10 +161,34 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                 </div>
             }
         >
+            <div className="mb-3 flex gap-1 rounded-2xl bg-slate-100/80 p-1">
+                <button
+                    type="button"
+                    onClick={() => setTab('llm')}
+                    className={`flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors ${
+                        tab === 'llm' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
+                    }`}
+                >
+                    模型
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setTab('tts')}
+                    className={`flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors ${
+                        tab === 'tts' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
+                    }`}
+                >
+                    语音
+                </button>
+            </div>
+
             <div className="flex items-start justify-between gap-2 mb-3 px-1">
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                    只保留最近 <span className="font-semibold text-slate-500">5 天</span>的调用，超期自动丢弃。记录在你本地浏览器，不上传。
+                    {tab === 'tts'
+                        ? <>只保留最近 <span className="font-semibold text-slate-500">5 天</span>的语音合成。计费次数不含本机缓存。记录在本地，不上传。</>
+                        : <>只保留最近 <span className="font-semibold text-slate-500">5 天</span>的模型调用，超期自动丢弃。记录在你本地浏览器，不上传。</>}
                 </p>
+                {tab === 'llm' && (
                 <button
                     onClick={() => { if (!showHelp) trackEvent('打开实际后端字段说明'); setShowHelp(v => !v); }}
                     className={`shrink-0 w-5 h-5 rounded-full text-[11px] font-bold leading-none flex items-center justify-center transition-colors ${
@@ -148,9 +198,112 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                 >
                     ?
                 </button>
+                )}
             </div>
 
-            {showHelp && (
+            {tab === 'tts' && (
+                <>
+                    {ttsEntries.length > 0 && (() => {
+                        const fmt = (n: number) => n.toLocaleString('en-US');
+                        const providerRows = Object.entries(ttsSummary.byProvider);
+                        return (
+                            <div className="mb-3 space-y-2">
+                                <div className="rounded-2xl bg-primary/5 border border-primary/15 px-4 py-3 flex items-center justify-around text-center">
+                                    <div>
+                                        <div className="text-[10px] text-slate-400">计费次数</div>
+                                        <div className="text-sm font-bold text-slate-600">{ttsSummary.billableCount}</div>
+                                    </div>
+                                    <div className="w-px h-7 bg-slate-200" />
+                                    <div>
+                                        <div className="text-[10px] text-slate-400">计费字符</div>
+                                        <div className="text-sm font-bold text-primary">{fmt(ttsSummary.billableChars)}</div>
+                                    </div>
+                                    <div className="w-px h-7 bg-slate-200" />
+                                    <div>
+                                        <div className="text-[10px] text-slate-400">缓存命中</div>
+                                        <div className="text-[11px] font-semibold text-slate-500">{ttsSummary.cachedCount}</div>
+                                    </div>
+                                </div>
+                                {providerRows.length > 0 && (
+                                    <div className="rounded-2xl bg-white/70 border border-slate-200/60 px-3 py-2 space-y-1">
+                                        {providerRows.map(([provider, slot]) => (
+                                            <div key={provider} className="flex items-center justify-between gap-2 text-[11px]">
+                                                <span className="font-semibold text-slate-600">
+                                                    {TTS_PROVIDER_LABEL[provider] || provider}
+                                                </span>
+                                                <span className="font-mono text-slate-400">
+                                                    {slot.count} 次 · {fmt(slot.chars)} 字
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
+
+                    {loading ? (
+                        <div className="py-10 text-center text-sm text-slate-400">加载中…</div>
+                    ) : ttsEntries.length === 0 ? (
+                        <div className="py-10 text-center text-sm text-slate-400">
+                            暂无语音调用记录。<br />
+                            <span className="text-[11px]">让角色发条语音、打通电话或试听音色，这里就会有数据了。</span>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {ttsEntries.map((e) => {
+                                const { day, time } = formatTime(e.timestamp);
+                                const providerLabel = TTS_PROVIDER_LABEL[e.provider] || e.provider;
+                                return (
+                                    <div
+                                        key={e.id}
+                                        className={`rounded-2xl border p-3 ${
+                                            e.ok ? 'bg-white/70 border-slate-200/60' : 'bg-rose-50/60 border-rose-200/60'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="text-[11px] font-bold text-slate-400 shrink-0">{day}</span>
+                                                <span className="text-[11px] font-mono text-slate-500 shrink-0">{time}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                {e.cached && (
+                                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                                                        缓存
+                                                    </span>
+                                                )}
+                                                <span
+                                                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                                        e.ok ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-500'
+                                                    }`}
+                                                >
+                                                    {e.ok ? '成功' : '失败'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                                            <Field label="服务商" value={providerLabel} accent />
+                                            <Field label="模型" value={e.model} mono />
+                                            <Field label="字符" value={String(e.textChars ?? 0)} mono accent />
+                                            <Field
+                                                label="耗时"
+                                                value={e.durationMs != null ? `${e.durationMs} ms` : undefined}
+                                                mono
+                                            />
+                                            <Field label="App" value={e.appName || e.appId} />
+                                            <Field label="角色" value={e.charName || e.charId} />
+                                            <Field label="用途" value={e.purpose} />
+                                            <Field label="HTTP" value={e.status != null ? String(e.status) : undefined} mono />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </>
+            )}
+
+            {tab === 'llm' && showHelp && (
                 <div className="mb-3 rounded-2xl bg-amber-50/70 border border-amber-200/60 px-4 py-3 text-[11px] text-slate-600 leading-relaxed space-y-2">
                     <p className="font-bold text-amber-700">「实际后端」是什么——仅供参考，不是测谎仪</p>
                     <p>
@@ -192,6 +345,8 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                 </div>
             )}
 
+            {tab === 'llm' && (
+            <>
             <OneShotCapturePanel
                 capture={capture}
                 armed={captureArmed}
@@ -353,6 +508,8 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                         );
                     })}
                 </div>
+            )}
+            </>
             )}
         </Modal>
     );

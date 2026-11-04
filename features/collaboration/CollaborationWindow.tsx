@@ -1792,6 +1792,13 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
         languageBoost: character.chatVoiceLang || undefined,
         groupId: chatApi.minimaxGroupId || undefined,
         emotion: parsed.emotion,
+        meta: {
+          appId: 'chat',
+          appName: '消息',
+          charId: character.id,
+          charName: character.name,
+          purpose: '协同语音',
+        },
       });
       if (result.url.startsWith('blob:')) collaborationVoiceBlobUrlsRef.current.add(result.url);
       setVoiceAudioUrls(previous => ({ ...previous, [message.id]: result.url }));

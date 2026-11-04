@@ -920,6 +920,13 @@ const LiveStreamApp: React.FC = () => {
               model: refs.model,
               proxyBase: refs.proxy,
               speed,
+              meta: {
+                appId: 'live_stream',
+                appName: '电波',
+                charId: tempChar.id,
+                charName: tempChar.name,
+                purpose: '直播语音',
+              },
             });
             if (stamped?.url && stamped.timeline?.segments?.length) {
               if (!skipCache && stamped.blob) {
@@ -940,7 +947,16 @@ const LiveStreamApp: React.FC = () => {
             }
           }
         }
-        const { url, blob } = await synthesizeSpeechDetailed(text, tempChar, apiConfig, { skipCache });
+        const { url, blob } = await synthesizeSpeechDetailed(text, tempChar, apiConfig, {
+          skipCache,
+          meta: {
+            appId: 'live_stream',
+            appName: '电波',
+            charId: tempChar.id,
+            charName: tempChar.name,
+            purpose: '直播语音',
+          },
+        });
         if (beatId && blob && beatStillUsesText(beatId, text)) {
           void saveLiveBeatVoiceAsset(beatId, blob, null);
         }

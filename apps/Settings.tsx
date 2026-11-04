@@ -3222,7 +3222,7 @@ const Settings: React.FC = () => {
             </div>
             <div className="flex-1 min-w-0">
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">API 调用记录</h2>
-                <p className="text-[11px] text-slate-400 mt-0.5">最近 5 天：时间 · 哪个 API · 哪个 App · 哪个角色 · 用途</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">最近 5 天 · 模型 Token 与语音字数分页看</p>
             </div>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
                 <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />

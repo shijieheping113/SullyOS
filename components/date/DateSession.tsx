@@ -322,7 +322,17 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (streamId && apiConfig.ttsProvider === 'elevenlabs') {
                 if (generation !== dateVoiceGenerationRef.current) return null;
                 dateAudioRef.current?.pause();
-                const recording = await streamingVoice.speak(streamId, ttsText, char, apiConfig, { languageBoost: voiceLang || undefined, emotion });
+                const recording = await streamingVoice.speak(streamId, ttsText, char, apiConfig, {
+                    languageBoost: voiceLang || undefined,
+                    emotion,
+                    meta: {
+                        appId: 'date',
+                        appName: '见面',
+                        charId: char.id,
+                        charName: char.name,
+                        purpose: '见面语音',
+                    },
+                });
                 const url = URL.createObjectURL(recording.blob);
                 dateStreamUrls.current.add(url);
                 return { url, spokenText: stripTtsMarkupForDisplay(ttsText, apiConfig), recording };
@@ -331,6 +341,13 @@ const DateSession: React.FC<DateSessionProps> = ({
                 languageBoost: voiceLang || undefined,
                 groupId: apiConfig.minimaxGroupId || undefined,
                 emotion,
+                meta: {
+                    appId: 'date',
+                    appName: '见面',
+                    charId: char.id,
+                    charName: char.name,
+                    purpose: '见面语音',
+                },
             });
             return {
                 url,

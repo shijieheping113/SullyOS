@@ -50,7 +50,8 @@ const DB_NAME = 'AetherOS_Data';
 // v75：喵喵盒表和家园索引一起补齐。旧库无论停在哪一版，缺的表和索引都会在升级时建上。
 // v76：私聊最近一页按 [charId, timestamp] 取。补记的挂断卡片编号最新、时间却在最后一句后面，按编号取页会被切掉。
 // v77：直播（电波 OnAir）数据从 localStorage 迁入 IDB：live_channels / live_sessions / live_vods / live_npc_watches / live_kv
-const DB_VERSION = 77;
+// v78：语音 TTS 调用记录单例 store（与 LLM api_call_log 分账，近 5 天）
+const DB_VERSION = 78;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -100,6 +101,7 @@ const STORE_VR_PRESETS = 'vr_presets';            // 剧院·用户自定义写�
 const STORE_VR_LETTERS = 'vr_letters';            // 邮局信件（本地存档 + 待寄出/待回复队列）
 const STORE_VR_SETTINGS = 'vr_settings';          // 彼方设置单例：独立 API（id='api'）+ 调用记录（id='apilog'）
 const STORE_API_CALL_LOG = 'api_call_log';        // 全局 API 调用记录单例（id='log'，保留近 5 天）
+const STORE_TTS_CALL_LOG = 'tts_call_log';          // 语音 TTS 调用记录单例（id='log'，保留近 5 天；与 LLM 分账）
 const STORE_WORLDS = 'worlds';                    // 家园·世界定义（成员/NPC/居住/关系/模式）
 const STORE_WORLD_EPISODES = 'world_episodes';    // 家园·演绎历史（每轮一条，index worldId）
 const STORE_LIFE_RECORDS = 'life_records';        // 生活记录：生理期/药盒打卡/锻炼（记账走 bank_transactions）
@@ -109,9 +111,11 @@ const STORE_STORY_THEATERS = 'story_theaters';       // 见面·剧情条目（�
 const STORE_STORY_THEATER_PRESETS = 'story_theater_presets'; // 糯米机原生剧情预设
 const STORE_STORY_THEATER_MASKS = 'story_theater_masks'; // 剧场原创人物面具
 
-// API 调用记录：保留近 5 天，超期丢弃；再加一个硬上限防止异常情况撑爆
+// API / TTS 调用记录：保留近 5 天，超期丢弃；再加一个硬上限防止异常情况撑爆
 const API_CALL_LOG_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000;
 const API_CALL_LOG_MAX_ENTRIES = 2000;
+const TTS_CALL_LOG_MAX_AGE_MS = API_CALL_LOG_MAX_AGE_MS;
+const TTS_CALL_LOG_MAX_ENTRIES = API_CALL_LOG_MAX_ENTRIES;
 
 export interface ScheduledMessage {
     id: string;
@@ -411,6 +415,7 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
       createStore(STORE_VR_SETTINGS, { keyPath: 'id' });
       createStore(STORE_API_CALL_LOG, { keyPath: 'id' });
+      createStore(STORE_TTS_CALL_LOG, { keyPath: 'id' });
 
       // v63: 家园（同世界观多角色大世界）
       createStore(STORE_WORLDS, { keyPath: 'id' });
@@ -3526,6 +3531,59 @@ export const DB = {
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error || new Error('clearApiCallLog transaction failed'));
           tx.onabort = () => reject(tx.error || new Error('clearApiCallLog transaction aborted'));
+      });
+  },
+
+  // --- 语音 TTS 调用记录（tts_call_log 单例 store，id='log'）---
+  // 与 api_call_log 同款：近 5 天 + 硬上限；读出时再过滤一次兜底。
+  getTtsCallLog: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TTS_CALL_LOG)) return [];
+      return new Promise((resolve) => {
+          const tx = db.transaction(STORE_TTS_CALL_LOG, 'readonly');
+          const req = tx.objectStore(STORE_TTS_CALL_LOG).get('log');
+          req.onsuccess = () => {
+              const entries: any[] = req.result?.entries ?? [];
+              const cutoff = Date.now() - TTS_CALL_LOG_MAX_AGE_MS;
+              resolve(entries.filter((e) => (e?.timestamp ?? 0) > cutoff));
+          };
+          req.onerror = () => resolve([]);
+      });
+  },
+
+  appendTtsCallLog: async (entry: any): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TTS_CALL_LOG)) return;
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TTS_CALL_LOG, 'readwrite');
+          const store = tx.objectStore(STORE_TTS_CALL_LOG);
+          const req = store.get('log');
+          req.onsuccess = () => {
+              const cur: any[] = req.result?.entries ?? [];
+              cur.unshift(entry);
+              const cutoff = Date.now() - TTS_CALL_LOG_MAX_AGE_MS;
+              const pruned = cur
+                  .filter((e) => (e?.timestamp ?? 0) > cutoff)
+                  .sort((a, b) => (b?.timestamp ?? 0) - (a?.timestamp ?? 0))
+                  .slice(0, TTS_CALL_LOG_MAX_ENTRIES);
+              store.put({ id: 'log', entries: pruned });
+          };
+          req.onerror = () => tx.abort();
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error || new Error('appendTtsCallLog transaction failed'));
+          tx.onabort = () => reject(tx.error || new Error('appendTtsCallLog transaction aborted'));
+      });
+  },
+
+  clearTtsCallLog: async (): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TTS_CALL_LOG)) return;
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TTS_CALL_LOG, 'readwrite');
+          tx.objectStore(STORE_TTS_CALL_LOG).put({ id: 'log', entries: [] });
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error || new Error('clearTtsCallLog transaction failed'));
+          tx.onabort = () => reject(tx.error || new Error('clearTtsCallLog transaction aborted'));
       });
   },
 

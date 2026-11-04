@@ -115,6 +115,8 @@ export async function synthesizeFishWithTimestamp(params: {
   proxyBase?: string;
   speed?: number;
   volumeDb?: number;
+  /** App / 用途；写入语音调用记录 */
+  meta?: { appId?: string; appName?: string; charId?: string; charName?: string; purpose?: string };
 }): Promise<FishTimestampResult | null> {
   const { text, referenceId, apiKey, model } = params;
   if (!apiKey || !referenceId || !text.trim()) return null;
@@ -144,6 +146,21 @@ export async function synthesizeFishWithTimestamp(params: {
   const url = `${proxy}/fishaudio/tts-timestamp?model=${encodeURIComponent(model)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FISH_TS_TIMEOUT_MS);
+  const started = Date.now();
+  const logTs = (ok: boolean, status?: number) => {
+    import('./ttsCallLog')
+      .then(({ recordTtsCall }) => recordTtsCall({
+        provider: 'fishaudio',
+        model,
+        textChars: spoken.length,
+        ok,
+        status,
+        durationMs: Date.now() - started,
+        meta: params.meta,
+        purpose: params.meta?.purpose || '带时间轴合成',
+      }))
+      .catch(() => {});
+  };
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -152,8 +169,14 @@ export async function synthesizeFishWithTimestamp(params: {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    if (!res.ok) return null;
-    if (!res.body) return null;
+    if (!res.ok) {
+      logTs(false, res.status);
+      return null;
+    }
+    if (!res.body) {
+      logTs(false, res.status);
+      return null;
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -199,19 +222,28 @@ export async function synthesizeFishWithTimestamp(params: {
       if (data) { try { take(JSON.parse(data)); } catch (e) { /* ignore */ } }
     }
 
-    if (!audioChunks.length) return null;
+    if (!audioChunks.length) {
+      logTs(false, res.status);
+      return null;
+    }
 
     const { segments, durationSec } = mergeTimelineSnapshots(snapshots);
-    if (!segments.length) return null;   // 没时间点就当没这能力，调用方退回估算
+    if (!segments.length) {
+      // 已经打过服务商，仍记一笔成功合成（时间点缺失只影响字幕对位）
+      logTs(true, res.status);
+      return null;   // 没时间点就当没这能力，调用方退回估算
+    }
 
     const decoded = audioChunks.map(b64ToBytes);
     const merged = new Uint8Array(decoded.reduce((a, u) => a + u.length, 0));
     let at = 0;
     for (const u of decoded) { merged.set(u, at); at += u.length; }
     const blob = new Blob([merged], { type: 'audio/mpeg' });
+    logTs(true, res.status);
     return { url: URL.createObjectURL(blob), blob, timeline: { segments, durationSec } };
   } catch (e) {
     console.warn('[fish-ts] 时间轴合成失败，退回普通合成:', (e as any)?.message || e);
+    logTs(false);
     return null;
   } finally {
     clearTimeout(timer);

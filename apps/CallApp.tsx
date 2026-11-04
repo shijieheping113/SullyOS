@@ -1403,6 +1403,13 @@ const CallApp: React.FC = () => {
   const canSpeakVoice = (): boolean => isSpeakerOn && hasConfiguredVoice();
   // 鱼声「带时间轴」优先路：只有电话、只有鱼声、且用户填了中转地址时才启用。
   // 拿不到就返回 null，由下面的老路照旧合成 —— 字幕退回估算，不会更差。
+  const callVoiceMeta = () => ({
+    appId: 'call',
+    appName: '电话',
+    charId: selectedChar?.id,
+    charName: selectedChar?.name,
+    purpose: '通话语音',
+  });
   const tryFishTimestampAudio = async (rawText: string): Promise<{ url: string; timeline: SpeechTimeline } | null> => {
     if (activeTtsProvider !== 'fishaudio') return null;
     if (!selectedChar) return null;
@@ -1418,6 +1425,7 @@ const CallApp: React.FC = () => {
       proxyBase: refs.proxy,
       speed,
       volumeDb: callVolumeDb,
+      meta: callVoiceMeta(),
     });
   };
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
@@ -1441,7 +1449,7 @@ const CallApp: React.FC = () => {
     if (activeTtsProvider === 'elevenlabs') {
       if (!selectedChar) throw new Error('未选择角色');
       const script = extractVoiceTag(rawText).voiceText || rawText;
-      const options = { languageBoost: voiceLang || undefined, emotion };
+      const options = { languageBoost: voiceLang || undefined, emotion, meta: callVoiceMeta() };
       const recording = playStream
         ? await streamingVoice.speak('call', script, selectedChar, apiConfig, options)
         : await streamElevenLabsSpeech(script, selectedChar, apiConfig, options);
@@ -1472,6 +1480,7 @@ const CallApp: React.FC = () => {
         emotion,
         // 电话专用音量增益：只有这一岔传，聊天/约会不传 = 音量不变。
         volumeDb: callVolumeDb,
+        meta: callVoiceMeta(),
       });
       return { url: url || '', traceIds: [] };
     }
@@ -1497,10 +1506,20 @@ const CallApp: React.FC = () => {
 
       const chunkCacheKey = buildMiniMaxTtsCacheKey(ttsPayload, paramVersion);
       const cachedChunk = skipCache ? null : await getCachedTts(chunkCacheKey);
+      const chunkChars = typeof chunk === 'string' ? chunk.length : 0;
       if (cachedChunk) {
+        import('../utils/ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+          provider: 'minimax',
+          model,
+          textChars: chunkChars,
+          ok: true,
+          cached: true,
+          meta: callVoiceMeta(),
+        })).catch(() => {});
         return { blob: cachedChunk, traceId: 'cache' };
       }
 
+      const chunkStarted = Date.now();
       const response = await minimaxFetch('/api/minimax/t2a', {
         method: 'POST',
         headers: {
@@ -1514,6 +1533,15 @@ const CallApp: React.FC = () => {
       const data = await response.json();
       const statusCode = data?.base_resp?.status_code;
       if (!response.ok || (typeof statusCode === 'number' && statusCode !== 0)) {
+        import('../utils/ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+          provider: 'minimax',
+          model,
+          textChars: chunkChars,
+          ok: false,
+          status: response.status,
+          durationMs: Date.now() - chunkStarted,
+          meta: callVoiceMeta(),
+        })).catch(() => {});
         throw new Error(buildMiniMaxErrorMessage(data?.base_resp?.status_msg || `调用失败（HTTP ${response.status}）`, data?.trace_id));
       }
 
@@ -1529,6 +1557,15 @@ const CallApp: React.FC = () => {
         audio_type: typeof data?.data?.audio,
         audio_preview: normalizedAudio.slice(0, 80),
       });
+      import('../utils/ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+        provider: 'minimax',
+        model,
+        textChars: chunkChars,
+        ok: true,
+        status: response.status,
+        durationMs: Date.now() - chunkStarted,
+        meta: callVoiceMeta(),
+      })).catch(() => {});
 
       if (/^https?:\/\//i.test(normalizedAudio)) {
         try {

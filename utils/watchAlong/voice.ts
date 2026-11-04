@@ -89,6 +89,13 @@ export async function synthesizeWatchVoice(opts: {
     languageBoost: voiceLang || undefined,
     groupId: opts.apiConfig.minimaxGroupId || undefined,
     skipCache: true,
+    meta: {
+      appId: 'live_stream',
+      appName: '电波',
+      charId: opts.char.id,
+      charName: opts.char.name,
+      purpose: '陪看语音',
+    },
   });
   if (blob) await saveLiveBeatVoiceAsset(opts.key, blob);
   return url;

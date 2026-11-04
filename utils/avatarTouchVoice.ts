@@ -35,7 +35,17 @@ export const generateCompanionStartupVoice = async (options: {
       options.text,
       options.character,
       options.apiConfig,
-      { emotion: options.performance?.emotion, languageBoost: options.voiceLanguage || undefined },
+      {
+        emotion: options.performance?.emotion,
+        languageBoost: options.voiceLanguage || undefined,
+        meta: {
+          appId: 'character',
+          appName: '神经链接',
+          charId: options.character.id,
+          charName: options.character.name,
+          purpose: '开机语音',
+        },
+      },
     );
     playableUrl = result.url;
     if (!result.blob) throw new Error('语音服务未返回可持久保存的音频');
@@ -115,7 +125,17 @@ export const generateAvatarTouchVoicePack = async (options: {
           spokenText,
           options.character,
           options.apiConfig,
-          { emotion: task.reaction.performance?.emotion, languageBoost: options.voiceLanguage || undefined },
+          {
+            emotion: task.reaction.performance?.emotion,
+            languageBoost: options.voiceLanguage || undefined,
+            meta: {
+              appId: 'character',
+              appName: '神经链接',
+              charId: options.character.id,
+              charName: options.character.name,
+              purpose: '头像触摸语音',
+            },
+          },
         );
         playableUrl = result.url;
         if (!result.blob) throw new Error('语音服务未返回可持久保存的音频');

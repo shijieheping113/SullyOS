@@ -29,7 +29,8 @@ import { characterLaunch } from '../utils/characterLaunch';
 import { safeFetchJson, extractContent } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
-import { normalizeElevenLabsVoiceId, synthesizeSpeechElevenLabsDetailed } from '../utils/elevenLabsTts';
+import { normalizeElevenLabsVoiceId } from '../utils/elevenLabsTts';
+import { synthesizeSpeechDetailed } from '../utils/ttsRouter';
 import { isElevenLabsV4Model } from '../utils/elevenLabsModels';
 import { normalizeUserImpression } from '../utils/impression';
 import { parseGeneratedImpression } from '../utils/impressionGeneration';
@@ -282,10 +283,19 @@ const Character: React.FC = () => {
               ...formData,
               voiceProfile: { ...(formData.voiceProfile || {}), elevenLabsVoiceId: voiceId },
           };
-          const { url } = await synthesizeSpeechElevenLabsDetailed(
+          const { url } = await synthesizeSpeechDetailed(
               `你好，我是${formData.name || '你的角色'}。现在能听见我的声音吗？`,
               previewChar,
               apiConfig,
+              {
+                  meta: {
+                      appId: 'character',
+                      appName: '神经链接',
+                      charId: previewChar.id,
+                      charName: previewChar.name,
+                      purpose: '音色试听',
+                  },
+              },
           );
           previewUrl = url;
           const audio = new Audio(url);

@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import type { APIConfig, CharacterProfile } from '../types';
+import type { ApiCallMeta } from './apiCallLog';
 import { DB } from './db';
 import { hashTtsParams } from './ttsCache';
 import { getProxyWorkerUrl } from './proxyWorker';
@@ -18,6 +19,8 @@ export interface VoiceStreamOptions {
   languageBoost?: string;
   emotion?: string;
   previousText?: string;
+  /** App / 用途；与 ambient 按字段合并进语音调用记录 */
+  meta?: ApiCallMeta;
   onAudio?: (pcm: Uint8Array) => void;
   onCues?: (cues: VoiceCue[]) => void;
 }
@@ -106,6 +109,15 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
   throwIfVoiceAborted(options.signal);
   const apiKey = resolveElevenLabsApiKey(config);
   if (!apiKey) throw new Error('缺少 ElevenLabs API Key');
+  const model = resolveElevenLabsModel(config);
+  const totalChars = parts.reduce((sum, part) => {
+    const text = typeof (part.body as any)?.text === 'string'
+      ? (part.body as any).text
+      : Array.isArray((part.body as any)?.inputs)
+        ? (part.body as any).inputs.map((i: any) => i?.text || '').join('')
+        : '';
+    return sum + String(text).length;
+  }, 0);
   const cacheKey = hashTtsParams({ kind: 'elevenlabs-timed-pcm-v1', parts, output_format: 'pcm_24000' });
   const cached = await DB.getAssetRaw(cacheKey).catch(() => null) as StreamedVoice | null;
   throwIfVoiceAborted(options.signal);
@@ -118,6 +130,14 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
       throwIfVoiceAborted(options.signal);
       options.onAudio?.(pcm.slice(i, i + VOICE_SAMPLE_RATE * 2));
     }
+    import('./ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+      provider: 'elevenlabs',
+      model,
+      textChars: totalChars,
+      ok: true,
+      cached: true,
+      meta: options.meta,
+    })).catch(() => {});
     return cached;
   }
   const chunks: Uint8Array[] = [];
@@ -127,17 +147,47 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
   for (const part of parts) {
     throwIfVoiceAborted(options.signal);
     const body = { ...part.body };
+    const partText = typeof (body as any)?.text === 'string'
+      ? (body as any).text
+      : Array.isArray((body as any)?.inputs)
+        ? (body as any).inputs.map((i: any) => i?.text || '').join('')
+        : '';
+    const partStarted = Date.now();
     // v3 does not support request stitching. Model choice is never changed automatically.
     if (isElevenLabsV4Model(config.elevenLabsModel) && requestIds.length) body.previous_request_ids = requestIds.slice(-3);
     // Native streaming goes through the CORS proxy using WebView fetch, not CapacitorHttp's buffered bridge.
     const nativeFetch = typeof window !== 'undefined' ? (window as any).CapacitorWebFetch : undefined;
     const fetcher: typeof fetch = nativeFetch ? nativeFetch.bind(window) : fetch;
-    const response = await fetcher(streamUrl(part.voiceId), {
-      method: 'POST', signal: options.signal,
-      headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey, Accept: 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) throw new Error(friendlyElevenLabsError(response.status, await response.text()));
+    let response: Response;
+    try {
+      response = await fetcher(streamUrl(part.voiceId), {
+        method: 'POST', signal: options.signal,
+        headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey, Accept: 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      import('./ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+        provider: 'elevenlabs',
+        model,
+        textChars: String(partText).length,
+        ok: false,
+        durationMs: Date.now() - partStarted,
+        meta: options.meta,
+      })).catch(() => {});
+      throw err;
+    }
+    if (!response.ok) {
+      import('./ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+        provider: 'elevenlabs',
+        model,
+        textChars: String(partText).length,
+        ok: false,
+        status: response.status,
+        durationMs: Date.now() - partStarted,
+        meta: options.meta,
+      })).catch(() => {});
+      throw new Error(friendlyElevenLabsError(response.status, await response.text()));
+    }
     const requestId = response.headers.get('request-id');
     await readVoiceJsonStream(response, frame => {
       // HTTP alignment accompanies each audio chunk; offset it by preceding PCM duration.
@@ -149,6 +199,15 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
         options.onAudio?.(pcm);
       }
     }, options.signal);
+    import('./ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+      provider: 'elevenlabs',
+      model,
+      textChars: String(partText).length,
+      ok: true,
+      status: response.status,
+      durationMs: Date.now() - partStarted,
+      meta: options.meta,
+    })).catch(() => {});
     if (requestId) requestIds.push(requestId);
   }
   throwIfVoiceAborted(options.signal);
