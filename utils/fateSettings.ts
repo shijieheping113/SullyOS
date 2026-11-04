@@ -1,5 +1,8 @@
 import { BUILTIN_FATE_FACTORS, type FateFactor } from './fateFactors';
 
+/** localStorage 键前缀；二改全量备份按此前缀扫描（见 utils/forkBackup.ts） */
+export const FATE_SETTINGS_STORAGE_PREFIX = 'sully_fate_settings_v1_';
+
 export interface FateTendency { id: string; name: string; meaning: string }
 export interface FateSettings {
     factors: FateFactor[];
@@ -21,7 +24,7 @@ export function defaultFateSettings(): FateSettings {
 export function loadFateSettings(charId: string): FateSettings {
     const defaults = defaultFateSettings();
     try {
-        const raw = localStorage.getItem(`sully_fate_settings_v1_${charId}`);
+        const raw = localStorage.getItem(`${FATE_SETTINGS_STORAGE_PREFIX}${charId}`);
         if (!raw) return defaults;
         const parsed = JSON.parse(raw);
         const valid = (v: any) => v && typeof v.id === 'string' && typeof v.name === 'string' && v.name.trim() && typeof v.meaning === 'string' && v.meaning.trim();
@@ -34,6 +37,6 @@ export function loadFateSettings(charId: string): FateSettings {
     } catch { return defaults; }
 }
 export function saveFateSettings(charId: string, settings: FateSettings): void {
-    localStorage.setItem(`sully_fate_settings_v1_${charId}`, JSON.stringify(settings));
+    localStorage.setItem(`${FATE_SETTINGS_STORAGE_PREFIX}${charId}`, JSON.stringify(settings));
     window.dispatchEvent(new CustomEvent('fate-settings-updated', { detail: { charId } }));
 }

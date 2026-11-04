@@ -1,6 +1,8 @@
 /**
  * 二改（Ann fork）全量备份扩展：作者主线 exportSystem / importFullData 之外的登记层。
  * 字段名刻意避开 vectorMemories / extraLocalStorageConfig（第三方备份拦截名单）。
+ *
+ * 边界：只扩本文件的 collect / restore / clear。不要改 OSContext 的 allStores 或作者 metadata。
  */
 import { DB, openDB } from './db';
 import type { FullBackupData } from '../types';
@@ -9,9 +11,12 @@ import {
     STORE_MIAOMIAO_SESSIONS,
     STORE_MIAOMIAO_SETTINGS,
 } from '../apps/miaomiaoBox/miaomiaoBoxDb';
+import { FATE_SETTINGS_STORAGE_PREFIX } from './fateSettings';
 
 export const FORK_CUSTOM_ID = 'ann-lily';
-export const FORK_BACKUP_VERSION = 1;
+/** 写出包的版本；读端认 1..FORK_BACKUP_VERSION（旧包仍当二改包） */
+export const FORK_BACKUP_VERSION = 2;
+export const FORK_BACKUP_MIN_VERSION = 1;
 
 /** Spark：仅存 localStorage、作者全量备份未单独登记的二改配置 */
 export const FORK_SPARK_LOCAL_KEYS = [
@@ -32,12 +37,33 @@ export const FORK_MIAOMIAO_LOCAL_KEYS = [
     'miaomiao-voice-seq',
 ] as const;
 
-/** 电波 OnAir：本机开关（舞台小人 / 静音预生成 / 上次替身），随二改包一起走 */
+/** 电波 OnAir：本机开关（舞台小人 / 静音预生成 / 上次替身 / 台词静默预生成），随二改包一起走 */
 export const FORK_LIVE_LOCAL_KEYS = [
     'live_stage_avatar',
     'live_silent_tts_pregeneration',
     'live_last_alt_persona_v1',
+    'live_speech_perform_enabled',
 ] as const;
+
+/** 二改 UI 偏好：私聊通知 / 全局翻译 / 悬浮球（作者 metadata 未登记） */
+export const FORK_UI_PREFS_LOCAL_KEYS = [
+    'sullyos.chatNotify.enabled.v1',
+    'sullyos.globalTranslate.enabled.v1',
+    'sully_navigation_ball_enabled_v1',
+    'sully_navigation_ball_position_v1',
+    'sully_navigation_ball_slots_v1',
+] as const;
+
+/** 聊天括号翻译（按角色），作者 chatTranslate* 段未覆盖 */
+export const FORK_PAREN_TRANSLATION_KEY_PREFIXES = [
+    'chat_paren_translation_enabled_',
+    'chat_paren_translation_format_',
+] as const;
+
+/** 命运牌库等按角色前缀 */
+export const FORK_FATE_SETTINGS_KEY_PREFIX = FATE_SETTINGS_STORAGE_PREFIX;
+
+const STORE_XHS_OWNED_POSTS = 'xhs_owned_posts';
 
 export type ForkBackupLayer = Pick<
     FullBackupData,
@@ -49,25 +75,45 @@ export type ForkBackupLayer = Pick<
     | 'forkSparkLocal'
     | 'forkMiaomiaoLocal'
     | 'forkLiveLocal'
+    | 'forkUiPrefsLocal'
+    | 'forkFateSettingsLocal'
+    | 'forkParenTranslationLocal'
     | 'forkSparkAssets'
     | 'liveChannels'
     | 'liveSessions'
     | 'liveVods'
     | 'liveNpcWatches'
     | 'liveKv'
+    | 'xhsOwnedPosts'
 >;
 
 export function isForkBackupData(data: unknown): boolean {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     const record = data as Record<string, unknown>;
+    const version = record.forkBackupVersion;
     return record.customFork === FORK_CUSTOM_ID
-        && record.forkBackupVersion === FORK_BACKUP_VERSION;
+        && typeof version === 'number'
+        && version >= FORK_BACKUP_MIN_VERSION
+        && version <= FORK_BACKUP_VERSION;
 }
 
 function readLocalStorageMap(keys: readonly string[]): Record<string, string> {
     const out: Record<string, string> = {};
     if (typeof localStorage === 'undefined') return out;
     for (const key of keys) {
+        const value = localStorage.getItem(key);
+        if (value != null) out[key] = value;
+    }
+    return out;
+}
+
+function readLocalStorageByPrefixes(prefixes: readonly string[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (typeof localStorage === 'undefined') return out;
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        if (!prefixes.some((prefix) => key.startsWith(prefix))) continue;
         const value = localStorage.getItem(key);
         if (value != null) out[key] = value;
     }
@@ -83,6 +129,24 @@ function writeLocalStorageMap(map: Record<string, string> | undefined): void {
             /* ignore quota */
         }
     }
+}
+
+function clearLocalStorageKeys(keys: readonly string[]): void {
+    if (typeof localStorage === 'undefined') return;
+    for (const key of keys) {
+        localStorage.removeItem(key);
+    }
+}
+
+function clearLocalStorageByPrefixes(prefixes: readonly string[]): void {
+    if (typeof localStorage === 'undefined') return;
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        if (prefixes.some((prefix) => key.startsWith(prefix))) toRemove.push(key);
+    }
+    for (const key of toRemove) localStorage.removeItem(key);
 }
 
 /**
@@ -166,6 +230,7 @@ export async function collectForkBackupLayer(): Promise<ForkBackupLayer> {
         liveVods,
         liveNpcWatches,
         liveKv,
+        xhsOwnedPosts,
     ] = await Promise.all([
         DB.getRawStoreData(STORE_MIAOMIAO_SESSIONS),
         DB.getRawStoreData(STORE_MIAOMIAO_MESSAGES),
@@ -175,6 +240,8 @@ export async function collectForkBackupLayer(): Promise<ForkBackupLayer> {
         DB.getRawStoreData(STORE_LIVE_VODS),
         DB.getRawStoreData(STORE_LIVE_NPC_WATCHES),
         DB.getRawStoreData(STORE_LIVE_KV),
+        // 作者 allStores 漏了这张表；只在二改包里带走，不改作者扫描
+        DB.getRawStoreData(STORE_XHS_OWNED_POSTS),
     ]);
 
     const forkSparkAssets: { id: string; data: string }[] = [];
@@ -197,12 +264,16 @@ export async function collectForkBackupLayer(): Promise<ForkBackupLayer> {
         forkSparkLocal: readLocalStorageMap(FORK_SPARK_LOCAL_KEYS),
         forkMiaomiaoLocal: readLocalStorageMap(FORK_MIAOMIAO_LOCAL_KEYS),
         forkLiveLocal: readLocalStorageMap(FORK_LIVE_LOCAL_KEYS),
+        forkUiPrefsLocal: readLocalStorageMap(FORK_UI_PREFS_LOCAL_KEYS),
+        forkFateSettingsLocal: readLocalStorageByPrefixes([FORK_FATE_SETTINGS_KEY_PREFIX]),
+        forkParenTranslationLocal: readLocalStorageByPrefixes([...FORK_PAREN_TRANSLATION_KEY_PREFIXES]),
         forkSparkAssets,
         liveChannels: stripLiveMediaRows(STORE_LIVE_CHANNELS, liveChannels),
         liveSessions: stripLiveMediaRows(STORE_LIVE_SESSIONS, liveSessions),
         liveVods: stripLiveMediaRows(STORE_LIVE_VODS, liveVods),
         liveNpcWatches: stripLiveMediaRows(STORE_LIVE_NPC_WATCHES, liveNpcWatches),
         liveKv,
+        xhsOwnedPosts,
     };
 }
 
@@ -213,7 +284,7 @@ export interface RestoreForkBackupOptions {
 
 /**
  * 恢复二改层（在 importFullData 之后调用）。
- * 二改全量包：miaomiao 已在 importFullData 里 clear-and-add。
+ * 二改全量包：miaomiao / xhsOwnedPosts 已在 importFullData 里 clear-and-add。
  * 作者包 + 二改导入口：仅当用户勾选覆盖时才清空并跳过（包内无二改字段）。
  */
 export async function restoreForkBackupLayer(
@@ -228,12 +299,16 @@ export async function restoreForkBackupLayer(
         || data.forkSparkLocal !== undefined
         || data.forkMiaomiaoLocal !== undefined
         || data.forkLiveLocal !== undefined
+        || data.forkUiPrefsLocal !== undefined
+        || data.forkFateSettingsLocal !== undefined
+        || data.forkParenTranslationLocal !== undefined
         || (data.forkSparkAssets?.length ?? 0) > 0
         || data.liveChannels !== undefined
         || data.liveSessions !== undefined
         || data.liveVods !== undefined
         || data.liveNpcWatches !== undefined
-        || data.liveKv !== undefined;
+        || data.liveKv !== undefined
+        || data.xhsOwnedPosts !== undefined;
 
     if (!hasForkPayload) {
         return { restoredForkLayer: false, skippedForkLayer: false };
@@ -246,6 +321,9 @@ export async function restoreForkBackupLayer(
     if (data.forkSparkLocal) writeLocalStorageMap(data.forkSparkLocal);
     if (data.forkMiaomiaoLocal) writeLocalStorageMap(data.forkMiaomiaoLocal);
     if (data.forkLiveLocal) writeLocalStorageMap(data.forkLiveLocal);
+    if (data.forkUiPrefsLocal) writeLocalStorageMap(data.forkUiPrefsLocal);
+    if (data.forkFateSettingsLocal) writeLocalStorageMap(data.forkFateSettingsLocal);
+    if (data.forkParenTranslationLocal) writeLocalStorageMap(data.forkParenTranslationLocal);
 
     // 电波：整表替换（包里有这一层才动，没有就不碰本机现有直播数据）
     await replaceStoreIfPresent(STORE_LIVE_CHANNELS, data.liveChannels);
@@ -309,10 +387,18 @@ export async function clearForkBackupStores(): Promise<void> {
     ]) {
         await clearIndexedDbStore(storeName);
     }
+    // 故意不清 xhs_owned_posts：那是共用表，作者包也不带；清了会误伤本机主页帖
     if (typeof localStorage !== 'undefined') {
-        for (const key of [...FORK_SPARK_LOCAL_KEYS, ...FORK_MIAOMIAO_LOCAL_KEYS, ...FORK_LIVE_LOCAL_KEYS]) {
-            localStorage.removeItem(key);
-        }
+        clearLocalStorageKeys([
+            ...FORK_SPARK_LOCAL_KEYS,
+            ...FORK_MIAOMIAO_LOCAL_KEYS,
+            ...FORK_LIVE_LOCAL_KEYS,
+            ...FORK_UI_PREFS_LOCAL_KEYS,
+        ]);
+        clearLocalStorageByPrefixes([
+            FORK_FATE_SETTINGS_KEY_PREFIX,
+            ...FORK_PAREN_TRANSLATION_KEY_PREFIXES,
+        ]);
     }
     const assets = await DB.getAllAssets();
     if (Array.isArray(assets)) {

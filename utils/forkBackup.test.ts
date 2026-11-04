@@ -4,9 +4,12 @@ import { writeV2Backup, assembleV2Backup } from './backupFormat';
 import { DB, openDB } from './db';
 import {
     FORK_BACKUP_VERSION,
+    FORK_BACKUP_MIN_VERSION,
     FORK_CUSTOM_ID,
+    FORK_FATE_SETTINGS_KEY_PREFIX,
     isForkBackupData,
     collectForkBackupLayer,
+    restoreForkBackupLayer,
 } from './forkBackup';
 
 class FakeZip {
@@ -27,9 +30,11 @@ class FakeZip {
 }
 
 describe('forkBackup', () => {
-    it('isForkBackupData 识别 ann-lily 标记', () => {
+    it('isForkBackupData 识别 ann-lily 标记，并认旧版 v1', () => {
         expect(isForkBackupData({ customFork: FORK_CUSTOM_ID, forkBackupVersion: FORK_BACKUP_VERSION })).toBe(true);
+        expect(isForkBackupData({ customFork: FORK_CUSTOM_ID, forkBackupVersion: FORK_BACKUP_MIN_VERSION })).toBe(true);
         expect(isForkBackupData({ customFork: 'other' })).toBe(false);
+        expect(isForkBackupData({ customFork: FORK_CUSTOM_ID, forkBackupVersion: FORK_BACKUP_VERSION + 1 })).toBe(false);
     });
 
     it('含 vectorMemories 仍被 assertSupportedSullyBackup 拒绝', () => {
@@ -171,6 +176,95 @@ describe('forkBackup', () => {
             expect(layer.forkLiveLocal?.live_stage_avatar).toBe('1');
         } finally {
             localStorage.removeItem('live_stage_avatar');
+        }
+    });
+
+    it('collect 带走命运牌库 / UI 偏好 / 括号翻译 / 静默预生成 / 小红书主页帖', async () => {
+        const db = await openDB();
+        const fateKey = `${FORK_FATE_SETTINGS_KEY_PREFIX}char-fate`;
+        const parenEnabledKey = 'chat_paren_translation_enabled_char-p';
+        const parenFormatKey = 'chat_paren_translation_format_char-p';
+        const fateValue = JSON.stringify({
+            factors: [{ id: 'f1', name: '自定义因子', meaning: '意思' }],
+            tendencies: [],
+            disabledFactorIds: ['f1'],
+            disabledTendencyIds: [],
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction('xhs_owned_posts', 'readwrite');
+            tx.objectStore('xhs_owned_posts').put({
+                id: 'fork-xhs-1',
+                charId: 'c1',
+                title: '主页帖',
+                createdAt: 1,
+            });
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+
+        localStorage.setItem(fateKey, fateValue);
+        localStorage.setItem('sullyos.chatNotify.enabled.v1', '0');
+        localStorage.setItem('sullyos.globalTranslate.enabled.v1', '0');
+        localStorage.setItem('sully_navigation_ball_enabled_v1', '1');
+        localStorage.setItem('sully_navigation_ball_position_v1', '{"x":8,"y":28}');
+        localStorage.setItem('sully_navigation_ball_slots_v1', '[null,null,null,null]');
+        localStorage.setItem('live_speech_perform_enabled', '0');
+        localStorage.setItem(parenEnabledKey, 'true');
+        localStorage.setItem(parenFormatKey, 'quoted');
+
+        try {
+            const layer = await collectForkBackupLayer();
+            expect(layer.forkBackupVersion).toBe(2);
+            expect(layer.forkFateSettingsLocal?.[fateKey]).toBe(fateValue);
+            expect(layer.forkUiPrefsLocal?.['sullyos.chatNotify.enabled.v1']).toBe('0');
+            expect(layer.forkUiPrefsLocal?.['sullyos.globalTranslate.enabled.v1']).toBe('0');
+            expect(layer.forkUiPrefsLocal?.['sully_navigation_ball_enabled_v1']).toBe('1');
+            expect(layer.forkLiveLocal?.live_speech_perform_enabled).toBe('0');
+            expect(layer.forkParenTranslationLocal?.[parenEnabledKey]).toBe('true');
+            expect(layer.forkParenTranslationLocal?.[parenFormatKey]).toBe('quoted');
+            expect((layer.xhsOwnedPosts as any[]).some((p) => p.id === 'fork-xhs-1')).toBe(true);
+        } finally {
+            localStorage.removeItem(fateKey);
+            localStorage.removeItem('sullyos.chatNotify.enabled.v1');
+            localStorage.removeItem('sullyos.globalTranslate.enabled.v1');
+            localStorage.removeItem('sully_navigation_ball_enabled_v1');
+            localStorage.removeItem('sully_navigation_ball_position_v1');
+            localStorage.removeItem('sully_navigation_ball_slots_v1');
+            localStorage.removeItem('live_speech_perform_enabled');
+            localStorage.removeItem(parenEnabledKey);
+            localStorage.removeItem(parenFormatKey);
+        }
+    });
+
+    it('restoreForkBackupLayer 写回命运 / UI / 括号翻译 / 静默预生成', async () => {
+        const fateKey = `${FORK_FATE_SETTINGS_KEY_PREFIX}char-restore`;
+        const parenEnabledKey = 'chat_paren_translation_enabled_char-r';
+        localStorage.removeItem(fateKey);
+        localStorage.removeItem('sullyos.chatNotify.enabled.v1');
+        localStorage.removeItem('live_speech_perform_enabled');
+        localStorage.removeItem(parenEnabledKey);
+
+        try {
+            const result = await restoreForkBackupLayer({
+                customFork: FORK_CUSTOM_ID,
+                forkBackupVersion: FORK_BACKUP_VERSION,
+                forkFateSettingsLocal: { [fateKey]: '{"factors":[]}' },
+                forkUiPrefsLocal: { 'sullyos.chatNotify.enabled.v1': '0' },
+                forkLiveLocal: { live_speech_perform_enabled: '0' },
+                forkParenTranslationLocal: { [parenEnabledKey]: 'true' },
+            } as any);
+
+            expect(result.restoredForkLayer).toBe(true);
+            expect(localStorage.getItem(fateKey)).toBe('{"factors":[]}');
+            expect(localStorage.getItem('sullyos.chatNotify.enabled.v1')).toBe('0');
+            expect(localStorage.getItem('live_speech_perform_enabled')).toBe('0');
+            expect(localStorage.getItem(parenEnabledKey)).toBe('true');
+        } finally {
+            localStorage.removeItem(fateKey);
+            localStorage.removeItem('sullyos.chatNotify.enabled.v1');
+            localStorage.removeItem('live_speech_perform_enabled');
+            localStorage.removeItem(parenEnabledKey);
         }
     });
 });
