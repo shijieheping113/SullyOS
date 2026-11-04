@@ -1,0 +1,18 @@
+
+/* 共用弹窗进场：幅度/时长/曲线对齐旧 animate-slide-up，但去掉 opacity。
+   旧 0% { opacity:0 } 会在手机上闪透底下原界面。
+   遮罩不进场淡入（由 Modal 外层瞬时铺 bg-black/40）。 */
+@keyframes sully-modal-card-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.sully-modal-card-in {
+  animation: sully-modal-card-in 0.35s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sully-modal-card-in {
+    animation: none;
+  }
+}
