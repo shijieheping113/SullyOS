@@ -4109,13 +4109,22 @@ export interface EmojiCategory {
     id: string;
     name: string;
     isSystem?: boolean;
-    allowedCharacterIds?: string[]; // If set, only these characters can see this category
+    /** 旧版可见名单：非空时只有名单内角色能用。仅用于兼容旧数据；新写入改用 blockedCharacterIds。 */
+    allowedCharacterIds?: string[];
+    /** 新版：开关被关掉的角色（默认全开）。字段存在即以此为准（空数组 = 全开）。 */
+    blockedCharacterIds?: string[];
+    /** 新版：只有用户自己能用，所有角色都不能发。 */
+    userOnly?: boolean;
+    /** 新版：在哪些聊天窗口折叠。私聊存 characterId，群聊存 `group:<groupId>`。 */
+    foldedIn?: string[];
 }
 
 export interface Emoji {
     name: string;
     url: string;
     categoryId?: string; 
+    /** 新版：不给哪些角色用（单表情屏蔽）。 */
+    blockedCharacterIds?: string[];
 }
 
 export interface FullBackupData {

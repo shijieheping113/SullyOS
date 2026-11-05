@@ -73,6 +73,18 @@ import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/VoiceFavoritesPortal';
 import ChatModals from '../components/chat/ChatModals';
+import EmojiPermissionManager from '../components/chat/EmojiPermissionManager';
+import {
+    foldedCategoriesFor,
+    userVisibleCategories,
+    userVisibleEmojis,
+    visibleCategoriesForCharacter,
+    visibleEmojisForCharacter,
+    withCategoryFold,
+    withCharacterSwitch,
+    withEmojiBlock,
+    withUserOnly,
+} from '../utils/emojiPermissions';
 import ChatGameMenu from '../components/chat/ChatGameMenu';
 import SullyAssistantSheet from '../components/chat/SullyAssistantSheet';
 import SullyAiRepairModal from '../components/chat/SullyAiRepairModal';
@@ -301,6 +313,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [newCategoryName, setNewCategoryName] = useState('');
     const [emojiExport, setEmojiExport] = useState<{ emojis: Emoji[]; title: string } | null>(null);
     const [newEmojiName, setNewEmojiName] = useState(''); // 表情包重命名输入框
+    // 表情包权限管理页：长按任意分组标签直达（Ann 定案）
+    const [emojiManager, setEmojiManager] = useState<{ open: boolean; categoryId: string | null }>({ open: false, categoryId: null });
 
     const scrollRef = useRef<HTMLDivElement>(null);
     // 心里话默认不占滚动高度。滑到底停住；已经贴住再滑，才把它放进列表，跟着消息一起出来。
@@ -420,7 +434,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     } | null>(null);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
-    const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
     const [editVideoTitle, setEditVideoTitle] = useState('');
     const [editVideoDescription, setEditVideoDescription] = useState('');
@@ -621,17 +634,30 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     );
     const draftKey = `chat_draft_${activeCharacterId}`;
 
-    // Filter categories and emojis by active character's visibility (used for both AI prompt and UI)
-    const visibleCategories = useMemo(() => categories.filter(cat => {
-        if (!cat.allowedCharacterIds || cat.allowedCharacterIds.length === 0) return true;
-        return cat.allowedCharacterIds.includes(activeCharacterId);
-    }), [categories, activeCharacterId]);
-
-    const aiVisibleEmojis = useMemo(() => {
-        const hiddenIds = new Set(categories.filter(c => !visibleCategories.some(vc => vc.id === c.id)).map(c => c.id));
-        if (hiddenIds.size === 0) return emojis;
-        return emojis.filter(e => !e.categoryId || !hiddenIds.has(e.categoryId));
-    }, [emojis, categories, visibleCategories]);
+    // 表情包权限（Ann 定案）：
+    // - AI 侧用 visibleCategoriesForCharacter / visibleEmojisForCharacter（分组开关 + 旧名单换算 + 单表情屏蔽 + 只有我能用）
+    // - 用户自己的面板永远能看见所有分组，只有折叠会收起来；折叠跟当前聊天窗口走
+    const emojiFoldKey = activeCharacterId;
+    const panelCategories = useMemo(
+        () => userVisibleCategories(categories, emojiFoldKey),
+        [categories, emojiFoldKey],
+    );
+    const foldedCategories = useMemo(
+        () => foldedCategoriesFor(categories, emojiFoldKey),
+        [categories, emojiFoldKey],
+    );
+    const userEmojis = useMemo(
+        () => userVisibleEmojis(emojis, categories, emojiFoldKey),
+        [emojis, categories, emojiFoldKey],
+    );
+    const visibleCategories = useMemo(
+        () => visibleCategoriesForCharacter(categories, activeCharacterId),
+        [categories, activeCharacterId],
+    );
+    const aiVisibleEmojis = useMemo(
+        () => visibleEmojisForCharacter(emojis, categories, activeCharacterId),
+        [emojis, categories, activeCharacterId],
+    );
 
 
 
@@ -2704,8 +2730,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             case 'emoji-options': setSelectedEmoji(payload); setModalType('emoji-options'); break;
             case 'add-category': setModalType('add-category'); break;
             case 'select-category': setActiveCategory(payload); break;
-            case 'category-options': setSelectedCategory(payload); setModalType('category-options'); break;
-            case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
+            case 'category-options': setEmojiManager({ open: true, categoryId: null }); break;
+            case 'open-emoji-permissions': setEmojiManager({ open: true, categoryId: null }); break;
+            case 'expand-category': handleToggleCategoryFold(payload, false); break;
             case 'meetup': if (char) { setShowPanel('none'); openDateWithChar(char.id); } break;
             case 'proactive': setShowProactiveModal(true); break;
             case 'active-msg-2': setShowActiveMsg2Modal(true); break;
@@ -3256,44 +3283,70 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         addToast('表情包导入成功', 'success');
     };
 
-    const handleRenameCategory = async () => {
-        if (!selectedCategory || selectedCategory.isSystem || selectedCategory.id === 'default') return;
-        const name = newCategoryName.trim();
-        if (!name) { addToast('分类名称不能为空', 'error'); return; }
-        try {
-            await DB.saveEmojiCategory({ ...selectedCategory, name });
-            await loadEmojiData();
-            markEmojiLibraryChanged();
-            setModalType('none'); setSelectedCategory(null); setNewCategoryName('');
-            addToast('分类已重命名', 'success');
-        } catch { addToast('分类重命名失败', 'error'); }
-    };
-    const handleDownloadCategory = () => {
-        if (!selectedCategory) return;
-        const items = emojis.filter(e => selectedCategory.id === 'default' ? !e.categoryId || e.categoryId === 'default' : e.categoryId === selectedCategory.id);
-        setEmojiExport({ emojis: items, title: selectedCategory.name });
-        setModalType('none');
-    };
+    // --- 表情包权限（长按分组直达的管理页；Ann 定案） ---
 
-    const handleDeleteCategory = async () => {
-        if (!selectedCategory) return;
-        await DB.deleteEmojiCategory(selectedCategory.id);
+    /** 保存分组并刷新；repack 管权限改动后要重新打包云端表情清单，折叠不需要。 */
+    const persistCategory = async (next: EmojiCategory, repack: boolean) => {
+        await DB.saveEmojiCategory(next);
         await loadEmojiData();
-        markEmojiLibraryChanged();
-        setActiveCategory('default');
-        setModalType('none');
-        setSelectedCategory(null);
-        addToast('分类及包含表情已删除', 'success');
+        if (repack) markEmojiLibraryChanged();
     };
 
-    const handleSaveCategoryVisibility = async (categoryId: string, allowedCharacterIds: string[] | undefined) => {
+    const handleToggleCategoryFold = (categoryId: string, folded: boolean) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat || categoryId === 'default') return;
+        void persistCategory(withCategoryFold(cat, emojiFoldKey, folded), false);
+    };
+
+    const handleToggleCategoryCharacter = (categoryId: string, characterId: string, allowed: boolean) => {
         const cat = categories.find(c => c.id === categoryId);
         if (!cat) return;
-        await DB.saveEmojiCategory({ ...cat, allowedCharacterIds });
-        await loadEmojiData();
-        markEmojiLibraryChanged();
-        setSelectedCategory(null);
-        addToast(allowedCharacterIds ? `已设置 ${allowedCharacterIds.length} 个角色可见` : '已设为所有角色可见', 'success');
+        void persistCategory(withCharacterSwitch(cat, characters.map(c => c.id), characterId, allowed), true);
+    };
+
+    const handleToggleCategoryUserOnly = (categoryId: string, userOnly: boolean) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat) return;
+        void persistCategory(withUserOnly(cat, userOnly), true);
+    };
+
+    /** 长按表情的「表情包操作」弹窗里那一行：不给当前角色用 / 重新允许。 */
+    const handleToggleSelectedEmojiBlock = () => {
+        if (!selectedEmoji || Array.isArray(selectedEmoji) || !char) return;
+        const target = selectedEmoji;
+        const blocked = (target.blockedCharacterIds || []).includes(char.id);
+        void (async () => {
+            await DB.saveEmojiRecord(withEmojiBlock(target, char.id, !blocked));
+            await loadEmojiData();
+            markEmojiLibraryChanged();
+            setModalType('none');
+            setSelectedEmoji(null);
+            addToast(blocked ? `已让「${char.name}」重新能用这个表情` : `已不给「${char.name}」用这个表情`, 'success');
+        })();
+    };
+
+    const handleRenameCategoryFromManager = (categoryId: string, name: string) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat) return;
+        void persistCategory({ ...cat, name }, true);
+    };
+
+    const handleDeleteCategoryFromManager = (categoryId: string) => {
+        void (async () => {
+            await DB.deleteEmojiCategory(categoryId);
+            await loadEmojiData();
+            markEmojiLibraryChanged();
+            setActiveCategory('default');
+            addToast('分类及包含表情已删除', 'success');
+        })();
+    };
+
+    const handleDownloadCategoryFromManager = (categoryId: string) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat) return;
+        const items = emojis.filter(e => categoryId === 'default' ? !e.categoryId || e.categoryId === 'default' : e.categoryId === categoryId);
+        setEmojiExport({ emojis: items, title: cat.name });
+        setEmojiManager({ open: false, categoryId: null });
     };
 
     const handleSavePrompt = () => {
@@ -4961,16 +5014,16 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
-        if (activeCategory !== 'default' && visibleCategories.length > 0 && !visibleCategories.some(c => c.id === activeCategory)) {
+        if (activeCategory !== 'default' && panelCategories.length > 0 && !panelCategories.some(c => c.id === activeCategory)) {
             setActiveCategory('default');
         }
-    }, [visibleCategories, activeCategory]);
+    }, [panelCategories, activeCategory]);
 
     // Suggestions span all visible categories; the picker still uses its selected tab.
-    const filteredEmojis = useMemo(() => aiVisibleEmojis.filter(e => {
+    const filteredEmojis = useMemo(() => userEmojis.filter(e => {
         if (activeCategory === 'default') return !e.categoryId || e.categoryId === 'default';
         return e.categoryId === activeCategory;
-    }), [aiVisibleEmojis, activeCategory]);
+    }), [userEmojis, activeCategory]);
 
     // Memoize ChatInputArea callbacks
     const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget, inputPreferences]);
@@ -5315,6 +5368,24 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 message="检测到分享链接，要关闭自动转卡片吗？关闭后，本条及之后的链接会按原文发送，方便角色用你配置的 MCP 读取。保留卡片也会带上原链接。两类解析可在加号 → 设置中分别调整。"
                 confirmText="关闭，发送原文" cancelText="保留卡片"
                 onConfirm={() => answerLinkCard(false)} onCancel={() => answerLinkCard(true)} />
+            {char && (
+                <EmojiPermissionManager
+                    open={emojiManager.open}
+                    onClose={() => setEmojiManager({ open: false, categoryId: null })}
+                    categories={categories}
+                    emojis={emojis}
+                    characters={characters}
+                    foldKey={emojiFoldKey}
+                    foldLabel={char.name}
+                    initialCategoryId={emojiManager.categoryId}
+                    onToggleFold={handleToggleCategoryFold}
+                    onToggleCharacter={handleToggleCategoryCharacter}
+                    onToggleUserOnly={handleToggleCategoryUserOnly}
+                    onRenameCategory={handleRenameCategoryFromManager}
+                    onDeleteCategory={handleDeleteCategoryFromManager}
+                    onDownloadCategory={handleDownloadCategoryFromManager}
+                />
+            )}
             <ChatModals
                 compactHome={!!homePhone}
                 modalType={modalType} setModalType={setModalType}
@@ -5343,7 +5414,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 
                 newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} onAddCategory={handleAddCategory}
                 newEmojiName={newEmojiName} setNewEmojiName={setNewEmojiName} onRenameEmoji={handleRenameEmoji}
-                selectedCategory={selectedCategory}
+                emojiBlockedForCharacter={!!(selectedEmoji && !Array.isArray(selectedEmoji) && char && (selectedEmoji.blockedCharacterIds || []).includes(char.id))}
+                onToggleEmojiBlockForCharacter={handleToggleSelectedEmojiBlock}
 
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt, note: transferNote.trim() || undefined, status: 'pending' }); setTransferNote(''); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji}
@@ -5366,8 +5438,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 onConfirmEditMessage={confirmEditMessage} onConfirmEditVideoMessage={confirmEditVideoMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage}
                 messageFavorited={!!(selectedMessage && contentFavoriteIds.has(contentFavoriteIdForMessage(selectedMessage)))}
                 onToggleMessageFavorite={selectedMessage ? () => handleToggleContentFavorite(selectedMessage) : undefined}
-                onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory} onRenameCategory={handleRenameCategory} onDownloadCategory={handleDownloadCategory}
-                allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
+                onDeleteEmoji={handleDeleteEmoji}
                 translationEnabled={translationEnabled}
                 onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (next) { trackEvent('开启聊天翻译', { targetLang: isTranslationLangPreset(translateTargetLang) ? translateTargetLang : 'custom' }); } if (!next) { setShowingTargetIds(new Set()); } }}
                 translateSourceLang={translateSourceLang}
@@ -6047,7 +6118,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
                     emojis={filteredEmojis}
                     emojiSuggestionsEnabled={inputPreferences.emojiSuggestions}
-                    suggestionEmojis={aiVisibleEmojis}
+                    suggestionEmojis={userEmojis}
                     characters={characters} activeCharacterId={activeCharacterId}
                     onCharSelect={handleCharSelectCallback}
                     unreadMessages={unreadMessages}
@@ -6058,7 +6129,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     onImageSelect={handleImageSelect}
                     onVideoFilePick={handleVideoFilePick}
                     isSummarizing={isSummarizing}
-                    categories={visibleCategories}
+                    categories={panelCategories}
+                    foldedCategories={foldedCategories}
                     activeCategory={activeCategory}
                     onReroll={handleReroll}
                     canReroll={canReroll}

@@ -12,6 +12,7 @@ import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
 import { DiceGlyph } from './ChatGameCard';
 import { useEmojiThumbnailCache } from '../../utils/useEmojiThumbnailCache';
 import { CHAT_TEXTAREA_MAX_PX, useAutoGrowTextarea } from '../../utils/autoGrowTextarea';
+import { categoryHasRestriction } from '../../utils/emojiPermissions';
 
 const EMOJI_PAGE_SIZE = 40;
 const ACTION_PAGE_SIZE = 8;
@@ -47,6 +48,8 @@ interface ChatInputAreaProps {
     emojiSuggestionsEnabled?: boolean;
     /** Visible library across all categories; also invalidates removed/replaced cached thumbnails. */
     suggestionEmojis?: Emoji[];
+    /** 当前聊天窗口里被折叠的分组：收进「已折叠」，点开随时展开。 */
+    foldedCategories?: EmojiCategory[];
     /** 以下会话切换/主题 props 仅私聊使用；群聊等复用方不传（'chars' 面板不会被打开） */
     characters?: CharacterProfile[];
     activeCharacterId?: string;
@@ -107,7 +110,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     sendButtonGenerates = false, enterToSend = true, onGenerate,
     autoReplyEnabled = false, autoReplySeconds = null, onCancelAutoReply, onInputFocusChange,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
-    emojiSuggestionsEnabled = false, suggestionEmojis = emojis,
+    emojiSuggestionsEnabled = false, suggestionEmojis = emojis, foldedCategories = [],
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
     actionsContent,
@@ -186,6 +189,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const [selectedEmojis, setSelectedEmojis] = useState<Emoji[]>([]);
     // 手动分页避免旧版/第三方 WebView 不触发 IntersectionObserver，永远卡在「加载中」。
     const [emojiPaging, setEmojiPaging] = useState({category: activeCategory, page: 0});
+    // 「已折叠 N 个」展开条：点分组标签上的胶囊出现，点某个分组把它放回面板。
+    const [foldedOpen, setFoldedOpen] = useState(false);
+    useEffect(() => {
+        if (showPanel !== 'emojis') setFoldedOpen(false);
+    }, [showPanel]);
     const [emojiPanelVisited, setEmojiPanelVisited] = useState(showPanel === 'emojis');
     useEffect(() => {
         if (showPanel === 'emojis') setEmojiPanelVisited(true);
@@ -917,11 +925,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                             className={`px-3 py-1 text-xs rounded-full whitespace-nowrap shrink-0 transition-all select-none flex items-center gap-1 ${activeCategory === cat.id ? activeCategoryClass : inactiveCategoryClass}`}
                                         >
                                             {cat.name}
-                                            {cat.allowedCharacterIds && cat.allowedCharacterIds.length > 0 && (
+                                            {categoryHasRestriction(cat) && (
                                                 <Lock className="w-3 h-3 opacity-60" weight="bold" />
                                             )}
                                         </button>
                                     ))}
+                                    {foldedCategories.length > 0 && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setFoldedOpen(v => !v); }}
+                                            className={`px-3 py-1 text-xs rounded-full whitespace-nowrap shrink-0 border border-dashed select-none ${emojiLabelClass}`}
+                                        >
+                                            已折叠 {foldedCategories.length} 个 {foldedOpen ? '⌃' : '⌄'}
+                                        </button>
+                                    )}
                                     <button onClick={() => onPanelAction('add-category')} className={categoryAddButtonClass}>+</button>
                                 </div>
                                 {emojiSelectionMode ? (
@@ -962,6 +978,21 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     </div>
                                 )}
                             </div>
+
+                            {foldedOpen && foldedCategories.length > 0 && (
+                                <div className="shrink-0 flex flex-wrap items-center gap-2 px-4 py-2 border-b border-black/5">
+                                    <span className={`text-[10px] ${emojiLabelClass}`}>已折叠：</span>
+                                    {foldedCategories.map(cat => (
+                                        <button
+                                            key={cat.id}
+                                            onClick={() => { onPanelAction('expand-category', cat.id); setFoldedOpen(false); }}
+                                            className="px-3 py-1 text-xs rounded-full bg-slate-100 text-slate-600"
+                                        >
+                                            {cat.name} ↩
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
 
                             <div className="flex-1 overflow-y-auto no-scrollbar p-4">
                                 {/* 4 列 → 5 列：面板缩略图整体缩小一档（吸收社区美化的共识密度）。

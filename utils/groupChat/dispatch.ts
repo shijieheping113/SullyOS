@@ -15,8 +15,9 @@ import {
 } from './redpacket';
 import { normalizeAssistantEmojiFormatting } from '../assistantActionFormat';
 import { extractHtmlBlocks } from '../htmlPrompt';
+import { visibleEmojisForCharacter } from '../emojiPermissions';
 
-interface EmojiItem { name: string; url: string; categoryId?: string }
+interface EmojiItem { name: string; url: string; categoryId?: string; blockedCharacterIds?: string[] }
 
 export interface DispatchContext {
     groupId: string;
@@ -103,16 +104,8 @@ export async function dispatchMemberActions(actions: DirectorAction[], ctx: Disp
         publicContent = normalizeAssistantEmojiFormatting(publicContent);
 
         // 1. Check for Emoji Commands (handle multiple emojis)
-        // Filter emojis by character visibility to prevent using hidden emoji packs
-        const charVisibleEmojis = (() => {
-            const visibleCats = categories.filter(c => {
-                if (!c.allowedCharacterIds || c.allowedCharacterIds.length === 0) return true;
-                return c.allowedCharacterIds.includes(targetId);
-            });
-            const hiddenCatIds = new Set(categories.filter(c => !visibleCats.some(vc => vc.id === c.id)).map(c => c.id));
-            if (hiddenCatIds.size === 0) return emojis;
-            return emojis.filter(e => !e.categoryId || !hiddenCatIds.has(e.categoryId));
-        })();
+        // 按这个角色自己的权限过滤（分组开关 + 旧名单换算 + 单表情屏蔽 + 只有我能用）
+        const charVisibleEmojis = visibleEmojisForCharacter(emojis, categories, targetId);
         const emojiRegex = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
         let emojiMatch;
         while ((emojiMatch = emojiRegex.exec(publicContent)) !== null) {

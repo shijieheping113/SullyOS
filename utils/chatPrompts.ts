@@ -5,6 +5,7 @@ import { hasReliableMessageTimestamp, protectPendingChatTurn } from './storyThea
 import { sarPublicContext } from './vrWorld/kanataPublicContext';
 import { kanataTitleContext } from './vrWorld/kanataTitle';
 import { selectCharacterContextMessages } from './chatContextRange';
+import { visibleCategoriesForCharacter, visibleEmojisForCharacter } from './emojiPermissions';
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
@@ -250,9 +251,7 @@ export const ChatPrompts = {
     },
 
     // 按角色可见性过滤表情包分类与表情。
-    // 规则与 Chat.tsx 的 visibleCategories / aiVisibleEmojis 保持一致：
-    // 分类未设 allowedCharacterIds（或为空）= 所有角色可见；否则只有名单内角色可见。
-    // 表情若属于一个对该角色不可见的分类，则一并隐藏（无 categoryId 的表情始终可见）。
+    // 规则收口在 utils/emojiPermissions.ts（分组开关 + 旧名单换算 + 单表情屏蔽 + 只有我能用）。
     // 主动消息（proactive）等不经过 Chat.tsx UI 的路径必须复用本函数，
     // 否则角色会在主动消息里用到不属于自己范围的表情包。
     filterVisibleEmojis: (
@@ -260,17 +259,13 @@ export const ChatPrompts = {
         categories: EmojiCategory[],
         charId: string,
     ): { emojis: Emoji[]; categories: EmojiCategory[] } => {
-        const visibleCategories = categories.filter(cat => {
-            if (!cat.allowedCharacterIds || cat.allowedCharacterIds.length === 0) return true;
-            return cat.allowedCharacterIds.includes(charId);
-        });
-        const hiddenIds = new Set(
-            categories.filter(c => !visibleCategories.some(vc => vc.id === c.id)).map(c => c.id),
-        );
-        const visibleEmojis = hiddenIds.size === 0
-            ? emojis
-            : emojis.filter(e => !e.categoryId || !hiddenIds.has(e.categoryId));
-        return { emojis: visibleEmojis, categories: visibleCategories };
+        const visibleCategories = visibleCategoriesForCharacter(categories, charId);
+        const visibleEmojis = visibleEmojisForCharacter(emojis, categories, charId);
+        return {
+            // 没有任何过滤时保持原数组引用（老测试与调用方都按这个行为写的）。
+            emojis: visibleEmojis.length === emojis.length ? emojis : visibleEmojis,
+            categories: visibleCategories,
+        };
     },
 
     // 构建表情包上下文
@@ -777,6 +772,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - **历史中的 \`[聊天]\`、\`[通话]\`、\`[约会]\` 只是消息来源标记，只用于理解上下文；严禁输出、翻译或仿写这些标签（包括 \`[聊chat]\` 等中英混写形式）。**
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。命令里只写下面方括号内的表情名称，不要带分类名。
+   - **只能从下面清单里挑表情**: 清单里没有的名字绝对不要发；对话记录里出现过、但不在下面清单里的表情，也不能再发；不许编造不存在的表情名。
    - **可用表情库 (按分类)**:
      ${emojiContextStr}
    - **理解对方发的表情包**: 你看到的 \`[发送了表情包: xx]\` 只是图的名字。表情包是从有限图库里挑的，名字描述的是**图上画了什么**，不是**ta在做什么**，也不是"ta有这层意思"。按这个顺序读：

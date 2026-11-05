@@ -28,7 +28,7 @@ import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../ut
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { trackEvent } from '../utils/analytics';
-import { markAmsgStateDirty, type AmsgDirtyReason } from '../utils/amsgStateSync';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll, type AmsgDirtyReason } from '../utils/amsgStateSync';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock } from '../utils/groupChat/prompts';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
@@ -39,6 +39,16 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 import { UsersThree, Money, GearSix, Image as ImageIcon, ArrowsClockwise, PaintBrush, BellSimpleRinging, Code, Question } from '@phosphor-icons/react';
 import ChatHeaderShell from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import EmojiPermissionManager from '../components/chat/EmojiPermissionManager';
+import {
+    foldedCategoriesFor,
+    groupFoldKey,
+    userVisibleCategories,
+    userVisibleEmojis,
+    withCategoryFold,
+    withCharacterSwitch,
+    withUserOnly,
+} from '../utils/emojiPermissions';
 import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
 import ChatInputSettings from '../components/chat/ChatInputSettings';
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
@@ -591,8 +601,10 @@ const GroupChat: React.FC = () => {
     useEffect(() => { setVoiceDialogueLines(null); }, [activeGroup?.id, view]);
 
     // Data State
-    const [emojis, setEmojis] = useState<{name: string, url: string, categoryId?: string}[]>([]);
+    const [emojis, setEmojis] = useState<{name: string, url: string, categoryId?: string, blockedCharacterIds?: string[]}[]>([]);
     const [categories, setCategories] = useState<EmojiCategory[]>([]); // New
+    // 表情包权限管理页（长按分组直达；群聊里的折叠单独记一份）
+    const [emojiManager, setEmojiManager] = useState<{ open: boolean; categoryId: string | null }>({ open: false, categoryId: null });
 
     useEffect(() => {
         setInputPreferences(loadChatInputPreferences());
@@ -1139,10 +1151,77 @@ const GroupChat: React.FC = () => {
     }, [userBubbleTheme.customCss, memberBubbleThemes, memberThemeScopeClasses]);
 
     // 表情面板按分类过滤（对齐私聊 ChatInputArea 的行为）
-    const filteredEmojis = useMemo(() => emojis.filter(e => {
+    const groupFold = activeGroup ? groupFoldKey(activeGroup.id) : '';
+    const panelCategories = useMemo(
+        () => userVisibleCategories(categories, groupFold),
+        [categories, groupFold],
+    );
+    const foldedCategories = useMemo(
+        () => foldedCategoriesFor(categories, groupFold),
+        [categories, groupFold],
+    );
+    const userEmojis = useMemo(
+        () => userVisibleEmojis(emojis, categories, groupFold),
+        [emojis, categories, groupFold],
+    );
+    const filteredEmojis = useMemo(() => userEmojis.filter(e => {
         if (activeEmojiCategory === 'default') return !e.categoryId || e.categoryId === 'default';
         return e.categoryId === activeEmojiCategory;
-    }), [emojis, activeEmojiCategory]);
+    }), [userEmojis, activeEmojiCategory]);
+
+    // 当前选中的分类被折叠后，回到默认分组，避免面板空着。
+    useEffect(() => {
+        if (activeEmojiCategory !== 'default' && !panelCategories.some(c => c.id === activeEmojiCategory)) {
+            setActiveEmojiCategory('default');
+        }
+    }, [panelCategories, activeEmojiCategory]);
+
+    // --- 表情包权限（长按分组直达；群聊折叠单独一份） ---
+    const reloadEmojiData = async () => {
+        const [es, cats] = await Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
+        setEmojis(es);
+        setCategories(cats);
+    };
+
+    const persistCategory = async (next: EmojiCategory, repack: boolean) => {
+        await DB.saveEmojiCategory(next);
+        await reloadEmojiData();
+        if (repack) markAmsgStateDirtyForAll({ characters, userProfile, groups, realtimeConfig });
+    };
+
+    const handleToggleCategoryFold = (categoryId: string, folded: boolean) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat || categoryId === 'default') return;
+        void persistCategory(withCategoryFold(cat, groupFold, folded), false);
+    };
+
+    const handleToggleCategoryCharacter = (categoryId: string, characterId: string, allowed: boolean) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat) return;
+        void persistCategory(withCharacterSwitch(cat, characters.map(c => c.id), characterId, allowed), true);
+    };
+
+    const handleToggleCategoryUserOnly = (categoryId: string, userOnly: boolean) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat) return;
+        void persistCategory(withUserOnly(cat, userOnly), true);
+    };
+
+    const handleRenameCategoryFromManager = (categoryId: string, name: string) => {
+        const cat = categories.find(c => c.id === categoryId);
+        if (!cat) return;
+        void persistCategory({ ...cat, name }, true);
+    };
+
+    const handleDeleteCategoryFromManager = (categoryId: string) => {
+        void (async () => {
+            await DB.deleteEmojiCategory(categoryId);
+            await reloadEmojiData();
+            markAmsgStateDirtyForAll({ characters, userProfile, groups, realtimeConfig });
+            setActiveEmojiCategory('default');
+            addToast('分类及包含表情已删除', 'success');
+        })();
+    };
 
     const loadTopicBoxStats = async (group: GroupProfile) => {
         try {
@@ -1167,8 +1246,8 @@ const GroupChat: React.FC = () => {
         trackEvent('打开群设置面板');
     };
 
-    // ChatInputArea 的面板动作：群聊只处理表情发送/分类切换，
-    // 表情包管理（导入/改名/删除/建分类）引导去私聊做——那套 Modal 全在 ChatModals 里
+    // ChatInputArea 的面板动作：群聊处理表情发送/分类切换/折叠展开；
+    // 长按分组直达表情包权限管理页（跟私聊同一个功能，群聊折叠单独记一份）。
     const handlePanelAction = (type: string, payload?: any) => {
         switch (type) {
             case 'send-emoji':
@@ -1177,9 +1256,17 @@ const GroupChat: React.FC = () => {
             case 'select-category':
                 setActiveEmojiCategory(payload);
                 break;
+            case 'category-options':
+                setEmojiManager({ open: true, categoryId: null });
+                break;
+            case 'open-emoji-permissions':
+                setEmojiManager({ open: true, categoryId: null });
+                break;
+            case 'expand-category':
+                handleToggleCategoryFold(payload, false);
+                break;
             case 'emoji-import':
             case 'emoji-options':
-            case 'category-options':
             case 'add-category':
             case 'delete-emoji-req':
                 addToast('请在私聊的表情面板里管理表情包', 'info');
@@ -1444,7 +1531,7 @@ ${memberTimeline || '(暂无互动记录)'}
                 3,
                 { useVisionDescriptions: apiConfig.visionApi?.enabled === true },
             );
-            const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members);
+            const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members, characters);
             // HTML 模块模式：群开关开启时追加提示词。导演模式输出的是 JSON 数组，
             // 额外强调 [html] 块写在角色 content 字符串内部且 HTML 属性用单引号，避免破坏外层 JSON
             const htmlPromptExt = activeGroup.htmlModeEnabled
@@ -1560,7 +1647,7 @@ ${memberTimeline || '(暂无互动记录)'}
                         3,
                         { useVisionDescriptions: apiConfig.visionApi?.enabled === true },
                     );
-                    const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members);
+                    const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members, characters);
                     const htmlPromptExt = activeGroup.htmlModeEnabled
                         ? `\n\n${buildHtmlPrompt(activeGroup.htmlModeCustomPrompt)}`
                         : '';
@@ -1971,6 +2058,23 @@ ${memberTimeline || '(暂无互动记录)'}
             {/* 输入区 — 复用私聊 ChatInputArea（输入/表情面板/多选删除随 OS 外观设置），
                 actions 面板整体替换为群聊自己的 4 格 */}
             {previewImage && <ImageViewer value={previewImage} fallback={previewImage} onClose={() => setPreviewImage(null)} />}
+            {activeGroup && (
+                <EmojiPermissionManager
+                    open={emojiManager.open}
+                    onClose={() => setEmojiManager({ open: false, categoryId: null })}
+                    categories={categories}
+                    emojis={emojis}
+                    characters={characters}
+                    foldKey={groupFold}
+                    foldLabel={activeGroup.name}
+                    initialCategoryId={emojiManager.categoryId}
+                    onToggleFold={handleToggleCategoryFold}
+                    onToggleCharacter={handleToggleCategoryCharacter}
+                    onToggleUserOnly={handleToggleCategoryUserOnly}
+                    onRenameCategory={handleRenameCategoryFromManager}
+                    onDeleteCategory={handleDeleteCategoryFromManager}
+                />
+            )}
             <ChatInputArea
                 input={input}
                 setInput={setInput}
@@ -1990,9 +2094,10 @@ ${memberTimeline || '(暂无互动记录)'}
                 selectedCount={selectedMsgIds.size}
                 emojis={filteredEmojis}
                 emojiSuggestionsEnabled={inputPreferences.emojiSuggestions}
-                suggestionEmojis={emojis}
+                suggestionEmojis={userEmojis}
                 activeCharacterId={activeGroup?.id || ''}
-                categories={categories}
+                categories={panelCategories}
+                foldedCategories={foldedCategories}
                 activeCategory={activeEmojiCategory}
                 onPanelAction={handlePanelAction}
                 onImageSelect={handleImageFile}

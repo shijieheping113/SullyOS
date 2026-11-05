@@ -1534,6 +1534,18 @@ export const DB = {
     });
   },
 
+  /** 整条表情记录写入：保留单表情屏蔽（blockedCharacterIds）等附加字段。 */
+  saveEmojiRecord: async (emoji: Emoji): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
+      transaction.objectStore(STORE_EMOJIS).put(emoji);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('saveEmojiRecord transaction aborted'));
+    });
+  },
+
   deleteEmoji: async (name: string): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
