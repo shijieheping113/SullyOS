@@ -100,6 +100,21 @@ describe('命运牌阵独立活动面板', () => {
         expect(host.textContent).toContain('经历与发现');
         expect(host.querySelector('.fate-panel__patron')?.getAttribute('aria-expanded')).toBe('false');
     });
+    it('重 Roll 成功后立刻显示新一轮，不先闪回更早的活动', async () => {
+        await render();
+        const title = () => host.querySelector('[aria-label="本轮活动"] h3')?.textContent;
+        expect(title()).toBe(current.activity);
+        // 新结果在页面上记的时间之后才到达：新日程的开始时间落在页面记住的时刻之后。
+        const later = NOW + 60_000;
+        vi.setSystemTime(later);
+        const rerolled: ScheduleSlot = {
+            ...current, activity: '新的活动', startTime: '10:01', endTime: '12:01',
+            startsAt: later, endsAt: later + 7_200_000, theater: undefined,
+        };
+        await render({ schedule: makeSchedule([previous, rerolled]) });
+        expect(title()).toBe('新的活动');
+        expect(host.querySelector('[aria-label="本轮活动"]')?.textContent).toContain('正在进行');
+    });
     it('三个行为和重Roll同排在正文下方，点顶部神像看小算盘并返回原神像', async () => {
         await render();
         const actions = host.querySelector('.fate-panel__copy [aria-label="活动操作"]')!;

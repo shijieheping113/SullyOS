@@ -17,6 +17,21 @@ describe('命运牌阵抽取与分时段判断', () => {
         expect(task).not.toContain('每天只能');
         expect(task).not.toContain('一天只能');
     });
+    it('牌意可以落在事件、日常、身体、梦境与念头等不同层面', () => {
+        const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'career', name: '事业与求索', meaning: '关注责任与成果。' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '', new Date('2026-11-04T23:30:00'));
+        expect(task).toContain('灵活解释牌阵倾向和因子');
+        expect(task).toContain('日常细节、身体感受、梦境');
+        expect(task).toContain('尚未成形的念头');
+        expect(task).toContain('这些只是部分可能');
+        expect(task).toContain('睡眠与梦');
+    });
+    it('短描述允许不同大小的落点，字数和时长保持现值', () => {
+        const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'discovery', name: '经历与发现', meaning: '发现变化' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '', new Date('2026-11-04T13:00:00'));
+        expect(task).toContain('目标30—60字，最多80字');
+        expect(task).not.toContain('只交代活动和进入活动的一处变化');
+        expect(task).toContain('成段的动作演出');
+        expect(task).toContain('未来30—180分钟');
+    });
     it('持续目标和明确聊天约定参与构思，同时保留正常生活并服从最新更改', () => {
         const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'discovery', name: '经历与发现', meaning: '发现变化' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '角色正在备考。用户约好周六一起去天文馆。', new Date('2026-11-04T13:00:00'));
         expect(task).toContain('角色正在备考。用户约好周六一起去天文馆。');

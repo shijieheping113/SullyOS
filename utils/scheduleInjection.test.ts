@@ -129,6 +129,33 @@ describe('意识流档位', () => {
     });
 });
 
+describe('日程是角色自己的背景，不默认用户知道', () => {
+    const NOTE = '日程是角色自己的生活背景；用户知道多少，以实际交流和共同经历为准。';
+    it('普通日程带上知情范围，原有分寸句仍在', () => {
+        const out = buildScheduleInjection(schedule, undefined, at(14), { includeFullDay: true });
+        expect(out).toContain(NOTE);
+        expect(out).toContain('不用追着问进展');
+        expect(out).toContain('不用催对方去做');
+    });
+
+    it('命运日程同样带上知情范围', () => {
+        const stamp = at(10, 30).getTime();
+        const out = buildScheduleInjection({
+            mode: 'fate',
+            slots: [{ startTime: '10:00', endTime: '11:00', startsAt: stamp - 3_600_000, endsAt: stamp + 3_600_000, activity: '写稿', location: '书房', description: '笔尖停在第三段。' }],
+        }, undefined, at(10, 30), { atTimestamp: stamp });
+        expect(out).toContain(NOTE);
+    });
+
+    it('不再用「表」指代日程', () => {
+        const out = buildScheduleInjection({
+            slots: [{ startTime: '13:00', activity: '写稿' }, { startTime: '20:00', activity: '看书' }],
+        }, undefined, at(14), { includeFullDay: true, includeChangeInstruction: true });
+        expect(out).not.toContain('这张表');
+        expect(out).not.toContain('表上');
+    });
+});
+
 describe('日程不是给对方列的待办', () => {
     // 病象：用户随口说「今天想看书」，之后每一轮结尾都被问「书看到哪了」。日程这条路
     // 走得通——生成侧明写「对话里提到的事必须严格遵循」，意识系那档还把「惦记对方」

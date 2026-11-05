@@ -77,6 +77,9 @@ export const resolveScheduleSlots = (
     return { current: null, next: schedule.slots[0] };
 };
 
+/** 日程是角色自己的背景。用户有没有听说过，以真实交流和共同经历为准，避免角色把日程当成双方共享的信息。 */
+const SCHEDULE_PRIVACY_NOTE = '日程是角色自己的生活背景；用户知道多少，以实际交流和共同经历为准。';
+
 /**
  * 构建日程注入文本
  *
@@ -102,7 +105,7 @@ export const buildScheduleInjection = (
             out += `当前正在展开的活动：${withClock ? `${currentSlot.startTime}—${currentSlot.endTime || ''} ` : ''}${currentSlot.activity}${currentSlot.location ? `（${currentSlot.location}）` : ''}\n${currentSlot.description || ''}\n这是活动展开的背景，后续选择、感受与结果随真实对话发展，不照念日程，不把尚未完成的进展提前宣称完成。\n`;
             if (options.includeChangeInstruction && withClock) out += `角色可以改变当前活动。需要修改时在回复末尾单独输出：[[ACTION:CHANGE_SCHEDULE | ${currentSlot.startTime} | 实际在做的活动]]，时刻原样保留。\n`;
         } else out += '当前没有有效活动资料；不能把已经结束的活动继续称为正在进行，也不代表角色停止生活。\n';
-        return out;
+        return out + `${SCHEDULE_PRIVACY_NOTE}\n`;
     }
     /** 报钟点时写「活动（07:00）」，不报时只留活动本身。 */
     const withTime = (text: string, startTime: string) => (withClock ? `${text}（${startTime}）` : text);
@@ -156,7 +159,7 @@ export const buildScheduleInjection = (
     // 表上就可能出现一件「跟对方有关、每轮都摆在眼前、没人说过该怎么对待」的事。
     // 这块的注释自己就写过这条硬事实的推力：表上停在睡觉，角色每轮都被推着去道晚安。
     // 换成「问问书看到哪了」，就是每轮追问进度的由来。
-    const scopeNote = '（这张表是你自己的一天，不是给对方列的待办。里头要是有跟对方相关的事，'
+    const scopeNote = '（日程是你自己的一天，不是给对方列的待办。里头要是有跟对方相关的事，'
         + '那也是你自己的惦记——话赶到了顺口带一句就够，不用追着问进展，也不用催对方去做。）';
 
     let out = '';
@@ -179,13 +182,14 @@ export const buildScheduleInjection = (
     const changeTarget = nextSlot ?? currentSlot;
     if (options.includeChangeInstruction && withClock && changeTarget) {
         out += '\n日程是你早上给自己排的计划，不是必须履行的命令。真实发生的事跟它对不上时'
-            + '（比如这会儿表上写着睡觉、你却醒着在跟对方说话），把它改成你实际在做的事就好。\n'
+            + '（比如这会儿日程上写着睡觉、你却醒着在跟对方说话），把它改成你实际在做的事就好。\n'
             + '需要时在回复末尾单独输出：'
             + `[[ACTION:CHANGE_SCHEDULE | ${changeTarget.startTime} | 去超市]]`
             + '（时段要原样抄上面出现过的那几个；正在进行的这一条和它之后的都能改，已经过去的不能）。';
     }
     // 放块尾：上面几段是条件拼的，挂在其中一段里的话，另一种形态就是裸的。
     out += `\n${scopeNote}`;
+    out += `\n${SCHEDULE_PRIVACY_NOTE}`;
     out += '\n';
     return out;
 };

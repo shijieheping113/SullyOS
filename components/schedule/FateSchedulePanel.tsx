@@ -122,6 +122,8 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
         const timer = window.setInterval(() => setNow(Date.now()), 15_000);
         return () => window.clearInterval(timer);
     }, []);
+    // 新一轮的时间戳取生成完成那一刻。若等 15 秒的计时器走完，页面会先把这一轮当成「尚未开始」而退回上一条。
+    useEffect(() => { setNow(Date.now()); }, [schedule]);
     useEffect(() => { setDraft(null); setDeleting(null); setError(''); setHistoryPage(null); setRationaleOpen(false); }, [character?.id, schedule?.id]);
     const slots = schedule?.slots || [];
     const index = primaryIndex(slots, now);
