@@ -173,8 +173,6 @@ import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
-import { listChatGameMenu } from '../utils/chatGames/registry';
-import { CHAT_GAMES_CHANGED } from '../utils/chatGames/settings';
 import { saveUserChatGame } from '../utils/chatGames/userPlay';
 import { collectRelatedCallMessageIds, DEFAULT_INCOMING_CALL_PROMPT, isCallRecordCard } from '../utils/incomingCall';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
@@ -2837,14 +2835,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         return () => { cancelled = true; };
     }, [activeCharacterId]);
     const [showChatGameMenu, setShowChatGameMenu] = useState(false);
-    const [chatGamesEpoch, setChatGamesEpoch] = useState(0);
-    useEffect(() => {
-        const bump = () => setChatGamesEpoch(n => n + 1);
-        window.addEventListener(CHAT_GAMES_CHANGED, bump);
-        return () => window.removeEventListener(CHAT_GAMES_CHANGED, bump);
-    }, []);
     useEffect(() => { setShowChatGameMenu(false); }, [activeCharacterId]);
-    const miniGames = useMemo(() => listChatGameMenu(), [chatGamesEpoch]);
     // 拉黑确认弹窗里「连电话一起拉黑」的勾选
     const [blockCallsTooChecked, setBlockCallsTooChecked] = useState(false);
     const [mcdAppOpen, setMcdAppOpen] = useState(false);
@@ -5391,7 +5382,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
              )}
             <ChatGameMenu
                 open={showChatGameMenu}
-                games={miniGames}
                 onClose={() => setShowChatGameMenu(false)}
                 onPlay={(gameId, value) => {
                     setShowChatGameMenu(false);

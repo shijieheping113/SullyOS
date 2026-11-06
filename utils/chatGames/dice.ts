@@ -11,6 +11,8 @@ export const diceGame: ChatGamePlugin = {
     id: 'dice',
     name: '掷骰子',
     blurb: '1 到 6 点',
+    settingCardBlurb: '呼噜一下…点数自己跳出来…',
+    settingStory: '唔…骰子会自己滚。\n1 到 6…哪一面朝上…猫儿也说不准…\n角色接话就好…猫儿在旁边蹲着…',
     settingRule: '摇 1 到 6 点。点数怎么用，角色自己决定。',
     playLine: '· 骰子 [[GAME:dice]] —— 摇 1 到 6 点。',
     ruleLines: [],

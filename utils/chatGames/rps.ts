@@ -26,6 +26,8 @@ export const rpsGame: ChatGamePlugin = {
     id: 'rps',
     name: '猜拳',
     blurb: '石头 剪刀 布',
+    settingCardBlurb: '先盖着…再一起翻…嘿嘿',
+    settingStory: '唔…石头、剪刀、布。出完先扣在手心…\n想让角色自己动脑筋…就打开「角色自己出拳」…\n也可以先聊两句…猫儿有点迷糊…',
     settingRule: '石头胜剪刀、剪刀胜布、布胜石头；一样算平手。谁赢系统不判。',
     playLine: '· 猜拳 [[GAME:rps]] —— 想玩就用这个记号出招。',
     ruleLines: ['  石头胜剪刀、剪刀胜布、布胜石头；一样算平手。'],

@@ -11,7 +11,11 @@ export interface ChatGamePlugin {
     name: string;
     /** 加号列表里那一行小字 */
     blurb: string;
-    /** 设置页里给用户看的规则 */
+    /** 设置页列表卡上的短介绍 */
+    settingCardBlurb: string;
+    /** 设置页详情：猫儿口吻的玩法介绍 */
+    settingStory: string;
+    /** 设置页里给用户看的规则（短句，可写在详情里） */
     settingRule: string;
     /** 提示词里「是什么」那一行，含 [[GAME:id]] */
     playLine: string;
