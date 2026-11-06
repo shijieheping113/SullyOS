@@ -46,4 +46,16 @@ describe('buildEmojiContextStr（群聊权限）', () => {
         const onlyMine: Emoji[] = [{ name: '私藏', url: 'u3', categoryId: 'mine' }];
         expect(buildEmojiContextStr(onlyMine, categories, ['A', 'B'], characters)).toBe('无');
     });
+
+    it('群窗口里折叠的分组不进清单（折叠 = 这个群不用，省 token）', () => {
+        const folded = categories.map(c => (c.id === 'public' ? { ...c, foldedIn: ['group:g1'] } : c));
+        const text = buildEmojiContextStr(emojis, folded, ['A', 'B'], characters, 'group:g1');
+        expect(text).not.toContain('通用');
+        expect(text).toContain('A专属（仅角色甲）');
+    });
+
+    it('别的群窗口的折叠不影响这个群', () => {
+        const folded = categories.map(c => (c.id === 'public' ? { ...c, foldedIn: ['group:other'] } : c));
+        expect(buildEmojiContextStr(emojis, folded, ['A', 'B'], characters, 'group:g1')).toContain('通用');
+    });
 });

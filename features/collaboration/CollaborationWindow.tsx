@@ -1747,16 +1747,10 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
     [sessions, activeSessionId],
   );
 
-  const visibleEmojiLibrary = useMemo(() => {
-    const visibleCategories = emojiCategories.filter(category => (
-      !category.allowedCharacterIds?.length || category.allowedCharacterIds.includes(character.id)
-    ));
-    const visibleIds = new Set(visibleCategories.map(category => category.id));
-    return {
-      categories: visibleCategories,
-      emojis: emojis.filter(emoji => !emoji.categoryId || visibleIds.has(emoji.categoryId)),
-    };
-  }, [character.id, emojiCategories, emojis]);
+  // 显示层看全本，跟私聊一致：协同里的表情是按名字存的，要认得出「只有我能用」和
+  // 折叠分组里的名字，否则会显示成「表情包未找到」。能发什么由 context.ts 的
+  // filterVisibleEmojis 收口（权限 + 折叠），跟这里无关。
+  // （原来这里有一套只看 allowedCharacterIds 的旧换算，不认 userOnly/blockedCharacterIds，已删除。）
 
   const playCollaborationVoice = async (message: CollaborationMessage) => {
     const parsed = parseCollaborationRichOutput(message.content).voice;
@@ -2720,8 +2714,8 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
                 user={user}
                 theme={theme}
                 uiTheme={uiTheme}
-                emojis={visibleEmojiLibrary.emojis}
-                emojiCategories={visibleEmojiLibrary.categories}
+                emojis={emojis}
+                emojiCategories={emojiCategories}
                 voiceState={{
                   loading: voiceLoadingIds.has(message.id),
                   playing: playingVoiceId === message.id,

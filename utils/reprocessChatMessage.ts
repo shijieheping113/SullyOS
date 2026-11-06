@@ -59,21 +59,10 @@ function resolveEmojiForSend(
     return unique.length === 1 ? unique[0] : undefined;
 }
 
-function filterEmojisForChar(emojis: Emoji[], categories: EmojiCategory[], charId: string): Emoji[] {
-    const visibleCategoryIds = new Set(
-        categories
-            .filter(c => !c.allowedCharacterIds || c.allowedCharacterIds.includes(charId))
-            .map(c => c.id),
-    );
-    return emojis.filter(e => {
-        if (!e.categoryId) return true;
-        if (!visibleCategoryIds.has(e.categoryId)) {
-            const cat = categories.find(c => c.id === e.categoryId);
-            if (cat?.allowedCharacterIds && !cat.allowedCharacterIds.includes(charId)) return false;
-        }
-        return true;
-    });
-}
+// 这里原本有一份只看 allowedCharacterIds 的旧换算函数，不认
+// userOnly / blockedCharacterIds。它服务的是「重新处理 / 修格式 / 合并邻泡」这类
+// **重建已有消息**的路径，按契约该看全本：调用方传什么就用什么，不再二次收口。
+// 会话里已经存在的表情不该因为后来改了权限就变回 `[表情：名字]` 文字泡。
 
 export type ReprocessOptions = {
     char: CharacterProfile;
@@ -150,7 +139,7 @@ export function reprocessSourceToBubbles(opts: ReprocessOptions): RenderedBubble
         .trim();
     if (!rawRemainder) return bubbles;
 
-    const scopedEmojis = filterEmojisForChar(emojis, categories, char.id);
+    const scopedEmojis = emojis;
     let firstText = true;
 
     const pushTextChunks = (segment: string) => {

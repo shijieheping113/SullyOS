@@ -546,6 +546,8 @@ const processInboxMessageWithPostProcessing = async (
   // 若传全量表情，名字冲突时会把 A 的 [[SEND_EMOJI: x]] 匹配到 B 名下的同名表情，导致
   // A 发出绑定给 B 的表情包。本地聊天路径喂的是 aiVisibleEmojis（已过滤），主动消息路径
   // 之前漏了这步，这里复用同一套过滤收口（与 activeMsgClient.buildCompletePrompt 对齐）。
+  // 注意：这里**不传 foldKey**。这份 emojis 只用于落库反查（applyAssistantPostProcessing），
+  // 折叠是「用户这个窗口不看」，不是禁令；减掉折叠会让角色真发出的折叠表情降级成文字泡。
   const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
     await replyStep(async () => DB.getEmojis()),
     await replyStep(async () => DB.getEmojiCategories()),

@@ -69,12 +69,14 @@ export async function migrateSharkpanAssets(): Promise<void> {
     try { if (localStorage.getItem(MIGRATION_FLAG) === '1') return; } catch { /* localStorage 不可用：照跑 */ }
 
     try {
-        // 表情包：逐行改 url（keyPath=name，saveEmoji 同名覆盖）
+        // 表情包：逐行改 url（keyPath=name）。整条写回，只换 url 一个字段：
+        // DB.saveEmoji 只 put {name,url,categoryId}，会把表情上的 blockedCharacterIds
+        // （长按单张表情设的「不给某个角色用」）一起抹掉。
         const emojis = await DB.getRawStoreData('emojis');
         for (const e of emojis) {
             if (e && typeof e.url === 'string' && e.url.includes('sharkpan.xyz')) {
                 const nu = rewriteSharkpanUrls(e.url);
-                if (nu !== e.url) await DB.saveEmoji(e.name, nu, e.categoryId);
+                if (nu !== e.url) await DB.saveEmojiRecord({ ...e, url: nu });
             }
         }
 

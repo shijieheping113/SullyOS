@@ -2756,18 +2756,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 这里既要过滤提示词，也要过滤下方 [[SEND_EMOJI]] 的按名反查：
               // 只修提示词仍挡不住模型复述旧上下文里的表情名；只修落库则模型仍会看到越权表情。
               // 2.0 推送路径已在 activeMsgClient / activeMsgRuntime 做同样的双层收口。
-              const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
-                  await DB.getEmojis(),
-                  await DB.getEmojiCategories(),
+              const allEmojis = await DB.getEmojis();
+              const allCategories = await DB.getEmojiCategories();
+              // 提示词清单：权限 + 当前窗口折叠（折叠表示用户不会用，留着只摊薄注意力）。
+              const { emojis: promptEmojis, categories } = ChatPrompts.filterVisibleEmojis(
+                  allEmojis,
+                  allCategories,
+                  charId,
                   charId,
               );
+              // 落库按名反查：只按权限，不减折叠（折叠不是禁令；减了会把角色真发的表情丢掉）。
+              const { emojis } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);
 
               // 主动私聊也使用共享内心状态，不用独立 ref 缓存覆盖它。
               // 内心状态由 ContextBuilder 读取角色共享缓存。
 
               const payload = await buildChatRequestPayload({
                   char, userProfile: currentUserProfile!, groups: currentGroups,
-                  emojis, categories,
+                  emojis: promptEmojis, categories,
+                  // 认图看全本：历史里存的是图片地址，过滤版认不出「只有我能用」的表情。
+                  historyEmojis: allEmojis,
                   historyMsgs: allMsgs,
                   contextLimit: Math.max(1, allMsgs.length),
                   recallEntryPoint: 'proactive_chat',

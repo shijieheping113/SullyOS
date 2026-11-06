@@ -27,6 +27,7 @@ import type {
   WatchTransfer,
 } from '../../utils/watchAlong/types';
 import { shownWatchText, watchLineIsVoice } from '../../utils/watchAlong/voice';
+import { userVisibleCategories, userVisibleEmojis } from '../../utils/emojiPermissions';
 import { normalizeTranslationLangLabel } from '../../utils/translationLang';
 
 /** 主聊天按角色存的翻译开关。没有按角色的语言键时，看旧的全局键。 */
@@ -194,10 +195,21 @@ export function WatchChat({
     setEmojiTab('all');
   }, [emojiOpen]);
 
+  // 面板跟私聊一致：看全本、减去你在当前角色下折叠的分组。折叠只收进「全部」之外，
+  // 面板里能开回来；角色以前发过的表情靠下面的 emojiUrl 用全本认，永远显示得出来。
+  const panelCategories = useMemo(
+    () => userVisibleCategories(categories, charId),
+    [categories, charId],
+  );
+  const panelEmojis = useMemo(
+    () => userVisibleEmojis(emojis, categories, charId),
+    [emojis, categories, charId],
+  );
+
   const shownEmojis = useMemo(() => {
-    if (emojiTab === 'all') return emojis;
-    return emojis.filter(e => e.categoryId === emojiTab);
-  }, [emojis, emojiTab]);
+    if (emojiTab === 'all') return panelEmojis;
+    return panelEmojis.filter(e => e.categoryId === emojiTab);
+  }, [panelEmojis, emojiTab]);
 
   const emojiUrl = (name?: string): string | undefined =>
     name ? emojis.find(e => e.name === name)?.url : undefined;
@@ -745,9 +757,9 @@ export function WatchChat({
       {/* 表情面板 */}
       {emojiOpen ? (
         <div className="flex shrink-0 flex-col px-3 pb-2 pt-2" style={{ borderTop: `1px solid ${W.line}`, background: W.page }}>
-          {categories.length > 1 ? (
+          {panelCategories.length > 1 ? (
             <div className="no-scrollbar mb-2 flex shrink-0 gap-2 overflow-x-auto">
-              {[{ id: 'all', name: '全部' } as EmojiCategory, ...categories].map(c => (
+              {[{ id: 'all', name: '全部' } as EmojiCategory, ...panelCategories].map(c => (
                 <button
                   key={c.id}
                   type="button"

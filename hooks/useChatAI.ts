@@ -479,6 +479,11 @@ interface UseChatAIProps {
     groups: GroupProfile[];
     emojis: Emoji[];
     categories: EmojiCategory[];
+    /**
+     * 只给历史认图用的全本表情库（可不传）。传了它，「只有我能用」/折叠分组里的
+     * 表情在聊天记录里才认得出名字；发送与落库仍用 emojis（权限版）。
+     */
+    historyEmojis?: Emoji[];
     addToast: (msg: string, type: 'info'|'success'|'error') => void;
     /** 长报错走弹窗 (toast 一行装不下), 手机用户能看清并复制反馈 */
     showError?: (title: string, details: string) => void;
@@ -506,6 +511,7 @@ export const useChatAI = ({
     groups,
     emojis,
     categories,
+    historyEmojis,
     addToast,
     showError,
     setMessages,
@@ -920,7 +926,7 @@ export const useChatAI = ({
             });
 
             const payload = await replyStep(async () => stageT('payload', buildChatRequestPayload({
-                char: charForGen, userProfile, groups, emojis, categories,
+                char: charForGen, userProfile, groups, emojis, categories, historyEmojis,
                 homePhoneContext:homePhoneContext?.(),
                 historyMsgs: contextMsgs,
                 recentMsgsHint: currentMsgs,

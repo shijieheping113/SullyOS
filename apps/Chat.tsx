@@ -697,6 +697,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         groups,
         emojis: aiVisibleEmojis,
         categories: visibleCategories,
+        // 认图看全本：历史里的表情消息只存图片地址，用过滤版会认成「未知表情」。
+        // 提示词清单与发送反查仍走上面的 emojis（权限版，载荷层还会再减折叠）。
+        historyEmojis: emojis,
         addToast,
         showError,
         setMessages: setMessagesFromGen,
@@ -3272,7 +3275,15 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     // 粘进来的可能是 data: 图（复制粘贴的图片），也可能是图床外链。
                     // 前者转成令牌只留二进制，后者是别人服务器上的地址，原样存。
                     const stored = url.startsWith('data:') ? await migrateDataUrlToRef(url) : url;
-                    await DB.saveEmoji(name, stored, targetCatId);
+                    // 同名会覆盖。覆盖时整条写回、只换 url / 分组：
+                    // DB.saveEmoji 只 put {name,url,categoryId}，会把这张表情上的
+                    // blockedCharacterIds（长按单张表情设的「不给某个角色用」）抹掉。
+                    const existing = emojis.find(e => e.name === name);
+                    await DB.saveEmojiRecord(
+                        existing
+                            ? { ...existing, name, url: stored, categoryId: targetCatId }
+                            : { name, url: stored, categoryId: targetCatId },
+                    );
                 }
             }
         }
@@ -6455,8 +6466,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         anchor={anchor}
                         char={char}
                         characters={characters}
-                        emojis={aiVisibleEmojis}
-                        categories={visibleCategories}
+                        emojis={emojis}
+                        categories={categories}
                         activeCategory={activeCategory}
                         onActiveCategoryChange={setActiveCategory}
                         translationEnabled={translationEnabled}

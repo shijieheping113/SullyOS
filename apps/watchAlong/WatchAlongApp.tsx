@@ -10,7 +10,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
-import { ChatPrompts } from '../../utils/chatPrompts';
 import { loadCharacterContextMessages } from '../../utils/chatContextRange';
 import { parseVoiceOutput } from '../../utils/minimaxTts';
 import { canSynthesizeSpeech } from '../../utils/ttsRouter';
@@ -258,9 +257,11 @@ export default function WatchAlongApp({
         await DB.initializeEmojiData();
         const [es, cats] = await Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
         if (!alive) return;
-        const visible = ChatPrompts.filterVisibleEmojis(es, cats, char.id);
-        setEmojis(visible.emojis);
-        setCategories(visible.categories);
+        // 读全本，跟私聊一样：面板要看得见「只有我能用」和折叠分组里的图（折叠了也能展开），
+        // 角色以前发过的表情也要对得上号。提示词清单由载荷层按权限 + 折叠收口，
+        // 发送落库另按权限反查 —— 这里传全本不会让角色多拿到任何表情。
+        setEmojis(es);
+        setCategories(cats);
       } catch {
         /* 表情读不到就不显示面板，不影响别的 */
       }

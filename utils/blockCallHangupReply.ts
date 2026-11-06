@@ -45,17 +45,25 @@ export async function runBlockedCallHangupReply(opts: {
 
     const range = await loadCharacterContextRange(char);
     const allMsgs = range.messages;
-    const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
-        await DB.getEmojis(),
-        await DB.getEmojiCategories(),
+    const allEmojis = await DB.getEmojis();
+    const allCategories = await DB.getEmojiCategories();
+    // 提示词清单：权限 + 当前窗口折叠（折叠表示用户不会用，留着只摊薄注意力）。
+    const { emojis: promptEmojis, categories } = ChatPrompts.filterVisibleEmojis(
+        allEmojis,
+        allCategories,
+        charId,
         charId,
     );
+    // 发送反查：只按权限，不减折叠（折叠不是禁令；减了会把角色真发的表情降级成文字泡）。
+    const { emojis } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);
     const payload = await buildChatRequestPayload({
         char,
         userProfile,
         groups,
-        emojis,
+        emojis: promptEmojis,
         categories,
+        // 认图看全本：历史里存的是图片地址，过滤版认不出「只有我能用」的表情。
+        historyEmojis: allEmojis,
         historyMsgs: allMsgs,
         contextLimit: Math.max(1, allMsgs.length),
         realtimeConfig,

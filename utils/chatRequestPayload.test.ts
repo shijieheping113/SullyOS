@@ -454,3 +454,42 @@ describe('ChatApp 按月 RECALL 提示偏好', () => {
         expect(JSON.stringify(char)).toBe(before);
     });
 });
+
+describe('表情权限：认图看全本、清单按权限减折叠', () => {
+    const emojiUrl = 'blob:emoji-cat';
+    const makeEmojiInput = () => {
+        const input = baseInput() as any;
+        input.emojis = [{ name: '猫猫', url: emojiUrl, categoryId: 'cat-normal' }];
+        input.categories = [{ id: 'cat-normal', name: '常用' }];
+        input.historyMsgs = [
+            { id: 1, charId: input.char.id, role: 'user', type: 'emoji', content: emojiUrl, timestamp: Date.now() },
+        ];
+        return input;
+    };
+
+    it('historyEmojis 让「只有我能用」的表情在历史里认出名字', async () => {
+        const input = makeEmojiInput();
+        input.emojis = [];
+        input.categories = [{ id: 'cat-normal', name: '常用', userOnly: true }];
+        input.historyEmojis = [{ name: '猫猫', url: emojiUrl, categoryId: 'cat-normal' }];
+        const payload = await buildChatRequestPayload(input);
+        expect(joinMessages(payload.fullMessages)).toContain('发送了表情包: 猫猫');
+        expect(joinMessages(payload.fullMessages)).not.toContain('未知表情');
+    });
+
+    it('只有我能用的分组不进入提示词清单，但认图不受影响', async () => {
+        const input = makeEmojiInput();
+        input.categories = [{ id: 'cat-normal', name: '常用', userOnly: true }];
+        const payload = await buildChatRequestPayload(input);
+        expect(payload.systemPrompt).not.toContain('猫猫');
+        expect(joinMessages(payload.fullMessages)).toContain('发送了表情包: 猫猫');
+    });
+
+    it('折叠的分组不进清单，认图仍认得出', async () => {
+        const input = makeEmojiInput();
+        input.categories = [{ id: 'cat-normal', name: '常用', foldedIn: [input.char.id] }];
+        const payload = await buildChatRequestPayload(input);
+        expect(payload.systemPrompt).not.toContain('猫猫');
+        expect(joinMessages(payload.fullMessages)).toContain('发送了表情包: 猫猫');
+    });
+});

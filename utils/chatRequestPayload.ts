@@ -71,6 +71,18 @@ export interface BuildChatPayloadInput {
     groups: GroupProfile[];
     emojis: Emoji[];
     categories: EmojiCategory[];
+    /**
+     * 只给历史拼装认图用的表情库（全本，不看权限、不减折叠）。
+     * 历史消息里存的是图片地址，只有全本才查得回名字；用过滤版会让「只有我能用」
+     * 或折叠分组里的表情变成「未知表情」，角色等于没看见对方发了什么。
+     * 不传时退化成 input.emojis（老调用方零改动）。禁止流向提示词清单与发送反查。
+     */
+    historyEmojis?: Emoji[];
+    /**
+     * 折叠用的窗口 key；缺省按 char.id。私聊/陪看/协同/主动消息的折叠都记在角色 id 下，
+     * 群聊记在 group:<groupId>。只影响提示词清单，不影响落库反查。
+     */
+    emojiFoldKey?: string;
     /** 给 buildMessageHistory 用的完整历史（≤ contextLimit） */
     historyMsgs: Message[];
     /**
@@ -284,7 +296,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         input.emojis,
         input.categories,
         char.id,
+        input.emojiFoldKey ?? char.id,
     );
+    // 认图看全本：提示词清单（上面那份）与历史认图（下面这份）从此分开走。
+    const historyEmojis = input.historyEmojis ?? input.emojis;
     // 正文、召回、世界书扫描和识图共用可见范围；UI 近窗可能仍缓存着范围外旧消息。
     const contextHighWaterMark = input.contextHighWaterMark ?? getMemoryPalaceHighWaterMarkForContext(char.id);
     const selectedHistory = selectCharacterContextMessages(historyMsgs, char, contextHighWaterMark);
@@ -323,7 +338,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             contextLimit,
             char,
             userProfile,
-            emojis,
+            historyEmojis,
             undefined,
             { useVisionDescriptions, contextHighWaterMark, protectPendingChatTurn: true },
         );
@@ -389,7 +404,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         contextLimit,
         char,
         userProfile,
-        emojis,
+        historyEmojis,
         undefined,
         { useVisionDescriptions, contextHighWaterMark, protectPendingChatTurn: true },
     );

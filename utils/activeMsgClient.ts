@@ -812,6 +812,7 @@ export const buildFirePack = async (
     library.all,
     library.categories,
     char.id,
+    char.id,
   );
   const systemPrompt = templateStub ? '' : await ChatPrompts.buildSystemPrompt(
     char,
@@ -834,7 +835,10 @@ export const buildFirePack = async (
     Math.max(1, recentMessages.length),
     char,
     userProfile,
-    emojis,
+    // 认图看全本：历史里存的是图片地址，只有全本才查得回名字。
+    // 上面过滤后的 emojis 是给提示词清单用的（还减掉了折叠的分组），拿它认图的话，
+    // 「只有我能用」或折叠分组里的表情在记录里会变成「未知表情」。
+    library.all,
   ).apiMessages
     .map((message) => formatHistoryLine(message.role, message.content, char, userProfile))
     .join('\n\n');

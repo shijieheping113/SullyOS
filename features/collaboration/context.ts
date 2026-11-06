@@ -54,9 +54,11 @@ const collaborationRichOutputPrompt = (
   emojis: Emoji[] = [],
   categories: EmojiCategory[] = [],
 ): string => {
-  const visible = ChatPrompts.filterVisibleEmojis(emojis, categories, char.id);
+  // 提示词清单：权限 + 当前窗口折叠（减掉折叠的分组，省 token 也少分散注意力）。
+  // 显示层（CollaborationWindow）用的是全本，两者互不影响。
+  const visible = ChatPrompts.filterVisibleEmojis(emojis, categories, char.id, char.id);
   const emojiRule = visible.emojis.length > 0
-    ? `- 可以发送表情包；只使用 \`[[SEND_EMOJI: 表情名称]]\`，可用表情为：${ChatPrompts.buildEmojiContext(visible.emojis, visible.categories)}。`
+    ? `- 可以发送表情包；只使用 \`[[SEND_EMOJI: 表情名称]]\`。上下文里出现的表情不等于你能用，权限一直在更新；只能用下面「可用表情」列出的名称，清单外的别学，不能自创，不能乱抄。可用表情为：${ChatPrompts.buildEmojiContext(visible.emojis, visible.categories)}。`
     : '- 当前没有可用表情包，不要输出 SEND_EMOJI。';
   const voiceRule = char.chatVoiceEnabled
     ? `- 可以发送语音条；使用 \`<语音>真正朗读的台词</语音>\`。${char.chatVoiceLang ? '若是外语语音，紧跟 `<字幕>中文对照</字幕>`。' : ''}语音会由协同界面真实渲染和播放，不要把标签当普通文字解释。`
