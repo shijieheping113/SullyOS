@@ -46,6 +46,11 @@
     border: 1px solid rgba(62, 52, 57, 0.08);
     border-radius: 17px;
 }
+.sully-game-sealed {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
 .sully-game-back {
     width: 58px;
     height: 58px;
@@ -58,6 +63,7 @@
     font-size: 11.5px;
     color: #8A7D85;
     margin-top: 8px;
+    text-align: center;
 }
 .sully-die-flat {
     width: 56px;

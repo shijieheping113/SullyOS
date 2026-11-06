@@ -3,7 +3,7 @@ import { DB } from '../db';
 import { getChatGamePlugin } from './registry';
 import { isChatGameEnabled } from './settings';
 import { hasRerunTags, partitionDisplay, splitActionTags } from './tags';
-import { normalizeGameId, plainChatGameClause, planGameTags, readChatGame } from './text';
+import { findUserGameInOpenTurn, normalizeGameId, plainChatGameClause, planGameTags, readChatGame } from './text';
 import type { ChatGameRecord } from './types';
 
 export function gameTurnKey(metadata: any): string {
@@ -28,6 +28,8 @@ function alreadyRolled(recent: Message[], gameId: string, turnKey: string): bool
 export interface GameRollResult {
     id: string;
     value: number | string;
+    /** 用户先出盖着，角色这手揭开成局时带上用户手势，用来接话。 */
+    revealedWithUser?: number | string;
 }
 
 type GamePart = { kind: 'text'; text: string } | { kind: 'game'; id: string };
@@ -99,7 +101,8 @@ export async function persistGameTagsFromText(args: {
     if (!/\[\[GAME:/i.test(args.content || '')) return empty(args.content);
     if (!planned.ids.length) return empty(planned.content);
     const turnKey = gameTurnKey(args.inheritMeta);
-    const recent = turnKey && args.loadRecent ? await args.loadRecent() : [];
+    const needRecentForUserPair = planned.ids.some((id) => getChatGamePlugin(id)?.needUser);
+    const recent = (turnKey || needRecentForUserPair) && args.loadRecent ? await args.loadRecent() : [];
     const rerunPending = hasRerunTags(planned.content);
     if (!rerunPending && turnKey && planned.ids.every((id) => alreadyRolled(recent, id, turnKey))) {
         const actions = splitActionTags(planned.content).actions;
@@ -149,10 +152,20 @@ export async function persistGameTagsFromText(args: {
             console.warn('[chat-game] 摇不了', part.id, error);
             continue;
         }
-        const record: ChatGameRecord = { game: part.id, by: 'ai', value };
+        const userWaiting = plugin.needUser ? findUserGameInOpenTurn(recent, part.id) : null;
+        const userWaitingRecord = userWaiting ? readChatGame(userWaiting.metadata) : null;
+        const completingUserFirst = !!(userWaiting && userWaitingRecord && userWaitingRecord.withAi == null);
+        const record: ChatGameRecord = {
+            game: part.id,
+            by: 'ai',
+            value,
+            ...(completingUserFirst ? { opened: true } : {}),
+        };
         const clause = plainChatGameClause(record, args.charName);
         if (!clause) continue;
-        const content = plugin.needUser ? `${plugin.name} · 等你出` : clause;
+        const content = plugin.needUser && !completingUserFirst
+            ? `${plugin.name} · 等你出`
+            : clause;
         const chatGame = turnKey ? { ...record, turnKey } : record;
         await saveCard({
             charId: args.charId,
@@ -162,7 +175,26 @@ export async function persistGameTagsFromText(args: {
             timestamp: args.timestamp ?? Date.now(),
             metadata: { chatGame },
         });
-        rolls.push({ id: part.id, value });
+        if (completingUserFirst && userWaiting) {
+            await DB.updateMessageMetadata(userWaiting.id, (prev: any) => ({
+                ...(prev || {}),
+                chatGame: { ...(prev?.chatGame || userWaitingRecord), withAi: value },
+            }));
+            // 同一局里用户卡已揭，recent 里也改掉，免得同一次回复再出第二手又配上。
+            if (userWaiting.metadata) {
+                userWaiting.metadata = {
+                    ...userWaiting.metadata,
+                    chatGame: { ...(userWaitingRecord || {}), withAi: value },
+                };
+            }
+        }
+        rolls.push({
+            id: part.id,
+            value,
+            ...(completingUserFirst && userWaitingRecord
+                ? { revealedWithUser: userWaitingRecord.value }
+                : {}),
+        });
     }
     if (rerunPending) {
         return {

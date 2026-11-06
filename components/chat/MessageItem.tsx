@@ -1452,6 +1452,8 @@ interface MessageItemProps {
     gameRevealed?: boolean;
     /** 只用于画面：后出的这张实际卡上叠出两边。不改消息正文。 */
     gameDuel?: { userValue: number | string; aiValue: number | string };
+    /** 对决合并后，先出那张不再另画。 */
+    gameDuelHidden?: boolean;
     onLongPress: (m: Message) => void;
     onReply: (m: Message) => void;
     selectionMode: boolean;
@@ -1524,6 +1526,7 @@ const MessageItem = React.memo(({
     onMediaLoad,
     gameRevealed = false,
     gameDuel,
+    gameDuelHidden = false,
     onLongPress,
     onReply,
     selectionMode,
@@ -2196,6 +2199,8 @@ const MessageItem = React.memo(({
     }
 
     if (m.type === 'interaction' && readChatGame(m.metadata)) {
+        // 对决合并只画在后出那张；先出那张不另画。
+        if (gameDuelHidden) return null;
         return (
             <div className={`flex w-full justify-center px-6 ${marginBottom} animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
                 {selectionMode && (
@@ -4501,6 +4506,7 @@ const MessageItem = React.memo(({
            prev.gameRevealed === next.gameRevealed &&
            prev.gameDuel?.userValue === next.gameDuel?.userValue &&
            prev.gameDuel?.aiValue === next.gameDuel?.aiValue &&
+           prev.gameDuelHidden === next.gameDuelHidden &&
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
            prev.msg.metadata?.thinkingChain === next.msg.metadata?.thinkingChain &&

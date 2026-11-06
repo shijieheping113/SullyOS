@@ -16,7 +16,7 @@ import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDel
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
 import { expandBatteryDeleteIds } from '../utils/batteryReminder';
 import { canRerollGameTurn, rerollTrailingAiGames } from '../utils/chatGames/reroll';
-import { expandChatGameDeleteIds, pairedDuelCards, readChatGame } from '../utils/chatGames/text';
+import { clearChatGameOpened, expandChatGameDeleteIds, findAiGamesToResealAfterDelete, pairedDuelCards, readChatGame } from '../utils/chatGames/text';
 import { purgeOrphanBatteryHints } from '../utils/batteryReminderRun';
 import { needsVoiceBackfill, computeBackfillContent, computeBackfillTaggedContent, hasVoiceShell, voiceShellInnerText, wrapVoiceShell } from '../utils/voiceContentBackfill';
 import { chatCharacterDisplayName } from '../utils/characterRemark';
@@ -3971,6 +3971,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const handleDeleteMessage = async () => {
         if (!selectedMessage) return;
         let ids = [selectedMessage.id];
+        let resealIds: number[] = [];
         if (isCallRecordCard(selectedMessage) && char?.id) {
             const all = await DB.getMessagesByCharId(char.id, true);
             ids = collectRelatedCallMessageIds(all, selectedMessage);
@@ -3979,16 +3980,25 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             const stored = await DB.getMessagesByCharId(char.id, true);
             ids = expandBatteryDeleteIds(stored, ids);
             ids = expandChatGameDeleteIds(stored, ids);
+            resealIds = findAiGamesToResealAfterDelete(stored, ids);
+            for (const id of resealIds) {
+                await DB.updateMessageMetadata(id, (prev: any) => clearChatGameOpened(prev));
+            }
         }
         const idSet = new Set(ids);
+        const resealSet = new Set(resealIds);
         if (ids.length === 1) await DB.deleteMessage(ids[0]);
         else await DB.deleteMessages(ids);
         discardVoiceForMessages(ids);
         // 满血主动消息：云端 fire_pack 里带最近对话原文，删了消息不打脏的话，角色到点
         // 还会提起这条已经不存在的消息（快照的消息在 flush 时从 DB 重读，这里只管打脏）。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        setMessages(prev => prev.filter(m => !idSet.has(m.id)));
-        setAllHistoryMessages(prev => prev.filter(m => !idSet.has(m.id)));
+        const applyReseal = (m: Message) => {
+            if (!resealSet.has(m.id)) return m;
+            return { ...m, metadata: clearChatGameOpened(m.metadata) };
+        };
+        setMessages(prev => prev.filter(m => !idSet.has(m.id)).map(applyReseal));
+        setAllHistoryMessages(prev => prev.filter(m => !idSet.has(m.id)).map(applyReseal));
         setTotalMsgCount(prev => Math.max(0, prev - ids.length));
         setModalType('none');
         setSelectedMessage(null);
@@ -4550,6 +4560,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 return rest;
             });
         }
+        let resealIds: number[] = [];
         if (char?.id) {
             const all = await DB.getMessagesByCharId(char.id, true);
             for (const m of all) {
@@ -4559,8 +4570,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             }
             expandBatteryDeleteIds(all, Array.from(msgIdsToDelete)).forEach(id => msgIdsToDelete.add(id));
             expandChatGameDeleteIds(all, Array.from(msgIdsToDelete)).forEach(id => msgIdsToDelete.add(id));
+            resealIds = findAiGamesToResealAfterDelete(all, Array.from(msgIdsToDelete));
+            for (const id of resealIds) {
+                await DB.updateMessageMetadata(id, (prev: any) => clearChatGameOpened(prev));
+            }
         }
         const ids = Array.from(msgIdsToDelete);
+        const resealSet = new Set(resealIds);
         if (ids.length > 0) {
             await DB.deleteMessages(ids);
             discardVoiceForMessages(ids);
@@ -4568,14 +4584,18 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
         const migMap = new Map(migrations.map(m => [m.targetId, m.chain]));
         const applyBatchDelete = (m: Message) => {
-            if (migMap.has(m.id)) {
-                return { ...m, metadata: { ...(m.metadata || {}), thinkingChain: migMap.get(m.id) } };
+            let next = m;
+            if (migMap.has(next.id)) {
+                next = { ...next, metadata: { ...(next.metadata || {}), thinkingChain: migMap.get(next.id) } };
             }
-            if (thinkingIdsToClear.has(m.id) && m.metadata?.thinkingChain) {
-                const { thinkingChain, ...rest } = m.metadata;
-                return { ...m, metadata: rest };
+            if (thinkingIdsToClear.has(next.id) && next.metadata?.thinkingChain) {
+                const { thinkingChain, ...rest } = next.metadata;
+                next = { ...next, metadata: rest };
             }
-            return m;
+            if (resealSet.has(next.id)) {
+                next = { ...next, metadata: clearChatGameOpened(next.metadata) };
+            }
+            return next;
         };
         setAllHistoryMessages(prev => prev.filter(m => !msgIdsToDelete.has(m.id)).map(applyBatchDelete));
         setMessages(prev => prev
@@ -4960,6 +4980,10 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const duelPairs = useMemo(() => pairedDuelCards(displayMessages), [displayMessages]);
     const duelByHostId = useMemo(
         () => new Map(duelPairs.map(pair => [pair.hostId, pair])),
+        [duelPairs],
+    );
+    const duelHiddenIds = useMemo(
+        () => new Set(duelPairs.map(pair => pair.hiddenId)),
         [duelPairs],
     );
     const shownMessages = renderedMessages;
@@ -5883,6 +5907,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
                             gameRevealed={revealedGameIds.has(m.id)}
                             gameDuel={duelByHostId.get(m.id)}
+                            gameDuelHidden={duelHiddenIds.has(m.id)}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
                             selectionMode={selectionMode || sullyPickActive}

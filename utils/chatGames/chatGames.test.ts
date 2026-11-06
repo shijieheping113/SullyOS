@@ -19,9 +19,12 @@ import {
 import {
     buildChatGamesGuide,
     chatGameIsSealed,
+    clearChatGameOpened,
     pairedDuelCards,
     findAiGameInOpenTurn,
+    findAiGamesToResealAfterDelete,
     expandChatGameDeleteIds,
+    readChatGame,
     formatChatGameForModel,
     followUpRolls,
     gameFollowUpNote,
@@ -103,10 +106,12 @@ describe('提示词', () => {
         expect(guide).toContain('现在有两种玩法');
         expect(guide).toContain('· 骰子 [[GAME:dice]] —— 摇 1 到 6 点。');
         expect(guide).toContain('你自己也能拿来决定事情，不用问用户。');
-        expect(guide).toContain('· 猜拳 [[GAME:rps]] —— 你出一只手，石头、剪刀、布。');
+        expect(guide).toContain('· 猜拳 [[GAME:rps]] —— 想玩就用这个记号出招。');
         expect(guide).toContain('石头胜剪刀、剪刀胜布、布胜石头；一样算平手。');
         expect(guide).not.toContain('不能自己单方面玩');
         expect(guide).not.toContain('这一轮只说话');
+        expect(guide).not.toContain('用户先出');
+        expect(guide).not.toContain('盖着时');
         expect(guide).toContain('怎么用：');
         expect(guide).toContain('用户让你扔、让你出拳，或者你自己想现在就玩，这一轮就写对应记号。');
         expect(guide).not.toContain('你赢了');
@@ -141,6 +146,12 @@ describe('给模型看的句子', () => {
             .toBe('[系统: 你出了猜拳，还盖着。用户还没出。不要说出你出的是什么，不要再输出 [[GAME:rps]]。]');
         expect(formatChatGameForModel({ metadata: { chatGame: { game: 'rps', by: 'ai', value: 'scissors', opened: true } } }, '江野'))
             .toBe('[系统: 你（江野）出了剪刀]');
+        expect(formatChatGameForModel({ metadata: { chatGame: { game: 'rps', by: 'user', value: 'rock' } } }, '江野'))
+            .toBe('[系统: 用户出了猜拳，还盖着。]');
+        expect(formatChatGameForModel({ metadata: { chatGame: { game: 'rps', by: 'user', value: 'rock' } } }, '江野'))
+            .not.toMatch(/石头|剪刀|布/);
+        expect(formatChatGameForModel({ metadata: { chatGame: { game: 'rps', by: 'user', value: 'rock' } } }, '江野'))
+            .not.toContain('不要猜测');
         expect(formatChatGameForModel({ metadata: { chatGame: { game: 'rps', by: 'user', value: 'rock', withAi: 'scissors' } } }, '江野'))
             .toBe('[系统: 用户出了石头，你（江野）出了剪刀]');
         expect(formatChatGameForModel({ metadata: {} }, '江野')).toBeNull();
@@ -164,17 +175,19 @@ describe('给模型看的句子', () => {
         expect(String(pokeHistory[0]?.content)).toContain('[系统: 用户戳了你一下]');
     });
 
-    it('接话时告诉角色真实结果，猜拳先不要说出手势', () => {
-        const rps = gameFollowUpNote([{ id: 'rps', value: 'scissors' }]);
+    it('接话：骰子照旧；猜拳只在用户先出揭开后才说双方手势', () => {
+        expect(followUpRolls([{ id: 'rps', value: 'scissors' }])).toEqual([]);
+        expect(gameFollowUpNote([{ id: 'rps', value: 'scissors' }])).toBe('');
+        const revealed = gameFollowUpNote([{ id: 'rps', value: 'scissors', revealedWithUser: 'rock' }]);
+        expect(revealed).toContain('用户出了石头');
+        expect(revealed).toContain('你出了剪刀');
+        expect(revealed).toContain('定死');
+        expect(revealed).not.toContain('你赢了');
+        expect(revealed).not.toContain('赢');
         const dice = gameFollowUpNote([{ id: 'dice', value: 4 }]);
-        expect(rps).toContain('还盖着');
-        expect(rps).not.toMatch(/石头|剪刀|布/);
-        expect(rps).toContain('不是用户出的');
-        expect(rps).toContain('不要说出你出的是什么');
         expect(dice).toContain('定死');
         expect(dice).toContain('你掷出了 4 点');
-        expect(rps + dice).not.toContain('你赢了');
-        expect(rps + dice).not.toContain('赢');
+        expect(followUpRolls([{ id: 'rps', value: 'scissors', revealedWithUser: 'rock' }]).map((roll) => roll.id)).toEqual(['rps']);
     });
 });
 
@@ -316,10 +329,81 @@ describe('记号', () => {
         expect(findAiGameInOpenTurn([sealed, ...said], 'rps')).toBe(sealed);
     });
 
-    it('猜拳在用户出之前盖着，骰子不盖', () => {
+    it('猜拳双方未成局都盖着，骰子不盖', () => {
         expect(chatGameIsSealed({ game: 'rps', by: 'ai', value: 'rock' })).toBe(true);
         expect(chatGameIsSealed({ game: 'rps', by: 'ai', value: 'rock', opened: true })).toBe(false);
+        expect(chatGameIsSealed({ game: 'rps', by: 'user', value: 'paper' })).toBe(true);
+        expect(chatGameIsSealed({ game: 'rps', by: 'user', value: 'paper', withAi: 'rock' })).toBe(false);
         expect(chatGameIsSealed({ game: 'dice', by: 'ai', value: 6 })).toBe(false);
+    });
+
+    it('已打完的旧用户卡不跟新开的猜拳局拼；新卡仍等你出', () => {
+        const oldMine = message({
+            id: 1,
+            role: 'user',
+            content: '你出了布，江野出了布',
+            metadata: { chatGame: { game: 'rps', by: 'user', value: 'paper', withAi: 'paper' } },
+        });
+        const fresh = message({
+            id: 9,
+            content: '猜拳 · 等你出',
+            metadata: { chatGame: { game: 'rps', by: 'ai', value: 'scissors' } },
+        });
+        expect(pairedDuelCards([oldMine, fresh])).toEqual([]);
+        expect(findAiGameInOpenTurn([oldMine, fresh], 'rps')).toBe(fresh);
+        expect(chatGameIsSealed(readChatGame(fresh.metadata)!)).toBe(true);
+    });
+
+    it('两边都在时，已揭开的旧局合并画在后出那张；删用户卡后角色卡可重新盖上', () => {
+        const ai = message({
+            id: 4,
+            content: '猜拳 · 等你出',
+            metadata: { chatGame: { game: 'rps', by: 'ai', value: 'scissors', opened: true } },
+        });
+        const mine = message({
+            id: 6,
+            role: 'user',
+            content: '你出了石头',
+            metadata: { chatGame: { game: 'rps', by: 'user', value: 'rock', withAi: 'scissors' } },
+        });
+        expect(pairedDuelCards([ai, mine])).toEqual([{
+            aiId: 4, userId: 6, hostId: 6, hiddenId: 4, userValue: 'rock', aiValue: 'scissors',
+        }]);
+        expect(findAiGameInOpenTurn([ai, mine], 'rps')).toBeNull();
+        expect(findAiGamesToResealAfterDelete([ai, mine], [6])).toEqual([4]);
+        const resealed = clearChatGameOpened(ai.metadata);
+        expect(resealed.chatGame.opened).toBeUndefined();
+        expect(resealed.chatGame.value).toBe('scissors');
+        expect(chatGameIsSealed(resealed.chatGame)).toBe(true);
+        expect(findAiGameInOpenTurn([
+            { ...ai, metadata: resealed },
+        ], 'rps')?.id).toBe(4);
+    });
+
+    it('你先出、角色后出：合并画在角色那张，旧局不粘新局', () => {
+        const mine = message({
+            id: 2,
+            role: 'user',
+            content: '猜拳 · 等对方出',
+            metadata: { chatGame: { game: 'rps', by: 'user', value: 'paper', withAi: 'rock' } },
+        });
+        const ai = message({
+            id: 5,
+            content: '柏木诚出了石头',
+            metadata: { chatGame: { game: 'rps', by: 'ai', value: 'rock', opened: true } },
+        });
+        expect(pairedDuelCards([mine, ai])).toEqual([{
+            aiId: 5, userId: 2, hostId: 5, hiddenId: 2, userValue: 'paper', aiValue: 'rock',
+        }]);
+        const nextAi = message({
+            id: 9,
+            content: '猜拳 · 等你出',
+            metadata: { chatGame: { game: 'rps', by: 'ai', value: 'scissors' } },
+        });
+        expect(pairedDuelCards([mine, ai, nextAi])).toEqual([{
+            aiId: 5, userId: 2, hostId: 5, hiddenId: 2, userValue: 'paper', aiValue: 'rock',
+        }]);
+        expect(findAiGameInOpenTurn([mine, ai, nextAi], 'rps')).toBe(nextAi);
     });
 });
 
@@ -497,7 +581,7 @@ describe('落卡', () => {
         expect(shouldRequestGameFollowUp(result.rolls, result.rerunPending)).toBe(true);
     });
 
-    it('表情和猜拳按顺序落卡，不接话', async () => {
+    it('表情和猜拳按顺序落卡，角色先出不接话', async () => {
         const order: string[] = [];
         const result = await persistGameTagsFromText({
             content: '[[SEND_EMOJI: 开心]]\n[[GAME:rps]]',
@@ -509,8 +593,43 @@ describe('落卡', () => {
         expect(order[0]).toContain('[[SEND_EMOJI: 开心]]');
         expect(order[1]).toBe('猜拳 · 等你出');
         expect(result.rolls.map((roll) => roll.id)).toEqual(['rps']);
+        expect(result.rolls[0]?.revealedWithUser).toBeUndefined();
         expect(shouldRequestGameFollowUp(result.rolls, result.rerunPending)).toBe(false);
         expect(followUpRolls(result.rolls)).toEqual([]);
+    });
+
+    it('用户先出盖着，角色应手后写回揭开并接话', async () => {
+        const updates: Array<{ id: number; withAi: string | number }> = [];
+        const sealedUser = message({
+            id: 21,
+            role: 'user',
+            content: '猜拳 · 等对方出',
+            metadata: { chatGame: { game: 'rps', by: 'user', value: 'rock' } },
+        });
+        vi.spyOn(DB, 'updateMessageMetadata').mockImplementation(async (id: number, updater: any) => {
+            const next = updater(sealedUser.metadata);
+            updates.push({ id, withAi: next.chatGame.withAi });
+            sealedUser.metadata = next;
+        });
+        const saved: string[] = [];
+        const result = await persistGameTagsFromText({
+            content: '来[[GAME:rps]]',
+            charId: 'c',
+            charName: '江野',
+            persist: async () => {},
+            saveBare: async (msg) => { saved.push(msg.content); },
+            loadRecent: async () => [sealedUser],
+        });
+        expect(saved[0]).toMatch(/出了(石头|剪刀|布)/);
+        expect(result.rolls).toHaveLength(1);
+        expect(result.rolls[0]?.revealedWithUser).toBe('rock');
+        expect(shouldRequestGameFollowUp(result.rolls, result.rerunPending)).toBe(true);
+        const note = gameFollowUpNote(followUpRolls(result.rolls));
+        expect(note).toContain('用户出了石头');
+        expect(note).toMatch(/你出了(石头|剪刀|布)/);
+        expect(updates).toEqual([{ id: 21, withAi: result.rolls[0]!.value }]);
+        expect(readChatGame(sealedUser.metadata)?.withAi).toBe(result.rolls[0]!.value);
+        vi.restoreAllMocks();
     });
 
     it('骰子和猜拳一起出时，两张卡都在，只按骰子接话', async () => {

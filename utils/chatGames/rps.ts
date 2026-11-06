@@ -13,7 +13,7 @@ export const rpsGame: ChatGamePlugin = {
     name: '猜拳',
     blurb: '石头 剪刀 布',
     settingRule: '石头胜剪刀、剪刀胜布、布胜石头；一样算平手。谁赢系统不判。',
-    playLine: '· 猜拳 [[GAME:rps]] —— 你出一只手，石头、剪刀、布。',
+    playLine: '· 猜拳 [[GAME:rps]] —— 想玩就用这个记号出招。',
     ruleLines: ['  石头胜剪刀、剪刀胜布、布胜石头；一样算平手。'],
     aiAlone: false,
     needUser: true,

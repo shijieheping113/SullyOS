@@ -40,11 +40,15 @@ export async function saveUserChatGame(args: {
     };
     const clause = plugin.clause('你', value);
     if (!clause) return { ok: false, reason: '这一手记不下来' };
+    // 需要盖牌的玩法：你先出还没对上角色时，正文也不写手势，免得别处读漏。
+    const content = plugin.needUser && record.withAi == null
+        ? `${plugin.name} · 等对方出`
+        : clause;
     await DB.saveMessage({
         charId: args.charId,
         role: 'user',
         type: 'interaction',
-        content: clause,
+        content,
         metadata: { chatGame: record },
     });
     if (pair && plugin.needUser && pairRecord) {

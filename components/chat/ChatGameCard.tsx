@@ -85,10 +85,22 @@ export function ChatGameCard({ message, charName, revealed = false, duelUser, du
                 <span className="time">{when}</span>
             </div>
             {sealed ? (
-                <>
-                    <div className="sully-game-back" role="img" aria-label={`${plugin?.name || '小游戏'}，还盖着，等你出`} />
-                    <p className="sully-game-wait">{plugin?.name || '小游戏'} · 等你出</p>
-                </>
+                <div className="sully-game-sealed">
+                    <div
+                        className="sully-game-back"
+                        role="img"
+                        aria-label={
+                            record.by === 'user'
+                                ? `${plugin?.name || '小游戏'}，还盖着，等对方出`
+                                : `${plugin?.name || '小游戏'}，还盖着，等你出`
+                        }
+                    />
+                    <p className="sully-game-wait">
+                        {record.by === 'user'
+                            ? `${plugin?.name || '小游戏'} · 等对方出`
+                            : `${plugin?.name || '小游戏'} · 等你出`}
+                    </p>
+                </div>
             ) : duel && duelUser != null && duelAi != null ? (
                 <div className="sully-game-plays">
                     <Side record={record} value={duelUser} who="你" />
@@ -97,6 +109,7 @@ export function ChatGameCard({ message, charName, revealed = false, duelUser, du
             ) : (
                 <div className="sully-game-plays">
                     <Side record={record} value={record.value} who={record.by === 'user' ? '你' : (charName || '对方')} />
+                    {/* 成局对决优先走 gameDuel 画在后出那张；这里只在对手卡不在窗口、没法配对时兜底。 */}
                     {record.by === 'user' && record.withAi != null && (
                         <Side record={record} value={record.withAi} who={charName || '对方'} />
                     )}
