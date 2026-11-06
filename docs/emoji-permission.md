@@ -26,28 +26,26 @@
 
 ## AI 侧
 
-### 三份清单，各管一件事（别混用）
+### 折叠和权限是两件不相干的事
 
-先分清两件完全不相干的事：
+- **权限**：这个角色能不能用某个表情。记在分组的 `blockedCharacterIds` / `userOnly`、以及单表情的 `blockedCharacterIds` 上。**只有权限决定角色能发什么。**
+- **折叠**：我在这个聊天窗口里把某个分组收起来、暂时不点。记在窗口上（私聊按角色 id、群聊按 `group:<groupId>`）。它是**我自己面板的收纳习惯**，不是权限、不是禁令，**不改变任何角色能发什么**（Ann 2026-11-06 定）。
 
-- **权限**：这个角色能不能用某个表情。记在分组的 `blockedCharacterIds` / `userOnly`、以及单表情的 `blockedCharacterIds` 上。
-- **折叠**：我在这个聊天窗口里把某个分组收起来、不常点。跟在窗口上（私聊按角色 id、群聊按 `group:<groupId>`），**不是权限、更不是禁令**。折叠完全不改变任何角色能发什么。
+### 两份数据，各管一件事（别混用）
 
 | 谁在用 | 拿哪一份 | 结果 |
 |---|---|---|
-| **角色**读聊天记录时认图（也用于界面把消息里的表情画出来） | **全本**（不看权限、不看折叠） | 谁发的、什么表情，都认得出 |
-| **角色**自己看「我能发哪些」的那份提示词清单 | 权限过滤后的清单 | 再减掉当前窗口折叠的分组（只为省 token；展开就回来） |
-| **系统**在角色说完话后，按名字去找图片落库 | 权限过滤后的清单 | 不减折叠（折叠不是禁令，减了会把真发出来的表情降级成文字） |
+| **角色**读聊天记录时认图（也用于界面把消息里的表情画出来） | **全本表情库**：库里所有表情，不看权限、不看折叠 | 谁发的、什么表情，都认得出 |
+| **角色**自己看「我能发哪些」的那份提示词清单 | 权限过滤后的清单（折叠不参与） | 它这轮能发什么，跟权限严格对应 |
+| **系统**在角色说完话后，按名字去找图片落库 | 权限过滤后的清单（折叠不参与） | 角色真发出来的表情，一定找得到图 |
 
-- **认图必须用全本**：聊天记录里的表情消息只存图片地址（`content` 是 url 或 blob 令牌），要靠全本 `emojis.find(e => e.url === url)` 才查得回名字。用过滤后的清单，静音分组 / 折叠分组里的表情会变成「未知表情」，角色等于没看见用户发了什么。载荷层为此有独立字段 `historyEmojis`，只喂 `buildMessageHistory`，**禁止流向提示词与发送反查**。
-- **提示词清单减折叠**（2026-11-06 Ann 定）：折叠表示「这个窗口里我不会用这些」，留着只让清单变长、把模型注意力摊薄。权限或折叠一变，下一轮自动恢复，不写死。统一入口 `promptEmojisForCharacter(emojis, categories, charId, foldKey)`；`ChatPrompts.filterVisibleEmojis` 的第四个参数 `foldKey` 传了才减。
-- **落库反查不减折叠**：折叠只是窗口偏好，不是禁令。减了会把角色真正发出的折叠表情降级成 `[表情：名字]` 文字泡。
-- 载荷层 `emojiFoldKey` 缺省按 `char.id`，所以私聊 / 陪看 / 协同 / 主动消息自动跟随各自窗口的折叠；群聊传 `groupFoldKey(groupId)`。
+- **认图必须用全本表情库**：聊天记录里的表情消息只存图片地址（`content` 是 url 或 blob 令牌），要靠全本 `emojis.find(e => e.url === url)` 才查得回名字。用过滤后的清单，「只有我能用」的表情会变成「未知表情」，角色等于没看见用户发了什么。载荷层为此有独立字段 `historyEmojis`，只喂 `buildMessageHistory`，**禁止流向提示词与发送反查**。
+- **折叠不进任何发给角色的清单**：无论私聊、群聊、协同、陪看、主动消息、挂断补句，清单都只按权限收口；`ChatPrompts.filterVisibleEmojis` 只收 `(emojis, categories, charId)` 三个参数，没有窗口/折叠参数。折叠只经 `userVisibleCategories` / `userVisibleEmojis` 作用于用户自己的面板与快速发送。
 - 私聊：`ChatPrompts.filterVisibleEmojis` 调用统一换算（分组开关 + 旧名单 + 单表情屏蔽 + 只有我能用）。主动消息的打包与收侧（activeMsgClient / activeMsgRuntime）、本地主动消息（OSContext）、挂断补句、协同、陪看都复用它。
 - 提示词规则（三处同义）：上下文里出现过的表情不等于现在能用，权限一直在更新；只能用清单里列出的名字，清单外的别学、不能自创、不能乱抄、不许编造。
-- 群聊：清单 = 所有成员都能用的公共清单 + 仅个别成员可用的名字后加「（仅角色名）」标注；这份清单也减掉群窗口折叠的分组。群聊分发落库时按发言角色自己的权限反查 URL；找不到就跳过（维持现状）。群聊历史的认图一直是全本。
-- 协同窗口：显示层用全本（表情按名字存，要认得出静音/折叠分组里的名字）；能发什么仍由 `features/collaboration/context.ts` 按权限 + 折叠收口。
-- 陪看：面板读全本、按用户当前角色的折叠收敛（跟私聊看到的一致）；角色发过的表情用全本认 URL，永远显示得出来。
+- 群聊：清单 = 所有成员都能用的公共清单 + 仅个别成员可用的名字后加「（仅角色名）」标注。群聊分发落库时按发言角色自己的权限反查 URL；找不到就跳过（维持现状）。群聊历史的认图一直是全本。
+- 协同窗口：显示层用全本（表情按名字存，要认得出所有名字）；能发什么由 `features/collaboration/context.ts` 按权限收口。
+- 陪看：面板读全本、再按当前角色的折叠收敛（跟私聊看到的一致）；角色发过的表情用全本认 URL，永远显示得出来。
 - **猫儿助手（加泡 / 修格式）**：始终拿全量表情库和全部分类，不受权限过滤。它是修格式的工具，所有显示得出来的格式都要能修。
 
 ## 渲染与降级（维持现状）
@@ -63,7 +61,7 @@
 ## 改动文件
 
 - `types.ts`：`EmojiCategory` 增加 `blockedCharacterIds` / `userOnly` / `foldedIn`；`Emoji` 增加 `blockedCharacterIds`。
-- `utils/emojiPermissions.ts`：唯一换算入口与写入 helper（`promptEmojisForCharacter` = 权限 + 折叠）。
+- `utils/emojiPermissions.ts`：唯一换算入口与写入 helper。
 - `components/chat/EmojiPermissionManager.tsx`：权限管理页。
 - `apps/Chat.tsx`：长按分组直达、面板按折叠过滤、AI 过滤改走统一换算、表情菜单加一行、权限改动触发云端重打包。
 - `components/chat/ChatInputArea.tsx`：分组长按直达、已折叠胶囊与展开、小锁判断改按新权限。
@@ -73,9 +71,9 @@
 - `utils/groupChat/prompts.ts`：群聊清单（公共 + 专属标注）。
 - `utils/groupChat/dispatch.ts`：表情落库按角色权限。
 - `utils/db.ts`：新增 `saveEmojiRecord`（整条表情记录写入，保留屏蔽字段）。
-- `utils/chatRequestPayload.ts`：`historyEmojis`（只给认图）与 `emojiFoldKey`（折叠窗口）。
+- `utils/chatRequestPayload.ts`：`historyEmojis`（只给认图，全本）。
 - `utils/reprocessChatMessage.ts`：删掉旧的 `filterEmojisForChar`（只认 allowedCharacterIds）；重建已有消息时按调用方传入的库还原，不再二次收口。
 - `apps/watchAlong/WatchAlongApp.tsx` / `components/watchAlong/WatchChat.tsx`：陪看读全本，面板按当前角色的折叠收敛。
-- `features/collaboration/CollaborationWindow.tsx` / `features/collaboration/context.ts`：协同显示层传全本、能发什么仍按权限 + 折叠收口。
-- `utils/activeMsgClient.ts` / `utils/activeMsgRuntime.ts` / `utils/blockCallHangupReply.ts` / `context/OSContext.tsx`：主动消息与挂断补句拆成「清单版」与「认图/落库版」两份。
+- `features/collaboration/CollaborationWindow.tsx` / `features/collaboration/context.ts`：协同显示层传全本、能发什么只按权限收口。
+- `utils/activeMsgClient.ts` / `utils/blockCallHangupReply.ts` / `context/OSContext.tsx`：认图用全本，清单与落库只按权限。
 - 测试：`utils/emojiPermissions.test.ts`、`utils/emojiBackupCompat.test.ts`、`utils/groupChat/prompts.emojiPermissions.test.ts`、`utils/chatPrompts.emojiRule.test.ts`、`utils/chatRequestPayload.test.ts`、`utils/emojiPermissionWiring.test.ts`。

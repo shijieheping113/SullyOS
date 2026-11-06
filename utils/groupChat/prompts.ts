@@ -5,7 +5,7 @@ import { stickerNameFromUrl } from '../messageFormat';
 import { isBlobRef } from '../blobRef';
 import { packetHistoryLine } from './redpacket';
 import { formatRelativeAge } from './relativeTime';
-import { DEFAULT_CATEGORY_ID, foldedCategoriesFor, visibleEmojisForCharacter } from '../emojiPermissions';
+import { visibleEmojisForCharacter } from '../emojiPermissions';
 
 interface EmojiItem { name: string; url: string; categoryId?: string; blockedCharacterIds?: string[] }
 
@@ -32,36 +32,18 @@ export function buildEmojiContextStr(
     categories: EmojiCategory[],
     memberIds: string[],
     characters: { id: string; name: string }[] = [],
-    /**
-     * 折叠窗口 key（群聊传 groupFoldKey(groupId)）。传了就减掉用户在这个群里折叠的分组：
-     * 折叠等于「不会用」，列在清单里只会让提示词变长、摊薄注意力（Ann 2026-11-06）。
-     * 只影响这份清单，不影响落库反查——群聊分发仍按发言角色自己的权限找 URL。
-     */
-    foldKey?: string,
 ): string {
     if (emojis.length === 0 || memberIds.length === 0) return '无';
-
-    // 折叠收敛：先按折叠窗口把整组剔掉，再做成员权限换算。
-    const foldedIds = new Set(
-        foldKey ? foldedCategoriesFor(categories, foldKey).map(category => category.id) : [],
-    );
-    foldedIds.delete(DEFAULT_CATEGORY_ID);
-    const promptCategories = foldedIds.size === 0
-        ? categories
-        : categories.filter(category => !foldedIds.has(category.id));
-    const promptEmojis = foldedIds.size === 0
-        ? emojis
-        : emojis.filter(emoji => !emoji.categoryId || !foldedIds.has(emoji.categoryId));
 
     const nameOf = new Map(characters.map(c => [c.id, c.name]));
     const allowedByMember = new Map<string, Set<string>>();
     for (const id of memberIds) {
-        allowedByMember.set(id, new Set(visibleEmojisForCharacter(promptEmojis, promptCategories, id).map(e => e.name)));
+        allowedByMember.set(id, new Set(visibleEmojisForCharacter(emojis, categories, id).map(e => e.name)));
     }
 
     const order: string[] = [];
     const owners = new Map<string, string[]>();
-    for (const emoji of promptEmojis) {
+    for (const emoji of emojis) {
         const allowed = memberIds.filter(id => allowedByMember.get(id)!.has(emoji.name));
         if (allowed.length === 0) continue;
         if (!owners.has(emoji.name)) {
@@ -71,11 +53,11 @@ export function buildEmojiContextStr(
     }
 
     const catMap: Record<string, string> = { 'default': '通用' };
-    promptCategories.forEach(c => catMap[c.id] = c.name);
+    categories.forEach(c => catMap[c.id] = c.name);
 
     const byCategory = new Map<string, string[]>();
     for (const name of order) {
-        const emoji = promptEmojis.find(e => e.name === name);
+        const emoji = emojis.find(e => e.name === name);
         const cid = emoji?.categoryId || 'default';
         if (!byCategory.has(cid)) byCategory.set(cid, []);
         const allowed = owners.get(name) || [];

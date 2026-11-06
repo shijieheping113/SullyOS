@@ -5,11 +5,7 @@ import { hasReliableMessageTimestamp, protectPendingChatTurn } from './storyThea
 import { sarPublicContext } from './vrWorld/kanataPublicContext';
 import { kanataTitleContext } from './vrWorld/kanataTitle';
 import { selectCharacterContextMessages } from './chatContextRange';
-import {
-    promptEmojisForCharacter,
-    visibleCategoriesForCharacter,
-    visibleEmojisForCharacter,
-} from './emojiPermissions';
+import { visibleCategoriesForCharacter, visibleEmojisForCharacter } from './emojiPermissions';
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
@@ -259,16 +255,14 @@ export const ChatPrompts = {
     // 主动消息（proactive）等不经过 Chat.tsx UI 的路径必须复用本函数，
     // 否则角色会在主动消息里用到不属于自己范围的表情包。
     //
-    // foldKey（可选）：传了就再减掉用户在这个窗口折叠的分组——折叠表示「不会用」，
-    // 留在清单里只会让提示词变长、摊薄注意力（Ann 2026-11-06）。不传保持旧行为。
-    // 注意：这只影响提示词清单，不影响落库反查（折叠不是禁令）。
+    // 这里**只管权限**，跟折叠无关（Ann 2026-11-06 定）：
+    // 折叠是用户自己面板里的收纳习惯，只影响她自己看到的和快速发送，
+    // 不改变任何角色能发什么，所以不进这份清单。
     filterVisibleEmojis: (
         emojis: Emoji[],
         categories: EmojiCategory[],
         charId: string,
-        foldKey?: string,
     ): { emojis: Emoji[]; categories: EmojiCategory[] } => {
-        if (foldKey) return promptEmojisForCharacter(emojis, categories, charId, foldKey);
         const visibleCategories = visibleCategoriesForCharacter(categories, charId);
         const visibleEmojis = visibleEmojisForCharacter(emojis, categories, charId);
         return {

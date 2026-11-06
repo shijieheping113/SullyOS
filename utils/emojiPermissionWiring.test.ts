@@ -2,12 +2,13 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { describe, it, expect } from 'vitest';
 
-// 表情权限的「三份清单」契约（docs/emoji-permission.md）：
-//   认图/显示已发消息 → 全本，不看权限，不减折叠
-//   提示词「能发清单」 → 权限过滤 + 减折叠
-//   发送落库按名反查 → 权限过滤，不减折叠
-// 这类错很难被行为测试逮住（要整套聊天记录 + 权限 + 折叠组合），
-// 所以对调用点做源码级守卫：谁把过滤后的清单递给了认图，这里直接红。
+// 表情权限的契约（docs/emoji-permission.md）：
+//   认图/显示已发消息 → 全本，不看权限
+//   提示词「能发清单」 → 只按权限过滤
+//   发送落库按名反查 → 也只按权限
+//   折叠 = 用户自己面板的收纳习惯，不进任何发给角色的清单
+// 这类错很难被行为测试逮住（要整套聊天记录 + 权限组合），
+// 所以对调用点做源码级守卫：谁把过滤后的清单递给了认图、谁把折叠掺进清单，这里直接红。
 
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8');
 
@@ -51,25 +52,52 @@ describe('认图走全本（historyEmojis / 全量库）', () => {
     });
 });
 
-describe('提示词清单按权限并减折叠', () => {
-    it('载荷层默认按 char.id 当折叠窗口', () => {
-        expect(payload).toContain('input.emojiFoldKey ?? char.id');
+describe('折叠不掺进任何发给角色的清单', () => {
+    // 折叠是用户自己面板里的收纳习惯（这里收起、暂时不点），跟「角色能不能发」是两回事。
+    // 所以凡是角色会看到的东西（提示词清单、群聊清单、协同清单、主动消息清单），
+    // 都不许出现折叠的痕迹。
+
+    it('载荷层不再有折叠窗口参数', () => {
+        expect(payload).not.toContain('emojiFoldKey');
+        expect(payload).toContain('ChatPrompts.filterVisibleEmojis(\n        input.emojis,\n        input.categories,\n        char.id,\n    );');
     });
 
-    it('私聊 / 挂断 / 本地主动消息都传了 foldKey（权限 + 折叠）', () => {
-        expect(hangup).toContain('charId,\n        charId,\n    );');
-        expect(osContext).toContain('charId,\n                  charId,\n              );');
-        expect(collaborationContext).toContain('ChatPrompts.filterVisibleEmojis(emojis, categories, char.id, char.id)');
+    it('聊天清单的过滤入口只收权限三参', () => {
+        const chatPrompts = read('chatPrompts.ts');
+        expect(chatPrompts).not.toContain('promptEmojisForCharacter');
+        expect(chatPrompts).not.toContain('foldedCategoriesFor');
+        expect(chatPrompts).not.toContain('foldKey');
     });
 
-    it('落库反查不传 foldKey（折叠不是禁令）', () => {
-        expect(hangup).toContain('const { emojis } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);');
-        expect(osContext).toContain('const { emojis } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);');
-    });
-
-    it('群聊清单在内部减折叠，并带「仅某某」标注', () => {
-        expect(groupPrompts).toContain('foldedCategoriesFor(categories, foldKey)');
+    it('群聊清单不按折叠收（只按成员权限 + 「仅某某」标注）', () => {
+        expect(groupPrompts).not.toContain('foldedCategoriesFor');
+        expect(groupPrompts).not.toContain('foldKey');
         expect(groupPrompts).toContain('（仅');
+    });
+
+    it('协同：提示词清单只按权限，折叠只留在她自己的面板', () => {
+        expect(collaborationContext).toContain(
+            'ChatPrompts.filterVisibleEmojis(emojis, categories, char.id)',
+        );
+        expect(collaborationContext).not.toContain('char.id, char.id');
+    });
+
+    it('挂断补句与主动消息：清单与落库都只按权限', () => {
+        expect(hangup).toContain(
+            'const { emojis, categories } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);',
+        );
+        expect(hangup).not.toContain('charId,\n        charId,');
+        expect(osContext).toContain(
+            'const { emojis, categories } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);',
+        );
+        expect(osContext).not.toContain('charId,\n                  charId,');
+        expect(activeMsgClient).not.toContain('char.id,\n    char.id,');
+    });
+
+    it('折叠仍然只作用于她自己的面板（这些入口必须还在）', () => {
+        expect(chatPage).toContain('userVisibleEmojis(emojis, categories, emojiFoldKey)');
+        expect(chatPage).toContain('withCategoryFold(cat, emojiFoldKey, folded)');
+        expect(watchChat).toContain('userVisibleEmojis(emojis, categories, charId)');
     });
 });
 

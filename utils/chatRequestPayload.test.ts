@@ -455,7 +455,7 @@ describe('ChatApp 按月 RECALL 提示偏好', () => {
     });
 });
 
-describe('表情权限：认图看全本、清单按权限减折叠', () => {
+describe('表情权限：认图看全本、清单只按权限', () => {
     const emojiUrl = 'blob:emoji-cat';
     const makeEmojiInput = () => {
         const input = baseInput() as any;
@@ -485,11 +485,12 @@ describe('表情权限：认图看全本、清单按权限减折叠', () => {
         expect(joinMessages(payload.fullMessages)).toContain('发送了表情包: 猫猫');
     });
 
-    it('折叠的分组不进清单，认图仍认得出', async () => {
+    it('折叠的分类照旧进清单（折叠只是她自己面板的收纳，不是权限）', async () => {
         const input = makeEmojiInput();
         input.categories = [{ id: 'cat-normal', name: '常用', foldedIn: [input.char.id] }];
         const payload = await buildChatRequestPayload(input);
-        expect(payload.systemPrompt).not.toContain('猫猫');
+        // 折叠 ≠ 角色不能发：清单里必须还在
+        expect(payload.systemPrompt).toContain('猫猫');
         expect(joinMessages(payload.fullMessages)).toContain('发送了表情包: 猫猫');
     });
 });

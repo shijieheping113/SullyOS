@@ -812,7 +812,6 @@ export const buildFirePack = async (
     library.all,
     library.categories,
     char.id,
-    char.id,
   );
   const systemPrompt = templateStub ? '' : await ChatPrompts.buildSystemPrompt(
     char,

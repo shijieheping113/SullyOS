@@ -54,9 +54,9 @@ const collaborationRichOutputPrompt = (
   emojis: Emoji[] = [],
   categories: EmojiCategory[] = [],
 ): string => {
-  // 提示词清单：权限 + 当前窗口折叠（减掉折叠的分组，省 token 也少分散注意力）。
+  // 提示词清单只按权限收口。折叠是用户自己面板的收纳习惯，跟角色能发什么无关（Ann 2026-11-06）。
   // 显示层（CollaborationWindow）用的是全本，两者互不影响。
-  const visible = ChatPrompts.filterVisibleEmojis(emojis, categories, char.id, char.id);
+  const visible = ChatPrompts.filterVisibleEmojis(emojis, categories, char.id);
   const emojiRule = visible.emojis.length > 0
     ? `- 可以发送表情包；只使用 \`[[SEND_EMOJI: 表情名称]]\`。上下文里出现的表情不等于你能用，权限一直在更新；只能用下面「可用表情」列出的名称，清单外的别学，不能自创，不能乱抄。可用表情为：${ChatPrompts.buildEmojiContext(visible.emojis, visible.categories)}。`
     : '- 当前没有可用表情包，不要输出 SEND_EMOJI。';

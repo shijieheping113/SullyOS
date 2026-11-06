@@ -1531,7 +1531,7 @@ ${memberTimeline || '(暂无互动记录)'}
                 3,
                 { useVisionDescriptions: apiConfig.visionApi?.enabled === true },
             );
-            const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members, characters, groupFold);
+            const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members, characters);
             // HTML 模块模式：群开关开启时追加提示词。导演模式输出的是 JSON 数组，
             // 额外强调 [html] 块写在角色 content 字符串内部且 HTML 属性用单引号，避免破坏外层 JSON
             const htmlPromptExt = activeGroup.htmlModeEnabled
@@ -1647,7 +1647,7 @@ ${memberTimeline || '(暂无互动记录)'}
                         3,
                         { useVisionDescriptions: apiConfig.visionApi?.enabled === true },
                     );
-                    const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members, characters, groupFold);
+                    const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members, characters);
                     const htmlPromptExt = activeGroup.htmlModeEnabled
                         ? `\n\n${buildHtmlPrompt(activeGroup.htmlModeCustomPrompt)}`
                         : '';

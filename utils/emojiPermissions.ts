@@ -108,35 +108,6 @@ export function foldedCategoriesFor(
     ));
 }
 
-/**
- * 给 AI 的「这一轮能用什么」：角色权限过滤之后，再减掉用户在当前窗口折叠的分组。
- *
- * 为什么要减折叠（Ann 2026-11-06）：折叠就是用户在说「这个窗口里我不看这些」，
- * 挂了也不会用；留着只会让提示词清单变长、把模型的注意力摊薄。折叠是窗口偏好、
- * 不是禁令——角色真要发某个折叠分组里的表情，落库那一步仍按权限反查 URL。
- *
- * foldKey 与 panel 一致：私聊/陪看/协同/主动消息用角色 id，群聊用 groupFoldKey(groupId)。
- */
-export function promptEmojisForCharacter(
-    emojis: readonly Emoji[],
-    categories: readonly EmojiCategory[],
-    characterId: string,
-    foldKey: string,
-): { emojis: Emoji[]; categories: EmojiCategory[] } {
-    const foldedIds = new Set(
-        foldedCategoriesFor(categories, foldKey)
-            .map(category => category.id)
-            .filter(id => id !== DEFAULT_CATEGORY_ID),
-    );
-    const promptCategories = foldedIds.size === 0
-        ? visibleCategoriesForCharacter(categories, characterId)
-        : visibleCategoriesForCharacter(categories, characterId)
-            .filter(category => !foldedIds.has(category.id));
-    const promptEmojis = visibleEmojisForCharacter(emojis, categories, characterId)
-        .filter(emoji => !emoji.categoryId || !foldedIds.has(emoji.categoryId));
-    return { emojis: promptEmojis, categories: promptCategories };
-}
-
 /** 用户自己的面板里能快速发送的表情：全部分组减去当前窗口折叠的分组。 */
 export function userVisibleEmojis(
     emojis: readonly Emoji[],

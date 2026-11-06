@@ -33,8 +33,13 @@ describe('表情提示词规则（源码检查）', () => {
         expect(source).toContain('visibleCategoriesForCharacter(categories, charId)');
     });
 
-    it('提示词清单还能再减掉折叠分组（foldKey 传了才生效）', () => {
-        expect(source).toContain('promptEmojisForCharacter(emojis, categories, charId, foldKey)');
+    it('提示词清单只管权限，不掺折叠（折叠是用户自己面板的收纳习惯）', () => {
+        expect(source).not.toContain('promptEmojisForCharacter');
+        expect(source).not.toContain('foldedCategoriesFor');
+        // filterVisibleEmojis 的签名里不能有 foldKey 这种「窗口」参数
+        expect(source).toContain(
+            'filterVisibleEmojis: (\n        emojis: Emoji[],\n        categories: EmojiCategory[],\n        charId: string,\n    )',
+        );
     });
 
     it('拼接版直接复用分块版，两条管线共享同一段表情规则', () => {
