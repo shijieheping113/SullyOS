@@ -3,7 +3,9 @@ import { DB } from '../db';
 import { getChatGamePlugin } from './registry';
 import { isChatGameEnabled } from './settings';
 import { hasRerunTags, partitionDisplay, splitActionTags } from './tags';
-import { findUserGameInOpenTurn, normalizeGameId, plainChatGameClause, planGameTags, readChatGame } from './text';
+import { resolveRpsChoice } from './rps';
+import { isRpsFreeChoiceEnabled } from './settings';
+import { findUserGameInOpenTurn, parseGameTagBody, plainChatGameClause, planGameTags, readChatGame } from './text';
 import type { ChatGameRecord } from './types';
 
 export function gameTurnKey(metadata: any): string {
@@ -30,9 +32,11 @@ export interface GameRollResult {
     value: number | string;
     /** 用户先出盖着，角色这手揭开成局时带上用户手势，用来接话。 */
     revealedWithUser?: number | string;
+    /** 角色自控猜拳选的。 */
+    byChoice?: boolean;
 }
 
-type GamePart = { kind: 'text'; text: string } | { kind: 'game'; id: string };
+type GamePart = { kind: 'text'; text: string } | { kind: 'game'; id: string; choice?: string };
 
 function splitGameParts(content: string, enabled: (id: string) => boolean): GamePart[] {
     const parts: GamePart[] = [];
@@ -44,10 +48,10 @@ function splitGameParts(content: string, enabled: (id: string) => boolean): Game
     while ((match = re.exec(source))) {
         const before = source.slice(last, match.index);
         if (before) parts.push({ kind: 'text', text: before });
-        const id = normalizeGameId(match[1]);
-        if (id && !seen.has(id) && enabled(id)) {
-            seen.add(id);
-            parts.push({ kind: 'game', id });
+        const parsed = parseGameTagBody(match[1]);
+        if (parsed && !seen.has(parsed.id) && enabled(parsed.id)) {
+            seen.add(parsed.id);
+            parts.push({ kind: 'game', id: parsed.id, choice: parsed.choice });
         }
         last = match.index + match[0].length;
     }
@@ -146,11 +150,29 @@ export async function persistGameTagsFromText(args: {
         const plugin = getChatGamePlugin(part.id);
         if (!plugin) continue;
         let value: number | string;
-        try {
-            value = plugin.roll();
-        } catch (error) {
-            console.warn('[chat-game] 摇不了', part.id, error);
-            continue;
+        let byChoice = false;
+        // 猜拳自控开着：记号里写了选手势就用他自己的；没写（旧 [[GAME:rps]]）仍落卡，
+        // 这一手临时由系统摇，避免角色嘴上说了出拳、页面却没卡。
+        if (part.id === 'rps' && isRpsFreeChoiceEnabled()) {
+            const picked = resolveRpsChoice(part.choice);
+            if (picked) {
+                value = picked;
+                byChoice = true;
+            } else {
+                try {
+                    value = plugin.roll();
+                } catch (error) {
+                    console.warn('[chat-game] 摇不了', part.id, error);
+                    continue;
+                }
+            }
+        } else {
+            try {
+                value = plugin.roll();
+            } catch (error) {
+                console.warn('[chat-game] 摇不了', part.id, error);
+                continue;
+            }
         }
         const userWaiting = plugin.needUser ? findUserGameInOpenTurn(recent, part.id) : null;
         const userWaitingRecord = userWaiting ? readChatGame(userWaiting.metadata) : null;
@@ -160,6 +182,7 @@ export async function persistGameTagsFromText(args: {
             by: 'ai',
             value,
             ...(completingUserFirst ? { opened: true } : {}),
+            ...(byChoice ? { byChoice: true } : {}),
         };
         const clause = plainChatGameClause(record, args.charName);
         if (!clause) continue;
@@ -191,6 +214,7 @@ export async function persistGameTagsFromText(args: {
         rolls.push({
             id: part.id,
             value,
+            ...(byChoice ? { byChoice: true } : {}),
             ...(completingUserFirst && userWaitingRecord
                 ? { revealedWithUser: userWaitingRecord.value }
                 : {}),

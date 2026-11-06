@@ -36,4 +36,6 @@ export interface ChatGameRecord {
     withAi?: number | string;
     /** 仅 needUser 的角色那一条：用户出手后写成 true，卡片才翻开 */
     opened?: boolean;
+    /** 角色自控猜拳：这一手是角色自己选的，不是系统摇的 */
+    byChoice?: boolean;
 }

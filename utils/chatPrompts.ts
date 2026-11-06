@@ -701,6 +701,8 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
             }
         }
 
+        // 小游戏教学随本机开关变，挂 volatile；先占位，下面 else 里拼正文后再追加。
+        let chatGamesGuide = '';
         if (promptOptions?.appRules !== undefined) {
             baseSystemPrompt += promptOptions.appRules;
         } else {
@@ -738,7 +740,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         // - 本地生成：worker 不参与 → 照教。
         const scheduleMessageTagEnabled = !forFirePack
             && !(timelyByWorker && isAmsg2EnabledForChar(char));
-        const chatGamesGuide = (forFirePack || boxPlay || batterySlice) ? '' : buildChatGamesGuide();
+        chatGamesGuide = (forFirePack || boxPlay || batterySlice) ? '' : buildChatGamesGuide();
         // 按月 / 按日 RECALL 教学各自开关；提到「按月」的对比句只在按月教学也开着时才写，避免关月度时还出现月调用字样。
         const showMonthlyRecallPrompt = forFirePack || char.hideMonthlyRecallPrompt === false;
         const showDailyRecallPrompt = forFirePack || char.hideDailyRecallPrompt === false;
@@ -798,7 +800,6 @@ ${scheduleMessageTagEnabled ? `   - **定时发送消息**: 如果你想在未�
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 你的记忆本身是完整可靠的，回忆过去优先靠记忆和 \`[[RECALL]]\`，**不需要**靠翻日记来"想起"事情。只有当你**自己**特别想重温那天日记里写下的心情、措辞或私密小细节时，才翻阅: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 同上——回忆优先靠记忆和 \`[[RECALL]]\`，只有你自己想重温那天日记的内容时才用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}
-${chatGamesGuide}
 ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
    你拥有实时搜索互联网的能力！每次对话时，你可以自己决定是否需要搜索。
    - **使用方式**: 当你想搜索某个话题时，在回复开头单独一行输出: \`[[SEARCH: 搜索关键词]]\`
@@ -1141,6 +1142,9 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         } else if (!batterySlice && !boxPlay) {
             baseSystemPrompt += `\n\n[系统提示: Spark 关注发动态功能当前未开启。严禁使用 [[ACTION:SPARK_POST|...]]。]`;
         }
+
+        // 小游戏教学随本机开关变（猜拳自控开/关），放进 volatile，避免 stable 缓存还在教旧记号。
+        if (chatGamesGuide) volatileState += chatGamesGuide;
 
         // 总纲正文与作者见面共用。喵喵盒播放不带这段，避免主聊天钢印进盒子。
         // 家园小手机走 appRules，不加上面这段 Spark 关注发动态。

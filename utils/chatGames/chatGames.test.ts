@@ -9,12 +9,15 @@ import { rpsGame } from './rps';
 import { canRerollGameTurn, rerollTrailingAiGames } from './reroll';
 import { hasRerunTags, stripRerunTags } from './tags';
 import { DB } from '../db';
+import { resolveRpsChoice } from './rps';
 import {
     CHAT_GAMES_STORAGE_KEY,
     isChatGameEnabled,
+    isRpsFreeChoiceEnabled,
     readChatGameSettings,
     writeChatGameEnabled,
     writeChatGameMaster,
+    writeRpsFreeChoice,
 } from './settings';
 import {
     buildChatGamesGuide,
@@ -28,6 +31,7 @@ import {
     formatChatGameForModel,
     followUpRolls,
     gameFollowUpNote,
+    parseGameTagBody,
     planGameTags,
     shouldRequestGameFollowUp,
     stripGameTags,
@@ -94,8 +98,17 @@ describe('开关', () => {
 
     it('坏掉的记录按全开处理', () => {
         const store = memoryStorage({ [CHAT_GAMES_STORAGE_KEY]: '{' });
-        expect(readChatGameSettings(store)).toEqual({ master: true, games: {} });
+        expect(readChatGameSettings(store)).toEqual({ master: true, games: {}, rpsFreeChoice: false });
         expect(isChatGameEnabled('dice', store)).toBe(true);
+    });
+
+    it('猜拳角色自控默认关，打开后仍受猜拳开关约束', () => {
+        const store = memoryStorage();
+        expect(isRpsFreeChoiceEnabled(store)).toBe(false);
+        writeRpsFreeChoice(true, store);
+        expect(isRpsFreeChoiceEnabled(store)).toBe(true);
+        writeChatGameEnabled('rps', false, store);
+        expect(isRpsFreeChoiceEnabled(store)).toBe(false);
     });
 });
 
@@ -108,6 +121,7 @@ describe('提示词', () => {
         expect(guide).toContain('你自己也能拿来决定事情，不用问用户。');
         expect(guide).toContain('· 猜拳 [[GAME:rps]] —— 想玩就用这个记号出招。');
         expect(guide).toContain('石头胜剪刀、剪刀胜布、布胜石头；一样算平手。');
+        expect(guide).not.toContain('[[GAME:rps:rock]]');
         expect(guide).not.toContain('不能自己单方面玩');
         expect(guide).not.toContain('这一轮只说话');
         expect(guide).not.toContain('用户先出');
@@ -115,6 +129,21 @@ describe('提示词', () => {
         expect(guide).toContain('怎么用：');
         expect(guide).toContain('用户让你扔、让你出拳，或者你自己想现在就玩，这一轮就写对应记号。');
         expect(guide).not.toContain('你赢了');
+    });
+
+    it('打开角色自控后，猜拳教自选记号并强调别泄密', () => {
+        const store = memoryStorage();
+        writeRpsFreeChoice(true, store);
+        const guide = buildChatGamesGuide(store);
+        expect(guide).toContain('[[GAME:rps:rock]]');
+        expect(guide).toContain('[[GAME:rps:scissors]]');
+        expect(guide).toContain('[[GAME:rps:paper]]');
+        expect(guide).toContain('你出了什么不能告诉用户');
+        expect(guide).toContain('你可以自己想策略');
+        expect(guide).toContain('试探能不能套出对方出的是什么');
+        expect(guide).toContain('用户也可能用同样的套路套你');
+        expect(guide).toContain('系统不替你摇');
+        expect(guide).not.toContain('· 猜拳 [[GAME:rps]] —— 想玩就用这个记号出招。');
     });
 
     it('关掉猜拳就不再教猜拳', () => {
@@ -157,6 +186,32 @@ describe('给模型看的句子', () => {
         expect(formatChatGameForModel({ metadata: {} }, '江野')).toBeNull();
     });
 
+    it('自控开着时，盖着的角色手也私下告诉他，并沿用别泄密/可玩策略', () => {
+        const store = memoryStorage();
+        writeRpsFreeChoice(true, store);
+        const sealed = formatChatGameForModel(
+            { metadata: { chatGame: { game: 'rps', by: 'ai', value: 'scissors', byChoice: true } } },
+            '江野',
+            false,
+            store,
+        );
+        expect(sealed).toContain('这一手你出了剪刀');
+        expect(sealed).toContain('还盖着（当前局');
+        expect(sealed).toContain('你出了什么不能告诉用户');
+        expect(sealed).toContain('你可以自己想策略');
+        expect(sealed).toContain('不要再说一次猜拳记号');
+        expect(sealed).not.toContain('不要说出你出的是什么');
+        // 原版随机不受影响
+        const classic = formatChatGameForModel(
+            { metadata: { chatGame: { game: 'rps', by: 'ai', value: 'scissors' } } },
+            '江野',
+            false,
+            memoryStorage(),
+        );
+        expect(classic).not.toMatch(/石头|剪刀|布/);
+        expect(classic).toContain('不要说出你出的是什么');
+    });
+
     it('历史里的小游戏不再被说成戳一戳', () => {
         const game = message({
             content: '江野掷出了 3 点',
@@ -197,6 +252,16 @@ describe('记号', () => {
         expect(planned.ids).toEqual(['dice']);
         expect(planned.content).toBe('来');
         expect(stripGameTags('看看[[GAME:dice]]\n[[SEARCH: 猫]]')).toBe('看看\n[[SEARCH: 猫]]');
+    });
+
+    it('猜拳自选记号能拆出 id 和手势', () => {
+        expect(parseGameTagBody('rps')).toEqual({ id: 'rps' });
+        expect(parseGameTagBody('rps:rock')).toEqual({ id: 'rps', choice: 'rock' });
+        expect(parseGameTagBody('RPS:剪刀')).toEqual({ id: 'rps', choice: '剪刀' });
+        expect(resolveRpsChoice('rock')).toBe('rock');
+        expect(resolveRpsChoice('布')).toBe('paper');
+        expect(resolveRpsChoice('nope')).toBeNull();
+        expect(planGameTags('[[GAME:rps:paper]]', () => true).ids).toEqual(['rps']);
     });
 
     it('中间说的话不打断猜拳，已经出过的那一局不再配', () => {
@@ -598,6 +663,61 @@ describe('落卡', () => {
         expect(followUpRolls(result.rolls)).toEqual([]);
     });
 
+    it('角色自控开着时认选手势；旧记号没选手势仍落卡兜底', async () => {
+        const store = memoryStorage();
+        writeRpsFreeChoice(true, store);
+        vi.stubGlobal('localStorage', store);
+        const bare: Array<{ content: string; byChoice?: boolean; value: any }> = [];
+        const legacy = await persistGameTagsFromText({
+            content: '[[GAME:rps]]',
+            charId: 'c',
+            charName: '江野',
+            persist: async () => {},
+            saveBare: async (msg) => {
+                bare.push({
+                    content: msg.content,
+                    byChoice: msg.metadata?.chatGame?.byChoice,
+                    value: msg.metadata?.chatGame?.value,
+                });
+            },
+        });
+        expect(bare).toHaveLength(1);
+        expect(bare[0]?.content).toBe('猜拳 · 等你出');
+        expect(bare[0]?.byChoice).toBeUndefined();
+        expect(String(bare[0]?.value)).toMatch(/^(rock|scissors|paper)$/);
+        expect(legacy.rolls[0]?.byChoice).toBeUndefined();
+
+        const picked: Array<{ content: string; byChoice?: boolean; value: any }> = [];
+        const chosen = await persistGameTagsFromText({
+            content: '[[GAME:rps:scissors]]',
+            charId: 'c',
+            charName: '江野',
+            persist: async () => {},
+            saveBare: async (msg) => {
+                picked.push({
+                    content: msg.content,
+                    byChoice: msg.metadata?.chatGame?.byChoice,
+                    value: msg.metadata?.chatGame?.value,
+                });
+            },
+        });
+        expect(picked).toEqual([{ content: '猜拳 · 等你出', byChoice: true, value: 'scissors' }]);
+        expect(chosen.rolls[0]).toMatchObject({ id: 'rps', value: 'scissors', byChoice: true });
+
+        writeRpsFreeChoice(false, store);
+        const randomSaved: string[] = [];
+        const random = await persistGameTagsFromText({
+            content: '[[GAME:rps:rock]]',
+            charId: 'c',
+            charName: '江野',
+            persist: async () => {},
+            saveBare: async (msg) => { randomSaved.push(String(msg.metadata?.chatGame?.value)); },
+        });
+        expect(random.rolls[0]?.byChoice).toBeUndefined();
+        expect(randomSaved[0]).toMatch(/^(rock|scissors|paper)$/);
+        vi.unstubAllGlobals();
+    });
+
     it('用户先出盖着，角色应手后写回揭开并接话', async () => {
         const updates: Array<{ id: number; withAi: string | number }> = [];
         const sealedUser = message({
@@ -832,17 +952,21 @@ describe('私聊提示词插不插', () => {
 
     it('平时的私聊带上小游戏', async () => {
         const parts = await build();
-        expect(parts.stable).toContain('【小游戏】');
-        expect(parts.stable).toContain('[[GAME:dice]]');
-        expect(parts.stable).toContain('[[GAME:rps]]');
+        // 小游戏教学随开关变，挂在 volatile，不进 stable 缓存。
+        expect(parts.volatileState).toContain('【小游戏】');
+        expect(parts.volatileState).toContain('[[GAME:dice]]');
+        expect(parts.volatileState).toContain('[[GAME:rps]]');
+        expect(parts.stable).not.toContain('【小游戏】');
     });
 
     it('主动消息打包和电量提醒不教小游戏', async () => {
         const packed = await build({ forFirePack: true });
         const battery = await build({ forBatteryReminder: true });
         expect(packed.stable).not.toContain('【小游戏】');
+        expect(packed.volatileState).not.toContain('【小游戏】');
         expect(packed.stable).not.toContain('[[GAME:dice]]');
         expect(battery.stable).not.toContain('【小游戏】');
+        expect(battery.volatileState).not.toContain('【小游戏】');
         expect(battery.stable).not.toContain('聊天 App 行为规范');
     });
 });

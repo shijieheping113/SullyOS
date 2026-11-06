@@ -1,6 +1,6 @@
 import type { Message } from '../../types';
 import { getChatGamePlugin, listEnabledChatGames } from './registry';
-import { isChatGameEnabled } from './settings';
+import { isChatGameEnabled, isRpsFreeChoiceEnabled } from './settings';
 import type { ChatGameRecord } from './types';
 
 const GAME_TAG = /\[\[GAME:([^\]]*)\]\]/gi;
@@ -9,6 +9,21 @@ export function normalizeGameId(raw: string): string | null {
     const id = String(raw || '').trim().toLowerCase();
     if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)) return null;
     return id;
+}
+
+/** [[GAME:rps]] 或 [[GAME:rps:rock]] → id + 可选自选手势。 */
+export function parseGameTagBody(raw: string): { id: string; choice?: string } | null {
+    const body = String(raw || '').trim();
+    if (!body) return null;
+    const colon = body.indexOf(':');
+    if (colon < 0) {
+        const id = normalizeGameId(body);
+        return id ? { id } : null;
+    }
+    const id = normalizeGameId(body.slice(0, colon));
+    if (!id) return null;
+    const choice = body.slice(colon + 1).trim();
+    return choice ? { id, choice } : { id };
 }
 
 export function readChatGame(metadata: any): ChatGameRecord | null {
@@ -21,6 +36,7 @@ export function readChatGame(metadata: any): ChatGameRecord | null {
     const record: ChatGameRecord = { game, by: raw.by, value: raw.value };
     if (typeof raw.withAi === 'number' || typeof raw.withAi === 'string') record.withAi = raw.withAi;
     if (raw.opened === true) record.opened = true;
+    if (raw.byChoice === true) record.byChoice = true;
     return record;
 }
 
@@ -324,7 +340,12 @@ export function plainChatGameClause(record: ChatGameRecord, charName: string): s
  * 不然角色会把用户出的当成自己出的。
  * 没有小游戏记录时返回空，调用方继续走原来的戳一戳句子。
  */
-export function formatChatGameForModel(msg: { metadata?: any }, charName: string, reveal = false): string | null {
+export function formatChatGameForModel(
+    msg: { metadata?: any },
+    charName: string,
+    reveal = false,
+    store?: Storage | null,
+): string | null {
     const record = readChatGame(msg.metadata);
     if (!record) return null;
     if (reveal) record.opened = true;
@@ -334,7 +355,19 @@ export function formatChatGameForModel(msg: { metadata?: any }, charName: string
         if (record.by === 'user') {
             return `[系统: 用户出了${plugin.name}，还盖着。]`;
         }
-        return `[系统: 你出了${plugin.name}，还盖着。用户还没出。不要说出你出的是什么，不要再输出 [[GAME:${record.game}]]。]`;
+        // 自控开着：角色要记得自己这手才能玩策略；系统私下告诉他，并沿用引导里那套「别泄密除非想让对方赢」。
+        // 原版随机仍不写手势，避免泄密。用「这一手 / 还盖着」跟已揭开的旧局区分，减轻多轮搞混。
+        const freeRps = record.game === 'rps' && isRpsFreeChoiceEnabled(store);
+        if (freeRps) {
+            const mine = plugin.clause('你', record.value);
+            if (mine) {
+                return `[系统: 这一手${mine}，还盖着（当前局，用户还没出）。你自己记得这手；你出了什么不能告诉用户，除非对话发展到你必须说（例如你特别想输掉或让用户赢）。你可以自己想策略。不要再说一次猜拳记号。]`;
+            }
+        }
+        const banTag = freeRps
+            ? '不要再说一次猜拳记号'
+            : `不要再输出 [[GAME:${record.game}]]`;
+        return `[系统: 你出了${plugin.name}，还盖着。用户还没出。不要说出你出的是什么，${banTag}。]`;
     }
     const self = charName ? `你（${charName}）` : '你';
     const actor = record.by === 'user' ? '用户' : self;
@@ -367,10 +400,10 @@ export function planGameTags(content: string, enabled: (id: string) => boolean):
     let match: RegExpExecArray | null;
     const re = new RegExp(GAME_TAG.source, 'gi');
     while ((match = re.exec(source))) {
-        const id = normalizeGameId(match[1]);
-        if (!id || seen.has(id) || !enabled(id)) continue;
-        seen.add(id);
-        ids.push(id);
+        const parsed = parseGameTagBody(match[1]);
+        if (!parsed || seen.has(parsed.id) || !enabled(parsed.id)) continue;
+        seen.add(parsed.id);
+        ids.push(parsed.id);
     }
     const stripped = source.replace(/\[\[GAME:[^\]]*\]\]/gi, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     return { ids, content: stripped };
@@ -384,19 +417,35 @@ export function stripGameTags(content: string): string {
 export function buildChatGamesGuide(store?: Storage | null): string {
     const plugins = listEnabledChatGames(store);
     if (!plugins.length) return '';
+    const rpsFree = isRpsFreeChoiceEnabled(store);
     const countWord = plugins.length === 1 ? '一' : plugins.length === 2 ? '两' : String(plugins.length);
     const lines: string[] = ['【小游戏】', `现在有${countWord}种玩法：`, ''];
     plugins.forEach((plugin) => {
-        lines.push(plugin.playLine);
-        plugin.ruleLines.forEach(line => lines.push(line));
-        if (plugin.aiAlone) lines.push('  你自己也能拿来决定事情，不用问用户。');
+        if (plugin.id === 'rps' && rpsFree) {
+            lines.push('· 猜拳 [[GAME:rps:rock]] / [[GAME:rps:scissors]] / [[GAME:rps:paper]] —— 想玩就写记号，并自己选定出哪一手。');
+            plugin.ruleLines.forEach(line => lines.push(line));
+            lines.push('  你出了什么不能告诉用户，除非对话发展到你必须说（例如你特别想输掉或让用户赢）。你可以自己想策略。');
+            lines.push('  用户已经出了、你还没出时：可以马上写记号应手，也可以先聊一两轮，试探能不能套出对方出的是什么，再决定自己出哪一手。');
+            lines.push('  反过来，用户也可能用同样的套路套你——对方追问、旁敲侧击时，仍按上面的泄密规矩自己拿捏。');
+        } else {
+            lines.push(plugin.playLine);
+            plugin.ruleLines.forEach(line => lines.push(line));
+            if (plugin.aiAlone) lines.push('  你自己也能拿来决定事情，不用问用户。');
+        }
     });
     lines.push('');
     lines.push('怎么用：');
     lines.push('- 用户让你扔、让你出拳，或者你自己想现在就玩，这一轮就写对应记号。');
-    lines.push('- 记号一出来系统马上摇。点数和手势是系统摇的，你改不了，不要自己编。');
+    if (rpsFree) {
+        lines.push('- 骰子：记号一出来系统马上摇，点数你改不了。');
+        lines.push('- 猜拳：你在记号里自己选定石头、剪刀或布；系统不替你摇。');
+    } else {
+        lines.push('- 记号一出来系统马上摇。点数和手势是系统摇的，你改不了，不要自己编。');
+    }
     lines.push('- 拿到结果之后你自己看着办，你平时怎么说话就怎么说。');
-    lines.push('- 系统没给结果，就是还没摇，不要自己编点数或手势。');
+    lines.push(rpsFree
+        ? '- 系统没给结果，就是还没落定，不要自己编点数；猜拳没写选手势就不算出了。'
+        : '- 系统没给结果，就是还没摇，不要自己编点数或手势。');
     return `\n${lines.join('\n')}\n`;
 }
 
@@ -423,7 +472,7 @@ export function shouldRequestGameFollowUp(
 }
 
 export function gameFollowUpNote(
-    rolls: Array<{ id: string; value: number | string; revealedWithUser?: number | string }>,
+    rolls: Array<{ id: string; value: number | string; revealedWithUser?: number | string; byChoice?: boolean }>,
 ): string {
     return rolls.map((roll) => {
         const plugin = getChatGamePlugin(roll.id);
@@ -433,7 +482,10 @@ export function gameFollowUpNote(
             const theirs = plugin.clause('用户', roll.revealedWithUser);
             const mine = plugin.clause('你', roll.value);
             if (!theirs || !mine) return '';
-            return `[系统: ${theirs}，${mine}。手势是系统摇的，已经定死。请用你自己的口气接着说。不要改口换成别的结果，不要再输出 [[GAME:${plugin.id}]]。]`;
+            const how = roll.byChoice
+                ? '这是你自己选的手势，已经定死'
+                : '手势是系统摇的，已经定死';
+            return `[系统: ${theirs}，${mine}。${how}。请用你自己的口气接着说。不要改口换成别的结果，不要再输出 [[GAME:${plugin.id}]]。]`;
         }
         const clause = plugin.clause('你', roll.value);
         if (!clause) return '';

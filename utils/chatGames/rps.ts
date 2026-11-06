@@ -3,9 +3,23 @@ import type { ChatGamePlugin } from './types';
 
 const HANDS = ['rock', 'scissors', 'paper'] as const;
 const LABEL: Record<string, string> = { rock: '石头', scissors: '剪刀', paper: '布' };
+const FROM_LABEL: Record<string, typeof HANDS[number]> = {
+    rock: 'rock', scissors: 'scissors', paper: 'paper',
+    '石头': 'rock', '剪刀': 'scissors', '布': 'paper',
+};
+
+export type RpsHand = typeof HANDS[number];
 
 export function rpsLabel(value: number | string): string | null {
     return LABEL[String(value)] || null;
+}
+
+/** 认英文 value 或中文名。认不出返回空。 */
+export function resolveRpsChoice(raw: string | null | undefined): RpsHand | null {
+    const key = String(raw || '').trim().toLowerCase();
+    if (!key) return null;
+    if ((HANDS as readonly string[]).includes(key)) return key as RpsHand;
+    return FROM_LABEL[String(raw || '').trim()] || FROM_LABEL[key] || null;
 }
 
 export const rpsGame: ChatGamePlugin = {
