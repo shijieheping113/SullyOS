@@ -179,7 +179,7 @@ export default function FateDayChart({ slots, now, stateOf, selectedIndex, onSel
                     })}
                 </svg>
                 {HOUR_TICKS.map(tick => {
-                    const point = fateChartPoint(tick.minutes, 1.16);
+                    const point = fateChartPoint(tick.minutes, 1.1);
                     return <span key={tick.minutes} className="fate-day-chart__tick" style={{ left: `${point.x}%`, top: `${point.y}%` }} aria-hidden="true">{tick.label}</span>;
                 })}
                 <svg className="fate-day-chart__threads" viewBox="0 0 100 100" aria-hidden="true">

@@ -5,7 +5,9 @@
 .fate-overlay__header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding-bottom:10px}
 .fate-overlay__header h2{font-family:'Songti SC',SimSun,serif;font-size:18px;font-weight:500;margin:0;color:#493945;line-height:1.5}
 .fate-overlay__header>button{border:0;background:transparent;color:#85495d;font:inherit;font-size:12px;padding:5px 0 5px 10px;min-height:34px;cursor:pointer}
-.fate-overlay__content{overflow-y:auto;overscroll-behavior:contain;min-height:0;padding:0 1px 3px;scrollbar-width:thin;scrollbar-color:#bd96a8 transparent}
+/* 滚动不要露出滚动条：保持内容可滚，但不占视觉。 */
+.fate-overlay__content{overflow-y:auto;overscroll-behavior:contain;min-height:0;padding:0 1px 3px;scrollbar-width:none;-ms-overflow-style:none;overflow-wrap:anywhere;word-break:break-word}
+.fate-overlay__content::-webkit-scrollbar{width:0;height:0;display:none}
 .fate-overlay button,.fate-overlay input,.fate-overlay select,.fate-overlay textarea{font:inherit}
 .fate-overlay :is(button,input,select,textarea):focus-visible{outline:2px solid #85495d;outline-offset:2px}
 @keyframes fate-veil-in{from{opacity:0}to{opacity:1}}

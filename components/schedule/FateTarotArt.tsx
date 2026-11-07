@@ -63,8 +63,8 @@ export function FateAstrolabe() {
     return <svg className="fate-astrolabe" viewBox="0 0 240 240" fill="none" aria-hidden="true">
         <circle cx="120" cy="120" r="103"/><circle cx="120" cy="120" r="96"/><circle cx="120" cy="120" r="73"/><circle cx="120" cy="120" r="53"/>
         {Array.from({ length: 12 }, (_, index) => <g key={index} transform={`rotate(${index * 30} 120 120)`}><path d="M120 17v30M120 47v12"/><circle cx="120" cy="35" r="2"/></g>)}
-        <path d="m120 43 67 116H53l67-116Zm0 154L53 81h134l-67 116Z" opacity=".35"/>
-        <path d="M135 87c-30 6-36 49-4 65-46 7-58-53-20-66 8-3 16-2 24 1Z"/>
-        <path d="m145 106 3 9 9 3-9 3-3 9-3-9-9-3 9-3ZM157 83v8m-4-4h8M92 158v7m-3-4h6"/>
+        <path className="fate-astrolabe__zodiac" d="m120 43 67 116H53l67-116Zm0 154L53 81h134l-67 116Z" opacity=".35"/>
+        <path className="fate-astrolabe__moon" d="M135 87c-30 6-36 49-4 65-46 7-58-53-20-66 8-3 16-2 24 1Z"/>
+        <path className="fate-astrolabe__spark" d="m145 106 3 9 9 3-9 3-3 9-3-9-9-3 9-3ZM157 83v8m-4-4h8M92 158v7m-3-4h6"/>
     </svg>;
 }
