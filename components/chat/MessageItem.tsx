@@ -46,6 +46,7 @@ export {THINKING_CHAIN_PRESETS,resolveThinkingChainStyle} from '../../utils/psyc
 export type {ThinkingChainStyleId,ThinkingChainStyleSpec} from '../../utils/psycheAppearance';
 import { webGoogleTranslate } from '../../utils/webGoogleTranslate';
 import { isGlobalTranslateEnabled, subscribeGlobalTranslateEnabled } from '../../utils/globalTranslateSettings';
+import { registerTranslateHolder } from '../../utils/translateSession';
 import {ChatCardSurface} from './ChatCardSurface';
 // 心象卡片的「破格」装饰：溢出卡片边框的风格化元素。
 // 必须渲染在卡片（overflow-hidden）的兄弟层、且父容器 relative + 不裁剪，才能真的探出边框。
@@ -159,7 +160,9 @@ export const ThinkingChainBlock: React.FC<{
     onOpenSettings?: () => void;
     /** 点「替换」：父级写库并刷新消息；未提供则隐藏「替换」 */
     onReplaceThinkingChain?: (translated: string) => void | Promise<void>;
-}> = ({ chain, styleId, customColors, onOpenSettings, initiallyExpanded=false, onReplaceThinkingChain }) => {
+    /** 所属消息 id：译文随窗口变长被清时需要它认人（流式预览不传）。 */
+    messageId?: number;
+}> = ({ chain, styleId, customColors, onOpenSettings, initiallyExpanded=false, onReplaceThinkingChain, messageId }) => {
     const [expanded, setExpanded] = useState(initiallyExpanded);
     const [focused, setFocused] = useState(false);
     const [copyState, setCopyState] = useState<'idle' | 'ready' | 'ok' | 'error'>('idle');
@@ -199,6 +202,19 @@ export const ThinkingChainBlock: React.FC<{
         setTranslateBusy(false);
         setTranslateHint('');
     }, [trimmed]);
+
+    // 译态随窗口变长回收：译文只是界面里的临时结果，不落库（点「替换」才写回 thinkingChain）。
+    // 这里把自己登记进台账，等 apps/Chat.tsx 报出「离最新一条超过 TRANSLATE_KEEP_WINDOW 条」时被清掉。
+    useEffect(() => {
+        if (!translation || messageId === undefined) return;
+        return registerTranslateHolder({
+            messageId,
+            clear: () => {
+                setTranslation(null);
+                setShowingTranslation(false);
+            },
+        });
+    }, [translation, messageId]);
 
     useEffect(() => subscribeGlobalTranslateEnabled(setGlobalTranslateOn), []);
 
@@ -2268,6 +2284,7 @@ const MessageItem = React.memo(({
             <div className={selectionMode ? 'pointer-events-none' : ''}>
                 <ThinkingChainBlock
                     chain={String(m.metadata!.thinkingChain)}
+                    messageId={m.id}
                     initiallyExpanded={previewExpanded}
                     styleId={thinkingChainOptions?.styleId}
                     customColors={thinkingChainOptions?.customColors}
