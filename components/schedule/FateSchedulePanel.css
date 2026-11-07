@@ -33,8 +33,8 @@
 .fate-panel__timing{display:flex;justify-content:center;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:7px 0 0;font-size:11px;color:var(--fate-muted);font-variant-numeric:tabular-nums}
 .fate-panel__timing .fate-panel__state::before{content:'·';margin-right:6px}
 .fate-panel__timing>span:first-child{font-size:12px;color:var(--fate-rose)}
-.fate-panel .fate-panel__location{font-size:12px;color:var(--fate-muted);margin-top:2px}
-.fate-panel .fate-panel__description{font-size:14px;line-height:1.85;font-weight:400;white-space:pre-wrap;margin-top:10px}
+.fate-panel__location{font-size:12px;color:var(--fate-muted);margin-top:2px}
+.fate-panel__description{font-size:14px;line-height:1.85;font-weight:400;white-space:pre-wrap;margin-top:10px}
 .fate-panel__copy>.fate-panel__location{justify-content:center;text-align:center;margin-top:5px}
 .fate-panel__controls{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
 .fate-panel__controls .fate-panel__actions{flex-wrap:nowrap;align-items:center;gap:5px;margin:0}
@@ -45,7 +45,7 @@
 .fate-panel__controls button[aria-label="删除活动"]::after{content:'删除'}
 .fate-panel__actions .fate-panel__toggle,.fate-panel__toggle{display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--fate-muted);font-size:12px;min-height:24px;padding:2px 3px;cursor:pointer}
 .fate-panel__toggle:hover:not(:disabled){color:var(--fate-rose);text-decoration:underline;text-underline-offset:3px}
-.fate-panel .fate-panel__state{font-size:11px;color:var(--fate-muted)}
+.fate-panel__state{font-size:11px;color:var(--fate-muted)}
 .fate-panel__actions{display:flex;flex-wrap:wrap;gap:4px 12px;grid-column:1/-1;justify-content:flex-end;margin-top:9px}
 .fate-panel__actions button{border:0;padding:6px 0;min-height:34px;background:transparent;color:var(--fate-ink);font-size:12px}
 .fate-panel__actions button:first-child{color:var(--fate-rose)}
@@ -58,20 +58,21 @@
 .fate-panel__card--open{background:#ebdae2;transform:translateY(-3px);border-color:#965d75}
 .fate-panel__card:not(:disabled):hover{transform:translateY(-3px)}
 .fate-panel__card-role{font-size:11px;color:var(--fate-rose)}
-.fate-panel .fate-panel__card-art{width:54px;height:58px;margin:0}
+.fate-panel__card-art{width:54px;height:58px;margin:0}
 .fate-panel__card strong{font:inherit;font-size:14px;font-weight:400;text-align:center;line-height:1.45;margin:auto 0 0}
 .fate-panel__card-hint{font-size:11px;color:var(--fate-muted)}
 .fate-panel__meaning{padding:10px;margin-top:8px;background:#ecdee4;font-size:13px;border-radius:4px;animation:fate-meaning-in .28s ease-out both}
 .fate-panel__meaning p{margin-top:4px;white-space:pre-wrap}
 .fate-panel__context{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px;margin-top:10px}
-/* 「心」是活动名下面的一句感受，和标题同一块，不单独占一栏。 */
-/* 「心」是正文的一段：接着描述往下读，左对齐、不加重、不加框。 */
-.fate-panel .fate-panel__feeling{margin:7px 0 0;padding:0 0 0 10px;border-left:1px solid #dcc0cb;font-size:13px;font-style:italic;line-height:1.8;color:#96707f;text-align:left}
+/* 「心」是地点与正文之间的一句题记：换宋体、居中、上方一道短线，和正文明显不是同一种声音。 */
+.fate-panel__feeling{display:block;margin:9px auto 0;padding:0;max-width:22em;font-family:'Songti SC',SimSun,serif;font-size:12.5px;font-style:normal;line-height:1.8;letter-spacing:.5px;color:#8f6b7b;text-align:center}
+.fate-panel__feeling::before{content:'';display:block;width:14px;height:1px;margin:0 auto 8px;background:#d3b3c1}
+.fate-panel__copy .fate-panel__description{margin-top:10px}
 .fate-panel__context strong{font-size:12px;font-weight:400}
 .fate-panel__label{font-size:11px;color:var(--fate-muted);margin-right:5px}
 .fate-panel__context p{font-size:12px;line-height:1.8;margin-top:6px;white-space:pre-wrap}
 .fate-panel summary{cursor:pointer;min-height:32px;padding:5px 0;font-size:12px}
-.fate-panel .fate-panel__rationale{display:flex;align-items:center;justify-content:flex-end;gap:4px;max-width:100%;text-align:right;border:0;background:transparent;color:var(--fate-rose);font-size:11px;padding:5px 0;min-height:36px;font-weight:400}
+.fate-panel__rationale{display:flex;align-items:center;justify-content:flex-end;gap:4px;max-width:100%;text-align:right;border:0;background:transparent;color:var(--fate-rose);font-size:11px;padding:5px 0;min-height:36px;font-weight:400}
 .fate-panel__rationale>svg{width:22px;height:22px;stroke:currentColor;stroke-width:1;flex:none}
 .fate-calculation__patron{display:flex;align-items:center;gap:12px;padding:0 2px 12px 0}
 .fate-calculation__patron>.fate-patron-art{width:70px;height:80px}
@@ -79,16 +80,13 @@
 .fate-calculation__patron span,.fate-calculation__result>span{font-size:11px;color:#85495d}
 .fate-calculation h3{font-family:'Songti SC',SimSun,serif;font-size:20px;font-weight:500;margin:3px 0}
 .fate-calculation p{font-size:13px;line-height:1.8;margin:4px 0 0;white-space:pre-wrap;font-weight:400}
-/* 小算盘：三行因子，每行画、职衔、名字、含义各归其位，行间用细虚线不用间距堆。 */
-.fate-calculation__factors{display:grid;gap:0;padding:2px 0;border-top:1px solid #dfc6d2;border-bottom:1px solid #dfc6d2}
-.fate-calculation__factors>div{display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;align-items:start;padding:10px 0;border-bottom:1px dashed #e8d3dc}
-.fate-calculation__factors>div:last-child{border-bottom:0}
-.fate-calculation__factors .fate-tarot-art{width:34px;height:39px;margin-top:2px}
-.fate-calculation__factors>div>div{min-width:0}
-.fate-calculation__factors span{display:block;font-size:10px;line-height:1.5;letter-spacing:.5px;color:#a3818f}
-.fate-calculation__factors strong{display:block;font-size:14px;font-weight:500;line-height:1.5;color:#85495d}
-.fate-calculation__factors p{font-size:12px!important;line-height:1.65;margin-top:1px;color:#705863}
-.fate-calculation__result{padding:11px 0 0}
+.fate-calculation__factors{display:grid;gap:10px;padding:12px 0;border-top:1px solid #dfc6d2;border-bottom:1px solid #dfc6d2}
+.fate-calculation__factors>div{display:flex;align-items:center;gap:10px}
+.fate-calculation__factors .fate-tarot-art{width:40px;height:47px}
+.fate-calculation__factors>div>div{min-width:0;flex:1}
+.fate-calculation__factors span{font-size:11px;color:#705863;margin-right:6px}
+.fate-calculation__factors strong{font-size:14px;font-weight:500;color:#85495d}
+.fate-calculation__result{padding:12px 0 0}
 .fate-panel__editor{grid-column:1/-1;text-align:left;padding:0;background:transparent;min-width:0}
 .fate-panel__editor h3{font-size:18px}
 .fate-panel__editor fieldset{border:0;padding:0;margin:12px 0 0;min-width:0}
@@ -98,8 +96,8 @@
 .fate-panel__editor .fate-panel__actions{justify-content:flex-start}
 .fate-panel__editor .fate-panel__actions .fate-panel__save{background:#85495d;color:#fff;padding:8px 12px;border-radius:4px}
 .fate-panel__confirm{margin-top:12px;padding:12px;background:#ecdee4;border-radius:4px;font-size:13px}
-.fate-panel .fate-panel__error{padding:10px;margin-top:10px;background:#f8dfe4;color:#842e46;font-size:13px}
-.fate-panel .fate-panel__muted,.fate-panel .fate-panel__continuation{font-size:12px;color:var(--fate-muted)}
+.fate-panel__error{padding:10px;margin-top:10px;background:#f8dfe4;color:#842e46;font-size:13px}
+.fate-panel__muted,.fate-panel__continuation{font-size:12px;color:var(--fate-muted)}
 .fate-panel__empty{display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;align-items:center;padding:24px 0}
 .fate-panel__empty h3{font-size:17px;line-height:1.5}
 .fate-panel__empty p{font-size:12px;color:var(--fate-muted);margin-top:8px}
@@ -111,22 +109,36 @@
 .fate-panel__history-page .fate-panel__location svg{width:13px;height:13px;stroke-width:1.5;opacity:.85}
 .fate-panel__history-actions .fate-panel__actions{justify-content:flex-start}
 /* 星盘：盘在上，选中那段在下，中间不留硬边框，靠留白分隔。 */
-.fate-panel__chart-overlay .fate-panel__history-page{margin-top:14px}
-/* 星盘里的那一段：标题与时间同行，状态和地点同行，下面才是正文。 */
-.fate-panel__detail-meta{display:flex;align-items:center;flex-wrap:wrap;gap:3px 8px;margin-top:4px;font-size:11px;line-height:1.6;color:var(--fate-muted)}
-.fate-panel__detail-meta .fate-panel__location{margin:0;font-size:11px}
-.fate-panel__detail-time{font-variant-numeric:tabular-nums;color:var(--fate-rose)}
-.fate-panel__detail-meta .fate-panel__state::before{content:'·';margin-right:8px;color:#c3a8b3}
+.fate-panel__chart-overlay .fate-panel__history-page{margin-top:16px}
+/* 星盘与因子牌都会传送到 body，面板里的排版规则在那边不生效；这几条补上同样的字与距。 */
+.fate-panel__reading,.fate-panel__history-page{color:var(--fate-ink,#51434b);font-size:14px;line-height:1.65}
+.fate-panel__history-page :is(h3,p){margin:0}
+.fate-panel__history-page .fate-panel__description{font-size:13.5px;line-height:1.85}
+.fate-panel__reading .fate-panel__context p{font-size:12px;line-height:1.8;margin-top:6px;white-space:pre-wrap}
+/* 覆盖层里 `.fate-overlay button{font:inherit}` 会把按钮字重设回正文字号，这枚按钮要按面板原样 11px 才不折行。 */
+.fate-overlay .fate-panel__rationale{font:inherit;font-size:11px;font-weight:400;line-height:1.5;letter-spacing:0;white-space:nowrap}
+.fate-overlay .fate-panel__rationale>svg{width:22px;height:22px;flex:none}
+/* 星盘里选中的那一段：先报时刻与状态，再报活动名，然后是地点、感受、正文、操作。 */
+.fate-panel__detail-head{display:flex;align-items:baseline;gap:8px;font-size:11px;line-height:1.5;color:var(--fate-muted)}
+.fate-panel__detail-time{font-variant-numeric:tabular-nums;letter-spacing:.3px;color:var(--fate-rose)}
+.fate-panel__detail-state::before{content:'·';margin-right:8px;color:#c3a8b3}
+.fate-panel__detail-where{display:flex;align-items:center;gap:4px;margin-top:5px;font-size:11px;line-height:1.6;color:var(--fate-muted)}
+.fate-panel__detail-where svg{width:12px;height:12px;stroke:currentColor;stroke-width:1.5;flex:none;opacity:.85}
+.fate-panel__draw-details{margin-top:3px}
+.fate-panel__draw-details>summary{color:var(--fate-muted)}
 .fate-panel__actions button:has(svg){width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:0}
 .fate-panel__actions button svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .fate-panel__action-name{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .fate-panel__location{display:flex;align-items:center;gap:4px}
 .fate-panel__location svg{width:15px;height:15px;stroke:currentColor;stroke-width:1.4;flex:none}
-.fate-panel .fate-panel__date{text-align:center;font-size:11px;color:var(--fate-muted);margin:6px 0 0}
+.fate-panel__date{text-align:center;font-size:11px;color:var(--fate-muted);margin:6px 0 0}
 @keyframes fate-patron-awaken{0%{transform:translateY(0) scale(1)}35%{transform:translateY(-5px) scale(1.06)}65%{transform:translateY(1px) scale(.99)}100%{transform:translateY(0) scale(1)}}
 @keyframes fate-meaning-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 @keyframes fate-panel-paw{0%,100%{transform:rotate(0)}45%{transform:rotate(-14deg)}}
 @keyframes fate-panel-yarn{0%,100%{transform:translateX(0) rotate(0)}45%{transform:translateX(7px) rotate(23deg)}}
 @media(max-height:740px){.fate-dialog>div:first-child{padding-top:6px}.fate-dialog>div:last-child{padding-bottom:5px}.fate-dialog__mode button{min-height:32px}.fate-dialog>div:last-child>button{min-height:38px}}
-@media(max-width:360px){.fate-panel{padding-left:16px;padding-right:16px}.fate-panel.fate-panel--embedded{padding-left:8px;padding-right:8px}.fate-panel__activity{padding-top:4px}.fate-panel__activity h3{font-size:20px}.fate-panel__figures{padding-bottom:4px}.fate-panel__patron .fate-patron-art{width:68px;height:74px}.fate-panel .fate-panel__description{line-height:1.75}.fate-panel__deck{gap:5px;margin-top:6px}.fate-panel__card{padding:6px 4px 5px}.fate-panel .fate-panel__card-art{width:46px;height:50px}.fate-panel__context{grid-template-columns:1fr}.fate-panel__controls{gap:4px;margin-top:8px}.fate-panel__controls .fate-panel__actions{gap:2px}.fate-panel__controls .fate-panel__actions button:has(svg){font-size:11px}.fate-panel__cat{width:76px;height:44px}.fate-panel .fate-panel__date{margin-top:3px}}
+@media(max-width:360px){.fate-panel{padding-left:16px;padding-right:16px}.fate-panel.fate-panel--embedded{padding-left:8px;padding-right:8px}.fate-panel__activity{padding-top:4px}.fate-panel__activity h3{font-size:20px}.fate-panel__figures{padding-bottom:4px}.fate-panel__patron .fate-patron-art{width:68px;height:74px}.fate-panel__description{line-height:1.75}.fate-panel__deck{gap:5px;margin-top:6px}.fate-panel__card{padding:6px 4px 5px}.fate-panel__card-art{width:46px;height:50px}.fate-panel__context{grid-template-columns:1fr}.fate-panel__controls{gap:4px;margin-top:8px}.fate-panel__controls .fate-panel__actions{gap:2px}.fate-panel__controls .fate-panel__actions button:has(svg){font-size:11px}.fate-panel__cat{width:76px;height:44px}.fate-panel__date{margin-top:3px}}
 @media(prefers-reduced-motion:reduce){.fate-panel *,.fate-panel *::before,.fate-panel *::after{animation:none!important;transition:none!important}.fate-panel__card:hover,.fate-panel__card--open,.fate-panel__draw:hover .fate-panel__yarn{transform:none}}
+/* 详情里同一条注释贴着地点左对齐，位置在主卡片里保持一致。 */
+.fate-panel__feeling--detail{margin:9px 0 0;max-width:none;text-align:left;letter-spacing:.4px}
+.fate-panel__feeling--detail::before{margin:0 0 8px;width:12px}

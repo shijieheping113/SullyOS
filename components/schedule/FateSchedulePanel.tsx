@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import { FATE_SLOT_MAX_MINUTES, FATE_SLOT_MIN_MINUTES, fateSlotOverlapsOthers, normalizeFateClock, resolveFateSlotTimes } from '../../utils/fateSchedule';
+import { getScheduleWallClock } from '../../utils/scheduleTime';
 import './FateSchedulePanel.css';
 import FateTarotArt, { FatePatronArt } from './FateTarotArt';
 import FateDayChart from './FateDayChart';
@@ -144,6 +145,9 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     useEffect(() => { setRationaleOpen(false); }, [slot?.startsAt, slot?.fate]);
     const rooms = character?.home3D?.rooms || [];
     const homeRoomId = slot?.homePosition?.kind === 'home' ? slot.homePosition.roomId : undefined;
+    // 盘上的「现在」用角色当地钟面，和 startTime 同一套坐标系。
+    const wallClock = getScheduleWallClock(character, new Date(now));
+    const nowMinutes = wallClock.getHours() * 60 + wallClock.getMinutes();
     const allSlots = slots.map((item, itemIndex) => ({ slot: item, index: itemIndex }));
     const snapshot = (itemIndex: number): SlotSnapshot => ({ index: itemIndex, scheduleId: schedule!.id, characterId: character?.id, startsAt: slots[itemIndex].startsAt, original: JSON.stringify(slots[itemIndex]), wasPrimary: itemIndex === index });
     const matches = (saved: SlotSnapshot) => saved.scheduleId === schedule?.id && saved.characterId === character?.id
@@ -245,8 +249,8 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
                     <h3>{slot.activity}</h3>
                     <div className="fate-panel__timing"><span>{range(slot)}</span><span className="fate-panel__state">{slotState(slot, now)}</span></div>
                     <p className="fate-panel__location"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{slot.location || rooms.find(room => room.id === homeRoomId)?.name || '地点未记录'}</p>
-                    {slot.description && <p className="fate-panel__description">{slot.description}</p>}
                     {slot.fate?.feeling && <p className="fate-panel__feeling">{slot.fate.feeling}</p>}
+                    {slot.description && <p className="fate-panel__description">{slot.description}</p>}
                     <div className="fate-panel__controls"><div className="fate-panel__companion">{drawButton}</div>{actions(slot, index, true)}</div>
                     </div>
                     </>}
@@ -269,7 +273,7 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
             {chartOpen && <FateOverlay title={`今日星盘 · ${schedule?.date || ''}`} onClose={() => setChartOpen(false)} className="fate-panel__chart-overlay">
                 {slots.length === 0 && <p>今天还没有更早的活动记录。</p>}
                 {slots.length > 0 && <>
-                    <FateDayChart slots={slots} now={now} stateOf={slotState} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
+                    <FateDayChart slots={slots} now={now} nowMinutes={nowMinutes} stateOf={slotState} selectedIndex={selectedIndex} onSelect={index => setSelectedIndex(current => current === index ? null : index)} />
                     {selectedIndex !== null && allSlots[selectedIndex] && <SlotDetail key={selectedIndex} item={allSlots[selectedIndex]} range={range} state={slotState} now={now} draftIndex={draft?.index} renderEditor={renderEditor} actions={actions} scheduleId={schedule?.id} />}
                 </>}
             </FateOverlay>}
@@ -291,17 +295,17 @@ function SlotDetail({ item, range: formatRange, state, now, draftIndex, renderEd
     const { slot: past, index: pastIndex } = item;
     return <article className="fate-panel__history-page">
                     {draftIndex === pastIndex ? renderEditor() : <>
-                    <h3>{past.activity}</h3>
-                    <div className="fate-panel__detail-meta">
+                    <div className="fate-panel__detail-head">
                         <span className="fate-panel__detail-time">{formatRange(past)}</span>
-                        <span className="fate-panel__state">{state(past, now)}</span>
-                        <span className="fate-panel__location"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{past.location || '地点未记录'}</span>
+                        <span className="fate-panel__detail-state">{state(past, now)}</span>
                     </div>
+                    <h3>{past.activity}</h3>
+                    <p className="fate-panel__detail-where"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{past.location || '地点未记录'}</p>
+                    {past.fate?.feeling && <p className="fate-panel__feeling fate-panel__feeling--detail">{past.fate.feeling}</p>}
                     {past.description && <p className="fate-panel__description">{past.description}</p>}
-                    {past.fate?.feeling && <p className="fate-panel__feeling">{past.fate.feeling}</p>}
                     <div className="fate-panel__history-actions">{actions(past, pastIndex)}</div>
                     </>}
-                    <details><summary>查看本轮牌阵</summary><FateCards slot={past} identity={`${scheduleId}:${past.startsAt}:${JSON.stringify(past.fate)}`} /></details>
+                    <details className="fate-panel__draw-details"><summary>查看本轮牌阵</summary><FateCards slot={past} identity={`${scheduleId}:${past.startsAt}:${JSON.stringify(past.fate)}`} /></details>
     </article>;
 }
 
