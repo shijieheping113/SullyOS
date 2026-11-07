@@ -14,6 +14,12 @@ import {
 import { confirmExportSafety } from '../utils/exportGuard';
 import { shareOrDownloadFile } from '../utils/shareExport';
 import { readShareFile } from '../utils/pngShare';
+import {
+    DEFAULT_DOCUMENT_CATEGORY,
+    WORLDBOOK_IMPORT_ACCEPT,
+    importWorldbookDocuments,
+    isWorldbookDocumentFile,
+} from '../utils/worldbookDocument';
 import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
@@ -47,6 +53,8 @@ const WorldbookApp: React.FC = () => {
     const [showCategoryPicker, setShowCategoryPicker] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [showImportConfirm, setShowImportConfirm] = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [importStatus, setImportStatus] = useState('');
     const importRef = useRef<HTMLInputElement>(null);
     const [tempEnabled, setTempEnabled] = useState(true);
     const [tempConstant, setTempConstant] = useState(true);
@@ -196,19 +204,69 @@ const WorldbookApp: React.FC = () => {
     };
 
     const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
+        const picked = Array.from(event.target.files || []);
+        if (picked.length === 0) return;
+
+        // 两条互不干扰的导入路：
+        //  - 标准世界书（酒馆 JSON / PNG 分享卡）：一个文件 = 一整个分组，逻辑保持原样。
+        //  - 整篇文档（Word / TXT / PDF / RTF / 网页）：一个文件 = 一条世界书，标题取文件名。
+        const documentFiles: File[] = [];
+        const standardFiles: File[] = [];
+        for (const file of picked) {
+            if (isWorldbookDocumentFile(file)) documentFiles.push(file);
+            else standardFiles.push(file);
+        }
+
+        const errors: string[] = [];
+        let standardCount = 0;
+        let lastCategory: string | null = null;
+        setImporting(true);
         try {
-            const source = await readShareFile(file, 'worldbook');
-            const text = await source.text();
-            const category = source.name.replace(/\.json$/i, '').trim() || '导入世界书';
-            const imported = parseStandardWorldbook(text, category);
-            for (const book of imported) await addWorldbook(book);
-            addToast(`已导入 ${imported.length} 条世界书条目`, 'success');
-            setExpandedCategory(category);
-        } catch (error: any) {
-            addToast(error?.message || '世界书导入失败', 'error');
+            for (let index = 0; index < standardFiles.length; index += 1) {
+                const file = standardFiles[index];
+                setImportStatus(picked.length > 1 ? `正在导入 ${index + 1}/${picked.length}：${file.name}` : '正在导入世界书…');
+                try {
+                    const source = await readShareFile(file, 'worldbook');
+                    const text = await source.text();
+                    const category = source.name.replace(/\.json$/i, '').trim() || '导入世界书';
+                    const imported = parseStandardWorldbook(text, category);
+                    for (const book of imported) await addWorldbook(book);
+                    standardCount += imported.length;
+                    lastCategory = category;
+                } catch (error: any) {
+                    errors.push(`${file.name}：${error?.message || '导入失败'}`);
+                }
+            }
+
+            let documentCount = 0;
+            if (documentFiles.length > 0) {
+                const result = await importWorldbookDocuments(documentFiles, {
+                    category: DEFAULT_DOCUMENT_CATEGORY,
+                    onProgress: label => setImportStatus(label),
+                });
+                for (const book of result.books) {
+                    await addWorldbook(book);
+                    documentCount += 1;
+                }
+                result.failures.forEach(failure => errors.push(`${failure.fileName}：${failure.error}`));
+            }
+
+            const parts: string[] = [];
+            if (standardCount > 0) parts.push(`${standardCount} 条标准世界书`);
+            if (documentCount > 0) parts.push(`${documentCount} 篇文档`);
+            if (parts.length > 0) {
+                addToast(`已导入 ${parts.join('，')}`, 'success');
+                setExpandedCategory(lastCategory || DEFAULT_DOCUMENT_CATEGORY);
+            }
+            if (errors.length > 0) {
+                addToast(
+                    `${errors.length} 个文件没导入成功：${errors.slice(0, 2).join('；')}${errors.length > 2 ? ' 等' : ''}`,
+                    'error',
+                );
+            }
         } finally {
+            setImporting(false);
+            setImportStatus('');
             if (importRef.current) importRef.current.value = '';
         }
     };
@@ -640,11 +698,12 @@ const WorldbookApp: React.FC = () => {
                                     {isSelecting ? '取消' : '管理'}
                                 </button>
                             )}
-                            <input ref={importRef} type="file" accept=".json,.png,application/json,image/png" className="hidden" onChange={handleImport} />
+                            <input ref={importRef} type="file" multiple accept={WORLDBOOK_IMPORT_ACCEPT} className="hidden" onChange={handleImport} />
                             <button
                                 onClick={() => { setShowImportConfirm(true); trackEvent('打开导入世界书弹窗'); }}
-                                className="w-9 h-9 bg-white/80 text-indigo-500 border border-white rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform"
-                                title="导入标准世界书"
+                                disabled={importing}
+                                className="w-9 h-9 bg-white/80 text-indigo-500 border border-white rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform disabled:opacity-50"
+                                title="导入世界书 / Word / TXT / PDF"
                             >
                                 <UploadSimple size={18} weight="bold" />
                             </button>
@@ -655,6 +714,12 @@ const WorldbookApp: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {importing && (
+                <div className="relative z-10 shrink-0 border-b border-indigo-100 bg-indigo-50/90 px-5 py-2.5 text-[11px] font-bold text-indigo-600 backdrop-blur-xl">
+                    {importStatus || '正在导入…'}
+                </div>
+            )}
 
             {isSelecting && (
                 <div className="relative z-10 shrink-0 bg-white/90 backdrop-blur-xl border-b border-indigo-100 px-5 py-2.5 flex items-center gap-3 shadow-sm">
@@ -848,6 +913,14 @@ const WorldbookApp: React.FC = () => {
                     </div>
                     <p className="text-center leading-6">
                         请注意，如果导入的不是您的作品，请确定该世界书的作者允许该世界书用于免费小手机。
+                    </p>
+                    <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
+                        可以一次选多个文件。标准世界书（JSON / PNG 分享卡）保持按文件分组；
+                        Word（.docx）、TXT、PDF、RTF、网页文件会<span className="font-bold text-slate-600">整篇作为一条</span>世界书，
+                        文件名当标题，默认放进「{DEFAULT_DOCUMENT_CATEGORY}」，导入后随时可以改。
+                    </p>
+                    <p className="text-center text-[10px] leading-relaxed text-slate-400">
+                        老式 .doc 是二进制格式，浏览器解不开；请在 Word / WPS 里另存为 .docx 再导入。
                     </p>
                 </div>
             </Modal>
