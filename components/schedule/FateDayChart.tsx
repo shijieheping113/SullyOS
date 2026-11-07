@@ -176,7 +176,10 @@ export default function FateDayChart({ slots, now, nowMinutes, stateOf, selected
     const hand = typeof nowMinutes === 'number' && Number.isFinite(nowMinutes)
         ? Math.max(0, Math.min(MINUTES_PER_DAY, nowMinutes))
         : null;
-    const handPoint = hand === null ? null : fateChartPoint(hand, 1);
+    /* 指针指「正在进行的这一段」，不是指钟面上的读数：读者要看的是「现在停在哪件事上」。
+       没有进行中的段时才退回钟面角度，指向环上对应时刻。 */
+    const liveNode = nodes.find(node => stateOf(node.slot, now) === '正在进行') || null;
+    const handPoint = liveNode ? liveNode.point : (hand === null ? null : fateChartPoint(hand, 1));
     return <>
         <div className="fate-day-chart" role="group" aria-label="今日星盘">
             <div className="fate-day-chart__dial">
@@ -205,10 +208,10 @@ export default function FateDayChart({ slots, now, nowMinutes, stateOf, selected
                             className="fate-day-chart__route" d={path} />;
                     })}
                 </svg>
-                {/* 现在：一道细长的指针加末端亮点，指针只从盘心伸到环上，不压住占位。 */}
-                {handPoint && hand !== null && <svg className="fate-day-chart__now" viewBox="0 0 100 100" aria-hidden="true">
+                {/* 现在：一条从盘心指向「正在进行」那一段的细线；它落在节点中心，不落在空处。 */}
+                {handPoint && (hand !== null || liveNode) && <svg className="fate-day-chart__now" viewBox="0 0 100 100" aria-hidden="true">
                     <line className="fate-day-chart__now-hand" x1="50" y1="50" x2={handPoint.x} y2={handPoint.y} />
-                    <circle className="fate-day-chart__now-dot" cx={handPoint.x} cy={handPoint.y} r="1.7" />
+                    {!liveNode && <circle className="fate-day-chart__now-dot" cx={handPoint.x} cy={handPoint.y} r="1.7" />}
                 </svg>}
                 {nodes.map(node => <button key={node.index} type="button"
                     className={`fate-day-chart__node fate-day-chart__node--${node.size} ${node.index === selectedIndex ? 'fate-day-chart__node--active' : ''}`}

@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import { FATE_SLOT_MAX_MINUTES, FATE_SLOT_MIN_MINUTES, fateSlotOverlapsOthers, normalizeFateClock, resolveFateSlotTimes } from '../../utils/fateSchedule';
-import { getScheduleWallClock } from '../../utils/scheduleTime';
+import { getScheduleDateKey, getScheduleWallClock } from '../../utils/scheduleTime';
+import { addLocalDays } from '../../utils/localDate';
+import { DB } from '../../utils/db';
 import './FateSchedulePanel.css';
 import FateTarotArt, { FatePatronArt } from './FateTarotArt';
 import FateDayChart from './FateDayChart';
@@ -125,6 +127,9 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     const [isSaving, setIsSaving] = useState(false);
     const [chartOpen, setChartOpen] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+    /** 星盘正在看哪一天：null 表示跟着今天的日程走。 */
+    const [viewDate, setViewDate] = useState<string | null>(null);
+    const [pastSchedules, setPastSchedules] = useState<Record<string, DailySchedule | null>>({});
     const [rationaleOpen, setRationaleOpen] = useState(false);
     const editorHeadingRef = useRef<HTMLHeadingElement>(null);
     useEffect(() => {
@@ -138,7 +143,7 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     }, []);
     // 新一轮的时间戳取生成完成那一刻。若等 15 秒的计时器走完，页面会先把这一轮当成「尚未开始」而退回上一条。
     useEffect(() => { setNow(Date.now()); }, [schedule]);
-    useEffect(() => { setDraft(null); setDeleting(null); setError(''); setChartOpen(false); setSelectedIndex(null); setRationaleOpen(false); }, [character?.id, schedule?.id]);
+    useEffect(() => { setDraft(null); setDeleting(null); setError(''); setChartOpen(false); setSelectedIndex(null); setViewDate(null); setPastSchedules({}); setRationaleOpen(false); }, [character?.id, schedule?.id]);
     const slots = schedule?.slots || [];
     const index = primaryIndex(slots, now);
     const slot = slots[index];
@@ -149,6 +154,28 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     const wallClock = getScheduleWallClock(character, new Date(now));
     const nowMinutes = wallClock.getHours() * 60 + wallClock.getMinutes();
     const allSlots = slots.map((item, itemIndex) => ({ slot: item, index: itemIndex }));
+    // 星盘能往回翻三天：今天、昨天、前天。日期一律按角色当地日历推，和日程本身的 key 同一套坐标系。
+    const todayKey = getScheduleDateKey(character, new Date(now));
+    // 星盘以「这一份日程的日期」当成今天。日程可能是昨天延过来的，标题就该跟着它，而不是跟着真实钟点漂。
+    const baseDay = schedule?.date || todayKey;
+    const chartDays = [baseDay, addLocalDays(baseDay, -1), addLocalDays(baseDay, -2)].map((key, offset) => ({ key, label: ['今天', '昨天', '前天'][offset], offset }));
+    const chartDate = viewDate || baseDay;
+    const chartSlots = chartDate === baseDay ? slots : (pastSchedules[chartDate]?.slots || []);
+    const chartAllSlots = chartSlots.map((item, itemIndex) => ({ slot: item, index: itemIndex }));
+    /** 只有真正落在今天的日程才画指针、才允许改；往回翻的日子一律只读。 */
+    const chartIsToday = chartDate === todayKey;
+    useEffect(() => {
+        if (!chartOpen) return;
+        let dropped = false;
+        (async () => {
+            const missing = chartDays.slice(1).filter(day => !(day.key in pastSchedules));
+            if (!missing.length) return;
+            const loaded = await Promise.all(missing.map(async day => [day.key, await DB.getDailySchedule(`fate:${character?.id || ''}`, day.key)] as const));
+            if (dropped) return;
+            setPastSchedules(current => ({ ...current, ...Object.fromEntries(loaded) }));
+        })();
+        return () => { dropped = true; };
+    }, [chartOpen, chartDate, character?.id]);
     const snapshot = (itemIndex: number): SlotSnapshot => ({ index: itemIndex, scheduleId: schedule!.id, characterId: character?.id, startsAt: slots[itemIndex].startsAt, original: JSON.stringify(slots[itemIndex]), wasPrimary: itemIndex === index });
     const matches = (saved: SlotSnapshot) => saved.scheduleId === schedule?.id && saved.characterId === character?.id
         && saved.startsAt === slots[saved.index]?.startsAt && saved.original === JSON.stringify(slots[saved.index])
@@ -270,11 +297,14 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
             </div>}
             {error && !draft && <p className="fate-panel__error" role="alert">{error}</p>}
 
-            {chartOpen && <FateOverlay title={`今日星盘 · ${schedule?.date || ''}`} onClose={() => setChartOpen(false)} className="fate-panel__chart-overlay">
-                {slots.length === 0 && <p>今天还没有更早的活动记录。</p>}
-                {slots.length > 0 && <>
-                    <FateDayChart slots={slots} now={now} nowMinutes={nowMinutes} stateOf={slotState} selectedIndex={selectedIndex} onSelect={index => setSelectedIndex(current => current === index ? null : index)} />
-                    {selectedIndex !== null && allSlots[selectedIndex] && <SlotDetail key={selectedIndex} item={allSlots[selectedIndex]} range={range} state={slotState} now={now} draftIndex={draft?.index} renderEditor={renderEditor} actions={actions} scheduleId={schedule?.id} />}
+            {chartOpen && <FateOverlay title={`星盘 · ${chartDate}`} onClose={() => setChartOpen(false)} className="fate-panel__chart-overlay">
+                <nav className="fate-panel__chart-days" aria-label="星盘日期">
+                    {chartDays.map(day => <button type="button" key={day.key} aria-pressed={day.key === chartDate} disabled={!day.key} onClick={() => { setViewDate(day.offset === 0 ? null : day.key); setSelectedIndex(null); }}>{day.label}</button>)}
+                </nav>
+                {chartSlots.length === 0 && <p>{chartDate === baseDay ? '今天还没有更早的活动记录。' : '这一天没有留下日程。'}</p>}
+                {chartSlots.length > 0 && <>
+                    <FateDayChart slots={chartSlots} now={chartIsToday ? now : new Date(`${chartDate}T23:59:59`).getTime()} nowMinutes={chartIsToday ? nowMinutes : null} stateOf={slotState} selectedIndex={selectedIndex} onSelect={index => setSelectedIndex(current => current === index ? null : index)} />
+                    {selectedIndex !== null && chartAllSlots[selectedIndex] && <SlotDetail key={`${chartDate}:${selectedIndex}`} item={chartAllSlots[selectedIndex]} range={range} state={slotState} now={chartIsToday ? now : new Date(`${chartDate}T23:59:59`).getTime()} draftIndex={chartIsToday ? draft?.index : undefined} renderEditor={renderEditor} actions={actions} scheduleId={chartIsToday ? schedule?.id : `fate:${character?.id}_${chartDate}`} editable={chartIsToday} />}
                 </>}
             </FateOverlay>}
         </div>
@@ -282,7 +312,7 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
 };
 
 /** 星盘上选中一枚星子后展开的那一段。仍沿用历史页的 class，编辑态定位不受影响。 */
-function SlotDetail({ item, range: formatRange, state, now, draftIndex, renderEditor, actions, scheduleId }: {
+function SlotDetail({ item, range: formatRange, state, now, draftIndex, renderEditor, actions, scheduleId, editable = true }: {
     item: { slot: ScheduleSlot; index: number };
     range: (slot: ScheduleSlot) => string;
     state: (slot: ScheduleSlot, now: number) => string;
@@ -291,6 +321,8 @@ function SlotDetail({ item, range: formatRange, state, now, draftIndex, renderEd
     renderEditor: () => React.ReactNode;
     actions: (item: ScheduleSlot, index: number) => React.ReactNode;
     scheduleId?: string;
+    /** 往日只读：编辑与删除只认今天的行程，往回翻的日子不提供这两个动作。 */
+    editable?: boolean;
 }) {
     const { slot: past, index: pastIndex } = item;
     return <article className="fate-panel__history-page">
@@ -303,7 +335,7 @@ function SlotDetail({ item, range: formatRange, state, now, draftIndex, renderEd
                     <p className="fate-panel__detail-where"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 10c0 5-7 12-7 12S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{past.location || '地点未记录'}</p>
                     {past.fate?.feeling && <p className="fate-panel__feeling fate-panel__feeling--detail">{past.fate.feeling}</p>}
                     {past.description && <p className="fate-panel__description">{past.description}</p>}
-                    <div className="fate-panel__history-actions">{actions(past, pastIndex)}</div>
+                    <div className="fate-panel__history-actions">{editable ? actions(past, pastIndex) : null}</div>
                     </>}
                     <details className="fate-panel__draw-details"><summary>查看本轮牌阵</summary><FateCards slot={past} identity={`${scheduleId}:${past.startsAt}:${JSON.stringify(past.fate)}`} /></details>
     </article>;

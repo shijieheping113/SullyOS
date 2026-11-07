@@ -65,9 +65,15 @@
 .fate-panel__meaning p{margin-top:4px;white-space:pre-wrap}
 .fate-panel__context{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px;margin-top:10px}
 /* 「心」是地点与正文之间的一句题记：换宋体、居中、上方一道短线，和正文明显不是同一种声音。 */
-.fate-panel__feeling{display:block;margin:9px auto 0;padding:0;max-width:22em;font-family:'Songti SC',SimSun,serif;font-size:12.5px;font-style:normal;line-height:1.8;letter-spacing:.5px;color:#8f6b7b;text-align:center}
-.fate-panel__feeling::before{content:'';display:block;width:14px;height:1px;margin:0 auto 8px;background:#d3b3c1}
+.fate-panel__feeling{display:block;margin:14px 0 0;padding:0;max-width:none;font-family:inherit;font-size:12.5px;font-style:normal;line-height:1.9;letter-spacing:.3px;color:#84656f;text-align:center}
+.fate-panel__feeling::before,.fate-panel__feeling::after{color:#c1a2ae;font-size:11px}
+.fate-panel__feeling::before{content:'\300c';margin-right:1px}
+/* `.fate-panel p{margin:0;color:inherit}` 特异性更高，会把间距和浅色一起盖掉，这里用同特异性再声明一次。 */
+p.fate-panel__feeling{margin:14px 0 0;color:#84656f}
+p.fate-panel__feeling--detail{margin:12px 0 0}
+.fate-panel__feeling::after{content:'\300d';margin-left:1px}
 .fate-panel__copy .fate-panel__description{margin-top:10px}
+.fate-panel__copy .fate-panel__feeling+.fate-panel__description{margin-top:6px}
 .fate-panel__context strong{font-size:12px;font-weight:400}
 .fate-panel__label{font-size:11px;color:var(--fate-muted);margin-right:5px}
 .fate-panel__context p{font-size:12px;line-height:1.8;margin-top:6px;white-space:pre-wrap}
@@ -110,6 +116,10 @@
 .fate-panel__history-actions .fate-panel__actions{justify-content:flex-start}
 /* 星盘：盘在上，选中那段在下，中间不留硬边框，靠留白分隔。 */
 .fate-panel__chart-overlay .fate-panel__history-page{margin-top:16px}
+.fate-panel__chart-days{display:flex;gap:6px;margin:0 0 8px}
+.fate-panel__chart-days button{flex:1;min-height:30px;padding:3px 0;border:0;border-radius:5px;background:transparent;color:#79616e;font-size:12px;cursor:pointer}
+.fate-panel__chart-days button[aria-pressed='true']{background:#ead9df;color:#6e354b;font-weight:500}
+.fate-panel__chart-days button:disabled{opacity:.45;cursor:default}
 /* 星盘与因子牌都会传送到 body，面板里的排版规则在那边不生效；这几条补上同样的字与距。 */
 .fate-panel__reading,.fate-panel__history-page{color:var(--fate-ink,#51434b);font-size:14px;line-height:1.65}
 .fate-panel__history-page :is(h3,p){margin:0}
@@ -140,5 +150,4 @@
 @media(max-width:360px){.fate-panel{padding-left:16px;padding-right:16px}.fate-panel.fate-panel--embedded{padding-left:8px;padding-right:8px}.fate-panel__activity{padding-top:4px}.fate-panel__activity h3{font-size:20px}.fate-panel__figures{padding-bottom:4px}.fate-panel__patron .fate-patron-art{width:68px;height:74px}.fate-panel__description{line-height:1.75}.fate-panel__deck{gap:5px;margin-top:6px}.fate-panel__card{padding:6px 4px 5px}.fate-panel__card-art{width:46px;height:50px}.fate-panel__context{grid-template-columns:1fr}.fate-panel__controls{gap:4px;margin-top:8px}.fate-panel__controls .fate-panel__actions{gap:2px}.fate-panel__controls .fate-panel__actions button:has(svg){font-size:11px}.fate-panel__cat{width:76px;height:44px}.fate-panel__date{margin-top:3px}}
 @media(prefers-reduced-motion:reduce){.fate-panel *,.fate-panel *::before,.fate-panel *::after{animation:none!important;transition:none!important}.fate-panel__card:hover,.fate-panel__card--open,.fate-panel__draw:hover .fate-panel__yarn{transform:none}}
 /* 详情里同一条注释贴着地点左对齐，位置在主卡片里保持一致。 */
-.fate-panel__feeling--detail{margin:9px 0 0;max-width:none;text-align:left;letter-spacing:.4px}
-.fate-panel__feeling--detail::before{margin:0 0 8px;width:12px}
+.fate-panel__feeling--detail{margin:12px 0 0;max-width:none;text-align:left}

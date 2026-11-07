@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CharacterProfile, DailySchedule, ScheduleSlot } from '../types';
 import FateSchedulePanel, { type FateSchedulePanelProps } from '../components/schedule/FateSchedulePanel';
 import { resolveFateSlotTimes } from './fateSchedule';
+import { DB } from './db';
 
 const NOW = 1_800_000_000_000;
 const current: ScheduleSlot = {
@@ -300,6 +301,33 @@ describe('命运牌阵独立活动面板', () => {
         expect(document.body.querySelector('.fate-panel__history-page')).toBeNull();
         await click('10:00 沿海堤寻找旧灯塔，正在进行', chart);
         expect(document.body.querySelector('.fate-panel__history-page h3')?.textContent).toBe(current.activity);
+    });
+    it('星盘给今天、昨天、前天三天，往日只读且明确说明没有记录', async () => {
+        const yesterdaySlot = { ...previous, activity: '昨天晒被子', startsAt: NOW - 90_000_000, endsAt: NOW - 86_400_000, startTime: '07:20', endTime: '08:10', theater: undefined };
+        const getSchedule = vi.spyOn(DB, 'getDailySchedule').mockImplementation(async (_charId, date) => (
+            date === '2027-01-15' ? makeSchedule() : date === '2027-01-14' ? { ...makeSchedule([yesterdaySlot]), date: '2027-01-14', id: 'fate:c1_2027-01-14' } : null
+        ));
+        try {
+            await render({ schedule: makeSchedule() });
+            await click('打开今日星盘，共2项');
+            const band = () => document.body.querySelector('.fate-panel__chart-days')!;
+            expect(Array.from(band().querySelectorAll('button')).map(item => item.textContent)).toEqual(['今天', '昨天', '前天']);
+            expect(band().querySelector('[aria-pressed="true"]')?.textContent).toBe('今天');
+            // 前天什么都没留下：先说清楚，不给一张空盘。
+            await click('前天', band());
+            expect(document.body.querySelector('.fate-panel__chart-overlay')?.textContent).toContain('这一天没有留下日程。');
+            // 昨天有记录：画得出来，但那是往日，不该出现编辑与删除。
+            await click('昨天', band());
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+            expect(getSchedule).toHaveBeenCalledWith('fate:c1', '2027-01-14');
+            const chart = document.body.querySelector('.fate-day-chart');
+            expect(chart).toBeTruthy();
+            await click('07:20 昨天晒被子，已结束 · 待续写', chart!);
+            const detail = document.body.querySelector('.fate-panel__history-page')!;
+            expect(detail.querySelector('h3')?.textContent).toBe('昨天晒被子');
+            expect(detail.querySelector('[aria-label="编辑活动"]')).toBeNull();
+            expect(detail.querySelector('[aria-label="删除活动"]')).toBeNull();
+        } finally { getSchedule.mockRestore(); }
     });
     it('一条都没有时星盘入口明确说明没有记录', async () => {
         await render({ schedule: makeSchedule([]) });
