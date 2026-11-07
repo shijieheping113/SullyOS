@@ -25,6 +25,22 @@ describe('命运牌阵抽取与分时段判断', () => {
         expect(task).toContain('这些只是部分可能');
         expect(task).toContain('睡眠与梦');
     });
+    it('三张牌分别交代场、心、势三个职责面，不是三件事', () => {
+        const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'career', name: '事业与求索', meaning: '关注责任与成果。' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '', new Date('2026-11-04T13:00:00'));
+        expect(task).toContain('主因子 · 场：');
+        expect(task).toContain('副因子一 · 心：');
+        expect(task).toContain('副因子二 · 势：');
+        expect(task).toContain('三个因子是同一段生活的三个面，不是三件事');
+        expect(task).toContain('场定处境');
+        expect(task).toContain('心定感受');
+        expect(task).toContain('势定推进方式');
+        expect(task).not.toContain('两副因子提供条件与变化');
+    });
+    it('输出结构包含情感倾向字段，且不把它写成必填校验', () => {
+        const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'career', name: '事业与求索', meaning: '关注责任与成果。' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '', new Date('2026-11-04T13:00:00'));
+        expect(task).toContain('"feeling":"一句情感倾向，不超过16字"');
+        expect(task).toContain('"development":"事件发展类型"');
+    });
     it('短描述允许不同大小的落点，字数和时长保持现值', () => {
         const task = buildFateTask({ name: '柏木诚' } as CharacterProfile, { date: '2026-11-04', tendency: { id: 'discovery', name: '经历与发现', meaning: '发现变化' }, factors: BUILTIN_FATE_FACTORS.slice(0, 3), people: 'free' }, [], '', new Date('2026-11-04T13:00:00'));
         expect(task).toContain('目标30—60字，最多80字');

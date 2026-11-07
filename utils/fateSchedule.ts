@@ -3,6 +3,7 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { getDailyScheduleForChar, getRecentScheduleHistory } from './dailySchedule';
 import { getScheduleDateKey, getScheduleWallClock } from './scheduleTime';
+import { addLocalDays } from './localDate';
 import { resolveCharTimeZone, wallClockToTimestamp } from './timezone';
 import { loadFateSettings, type FateTendency } from './fateSettings';
 import type { FateFactor } from './fateFactors';
@@ -34,7 +35,8 @@ export type ResolveFateSlotTimesResult =
 
 /**
  * 把角色当地当天的开始/结束钟点换成真实时间戳。
- * 只允许落在 dateKey 这一天内；时长须在 FATE_SLOT_MIN/MAX 分钟之间。
+ * 结束钟点早于或等于开始钟点时按跨到次日理解（23:20 → 02:20 是夜间续写的常态），
+ * 但时长仍须在 FATE_SLOT_MIN/MAX 分钟之间；不成立时沿用「结束时间必须晚于开始时间」。
  */
 export function resolveFateSlotTimes(
     char: Pick<CharacterProfile, 'customTimezoneEnabled' | 'customTimezone'> | null | undefined,
@@ -48,14 +50,22 @@ export function resolveFateSlotTimes(
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return { ok: false, error: '日程日期无效，无法保存时间。' };
     const tz = resolveCharTimeZone(char);
     const startsAt = wallClockToTimestamp(`${dateKey} ${startTime}:00`, tz);
-    const endsAt = wallClockToTimestamp(`${dateKey} ${endTime}:00`, tz);
-    if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) return { ok: false, error: '时间无法换算，请重试。' };
-    if (endsAt <= startsAt) return { ok: false, error: '结束时间必须晚于开始时间。' };
+    const sameDayEnd = wallClockToTimestamp(`${dateKey} ${endTime}:00`, tz);
+    if (!Number.isFinite(startsAt) || !Number.isFinite(sameDayEnd)) return { ok: false, error: '时间无法换算，请重试。' };
+    // 同一天内不晚于开始钟点：跨午夜段，结束落在次日。
+    const crossedMidnight = sameDayEnd <= startsAt;
+    const nextDayKey = crossedMidnight ? addLocalDays(dateKey, 1) : dateKey;
+    const endsAt = crossedMidnight ? wallClockToTimestamp(`${nextDayKey} ${endTime}:00`, tz) : sameDayEnd;
+    if (!Number.isFinite(endsAt)) return { ok: false, error: '时间无法换算，请重试。' };
     const minutes = Math.round((endsAt - startsAt) / 60_000);
     if (minutes < FATE_SLOT_MIN_MINUTES || minutes > FATE_SLOT_MAX_MINUTES) {
+        // 走了跨天分支却不在 30—180 分钟内，说明这组钟点本身说不通（如 12:00 → 11:00）。
+        if (crossedMidnight) return { ok: false, error: '结束时间必须晚于开始时间。' };
         return { ok: false, error: `活动时长需在 ${FATE_SLOT_MIN_MINUTES}—${FATE_SLOT_MAX_MINUTES} 分钟之间。` };
     }
-    if (getScheduleDateKey(char, new Date(startsAt)) !== dateKey || getScheduleDateKey(char, new Date(endsAt)) !== dateKey) {
+    // 开始必须落在当天；结束只允许当天或次日，别的一律不认。
+    const endKey = getScheduleDateKey(char, new Date(endsAt));
+    if (getScheduleDateKey(char, new Date(startsAt)) !== dateKey || (endKey !== dateKey && endKey !== nextDayKey)) {
         return { ok: false, error: '只能修改当天内的时间，不能跨天。' };
     }
     return { ok: true, startsAt, endsAt, startTime, endTime };
@@ -137,10 +147,10 @@ ${chat}
 结合角色当前的活动、身体状态与生活处境，灵活解释牌阵倾向和因子。表现可以落在外部事件、日常细节、身体感受、梦境，或尚未成形的念头等层面，这些只是部分可能。大小随处境自然选择，念头保留模糊方向，后续发展留给角色。
 
 本轮牌阵倾向：${draw.tendency.name}，${draw.tendency.meaning}
-主因子：${draw.factors[0].name}——${draw.factors[0].meaning}
-副因子一：${draw.factors[1].name}——${draw.factors[1].meaning}
-副因子二：${draw.factors[2].name}——${draw.factors[2].meaning}
-主因子决定整体走向，两副因子提供条件与变化，三个因子共同影响同一段生活，不是三项任务。把开放含义结合处境解释，内容里体现组合，不机械抄牌名。
+主因子 · 场：${draw.factors[0].name}——${draw.factors[0].meaning}
+副因子一 · 心：${draw.factors[1].name}——${draw.factors[1].meaning}
+副因子二 · 势：${draw.factors[2].name}——${draw.factors[2].meaning}
+三个因子是同一段生活的三个面，不是三件事。场定处境：这段生活落在哪、和谁、在推进什么，落到 activity 与 location。心定感受：角色心里对这件事的倾向与温度，落到 feeling。势定推进方式：这件事怎么展开、顺还是卡、是开头还是收尾，落到 development。把开放含义结合处境解释，内容里体现组合，不机械抄牌名。
 
 创作顺序：先根据当前处境、牌阵与近期生活决定这一段生活的落点与具体地点，再按照本轮抽中的人物方向处理这段生活里自然涉及的人物，最后检查因果、时间、空间与近期重复。人物方向不能反过来强行改变生活落点。
 ${buildPeopleDirectionPrompt(draw.people)}
@@ -155,7 +165,7 @@ ${char.scheduleStyle === 'mindful' ? '此角色使用意识系：尊重角色自
 输出前核对当天活动的前后衔接，确认角色有时间到达、有时间完成，工作安排与身份相符，再输出本轮日程。从现在开始设计一项活动，覆盖未来30—180分钟，由你选合理时长。不补过去，不排全天。
 日程描述是简短的场景提要，用朴实、直接的第三人称写1—2个短句，目标30—60字，最多80字。表现可以是正在做的事、身边的一点小动静、身上的一处感觉、梦里的片段，或刚冒出来还没成形的念头；写哪一种由当前处境自然决定。让读者知道在哪、做什么、有什么不同。人物按需要点明姓名或身份，具体地点单独填写。描述保留尚可发展的空间，成段的动作演出、完整对话、内心分析、后续选择与结局留给进一步查看和聊天。
 三个因子共同影响活动构思，不要求短描述逐个解释或逐个制造转折；组合如何作用写在rationale里，用一句面向用户的设计说明，最多100字，不写内心推理。活动服务于角色自己的生活，用户相关内容只在已知关系和当前情境适合时自然出现。
-仅输出JSON：{"durationMinutes":30到180的整数,"activity":"具体活动名","description":"一小段正在展开的生活","location":"具体地点","emoji":"一个表情","homePosition":{"kind":"home","roomId":"所列真实房间ID"}或{"kind":"away"},"rationale":"简短说明因子组合怎样符合处境，不输出内心推理","activityKind":"活动类别","sceneKind":"场景类别","development":"事件发展类型"}。
+仅输出JSON：{"durationMinutes":30到180的整数,"activity":"具体活动名","description":"一小段正在展开的生活","location":"具体地点","emoji":"一个表情","homePosition":{"kind":"home","roomId":"所列真实房间ID"}或{"kind":"away"},"rationale":"简短说明因子组合怎样符合处境，不输出内心推理","feeling":"一句情感倾向，不超过16字","activityKind":"活动类别","sceneKind":"场景类别","development":"事件发展类型"}。
 ${buildHomeSchedulePrompt(char).replace(/每个 slots 项/g, '输出对象').replace(/每条日程/g, '本轮日程')}`;
 }
 
@@ -212,7 +222,7 @@ export async function generateFateSchedule(
         startTime: clock(now), endTime: clock(end), startsAt: now, endsAt: end,
         activity: data.activity.trim(), description: data.description.trim(), location: data.location.trim(),
         emoji: typeof data.emoji === 'string' ? data.emoji : undefined, homePosition,
-        fate: { tendency: draw.tendency, factors: draw.factors, peopleDirection: draw.people, rationale: typeof data.rationale === 'string' ? data.rationale : '', activityKind: String(data.activityKind || data.activity), sceneKind: String(data.sceneKind || data.location), development: String(data.development || ''), usageDate: date },
+        fate: { tendency: draw.tendency, factors: draw.factors, peopleDirection: draw.people, rationale: typeof data.rationale === 'string' ? data.rationale : '', activityKind: String(data.activityKind || data.activity), sceneKind: String(data.sceneKind || data.location), development: String(data.development || ''), feeling: typeof data.feeling === 'string' && data.feeling.trim() ? data.feeling.trim().slice(0, 32) : undefined, usageDate: date },
     };
     const base = latest || existing;
     const slots = (base?.slots || []).filter(s => !rerollTarget || s.startsAt !== rerollTarget.startsAt);

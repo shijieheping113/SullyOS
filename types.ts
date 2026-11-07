@@ -852,6 +852,8 @@ export interface ScheduleSlot {
     activityKind: string;
     sceneKind: string;
     development: string;
+    /** 「心」副因子落在感受层的一句话；模型没给时为 undefined，不参与校验。 */
+    feeling?: string;
     usageDate: string;
   };
     activity: string;     // "晨跑"

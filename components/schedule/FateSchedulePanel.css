@@ -64,6 +64,11 @@
 .fate-panel__meaning{padding:10px;margin-top:8px;background:#ecdee4;font-size:13px;border-radius:4px;animation:fate-meaning-in .28s ease-out both}
 .fate-panel__meaning p{margin-top:4px;white-space:pre-wrap}
 .fate-panel__context{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px;margin-top:10px}
+/* 「心」副因子的落点：一行小字，没有就不渲染。 */
+/* 「心」是内容侧的一句话，跟在描述后面，不再当成一张牌。 */
+.fate-panel .fate-panel__feeling{display:flex;align-items:baseline;gap:6px;margin-top:8px;padding:0;background:transparent;border:0;border-radius:0;font-size:13px;line-height:1.8;color:var(--fate-muted)}
+.fate-panel__feeling span{flex:none;font-size:11px;letter-spacing:1px;color:var(--fate-rose);padding-right:2px}
+.fate-panel__feeling em{font-style:normal;color:var(--fate-ink)}
 .fate-panel__context strong{font-size:12px;font-weight:400}
 .fate-panel__label{font-size:11px;color:var(--fate-muted);margin-right:5px}
 .fate-panel__context p{font-size:12px;line-height:1.8;margin-top:6px;white-space:pre-wrap}
@@ -83,6 +88,8 @@
 .fate-calculation__factors span{font-size:11px;color:#705863;margin-right:6px}
 .fate-calculation__factors strong{font-size:14px;font-weight:500;color:#85495d}
 .fate-calculation__result{padding:12px 0 0}
+/* 第一次看到「场／心／势」这三个字的人得知道它们各管什么。 */
+.fate-calculation__roles{margin-top:10px!important;padding-top:9px;border-top:1px dashed #dfc6d2;font-size:11px!important;line-height:1.75;color:#8a6f7b!important}
 .fate-panel__editor{grid-column:1/-1;text-align:left;padding:0;background:transparent;min-width:0}
 .fate-panel__editor h3{font-size:18px}
 .fate-panel__editor fieldset{border:0;padding:0;margin:12px 0 0;min-width:0}
@@ -97,15 +104,16 @@
 .fate-panel__empty{display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;align-items:center;padding:24px 0}
 .fate-panel__empty h3{font-size:17px;line-height:1.5}
 .fate-panel__empty p{font-size:12px;color:var(--fate-muted);margin-top:8px}
-.fate-panel__history-trigger{display:flex;align-items:center;justify-content:center;margin:0;padding:6px;border:0;background:transparent;color:var(--fate-rose);width:36px;min-height:36px;flex:none}
-.fate-panel__history-trigger svg{width:25px;height:25px;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
-.fate-panel__history-trigger small{font-size:11px;color:var(--fate-muted)}
+.fate-panel__chart-trigger{display:flex;align-items:center;justify-content:center;margin:0;padding:6px;border:0;background:transparent;color:var(--fate-rose);width:36px;min-height:36px;flex:none}
+.fate-panel__chart-trigger svg{width:25px;height:25px;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.fate-panel__chart-trigger small{font-size:11px;color:var(--fate-muted)}
 .fate-panel__history-page h3{font-family:'Songti SC',SimSun,serif;font-size:19px;font-weight:500;margin-top:8px}
 .fate-panel__history-page .fate-panel__location{font-size:12px;line-height:1.7;gap:4px;margin-top:3px}
 .fate-panel__history-page .fate-panel__location svg{width:13px;height:13px;stroke-width:1.5;opacity:.85}
-.fate-panel__history-paging{display:flex;justify-content:space-between;margin-top:22px}
 .fate-panel__history-actions .fate-panel__actions{justify-content:flex-start}
-.fate-panel__history-paging button{min-height:38px;padding:6px 12px;border:1px solid #cdb2be;background:#fbf5f6;color:var(--fate-rose)}
+/* 星盘：盘在上，选中那段在下，中间不加边框分隔，避免看起来像两张卡。 */
+.fate-panel__chart-overlay .fate-panel__history-page{margin-top:4px;padding-top:12px;border-top:1px solid #e3ccd6}
+.fate-panel__chart-hint{text-align:center;font-size:12px;color:var(--fate-muted);margin-top:4px}
 .fate-panel__actions button:has(svg){width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:0}
 .fate-panel__actions button svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .fate-panel__action-name{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}

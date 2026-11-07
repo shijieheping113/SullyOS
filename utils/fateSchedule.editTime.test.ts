@@ -46,13 +46,36 @@ describe('命运日程时间编辑工具', () => {
         });
     });
 
-    it('恰好 30 与 180 分钟可通过', () => {
-        const short = resolveFateSlotTimes(shanghai, '2027-01-15', '10:00', '10:30');
+    it('恰好 30 与 180 分钟可通过', () => {        const short = resolveFateSlotTimes(shanghai, '2027-01-15', '10:00', '10:30');
         const long = resolveFateSlotTimes(shanghai, '2027-01-15', '10:00', '13:00');
         expect(short.ok).toBe(true);
         expect(long.ok).toBe(true);
         if (short.ok) expect(short.endsAt - short.startsAt).toBe(FATE_SLOT_MIN_MINUTES * 60_000);
         if (long.ok) expect(long.endsAt - long.startsAt).toBe(FATE_SLOT_MAX_MINUTES * 60_000);
+    });
+
+    it('跨午夜的结束钟点落在次日，不再误判为结束早于开始', () => {
+        const night = resolveFateSlotTimes(shanghai, '2027-01-15', '23:20', '02:20');
+        expect(night.ok).toBe(true);
+        if (night.ok) {
+            expect(night.endsAt - night.startsAt).toBe(180 * 60_000);
+            expect(night.startTime).toBe('23:20');
+            expect(night.endTime).toBe('02:20');
+            // 2027-01-16 02:20 Asia/Shanghai
+            expect(new Date(night.endsAt).toISOString()).toBe('2027-01-15T18:20:00.000Z');
+        }
+        const shortNight = resolveFateSlotTimes(shanghai, '2027-01-15', '23:00', '00:30');
+        expect(shortNight.ok).toBe(true);
+        if (shortNight.ok) expect(shortNight.endsAt - shortNight.startsAt).toBe(90 * 60_000);
+    });
+
+    it('跨午夜但时长超出上限时仍报结束早于开始，不吃掉既有语义', () => {
+        expect(resolveFateSlotTimes(shanghai, '2027-01-15', '23:20', '02:30')).toMatchObject({
+            error: '结束时间必须晚于开始时间。',
+        });
+        expect(resolveFateSlotTimes(shanghai, '2027-01-15', '10:00', '10:00')).toMatchObject({
+            error: '结束时间必须晚于开始时间。',
+        });
     });
 
     it('与其他条目重叠时检出，跳过自身 index', () => {
