@@ -195,3 +195,9 @@ purpose」的组合，会产出既无引用可解析、又无内联凭据的空�
 - 补刷函数（`refreshCharPendingAiTaskCredentials` / `refreshApiCredentialsForPendingTasks`）
   混合期保留照跑，存量内联任务消亡后自然 no-op，届时可退役，「API 凭据没刷新成功」
   toast 一并消失。
+- 启动和 API 切换都走凭据同步队列，失败退避重试、保留跨会话欠账。
+  即使没有本地凭据指纹底账，也为启用主动消息 2.0 的角色补一行 chat 凭据：开了单独 API 就写单独那份，否则用角色默认对话 API，再没有才用全局。
+- 补刷函数同时读取本地任务和远端清单，覆盖页面关闭期间的自排任务。
+  内联任务按当前生效凭据更新三字段（单独 API 优先）；引用任务先登记同一套凭据行，再更新 chat 引用，保留其它 purpose。
+  继承 `instant-chat` 标签的自排任务通过详情的 `amsgSelfScheduled` 确认；真正的即时回复、
+  fixed 和后台作业不参与这次刷新。刷新要等用户打开新版应用并成功连接其 Worker 后才会生效。

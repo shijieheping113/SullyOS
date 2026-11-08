@@ -5,6 +5,18 @@
  * 鱼声 / ElevenLabs 朗读也走这一格（成品站要 CORS 中转，填了自建就用自建）。
  * 读 getProxyWorkerUrl()。
  *
+ * SullyOS 一票联网能力都通过同一个 Cloudflare Worker 代理转发，源码全在
+ * `worker/index.js`（可直接完整复制部署，无需打包）。涉及：
+ *   - 联网搜索 / 实时新闻热榜（Brave）       → /search /news
+ *   - WebDAV 云备份代理                       → /webdav
+ *   - GitHub 云备份代理（GFW 下走代理）       → /github
+ *   - Notion 集成                             → /notion/*
+ *   - 飞书多维表格集成                        → /feishu/*
+ *   - 麦当劳 / 瑞幸 点单 MCP                   → /mcp/mcd /mcp/luckin
+ *   - Cloudflare API 中转（一键部署后端用）    → /cf-api
+ *   - 好友圈微博扫码和只读同步                → /weibo
+
+ *
  * 小红书 Lite、搜索、新闻、网易云、Notion、飞书、点单、网页抓取
  * 走作者公共实例。读 getCoreProxyUrl()。
  */

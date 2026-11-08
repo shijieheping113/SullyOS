@@ -273,6 +273,20 @@ export const buildTaskInstruction = (mode: ActiveMsg2Mode, promptHint?: string):
   ].join('\n');
 };
 
+// ─── 离开后消息 ───
+// 每个角色最多一条云端任务：对方开口后往后推到「最后一次开口 + 等待时长」，到点前对方
+// 又说过话就由 worker 原地推迟（见 worker onBeforeFire）。到点必发，不给角色选择不说。
+
+/** 任务 metadata 上的标记与等待时长（分钟）。worker 认这两个键。 */
+export const AMSG_AWAY_MESSAGE_META = 'amsgAwayMessage';
+export const AMSG_AWAY_DELAY_META = 'amsgAwayDelayMinutes';
+
+export const buildAwayTaskInstruction = (delayMinutes: number): string => [
+  `对方已经超过 ${delayMinutes} 分钟没跟你说话了，这次是你主动去找对方。`,
+  '这次一定要发出消息：结合你们最后聊到哪儿、对方离开了多久、你自己这会儿在做什么，像真人一样自然地发一到三句私聊。',
+  '可以惦记对方去哪了、分享你刚经历的事，或者接上没聊完的话；不要像系统提醒，也不要提「多少分钟」这种计时。',
+].join('\n');
+
 // ─── send_at 的时间参照系 ───
 //
 // 角色在 prompt 里看到的钟是自己时区的（fire_pack 的 tzId），它写出来的 send_at
@@ -532,7 +546,9 @@ export const extractFireScheduleTextCalls = (content: string): FireScheduleTextC
   if (!content) return [];
   const re = new RegExp(`(^|[^\\w./])${escapeRegExp(AMSG_FIRE_SCHEDULE_TOOL)}\\s*\\(([^)]*)\\)`, 'g');
   const calls: FireScheduleTextCall[] = [];
-  for (const m of content.matchAll(re)) {
+  // 文档示例和行内代码不是执行意图，保留原文给用户看。
+  const executable = content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g, match => ' '.repeat(match.length));
+  for (const m of executable.matchAll(re)) {
     const matched = m[0].slice(m[1].length);
     let args: Record<string, unknown> = {};
     try {

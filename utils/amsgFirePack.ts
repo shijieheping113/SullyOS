@@ -409,9 +409,17 @@ export interface AmsgFirePackChat {
   messages: { role: string; content: AmsgFirePackChatContent }[];
   /** 这份对话消息打包的时刻（epoch ms）。 */
   builtAt: number;
+  /**
+   * worker 时效块（时钟、实时世界、排程清单等）插在 messages 的这个下标前，
+   * 即本地「实时状态」段所在的位置，和本地路径一样把「回到你自己」留在最后。
+   * 缺省或越界时追加到末尾。
+   */
+  timelyInsertAt?: number;
 }
 
 export interface AmsgFirePack {
+  /** 模板是否含用户指定的内心独白协议；旧包缺省不回传原始推理。 */
+  thinkingChainEnabled?: boolean;
   v: typeof FIRE_PACK_VERSION;
   /** 完整 prompt 模板，时间性内容与本次任务指令留 AMSG_SLOT_* 槽位。 */
   template: string;
@@ -433,10 +441,9 @@ export interface AmsgFirePack {
   /** 用户称呼（userProfile.name || '对方'），awayHint 文案用。 */
   targetName: string;
   /**
-   * 这份模板打包的时刻（epoch ms），self_log 的 tasks 段拿它当对齐锚点：日志里记的
-   * basePackAt 和这个值不一样，说明客户端之后又传了一份新模板，自排任务已随
-   * pendingTasks 回来，tasks 段作废；连发记录（entries）不看它，只认用户有没有开口
-   * （见 reconcileSelfLogWithPack）。
+   * 这份模板打包的时刻（epoch ms）。basePackAt 记下当前快照版本，但换代本身
+   * 不能证明任务已被客户端认领；tasks 按 pendingTasks 里的 UUID 逐项去重。
+   * 连发记录只认用户有没有开口（见 reconcileSelfLogWithPack）。
    */
   builtAt: number;
   /**
@@ -652,8 +659,8 @@ export interface AmsgSelfLog {
    * 很容易把同一件事再排一遍。
    *
    * 客户端上线重放 directive 之后，这些任务会进它的本地清单，下次同步就随
-   * fire_pack.pendingTasks 一起上来——那时 tasks 段作废（basePackAt 对不上，
-   * 见 reconcileSelfLogWithPack），不会两边各记一份。
+   * fire_pack.pendingTasks 一起上来——只有已经出现的同 UUID 条目才从备账移除，
+   * 未认领的仍保留（见 reconcileSelfLogWithPack）。
    */
   tasks: ActiveMsg2TaskRecord[];
 }
@@ -697,8 +704,8 @@ export const countUnansweredSends = (log: AmsgSelfLog | null): number =>
  * - entries + unansweredSends（连发记录）只认「用户开口了」：lastUserMessageAt 比锚新
  *   就一起清零、锚前进。fire_pack 换代**不**清它们——换代多半只是客户端认领了角色自己
  *   发的推送（打脏重传），计数要是跟着清，连发提醒和上限在用户在线时就永远不会生效。
- * - tasks（自排任务备账）只认「fire_pack 换代」：客户端认领后这些任务已随
- *   pack.pendingTasks 回来，再留一份就会被记成两条。
+ * - tasks（自排任务备账）按 pack.pendingTasks 中的 UUID 逐项去重；单纯换代
+ *   不代表客户端已收下排程结果，不能清空尚未认领的任务。
  */
 export const reconcileSelfLogWithPack = (
   stored: AmsgSelfLog | null,
@@ -711,7 +718,9 @@ export const reconcileSelfLogWithPack = (
     log = { ...log, anchorUserMsgAt: lastUserMessageAt, entries: [], unansweredSends: 0, recurringSends: {} };
   }
   if (log.basePackAt !== pack.builtAt) {
-    log = { ...log, basePackAt: pack.builtAt, tasks: [] };
+    // 只有快照里明确带回的 uuid 才代表客户端已认领；打包时间本身不是回执。
+    const adopted = new Set(pack.pendingTasks.map(task => task.taskUuid));
+    log = { ...log, basePackAt: pack.builtAt, tasks: log.tasks.filter(task => !adopted.has(task.taskUuid)) };
   }
   return log;
 };
@@ -904,6 +913,8 @@ export const renderFirePack = (
      * 传进来；不传用包里那份。
      */
     lastUserMessageAt?: number | null;
+    /** 到点必发、不给角色选择不说（离开后消息）：模板里【开口之前】那段整个拿掉。 */
+    mustSpeak?: boolean;
   },
 ): string => {
   const tz: AmsgTzRef = { tzId: pack.tzId };
@@ -918,6 +929,7 @@ export const renderFirePack = (
   const awayHint = buildAwayHint(pack.targetName, timeSinceUser);
 
   let out = pack.template;
+  if (extras?.mustSpeak) out = out.split(`${BEFORE_SPEAK_LINES.join('\n')}\n`).join('');
   out = fillSlot(out, AMSG_SLOT_CURRENT_TIME, currentTime);
   // 对方那边的钟：跟上面那行是两个主体各自的时间，文案里各自写清主语（见 buildUserClockHint）。
   out = fillSlot(out, AMSG_SLOT_USER_CLOCK, buildUserClockHint(nowMs, tz, { tzId: pack.userTzId }, pack.targetName));
@@ -948,14 +960,8 @@ export const renderFirePack = (
  */
 export const FIRE_PACK_VERSION = 7;
 
-/**
- * 即时对话任务行的 messageSubtype 标签。上游只当自由文本原样透传；客户端两处都认它：
- * 排程时写（activeMsgClient.sendInstantChat）、面板对账时滤（amsg2Tasks 的
- * reconcileTasksWithRemote——即时对话的行不补进任务清单，不然用户正等着的一轮会显示
- * 成「待触发」，还可能被「取消全部」顺手掐掉）。写读两侧靠这一个常量绑死：它是
- * GET /messages 明文投影里唯一可查的即时对话标记，producer 改个说法 filter 就瞎了。
- */
-export const AMSG_INSTANT_CHAT_SUBTYPE = 'instant-chat';
+/** 即时对话任务行的 messageSubtype；定义和分类规则在 amsgTaskKinds。 */
+export { AMSG_INSTANT_CHAT_SUBTYPE } from './amsgTaskKinds';
 
 /**
  * 解析失败时给人看的一句原因。
@@ -994,8 +1000,9 @@ const chatContentOk = (content: unknown): boolean => {
 const chatFieldOk = (chat: unknown): boolean => {
   if (chat === undefined) return true;
   if (!chat || typeof chat !== 'object' || Array.isArray(chat)) return false;
-  const { messages, builtAt } = chat as Partial<AmsgFirePackChat>;
+  const { messages, builtAt, timelyInsertAt } = chat as Partial<AmsgFirePackChat>;
   return typeof builtAt === 'number'
+    && (timelyInsertAt === undefined || Number.isInteger(timelyInsertAt))
     && Array.isArray(messages) && messages.length > 0
     && messages.every((m) => !!m && typeof m === 'object'
       && typeof (m as { role?: unknown }).role === 'string'

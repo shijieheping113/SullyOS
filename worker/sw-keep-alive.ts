@@ -1,5 +1,9 @@
 /// <reference lib="WebWorker" />
 
+import { diagnosticNotificationScope } from './diagnosticNotification';
+import { diagnosticRunId, safeDiagnosticError } from '../utils/amsgReproduction';
+import { appendDiagnosticEvent } from '../utils/amsgReproductionStore';
+
 import { installReiSW } from '@rei-standard/amsg-sw';
 import { createStaticCache, type StaticManifest } from './staticCache';
 
@@ -83,7 +87,9 @@ const staticManifest = typeof __STATIC_CACHE_MANIFEST__ === 'undefined' ? undefi
  *            _blob 信封、reasoning、tool_request 三条路线移除。
  */
 // 1.20.0: 静态资源缓存、离线启动、用户确认更新；保留原推送注册。
-const SW_VERSION = '1.20.0';
+// 1.22.0: amsg-sw next.8，修复并发冲刷回执与分片收尾失败的诊断。
+// 1.23.0: 移除主动消息 1.0 的本地定时器（proactive-start / stop / sync 消息不再处理）。
+const SW_VERSION = '1.23.0';
 
 const PING_INTERVAL = 15_000;
 const MAX_MANUAL_ALIVE_MS = 5 * 60_000;
@@ -106,9 +112,6 @@ const PUSH_SUBSCRIPTION_CHANGED_KV_ID = 'push_subscription_changed_v1';
 let pingTimer: number | null = null;
 let manualKeepAliveCount = 0;
 let manualKeepAliveStartedAt = 0;
-
-const proactiveSchedules = new Map<string, { charId: string; intervalMs: number }>();
-const proactiveTimers = new Map<string, number>();
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
@@ -250,16 +253,27 @@ function traceSw(event: string, payload?: any, extra: Record<string, any> = {}) 
   void appendSwTrace(entry).catch(() => { /* trace 写不进去就算了 */ });
 }
 
-installReiSW(sw, {
+installReiSW(diagnosticNotificationScope(sw, appendDiagnosticEvent), {
   defaultIcon: './icons/icon-192.png',
   defaultBadge: './icons/icon-192.png',
   multipart: { enabled: true },
   onBusinessPayload: async (payload: any) => {
     traceSw('business-payload-start', payload);
+    const runId = diagnosticRunId(payload?.metadata);
+    const diagnosticTrace = async (event: string, fields: Record<string, unknown> = {}) => {
+      if (!runId) return;
+      try { await appendDiagnosticEvent({ runId, side: 'sw', event, ts: new Date().toISOString(), swVersion: SW_VERSION, messageId: payload?.messageId, chunk: payload?.messageIndex, total: payload?.totalMessages, ...fields }); } catch { /* 旁路 */ }
+    };
+    const receivedTrace = diagnosticTrace('sw-received', {
+      notificationShow: payload?.notification?.show ?? 'default',
+      notificationSilent: payload?.notification?.silent ?? false,
+    });
     try {
       await saveIncomingActiveMessage(payload);
       traceSw('business-payload-done', payload);
+      await Promise.all([receivedTrace, diagnosticTrace('inbox-content-saved')]);
     } catch (e) {
+      await Promise.all([receivedTrace, diagnosticTrace('inbox-error', safeDiagnosticError(e))]);
       traceSw('business-payload-error', payload, {
         error: e instanceof Error ? e.message : String(e),
       });
@@ -268,12 +282,8 @@ installReiSW(sw, {
   },
 });
 
-function hasActiveProactiveSchedules() {
-  return proactiveTimers.size > 0;
-}
-
 function shouldKeepAlive() {
-  return manualKeepAliveCount > 0 || hasActiveProactiveSchedules();
+  return manualKeepAliveCount > 0;
 }
 
 function stopPingLoop() {
@@ -376,47 +386,6 @@ async function notifyClients(data: Record<string, any>) {
     ...(failures.length > 0 ? { failures } : {}),
     ...(matchError ? { matchError } : {}),
   });
-}
-
-function fireProactiveTrigger(charId: string) {
-  void notifyClients({ type: 'proactive-trigger', charId });
-}
-
-function stopProactive(charId: string) {
-  const timer = proactiveTimers.get(charId);
-  if (timer) {
-    clearInterval(timer);
-    proactiveTimers.delete(charId);
-  }
-  proactiveSchedules.delete(charId);
-}
-
-function upsertProactive(config: { charId: string; intervalMs: number }) {
-  const prev = proactiveSchedules.get(config.charId);
-  const unchanged = prev && prev.intervalMs === config.intervalMs;
-  if (unchanged && proactiveTimers.has(config.charId)) return;
-
-  stopProactive(config.charId);
-  proactiveSchedules.set(config.charId, config);
-
-  const timer = setInterval(() => fireProactiveTrigger(config.charId), config.intervalMs) as unknown as number;
-  proactiveTimers.set(config.charId, timer);
-}
-
-function syncProactive(configs: Array<{ charId: string; intervalMs: number }>) {
-  const nextIds = new Set((configs || []).map((config) => config.charId));
-
-  for (const charId of Array.from(proactiveSchedules.keys())) {
-    if (!nextIds.has(charId)) stopProactive(charId);
-  }
-
-  for (const config of configs || []) {
-    if (config && config.charId && config.intervalMs > 0) {
-      upsertProactive(config);
-    }
-  }
-
-  refreshKeepAlive();
 }
 
 function readPushPayload(event: PushEvent): any | null {
@@ -752,7 +721,8 @@ sw.addEventListener('pushsubscriptionchange', (event: Event) => {
 
 sw.addEventListener('notificationclick', (event: NotificationEvent) => {
   const payload = event.notification.data?.payload || event.notification.data || {};
-  const charId = payload?.metadata?.charId || payload?.charId || '';
+  const diagnostic = diagnosticRunId(payload?.metadata);
+  const charId = diagnostic ? '' : payload?.metadata?.charId || payload?.charId || '';
   event.notification.close();
 
   event.waitUntil((async () => {
@@ -760,12 +730,12 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
     if (clients.length > 0) {
       const client = clients[0];
       await client.focus();
-      client.postMessage({ type: 'active-msg-open', charId });
+      if (!diagnostic) client.postMessage({ type: 'active-msg-open', charId });
       return;
     }
 
     const openUrl = new URL(sw.registration.scope || sw.location.origin);
-    openUrl.searchParams.set('openApp', 'chat');
+    if (!diagnostic) openUrl.searchParams.set('openApp', 'chat');
     if (charId) openUrl.searchParams.set('activeMsgCharId', charId);
     await sw.clients.openWindow(openUrl.toString());
   })());
@@ -823,22 +793,6 @@ sw.addEventListener('message', (event: ExtendableMessageEvent) => {
       break;
     case 'keepalive-stop':
       stopKeepAlive();
-      break;
-    case 'proactive-start':
-      if (event.data.config) {
-        syncProactive([...proactiveSchedules.values(), event.data.config]);
-      }
-      break;
-    case 'proactive-stop':
-      if (event.data.charId) {
-        stopProactive(event.data.charId);
-        refreshKeepAlive();
-      } else {
-        syncProactive([]);
-      }
-      break;
-    case 'proactive-sync':
-      syncProactive(event.data.configs || []);
       break;
   }
 });

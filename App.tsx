@@ -1,3 +1,4 @@
+import UserSpaceNotice from './components/user/UserSpaceNotice';
 
 import React from 'react';
 import { OSProvider } from './context/OSContext';
@@ -12,6 +13,7 @@ import VRBroadcast from './components/VRBroadcast';
 import WorldBroadcast from './components/WorldBroadcast';
 import ChatBroadcast from './components/ChatBroadcast';
 import WebUpdateNotice from './components/WebUpdateNotice';
+import AmsgOwnerConflictNotice from './components/AmsgOwnerConflictNotice';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 import { installDevDebugLifecycleCapture } from './utils/devDebug';
 
@@ -50,6 +52,8 @@ const App: React.FC = () => {
             <Amsg2DebugPanel />
             <BatteryReminderHost />
             <WebUpdateNotice />
+            <AmsgOwnerConflictNotice />
+            <UserSpaceNotice />
           </OSProvider>
         </div>
       </div>

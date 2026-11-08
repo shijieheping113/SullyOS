@@ -1,3 +1,5 @@
+import { INSTANT_INPUT_NAMESPACE, parseInstantInputEnvelope } from './instantInput';
+import { diagnosticRunId, DIAGNOSTIC_NAMESPACE } from '../../../utils/amsgReproduction';
 import { parseToolPack } from '../../../utils/amsgToolPack';
 import { parseCharCredId } from '../../../utils/amsgLlmCredentials';
 import { AMSG_STATE_NAMESPACE_PREFIX, unpackStateValue } from '../../../utils/amsgFirePack';
@@ -30,7 +32,24 @@ const character = (id: string, kind: string, label?: string): SullyCloudOwnershi
 
 /** 只按云端已有的结构化身份识别；不解析正文里的人名，也不读取浏览器资料。 */
 export async function resolveSullyCloudOwnership(input: SullyCloudResourceInput): Promise<SullyCloudOwnership | null> {
+  const diagnosticId = input.type === 'state' && input.namespace === DIAGNOSTIC_NAMESPACE
+    ? diagnosticRunId({ amsgDiagnosticRunId: input.key?.split(':')[0] })
+    : diagnosticRunId(record(record(input.payload).metadata)) ?? diagnosticRunId(record(record(input.task).metadata));
+  if (diagnosticId) return { owner: { type: 'diagnostic', id: diagnosticId, label: '主动消息复现' }, kind: 'diagnostic' };
   if (input.type === 'state') {
+    if (input.namespace === INSTANT_INPUT_NAMESPACE && typeof input.value === 'string') {
+      const envelope = parseInstantInputEnvelope(input.value);
+      return envelope ? character(envelope.charId, 'instant-input') : null;
+    }
+    if (input.namespace === 'amsg:attachments' && typeof input.value === 'string') {
+      try {
+        const envelope = record(JSON.parse(input.value));
+        const owner = record(envelope.owner);
+        const id = text(owner.id);
+        if (envelope.version === 1 && owner.type === 'character' && id) return character(id, 'sidechannel');
+      } catch { /* 旧异常附件没有可证明的角色归属。 */ }
+      return null;
+    }
     if (input.namespace?.startsWith(AMSG_STATE_NAMESPACE_PREFIX)) {
       const id = input.namespace.slice(AMSG_STATE_NAMESPACE_PREFIX.length);
       if (!id) return null;

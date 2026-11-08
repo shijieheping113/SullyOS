@@ -13,6 +13,7 @@ import { DiceGlyph } from './ChatGameCard';
 import { useEmojiThumbnailCache } from '../../utils/useEmojiThumbnailCache';
 import { CHAT_TEXTAREA_MAX_PX, useAutoGrowTextarea } from '../../utils/autoGrowTextarea';
 import { categoryHasRestriction } from '../../utils/emojiPermissions';
+import { useReducedBlur } from '../../utils/blurPolicy';
 
 const EMOJI_PAGE_SIZE = 40;
 const ACTION_PAGE_SIZE = 8;
@@ -21,6 +22,8 @@ interface ChatInputAreaProps {
     compactHome?: boolean;
     /** 仅可由指定嵌入窗口单独打开 compactHome 下隐藏的表情面板，不改变家园小手机默认行为。 */
     compactHomeEmojiPicker?: boolean;
+    /** 这个角色开着离开后消息：菜单项上亮一个点。 */
+    awayMessageOn?: boolean;
 
     /** Initial page for static decoration previews; does not run menu actions. */
     previewActionsPage?: number;
@@ -75,8 +78,6 @@ interface ChatInputAreaProps {
     // Reroll Support
     onReroll: () => void;
     canReroll: boolean;
-    // Proactive messaging
-    isProactiveActive?: boolean;
     /** 拉黑玩法：当前是否拉黑中（决定加号面板「拉黑 / 重新接收」） */
     blockActive?: boolean;
     // 麦当劳 MCP
@@ -105,7 +106,7 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
-    input, setInput, isTyping, selectionMode, compactHome=false, compactHomeEmojiPicker=false,
+    input, setInput, isTyping, selectionMode, compactHome=false, compactHomeEmojiPicker=false, awayMessageOn=false,
     showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, onFavoriteSelected, favoriteSelectedCount = 0, selectedCount,
     sendButtonGenerates = false, enterToSend = true, onGenerate,
     autoReplyEnabled = false, autoReplySeconds = null, onCancelAutoReply, onInputFocusChange,
@@ -118,7 +119,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     onPanelAction, showChatGames = false, onImageSelect, onVideoFilePick, isSummarizing,
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
-    isProactiveActive,
     blockActive = false,
     mcdConfigured = false,
     mcdActivated = false,
@@ -424,6 +424,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
     const isDiscordStyle = inputStyle === 'discord';
     const isPixelStyle = inputStyle === 'pixel' || chromeStyle === 'pixel';
+    const reducedBlur = useReducedBlur();
     const shellClass = acnh
         ? 'bg-[#a8d6bb] border-t-[3px] border-[#86c29a] shadow-[0_-3px_0_rgba(110,160,130,0.18)]'
         : chromeStyle === 'pixel'
@@ -431,8 +432,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         : chromeStyle === 'flat'
           ? 'bg-white border-t border-slate-200 shadow-none'
           : chromeStyle === 'floating'
-            ? 'bg-white/80 backdrop-blur-2xl border-t border-white/60 shadow-[0_-12px_30px_rgba(148,163,184,0.18)]'
-            : 'bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]';
+            ? `${reducedBlur ? 'bg-white/95' : 'bg-white/80 backdrop-blur-2xl'} border-t border-white/60 shadow-[0_-12px_30px_rgba(148,163,184,0.18)]`
+            : `${reducedBlur ? 'bg-white/95' : 'bg-white/90 backdrop-blur-2xl'} border-t border-slate-200/50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]`;
     const actionButtonClass = acnh
         ? 'w-11 h-11 shrink-0 rounded-full bg-[#4cb89e] flex items-center justify-center text-white hover:bg-[#43ad93] transition-colors shadow-sm'
         : isPixelStyle
@@ -594,13 +595,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             </div>)}
             <span className="text-xs font-bold">日程/情绪</span>
         </button>,
-        <button key="proactive" onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-            {acnh ? <AcnhActionTile kind="proactive" /> : (
-            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isProactiveActive ? (isDiscordStyle ? 'bg-violet-500/15 text-violet-300 border-violet-400/30' : 'bg-violet-50 text-violet-500 border-violet-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
-                <ChatCircleDots className="w-6 h-6" weight="bold" />
-            </div>)}
-            <span className="text-xs font-bold">主动消息</span>
-            {isProactiveActive && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
+        <button key="away-message" onClick={() => onPanelAction('away-message')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+            <div className="relative">
+                {acnh ? <AcnhActionTile kind="proactive" /> : (
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>
+                    <ChatCircleDots className="w-6 h-6" weight="bold" />
+                </div>)}
+                {awayMessageOn && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 bg-violet-500 border-white" />}
+            </div>
+            <span className="text-xs font-bold">离开后消息</span>
         </button>,
         <button key="active-msg-2" onClick={() => onPanelAction('active-msg-2')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
             {acnh ? <AcnhActionTile kind="proactive" /> : (
@@ -727,6 +730,10 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 {blockActive ? <LockOpen className="w-6 h-6" weight="bold" /> : <Lock className="w-6 h-6" weight="bold" />}
             </div>
             <span className="text-xs font-bold">{blockActive ? '重新接收' : '拉黑'}</span>
+        </button>,
+        <button key="export-chat" onClick={() => onPanelAction('export-chat')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+          <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4]' : isDiscordStyle ? 'bg-slate-800 border-slate-600' : 'bg-slate-50 border-slate-200'}`}><BookOpenText className="w-6 h-6" weight="bold" /></span>
+          <span className="text-xs font-bold">导出记录</span>
         </button>
     ].filter(tile=>!compactHome||['transfer','poke','image','reroll','memory-link','favorites'].includes(String(tile.key)));
     const actionPageCount = Math.max(1, Math.ceil(actionTiles.length / ACTION_PAGE_SIZE));
@@ -773,7 +780,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             )}
         <div className={`sully-chat-inputbar ${shellClass} pb-safe shrink-0 z-40 relative`}>
             {selectionMode ? (
-                <div className={`p-3 flex gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
+                <div className={`p-3 flex gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? (reducedBlur ? 'bg-slate-900/95' : 'bg-slate-900/60 backdrop-blur-md') : (reducedBlur ? 'bg-white/95' : 'bg-white/50 backdrop-blur-md')}`}>
                     {onFavoriteSelected && <button type="button" onClick={onFavoriteSelected} disabled={!favoriteSelectedCount}
                         className="flex-1 min-w-0 py-3 text-xs font-bold rounded-xl bg-amber-100 text-amber-900 disabled:opacity-40 flex flex-col items-center justify-center gap-1">
                         <Star size={18} weight="bold" />合并收藏 ({favoriteSelectedCount})

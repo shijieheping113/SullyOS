@@ -340,7 +340,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 </div>
                 
                 <div className="flex items-center justify-between px-1 gap-2 flex-wrap">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">日度记忆记录</h4>
                     <div className="flex gap-2 flex-wrap justify-end">
                         {rawMemories.length > 0 && (
                             <button

@@ -17,6 +17,7 @@ import { formatStatCount } from '../../utils/videoParser';
 import { trackEvent } from '../../utils/analytics';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../../utils/bubbleAppearance';
 import { BubbleCornerTime, BubbleInlineTime, lastBlockIsCodeFence, pinInlineTime } from './BubbleInlineTime';
+import { isReducedBlurActive } from '../../utils/blurPolicy';
 import { isImageValue, useBlobRefUrl } from '../../utils/blobRef';
 import { buildReplySnapshotContent } from '../../utils/applyAssistantPostProcessing';
 import { stripLeakedSourceTags } from '../../utils/sanitize';
@@ -48,6 +49,8 @@ import { webGoogleTranslate } from '../../utils/webGoogleTranslate';
 import { isGlobalTranslateEnabled, subscribeGlobalTranslateEnabled } from '../../utils/globalTranslateSettings';
 import { registerTranslateHolder } from '../../utils/translateSession';
 import {ChatCardSurface} from './ChatCardSurface';
+import {FriendFeedNote} from './FriendFeedNote';
+import FriendFeedShareCard from './FriendFeedShareCard';
 // 心象卡片的「破格」装饰：溢出卡片边框的风格化元素。
 // 必须渲染在卡片（overflow-hidden）的兄弟层、且父容器 relative + 不裁剪，才能真的探出边框。
 // 被 ThinkingChainBlock 与设置弹窗的 StylePreview 共用；compact 用于迷你预览缩小尺寸。
@@ -554,19 +557,15 @@ export const ThinkingChainBlock: React.FC<{
                 )}
                 {expanded && (
                     <div className="relative mt-1.5">
-                        {/* 上下软渐变盖掉系统滚动条; fadeColor 跟卡片背景一致 */}
-                        {spec.fadeColor && (
-                            <>
-                                <div aria-hidden className="absolute top-0 left-0 right-0 h-3 pointer-events-none z-10" style={{ background: `linear-gradient(to bottom, ${spec.fadeColor} 0%, transparent 100%)` }} />
-                                <div aria-hidden className="absolute bottom-0 left-0 right-0 h-3 pointer-events-none z-10" style={{ background: `linear-gradient(to top, ${spec.fadeColor} 0%, transparent 100%)` }} />
-                            </>
-                        )}
                         <div
                             className={`sully-psyche-body no-scrollbar relative pl-3 pr-1 py-2 text-[12.5px] leading-[1.85] whitespace-pre-wrap break-words max-h-72 overflow-auto ${spec.italic ? 'italic' : ''}`}
                             style={{
                                 color: spec.text,
                                 fontFamily: spec.fontFamily,
                                 borderLeft: `1px solid ${spec.border}`,
+                                // Fade the text itself so CSS outfits can freely change the card background.
+                                maskImage: spec.fadeColor ? 'linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent)' : undefined,
+                                WebkitMaskImage: spec.fadeColor ? 'linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent)' : undefined,
                                 textShadow: spec.glow ? '0 0 6px rgba(0, 0, 0, 0.4)' : undefined,
                                 userSelect: 'none',
                                 WebkitUserSelect: 'none',
@@ -1834,6 +1833,15 @@ const MessageItem = React.memo(({
 
     // Secrets are revealed on entering the home, or inspected in history management.
     if (m.type === 'secret_note') return null;
+    if (m.type === 'friend_feed_card' && m.metadata?.friendFeedComment) {
+        return <div className={`w-full relative ${selectionMode ? 'pl-8' : ''}`} {...interactionProps}>
+            {selectionMode && <button type="button" aria-label="选择好友圈记录" aria-pressed={isSelected}
+                className="absolute left-1 top-2 text-xs" onClick={event => {event.stopPropagation(); onToggleSelect(m.id);}}>
+                {isSelected ? '☑' : '□'}
+            </button>}
+            <FriendFeedNote note={m.metadata.friendFeedComment}/>
+        </div>;
+    }
 
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
@@ -2202,7 +2210,7 @@ const MessageItem = React.memo(({
                     </div>
                 )}
                 <div className="flex justify-center my-6 px-10 w-full" {...interactionProps}>
-                    <div className="flex items-center gap-1.5 bg-slate-200/40 backdrop-blur-md text-slate-500 px-3 py-1 rounded-full shadow-sm border border-white/20 select-none cursor-pointer active:scale-95 transition-transform">
+                    <div className="flex items-center gap-1.5 bg-white/60 text-slate-500 px-3 py-1 rounded-full shadow-sm border border-slate-200/70 select-none cursor-pointer active:scale-95 transition-transform">
                         {/* Optional Icon based on content */}
                         <img src={displayText.includes('任务') ? 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2728.png' :
                         displayText.includes('纪念日') || displayText.includes('Event') ? 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c5.png' :
@@ -2245,7 +2253,7 @@ const MessageItem = React.memo(({
                 )}
                 <div className="text-[10px] text-slate-400 mb-1 opacity-70">{formatTime(m.timestamp)}</div>
                 <div className="group relative cursor-pointer active:scale-95 transition-transform" {...interactionProps}>
-                        <div className="text-[11px] text-slate-500 bg-slate-200/50 backdrop-blur-sm px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-white/40 shadow-sm select-none">
+                        <div className="text-[11px] text-slate-500 bg-white/60 px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-slate-200/70 shadow-sm select-none">
                         <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-4 h-4 group-hover:animate-bounce" />
                         <span className="font-medium opacity-80">{isUser ? '你' : charName}</span>
                         <span className="opacity-60">戳了戳</span>
@@ -2355,7 +2363,7 @@ const MessageItem = React.memo(({
                         className={`absolute -right-10 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center pointer-events-none transition-all duration-150 ${isReplyReady ? 'bg-indigo-500 text-white shadow-md shadow-indigo-200' : 'bg-white/90 text-slate-400 shadow-sm'}`}
                         style={{
                             opacity: Math.min(1, Math.abs(replyOffset) / 36),
-                            transform: `translateY(-50%) scale(${isReplyReady ? 1 : 0.86})`,
+                            transform: replyOffset !== 0 ? `translateY(-50%) scale(${isReplyReady ? 1 : 0.86})` : undefined,
                         }}
                     >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
@@ -2366,7 +2374,7 @@ const MessageItem = React.memo(({
                     <div
                         className={`relative flex flex-col ${isModuleCard && centerModules ? 'items-center' : (isUser ? 'items-end' : 'items-start')} min-w-0`}
                         style={{
-                            transform: `translateX(${replyOffset}px)`,
+                            transform: replyOffset !== 0 ? `translateX(${replyOffset}px)` : undefined,
                             transition: isReplyGestureActive ? 'none' : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
                             touchAction: 'pan-y',
                             userSelect: 'none',
@@ -3457,6 +3465,9 @@ const MessageItem = React.memo(({
         return commonLayout(<HtmlCard html={html} />);
     }
 
+    if (m.type === 'friend_feed_share_card' && m.metadata?.friendFeedShare) {
+        return commonLayout(<FriendFeedShareCard share={m.metadata.friendFeedShare}/>);
+    }
     if (m.type === 'social_card' && m.metadata?.post) {
         const post = m.metadata.post;
         // 六改-3：帖子配图三路渲染——
@@ -3938,7 +3949,13 @@ const MessageItem = React.memo(({
         ...(bubbleVariant === 'shadow' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.12)' } : {}),
         ...(bubbleVariant === 'flat' ? { boxShadow: 'none' } : {}),
         ...(bubbleVariant === 'wechat' ? { boxShadow: 'none', border: '1px solid rgba(15,23,42,0.05)' } : {}),
-        ...(bubbleVariant === 'ios' ? { boxShadow: '0 10px 24px rgba(148,163,184,0.16)', border: '1px solid rgba(255,255,255,0.75)', backdropFilter: 'blur(12px)' } : {}),
+        ...(bubbleVariant === 'ios'
+            ? {
+                  boxShadow: '0 10px 24px rgba(148,163,184,0.16)',
+                  border: '1px solid rgba(255,255,255,0.75)',
+                  ...(isReducedBlurActive() ? {} : { backdropFilter: 'blur(12px)' }),
+              }
+            : {}),
     };
 
     // --- Inline formatting parser: code → bold → italic → plain ---
@@ -4095,7 +4112,8 @@ const MessageItem = React.memo(({
 
     // 语音文字（转文字面板 / 语音条预览）显示前：先洗 MiniMax 标记，再洗鱼声情绪 cue，
     // 两家服务商的演出标记都不会漏给用户看。
-    const cleanVoiceText = (t?: string | null) => stripFishCuesForDisplay(cleanVoiceMarkupForDisplay(t ?? ''));
+    // 旧数据里口播文本可能混着整块字幕（字幕曾写进语音标签里），字幕另有一行显示，这里剥掉。
+    const cleanVoiceText = (t?: string | null) => stripFishCuesForDisplay(cleanVoiceMarkupForDisplay((t ?? '').replace(/<字幕>[\s\S]*?<\/字幕>/g, '')));
 
     // 引用快照原样存着 %%BILINGUAL%% 等原始标记（双语消息），预览前先清洗。
     // 历史快照里还可能原样躺着图片令牌 / data: / 图床 URL（用户侧引用图片消息时曾直接落库），

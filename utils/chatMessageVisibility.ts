@@ -4,6 +4,7 @@ import type { Message } from '../types';
 export const chatPreviewText = (message: Pick<Message, 'type' | 'content'>): string => {
     if (message.type === 'image') return '[图片]';
     if (message.type === 'emoji') return '[表情]';
+    if (message.type === 'friend_feed_share_card') return '[分享好友圈帖子]';
     if (/^(blobref:|data:image\/|blob:)/i.test(message.content)) return '[图片]';
     return message.content.replace(/\[.*?\]/g, '').trim() || '[消息]';
 };
@@ -29,7 +30,7 @@ export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): 
     && !message.metadata?.proactiveHint
     && !message.metadata?.batteryHint
     && message.metadata?.source !== 'block-call-hangup'
-    && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card'
+    && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card' && message.type !== 'friend_feed_card'
         && !ALWAYS_VISIBLE_SYSTEM[String(message.metadata?.source || '')]
         && !(message.metadata?.source === 'call-end-popup' && message.metadata?.incomingFromChat))
 );

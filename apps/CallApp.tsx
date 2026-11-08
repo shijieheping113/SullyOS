@@ -1,3 +1,5 @@
+import { resolveCharacterUser } from '../utils/userPersona';
+import { resolveDialogueApi } from '../utils/characterApi';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { canAnalyzeVoiceSource, isVoiceAudioPriming, primeVoiceAudio, voicePlaybackErrorMessage } from '../utils/voicePlayback';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -632,7 +634,7 @@ ${currentVoiceActingGuide()}
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, incomingCallLaunch, consumeIncomingCallLaunch, incomingCallHandoff, bindIncomingCallSession, completeIncomingCall } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile: baseUserProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, incomingCallLaunch, consumeIncomingCallLaunch, incomingCallHandoff, bindIncomingCallSession, completeIncomingCall } = useOS();
 
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   useAppShortcut(ShortcutAppID.Call, intent => {
@@ -1029,6 +1031,7 @@ const CallApp: React.FC = () => {
   // VRM 模型的自定义表情名（加载时由画布回传），喂给基础版主模型或高质量导演。
   const vrmExpressionsRef = useRef<string[]>([]);
   const selectedChar = useMemo(() => characters.find(c => c.id === selectedCharId) || null, [characters, selectedCharId]);
+  const userProfile = useMemo(() => selectedChar ? resolveCharacterUser(baseUserProfile, selectedChar) : baseUserProfile, [baseUserProfile, selectedChar]);
   const selectedVisualSource = companionAvatarSource(selectedChar);
   const selectedDateOutfits = useMemo(() => listCompanionDateOutfits(selectedChar), [selectedChar]);
   const selectedDateOutfitId = normalizeCompanionSkinSetId(selectedChar?.companionAvatar?.skinSetId);
@@ -2544,7 +2547,8 @@ ${sentencePlan}`;
     callTextAbortRef.current = textAbort;
     let liveSpeech: ReturnType<typeof streamingVoice.sequence> | null = null;
     try {
-      const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
+      const dialogueApi = resolveDialogueApi(apiConfig, selectedChar);
+      const baseUrl = dialogueApi.baseUrl?.replace(/\/+$/, '');
       if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
       const userName = userProfile?.name?.trim() || '用户';
       if (selectedChar) {
@@ -2615,13 +2619,13 @@ ${sentencePlan}`;
         purpose: string,
       ) => {
         const reqBody: Record<string, any> = {
-          model: apiConfig.model,
+          model: dialogueApi.model,
           messages: [{ role: 'system', content: nextSystemPrompt }, ...nextMessages],
-          temperature: 0.85,
+          temperature: dialogueApi.temperature ?? 0.85,
           // max_tokens 是 Claude 原生 API 的必填字段；缺了它，OpenAI→Claude 中转会被
           // 上游打回，包成 502 / bad_response_status_code。与私聊 (useChatAI.ts) 对齐。
           max_tokens: 8000,
-          stream: liveSpeech ? true : false,
+          stream: liveSpeech ? true : (dialogueApi.stream ?? false),
         };
         // 与聊天同源：开心跳时显式请求思考通道，减轻自定义规则写进正文
         if (selectedChar?.showThinkingChain) {
@@ -2630,7 +2634,7 @@ ${sentencePlan}`;
         return safeFetchJson(`${baseUrl}/chat/completions`, {
         method: 'POST',
         signal: textAbort.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey || 'sk-none'}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dialogueApi.apiKey || 'sk-none'}` },
         body: JSON.stringify(reqBody),
       }, maxRetries, 0, { appName: '电话', charId: selectedChar?.id, charName: selectedChar?.name, purpose }, sentenceStream ? {
         onDelta: (_delta, fullText) => {

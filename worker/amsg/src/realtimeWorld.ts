@@ -1,3 +1,4 @@
+import {weatherForCharacter} from '../../../utils/characterWeather';
 /**
  * 到点现拉「外面的世界」：今日节日 + 实时天气 + 热搜，填进 fire_pack 的
  * AMSG_SLOT_REALTIME_WORLD 槽位。
@@ -194,6 +195,7 @@ const loadHotNews = async (
  * 两边都出就是一份提示词两个钟。
  */
 type RealtimeWorldArgs = {
+  charId?: string;
   userName?: string;
   toolConfig: AmsgToolConfig;
   /** 角色的时间感知开关（tool_pack 带上来的）：关掉就连今日节日一起不给。 */
@@ -221,7 +223,8 @@ export const buildUserHolidayBlock = async (args: RealtimeWorldArgs): Promise<st
 };
 
 export const buildRealtimeWorldBlock = async (args: RealtimeWorldArgs): Promise<string> => {
-  const { toolConfig: cfg, nowMs, globalRows } = args;
+  const { nowMs, globalRows } = args;
+  const cfg = weatherForCharacter(args.toolConfig, args.charId);
 
   const specialDates = args.timeAwarenessEnabled ? checkSpecialDates(args.tzId, nowMs) : [];
   const includeJp = !!cfg.jpHotEnabled && !!args.charJpHotEnabled;

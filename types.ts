@@ -16,6 +16,7 @@ export enum AppID {
   Schedule = 'schedule',
   Room = 'room',
   CheckPhone = 'check_phone',
+  FriendFeed = 'friend_feed',
   Social = 'social',
   Study = 'study',
   FAQ = 'faq',
@@ -88,6 +89,8 @@ export interface ScheduleCardAppearance {
   accentColor?: string;
   /** 仅允许 .sully-schedule-* 作用域的进阶美化。 */
   customCss?: string;
+  /** 非原版配色时，桌面小组件仍用毛玻璃透出壁纸、沿用桌面字色，只保留配色里的强调色。 */
+  desktopGlass?: boolean;
 }
 
 export type JournalAppearancePresetId =
@@ -269,6 +272,9 @@ export type MinimaxRegion = 'domestic' | 'overseas';
 // 语音合成（TTS）服务商。全局三选一：切换后聊天语音条 / 约会 / 电话统一用同一家。
 export type TtsProvider = 'minimax' | 'fishaudio' | 'elevenlabs';
 
+// 语音转文字（STT）服务商。电话麦克风收音可选任意已配置 Key 的平台（与 TTS 独立），或浏览器自带免费识别。
+export type SttProvider = 'minimax' | 'fishaudio' | 'elevenlabs' | 'browser';
+
 export interface VisionApiConfig {
   /** 开启后，聊天图片先由独立视觉模型转成文字，再交给主对话模型。 */
   enabled: boolean;
@@ -278,7 +284,7 @@ export interface VisionApiConfig {
 }
 
 /** A complete dialogue endpoint, separate from TTS/vision configuration. */
-export type DialogueApiConfig = Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model' | 'stream' | 'temperature'>;
+export type DialogueApiConfig = Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model' | 'stream' | 'temperature' | 'maxTokens' | 'apiType'>;
 
 /** 全局辅助 LLM 连接（小助手修格式等共用）；temperature 由各功能自行传入 */
 export interface SecondaryLlmApiConfig {
@@ -336,6 +342,9 @@ export interface SttUsageStats {
 }
 
 export interface APIConfig {
+  apiType?: 'openai' | 'anthropic';
+  /** 私聊单次生成上限；未设置沿用 8000，不改变历史范围。 */
+  maxTokens?: number;
   baseUrl: string;
   apiKey: string;
   // 可选识图中转：给不支持 image_url 的主模型补视觉能力。
@@ -354,6 +363,8 @@ export interface APIConfig {
   minimaxRegion?: MinimaxRegion;
   // 语音服务商三选一。缺省 → 'minimax'。
   ttsProvider?: TtsProvider;
+  // 语音转文字（STT）服务商。可与 ttsProvider 不同（只允许选已填好 Key 的平台或 'browser'）。
+  sttProvider?: SttProvider;
   // 鱼声 Fish Audio API Key（https://fish.audio/）。仅 ttsProvider === 'fishaudio' 时使用。
   fishAudioApiKey?: string;
   // 鱼声默认模型（s2.1-pro / s2-pro / s1）。缺省 → 's2.1-pro'。
@@ -400,6 +411,9 @@ export interface ActiveMsg2ApiConfig {
 }
 
 export interface ActiveMsg2GlobalConfig {
+  /** Confirmed by /config-check, scoped to the Worker URL that was checked. */
+  anthropicMessagesSupported?: boolean;
+  anthropicMessagesWorkerUrl?: string;
   userId: string;
   /** 单用户 Cloudflare Worker 地址，例如 https://amsg.your-worker.dev */
   workerUrl: string;
@@ -413,6 +427,18 @@ export interface ActiveMsg2GlobalConfig {
   masterKey?: string;
   /** 上次「连接」（在 worker 端建表）成功的时间 */
   initializedAt?: number;
+  /**
+   * 推送投递方式：
+   * - 'web-push'（缺省）：浏览器/PWA 原生 Web Push（或 APK 原生通道）
+   * - 'third-party'：通过第三方推送 App（WxPusher / Bark / MeoW）转发，绕过老 iOS 无 Web Push 限制与 Google FCM 连通性问题
+   */
+  pushMode?: 'web-push' | 'third-party';
+  /** 第三方推送 App 配置（属于个人连接信息，随 BACKEND_CONNECTION_KEYS 在不含后端连接的备份中剥离） */
+  thirdPartyPush?: {
+    provider: 'wxpusher' | 'bark' | 'meow';
+    token: string;
+    serverUrl?: string;
+  };
   /**
    * 即时对话：聊天的每一轮都交给云端跑（POST /instant-chat），回复走推送回来。
    * 只在设置页那一处开关（开关本身还有连接 / 通知权限 / worker 能力三道门），
@@ -501,6 +527,8 @@ export interface ActiveMsg2TaskRecord {
   status: ActiveMsg2TaskStatus;
   createdAt: number;
   lastError?: string;
+  /** 「离开后消息」的云端任务：每个角色最多一条，对方开口后往后推，见 docs/away-message.md。 */
+  away?: boolean;
 }
 
 export interface ActiveMsg2CharacterConfig {
@@ -621,7 +649,8 @@ export interface RealtimeConfig {
   // 天气配置
   weatherEnabled: boolean;
   weatherApiKey: string;  // OpenWeatherMap API Key（可选；留空走免 key 的 Open-Meteo）
-  weatherCity: string;    // 城市名（如 "北京"、"Beijing"）
+  weatherCities?: Record<string, string>; // Per-character override; missing/blank inherits weatherCity.
+    weatherCity: string;    // 城市名（如 "北京"、"Beijing"）
 
   // 新闻配置
   newsEnabled: boolean;
@@ -2372,6 +2401,7 @@ export interface StoryTheaterEntry {
     archiveAfter: number;
     /** 归档时至少留在会话里的最近楼层数；旧数据默认 5。 */
     archiveKeepRecent?: number;
+    archiveMode?: 'auto' | 'manual';
     archiveStrategy: StoryTheaterArchiveStrategy;
     archives: StoryTheaterArchive[];
     /** 从演员挂载世界书去重得到；只影响本剧情，不改外部挂载。 */
@@ -2471,6 +2501,8 @@ export interface HomeFigureSlot extends ChibiStudioSlot {
 // --- BANK / SHOP GAME TYPES (NEW) ---
 export interface BankTransaction {
     id: string;
+    /** 旧流水未带类型时按支出读取。金额始终为正数。 */
+    type?: 'expense' | 'income';
     amount: number;
     category: string; 
     note: string;
@@ -2830,6 +2862,7 @@ export interface MemoryPalaceWaterlineConfig {
 }
 
 export interface CharacterProfile {
+  userPersona?: import('./utils/userPersona').CharacterUserPersona;
   /** Local default for this character's dialogue; absent means follow Settings. Never shared in cards. */
   dialogueApi?: DialogueApiConfig;
   id: string;
@@ -3199,20 +3232,13 @@ export interface CharacterProfile {
   // Cross-session guidebook insights: what char has discovered about user across games
   guidebookInsights?: string[];
 
-  // 主动消息配置
-  proactiveConfig?: {
-    enabled: boolean;
-    intervalMinutes: number; // 30, 60, 120, 240, etc.
-    useSecondaryApi?: boolean;
-    secondaryApi?: {
-      baseUrl: string;
-      apiKey: string;
-      model: string;
-    };
-  };
-
   // 情绪Buff系统
   activeMsg2Config?: ActiveMsg2CharacterConfig;
+  /**
+   * 离开后消息：对方多久没说话，角色就来找对方（见 docs/away-message.md）。
+   * 开着主动消息 2.0 的角色走云端推送，其余在下次打开页面时本地补上。
+   */
+  awayMessage?: { enabled: boolean; delayMinutes?: number };
   activeBuffs?: CharacterBuff[];
   buffInjection?: string;   // 注入到systemPrompt的叙事型情绪底色描述
   emotionConfig?: {
@@ -3369,7 +3395,6 @@ export interface CharacterProfile {
 
   /**
    * 虚拟世界「彼方」的个人状态：是否自主登入、登入间隔、各本小说的独立书签等。
-   * 独立于 proactiveConfig（主动发消息），互不挤占触发。
    */
   vrState?: VRWorldCharState;
 }
@@ -3801,7 +3826,7 @@ export type LifeRecordModule = 'period' | 'med' | 'expense' | 'exercise';
 export interface LifeRecord {
     id: string;
     module: LifeRecordModule;
-    /** period: 'start' | 'end'；med: 'taken'；expense: 'expense'；exercise: 'session' */
+    /** period: 'start' | 'end'；med: 'taken'；expense: 'expense' | 'income'；exercise: 'session' */
     kind: string;
     date: string;              // YYYY-MM-DD（事件归属日）
     timestamp: number;
@@ -4089,7 +4114,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'secret_note' | 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'x_card' | 'threads_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'box_record';
+export type MessageType = 'friend_feed_share_card' | 'friend_feed_card' | 'secret_note' | 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'x_card' | 'threads_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'box_record';
 
 export interface Message {
     id: number;
@@ -4130,6 +4155,12 @@ export interface Emoji {
 }
 
 export interface FullBackupData {
+    /** 好友圈正文；文字备份单列，完整备份随 assets 保存。 */
+    friendFeed?: import('./utils/friendFeed').FriendFeedState;
+    /** Media-only patches never replace feed text or settings. */
+    friendFeedMedia?: import('./utils/activityBackup').FriendFeedMediaBackup;
+    /** Text records stored in assets; restore only this allowlisted subset. */
+    activityTextAssets?: import('./utils/activityBackup').ActivityTextAsset[];
     /** 纯文字备份单独携带收藏索引，不覆盖整个资源库。 */
     contentFavoritesIndex?: unknown;
     timestamp: number;

@@ -1,3 +1,4 @@
+import {validateCollaborationAppearance, type CollaborationAppearance} from '../features/collaboration/appearance';
 import {validateMeetingAppearance, type MeetingAppearance} from './meetingAppearance';
 import {validateJournalAppearance} from './journalAppearance';
 import {localizeCssImages,portableCssImages} from './cssImageAssets';
@@ -30,9 +31,9 @@ export function pickDecorationLayout(value:unknown):DecorationLayout{
 export function resolveDecorationTheme(theme:OSTheme,char?:CharacterProfile):OSTheme{
  return {...theme,...pickDecorationLayout(char?.chatFineTune?.enabled===false?{}:char?.chatAppearance||{}),...(['plain','grid','paper','mesh'].includes(char?.chatAppearance?.chatBackgroundStyle||'')?{chatBackgroundStyle:char!.chatAppearance!.chatBackgroundStyle}:{}),...(char?.chatDecorationCssIsolated?{chatChromeCustomCss:undefined}:{})};
 }
-export const PART_LABELS={layout:'布局',bubbles:'气泡',background:'背景',sound:'声音',date:'见面界面',story:'剧情界面（全局）',css:'白框 CSS',psyche:'心象卡片',schedule:'日程表（全局）',journal:'交换日记'} as const;
+export const PART_LABELS={collaboration:'协同工作（全局）',layout:'布局',bubbles:'气泡',background:'背景',sound:'声音',date:'见面界面',story:'剧情界面（全局）',css:'白框 CSS',psyche:'心象卡片',schedule:'日程表（全局）',journal:'交换日记'} as const;
 export type DecorationPart=keyof typeof PART_LABELS;
-export interface DecorationPreset{format:'sullyos-chat-decoration';version:1;name:string;parts:{date?:MeetingAppearance;story?:MeetingAppearance;journal?:JournalAppearance;schedule?:ScheduleCardAppearance;psyche?:PsycheAppearance;layout?:DecorationLayout;bubbles?:ChatTheme;background?:{image:string|null;style:OSTheme['chatBackgroundStyle']};sound?:{src:string;volume?:number}|null;css?:string}}
+export interface DecorationPreset{format:'sullyos-chat-decoration';version:1;name:string;parts:{collaboration?:CollaborationAppearance;date?:MeetingAppearance;story?:MeetingAppearance;journal?:JournalAppearance;schedule?:ScheduleCardAppearance;psyche?:PsycheAppearance;layout?:DecorationLayout;bubbles?:ChatTheme;background?:{image:string|null;style:OSTheme['chatBackgroundStyle']};sound?:{src:string;volume?:number}|null;css?:string}}
 function resource(value:unknown):string{
  if(typeof value!=='string'||value.length>40*1024*1024||!(/^(data:(image|audio)\/[\w.+-]+[;,]|https?:\/\/)/i.test(value)))throw Error('资源不是可分享的图片或音频，请重新导出原文件');return value;
 }
@@ -57,6 +58,7 @@ export function validateDecoration(value:unknown):DecorationPreset{
  if((p.schedule!==undefined||p.journal!==undefined)&&Object.keys(p).some(key=>key!=='schedule'&&key!=='journal'))throw Error('App 美化与聊天装扮请分别保存');
  if(p.schedule!==undefined&&p.journal!==undefined)throw Error('不同 App 的美化请分别保存');
  if((p.date!==undefined||p.story!==undefined)&&Object.keys(p).length!==1)throw Error('见面与剧情界面美化请单独保存');
+ if(p.collaboration!==undefined){if(Object.keys(p).length!==1)throw Error('协同工作美化请单独保存');result.parts.collaboration=validateCollaborationAppearance(p.collaboration);}
  if(p.date!==undefined)result.parts.date=validateMeetingAppearance(p.date);
  if(p.story!==undefined)result.parts.story=validateMeetingAppearance(p.story);
  if(p.journal!==undefined)result.parts.journal=validateJournalAppearance(p.journal);
@@ -65,7 +67,7 @@ export function validateDecoration(value:unknown):DecorationPreset{
  if(p.layout!==undefined)result.parts.layout=pickDecorationLayout(p.layout);
  if(p.bubbles!==undefined)result.parts.bubbles=validateBubble(p.bubbles);
  if(p.background!==undefined){if(!record(p.background)||!['plain','grid','paper','mesh'].includes(p.background.style))throw Error('背景格式无效');result.parts.background={image:p.background.image===null?null:resource(p.background.image),style:p.background.style};}
- if(p.sound!==undefined){if(p.sound===null)result.parts.sound=null;else{if(!record(p.sound)||typeof p.sound.src!=='string')throw Error('提示音格式无效');const src=p.sound.src;if(src!=='none'&&!Object.hasOwn(BUILTIN_SOUNDS,src))resource(src);if(p.sound.volume!==undefined&&(typeof p.sound.volume!=='number'||p.sound.volume<0||p.sound.volume>1))throw Error('音量无效');result.parts.sound={src,volume:p.sound.volume??.6};}}
+ if(p.sound!==undefined){if(p.sound===null)result.parts.sound=null;else{if(!record(p.sound)||typeof p.sound.src!=='string')throw Error('提示音格式无效');const src=p.sound.src;if(src!=='none'&&!Object.prototype.hasOwnProperty.call(BUILTIN_SOUNDS,src))resource(src);if(p.sound.volume!==undefined&&(typeof p.sound.volume!=='number'||p.sound.volume<0||p.sound.volume>1))throw Error('音量无效');result.parts.sound={src,volume:p.sound.volume??.6};}}
  if(p.css!==undefined){if(typeof p.css!=='string'||p.css.length>8*1024*1024||/<\/?(?:script|html|iframe)\b/i.test(p.css))throw Error('CSS 内容无效');result.parts.css=p.css;}
  if(!Object.keys(result.parts).length)throw Error('预设中没有可用的装扮内容');
  return result;

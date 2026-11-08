@@ -7,8 +7,11 @@ import https from 'node:https';
 import crypto from 'node:crypto';
 import { bakeVoiceMiddleware } from './server/bake-voice-middleware';
 import { staticCachePlugin } from './scripts/static-cache-build';
+import { homeResourcePacksPlugin } from './scripts/home-resource-packs.mjs';
 import { startupRecoveryPlugin } from './scripts/startup-recovery-plugin';
+import { pageBuildMetadataPlugin } from './scripts/build-metadata';
 import { APP_VERSION_TAG } from './utils/appVersion';
+import { tikhubMiddleware } from './server/tikhub-middleware';
 
 // MiniMax 国服 / 海外是两套域名，前端每个请求都带 X-MiniMax-Region 头说明走哪边。
 // Vite 的开发代理底层是 http-proxy，不认 router 选项，所以在 configure 里包一层 proxy.web，
@@ -103,13 +106,16 @@ export default defineConfig({
     ],
   },
   plugins: [
+    homeResourcePacksPlugin(),
     startupRecoveryPlugin(appBuildId),
+    pageBuildMetadataPlugin({ buildId: appBuildId, branch: gitInfo.branch, commit: gitInfo.commit, time: buildTime }),
     react(),
     staticCachePlugin({ buildId: appBuildId, appVersion: APP_VERSION_TAG }),
     {
       name: 'bake-voice-middleware',
       configureServer(server) {
         server.middlewares.use('/api/minimax/bake-voice', bakeVoiceMiddleware);
+        server.middlewares.use('/api/friend-feed/tikhub', tikhubMiddleware);
       },
     },
     {
@@ -166,9 +172,7 @@ export default defineConfig({
     },
   ],
   define: {
-    __BUILD_BRANCH__: JSON.stringify(gitInfo.branch),
-    __BUILD_COMMIT__: JSON.stringify(gitInfo.commit),
-    __BUILD_TIME__: JSON.stringify(buildTime),
+    // Keep feature gating compile-time; only descriptive release metadata moves to HTML.
     __BUILD_BADGE_VISIBLE__: JSON.stringify(showBuildBadge),
     __FORK_BACKUP_UI_VISIBLE__: JSON.stringify(forkBackupUiVisible),
     __APP_BUILD_ID__: JSON.stringify(appBuildId),

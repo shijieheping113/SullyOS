@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { openCollaborationSpace } from '../features/collaboration/store';
+import { openDB } from './db';
+import { SESSION_SPACE_ID, spaceDatabaseName } from './userSpaces';
 
 const read = (file: string) => fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
 
@@ -52,10 +55,11 @@ describe('collaboration sidecar wiring', () => {
     expect(context).toContain('chatCollaborationEnabled: false');
   });
 
-  it('keeps collaboration persistence in its own IndexedDB database', () => {
-    const store = read('features/collaboration/store.ts');
-    expect(store).toContain("const DB_NAME = 'SullyOS_Collaboration'");
-    expect(store).not.toContain("from '../../utils/db'");
+  it('keeps collaboration persistence in its own IndexedDB database', async () => {
+    const [collaboration, main] = await Promise.all([openCollaborationSpace(), openDB()]);
+    expect(collaboration.name).toBe(spaceDatabaseName('SullyOS_Collaboration', SESSION_SPACE_ID));
+    expect(collaboration.name).not.toBe(main.name);
+    expect(collaboration).not.toBe(main);
   });
 
   it('reports collaboration adoption without reading titles, messages, filenames or blobs', () => {
@@ -122,16 +126,20 @@ describe('collaboration sidecar wiring', () => {
 
   it('ships six collaboration-only interface skins without printing third-party brands', () => {
     const windowSource = read('features/collaboration/CollaborationWindow.tsx');
+    const themeSource = read('features/collaboration/themeCss.ts');
+    const appearanceSource = read('features/collaboration/appearance.ts');
+    expect(windowSource).toMatch(/import\s*\{\s*COLLABORATION_UI_THEME_CSS\s*\}\s*from '\.\/themeCss'/);
+    expect(windowSource).toContain('{COLLABORATION_UI_THEME_CSS}');
     for (const id of ['sully', 'gpt', 'claude', 'gemini', 'kimi', 'deepseek']) {
-      expect(windowSource).toContain(`id: '${id}'`);
-      expect(windowSource).toContain(`collab-ui-${id}`);
+      expect(appearanceSource).toContain(`id: '${id}'`);
+      expect(themeSource).toContain(`collab-ui-${id}`);
     }
     expect(windowSource).toContain('只改变这个工作窗口，不影响 ChatApp 和角色数据');
     for (const brand of ['ChatGPT', 'Claude', 'Gemini', 'Kimi', 'DeepSeek']) {
       expect(windowSource).not.toContain(brand);
     }
-    expect(windowSource).toContain("label: '黑白助手'");
-    expect(windowSource).toContain("label: '渐光协作'");
+    expect(appearanceSource).toContain("label: '黑白助手'");
+    expect(appearanceSource).toContain("label: '渐光协作'");
     expect(windowSource).toContain('collab-message-bubble-assistant');
   });
 
@@ -305,9 +313,10 @@ describe('collaboration sidecar wiring', () => {
 
   it('uses the same iOS safe-top contract as ChatApp for every collaboration header', () => {
     const windowSource = read('features/collaboration/CollaborationWindow.tsx');
+    const themeSource = read('features/collaboration/themeCss.ts');
     expect(windowSource).toContain('collab-safe-header');
-    expect(windowSource).toContain('var(--safe-top,0px)');
-    expect(windowSource).toContain('height:calc(4rem + var(--safe-top,0px))');
+    expect(themeSource).toContain('var(--safe-top,0px)');
+    expect(themeSource).toContain('height:calc(4rem + var(--safe-top,0px))');
   });
 
   it('uses a searchable five-per-page role picker instead of a clipped native select', () => {
