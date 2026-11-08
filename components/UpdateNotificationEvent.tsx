@@ -624,21 +624,11 @@ const UserSpacesUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onExit }) =>
     return <UserSpacesUpdatePopup onDone={onExit} onVisit={() => { openApp(AppID.User); onExit(); }} />;
 };
 
-const UPDATE_QUEUE: { key: string; render: (props: UpdatePopupProps) => React.ReactNode }[] = [
-    { key: USER_SPACES_UPDATE_KEY, render: props => <UserSpacesUpdateAnnouncement {...props} /> },
-    // 二改：不弹作者「万圣节 / 十月更新」介绍窗。
-    { key: USER_LOCATION_NOTICE_KEY, render: props => <UserLocationAnnouncement {...props} /> },
-    { key: NAVIGATION_BALL_NOTICE_KEY, render: props => <NavigationBallAnnouncement {...props} /> },
-    { key: HOME_UPDATE_KEY, render: props => <HomeUpdateAnnouncement {...props} /> },
-    { key: SMALL_UPDATES_KEY, render: props => <SmallUpdatesPopup onDone={props.onDone} /> },
-    { key: HOLIDAY_NOTICE_KEY, render: props => <UserHolidayIntro {...props} /> },
-    { key: DECORATION_UPDATE_KEY, render: props => <DecorationUpdatePopup onClose={props.onDone}/> },
-    { key: SAR_UPDATE_KEY, render: (props) => <SARUpdateAnnouncement {...props} /> },
-    { key: NETWORK_TRANSIT_NOTICE_KEY_2026_08, render: (props) => <NetworkTransitNoticePopup {...props} /> },
-    { key: UPDATE_NOTIFICATION_KEY_2026_08_10, render: (props) => <Live2DUpdatePopup {...props} /> },
-];
+// 二改：作者更新介绍窗一律不弹（用户空间 / 定位 / 悬浮球 / 家园 / 小更新 /
+// 节日 / 装扮 / SAR / 网络说明 / Live2D / 万圣节等）。组件文件仍留着，只是不进启动队列。
+const UPDATE_QUEUE: { key: string; render: (props: UpdatePopupProps) => React.ReactNode }[] = [];
 
-export const shouldShowUpdateNotification = (): boolean => UPDATE_QUEUE.some((entry) => !isUpdateSeen(entry.key));
+export const shouldShowUpdateNotification = (): boolean => false;
 
 interface UpdateNotificationControllerProps {
     onClose: () => void;

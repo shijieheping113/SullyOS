@@ -20,10 +20,11 @@ export function setGuideStep(step: number | 'done') {
     window.dispatchEvent(new Event(event));
 }
 // Called only after a successful DB read, before inserting the built-in Sully.
-export function initializeFirstUseGuide(characterCount: number) {
+// 二改：不要作者新手引导；新装直接记成完成，避免空角色表被拉进引导。
+export function initializeFirstUseGuide(_characterCount: number) {
     try {
         if (localStorage.getItem(GUIDE_KEY) === null) {
-            setGuideStep(characterCount === 0 ? 0 : 'done');
+            setGuideStep('done');
         }
     } catch { /* Storage failure must never turn a successful DB read into an empty roster. */ }
 }
@@ -35,8 +36,9 @@ function subscribe(notify: () => void) {
         window.removeEventListener('storage', notify);
     };
 }
+/** 二改：永远不进入新手引导步骤。 */
 export function useFirstUseGuideStep() {
-    return useSyncExternalStore(subscribe, readGuideStep, () => null);
+    return useSyncExternalStore(subscribe, () => null, () => null);
 }
 export function hasGuideApi(config?: { baseUrl?: string; apiKey?: string; model?: string }) {
     return !!(config?.baseUrl?.trim() && config.apiKey?.trim() && config.model?.trim());
