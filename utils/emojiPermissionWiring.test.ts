@@ -16,7 +16,7 @@ const payload = read('chatRequestPayload.ts');
 const useChatAI = read('../hooks/useChatAI.ts');
 const chatPage = read('../apps/Chat.tsx');
 const hangup = read('blockCallHangupReply.ts');
-const osContext = read('../context/OSContext.tsx');
+const awayMessage = read('awayMessage.ts');
 const activeMsgClient = read('activeMsgClient.ts');
 const watchAlong = read('../apps/watchAlong/WatchAlongApp.tsx');
 const watchChat = read('../components/watchAlong/WatchChat.tsx');
@@ -42,9 +42,10 @@ describe('认图走全本（historyEmojis / 全量库）', () => {
         expect(chatPage).toContain('historyEmojis: emojis,');
     });
 
-    it('挂断补句与本地主动消息各自留一份全量', () => {
+    it('挂断补句与离开后消息各自留一份全量', () => {
         expect(hangup).toContain('historyEmojis: allEmojis,');
-        expect(osContext).toContain('historyEmojis: allEmojis,');
+        // 1.0 本地主动消息已删；本地离开后消息接过这条认图契约。
+        expect(awayMessage).toContain('historyEmojis: allEmojis,');
     });
 
     it('云端主动消息的历史认图改用 library.all', () => {
@@ -82,15 +83,15 @@ describe('折叠不掺进任何发给角色的清单', () => {
         expect(collaborationContext).not.toContain('char.id, char.id');
     });
 
-    it('挂断补句与主动消息：清单与落库都只按权限', () => {
+    it('挂断补句与离开后消息：清单与落库都只按权限', () => {
         expect(hangup).toContain(
             'const { emojis, categories } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);',
         );
         expect(hangup).not.toContain('charId,\n        charId,');
-        expect(osContext).toContain(
-            'const { emojis, categories } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, charId);',
+        expect(awayMessage).toContain(
+            'ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, char.id)',
         );
-        expect(osContext).not.toContain('charId,\n                  charId,');
+        expect(awayMessage).not.toContain('char.id,\n    char.id,');
         expect(activeMsgClient).not.toContain('char.id,\n    char.id,');
     });
 

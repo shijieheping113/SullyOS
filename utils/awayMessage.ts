@@ -199,11 +199,15 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
   const userName = userProfile.name || '对方';
 
   const range = await loadCharacterContextRange(char);
-  const { emojis, categories } = ChatPrompts.filterVisibleEmojis(await DB.getEmojis(), await DB.getEmojiCategories(), char.id);
+  const allEmojis = await DB.getEmojis();
+  const allCategories = await DB.getEmojiCategories();
+  // 提示词清单只按权限；认图看全本（「只有我能用」的表情历史里也要认得出）。
+  const { emojis, categories } = ChatPrompts.filterVisibleEmojis(allEmojis, allCategories, char.id);
   const groups = deps.getGroups();
   const realtimeConfig = deps.getRealtimeConfig();
   const payload = await buildChatRequestPayload({
     char, userProfile, groups, emojis, categories,
+    historyEmojis: allEmojis,
     historyMsgs: range.messages,
     contextLimit: Math.max(1, range.messages.length),
     recallEntryPoint: 'proactive_chat',
