@@ -272,9 +272,6 @@ export type MinimaxRegion = 'domestic' | 'overseas';
 // 语音合成（TTS）服务商。全局三选一：切换后聊天语音条 / 约会 / 电话统一用同一家。
 export type TtsProvider = 'minimax' | 'fishaudio' | 'elevenlabs';
 
-// 语音转文字（STT）服务商。电话麦克风收音可选任意已配置 Key 的平台（与 TTS 独立），或浏览器自带免费识别。
-export type SttProvider = 'minimax' | 'fishaudio' | 'elevenlabs' | 'browser';
-
 export interface VisionApiConfig {
   /** 开启后，聊天图片先由独立视觉模型转成文字，再交给主对话模型。 */
   enabled: boolean;
@@ -310,7 +307,7 @@ export interface VideoApiConfig {
 }
 
 // ===== 语音识别（STT）三引擎配置 =====
-// 聊天输入框的麦克风按钮使用；从 stt-test.html 验证过的三方案移植：
+// 聊天麦克风与电话收音共用这一套（utils/volcStt.ts）：
 //   doubao  → 豆包流式 2.0（火山引擎，走 /api/volc-ws 代理，情绪 5 格，1元/时按实说话计费）
 //   omni    → Qwen3-Omni 全模态（硅基流动，走 /v1/chat/completions 代理，情绪词库细腻，按段计费）
 //   teleasr → TeleASR 出字（硅基流动，走 /api/sf-stt 代理，可选 SenseVoice 后台补情绪，免费档）
@@ -353,7 +350,7 @@ export interface APIConfig {
   secondaryLlm?: SecondaryLlmApiConfig;
   /** 私聊本地短视频理解（硅基 video_url）。默认关闭。 */
   videoApi?: VideoApiConfig;
-  // 可选语音识别：聊天麦克风按钮的三引擎配置。
+  // 语音识别三引擎（聊天麦克风与电话收音共用）。
   sttApi?: SttApiConfig;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
@@ -363,8 +360,6 @@ export interface APIConfig {
   minimaxRegion?: MinimaxRegion;
   // 语音服务商三选一。缺省 → 'minimax'。
   ttsProvider?: TtsProvider;
-  // 语音转文字（STT）服务商。可与 ttsProvider 不同（只允许选已填好 Key 的平台或 'browser'）。
-  sttProvider?: SttProvider;
   // 鱼声 Fish Audio API Key（https://fish.audio/）。仅 ttsProvider === 'fishaudio' 时使用。
   fishAudioApiKey?: string;
   // 鱼声默认模型（s2.1-pro / s2-pro / s1）。缺省 → 's2.1-pro'。
