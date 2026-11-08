@@ -32,11 +32,15 @@ const FateTheaterPlayer: React.FC<FateTheaterPlayerProps> = ({ character, slot, 
         return () => { mounted.current = false; previous?.focus?.(); };
     }, []);
 
+    // 正文指纹：轮询刷新会换新数组引用，但同一段剧场内容不该把滚动拽回顶。
+    const linesKey = isGenerating
+        ? '__generating__'
+        : (lines ? lines.map(line => `${line.emotion || ''}\n${line.text}`).join('\u0001') : '__null__');
     useEffect(() => {
         setNotice('');
         const region = scrollRef.current;
         if (region) region.scrollTop = 0;
-    }, [lines, isGenerating]);
+    }, [linesKey]);
 
     const sendCard = async (exposed: boolean) => {
         if (sendLock.current || !onSendCard) return;

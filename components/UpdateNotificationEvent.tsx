@@ -7,8 +7,6 @@ import { SARUpdatePopup } from './os/SARUpdatePopup';
 import { SAR_UPDATE_KEY, SAR_CHANGELOG, sarLaunch } from '../utils/sarUpdate';
 import HomeUpdatePopup from './os/HomeUpdatePopup';
 import { HOME_UPDATE_KEY, HOME_CHANGELOG } from '../utils/homeUpdate';
-import OctoberUpdatePopup from './os/OctoberUpdatePopup';
-import { OCTOBER_UPDATE_KEY } from '../utils/octoberUpdate';
 import { roomLaunch } from '../utils/roomLaunch';
 import NavigationBallNotice, { NAVIGATION_BALL_NOTICE_KEY } from './os/NavigationBallNotice';
 import UserLocationNotice, { USER_LOCATION_NOTICE_KEY } from './os/UserLocationNotice';
@@ -620,8 +618,6 @@ const UserLocationAnnouncement: React.FC<UpdatePopupProps> = ({ onDone, onExit }
     }} />;
 };
 
-const OctoberUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onDone }) => <OctoberUpdatePopup onDone={onDone}/>;
-
 const UserSpacesUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onExit }) => {
     const { openApp } = useOS();
     // Finish this launch's queue so older announcements do not cover the new feature.
@@ -630,7 +626,7 @@ const UserSpacesUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onExit }) =>
 
 const UPDATE_QUEUE: { key: string; render: (props: UpdatePopupProps) => React.ReactNode }[] = [
     { key: USER_SPACES_UPDATE_KEY, render: props => <UserSpacesUpdateAnnouncement {...props} /> },
-    { key: OCTOBER_UPDATE_KEY, render: props => <OctoberUpdateAnnouncement {...props} /> },
+    // 二改：不弹作者「万圣节 / 十月更新」介绍窗。
     { key: USER_LOCATION_NOTICE_KEY, render: props => <UserLocationAnnouncement {...props} /> },
     { key: NAVIGATION_BALL_NOTICE_KEY, render: props => <NavigationBallAnnouncement {...props} /> },
     { key: HOME_UPDATE_KEY, render: props => <HomeUpdateAnnouncement {...props} /> },

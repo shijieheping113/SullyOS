@@ -1582,7 +1582,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 if (!cancelled && !hasActiveFateSlot(existing)) {
                     retryAfter = Date.now() + 60_000;
                     await generateDailySchedule(char, false);
-                } else if (!cancelled) setScheduleData(existing);
+                } else if (!cancelled) {
+                    // 内容没变就保留旧引用，避免命运面板/小剧场因对象换新而关窗或回顶。
+                    setScheduleData(prev => {
+                        const same = !!(prev && existing && prev.id === existing.id && JSON.stringify(prev) === JSON.stringify(existing));
+                        return same ? prev : existing;
+                    });
+                }
             } finally { checking = false; }
         };
         const timer = window.setInterval(check, 30_000);

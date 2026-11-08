@@ -147,7 +147,11 @@ const FateSchedulePanel: React.FC<FateSchedulePanelProps> = ({ schedule, charact
     const slots = schedule?.slots || [];
     const index = primaryIndex(slots, now);
     const slot = slots[index];
-    useEffect(() => { setRationaleOpen(false); }, [slot?.startsAt, slot?.fate]);
+    // 只用内容指纹关小算盘：轮询刷新会换新对象引用，不能拿 slot.fate 引用当依赖。
+    const activeFateKey = slot?.fate
+        ? `${slot.fate.tendency.id}|${(slot.fate.factors || []).map(factor => factor.id).join(',')}|${slot.fate.peopleDirection || ''}|${slot.fate.rationale || ''}`
+        : '';
+    useEffect(() => { setRationaleOpen(false); }, [slot?.startsAt, activeFateKey]);
     const rooms = character?.home3D?.rooms || [];
     const homeRoomId = slot?.homePosition?.kind === 'home' ? slot.homePosition.roomId : undefined;
     // 盘上的「现在」用角色当地钟面，和 startTime 同一套坐标系。

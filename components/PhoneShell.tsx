@@ -1,5 +1,4 @@
 import FirstUseGuide from './FirstUseGuide';
-import DeploymentNotice from './os/DeploymentNotice';
 import { useDeploymentNotice } from '../hooks/useDeploymentNotice';
 import FeedbackInvitation from './FeedbackInvitation';
 import BeautyRepoInvitation from './share/BeautyRepoInvitation';
@@ -912,16 +911,6 @@ const PhoneShell: React.FC = () => {
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
   if (!isDataLoaded) {
     return <div className="w-full h-full" style={{ background: '#05060f' }} />;
-  }
-
-  // Before the lock screen and all startup prompts. The dialog's own mount starts
-  // the countdown, so neither the boot animation nor native identity lookup counts.
-  if (deploymentNotice.blocked) {
-    return <div className="w-full h-full" style={{ background: '#05060f' }}>
-      {deploymentNotice.source === 'checking'
-        ? <p role="status" className="p-6 text-center text-sm text-slate-300">正在确认版本来源…</p>
-        : deploymentNotice.source !== 'official' && <DeploymentNotice source={deploymentNotice.source} onAccept={deploymentNotice.accept} />}
-    </div>;
   }
 
   const getBgStyle = (wp: string) => {
