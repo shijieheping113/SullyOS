@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     toast: vi.fn(), updateCharacter: vi.fn(), fetch: vi.fn(),
     session: null as any, rows: [] as any[],
+    contextMessages: [] as any[],
     characters: [{ id: 'c', name: '测试角色', avatar: '', savedDateState: { currentText: '旧快照' } }],
 }));
 vi.mock('../context/OSContext', async () => {
@@ -32,7 +33,7 @@ vi.mock('./analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('./amsgStateSync', () => ({ markAmsgStateDirty: vi.fn() }));
 vi.mock('./chatContextRange', async importOriginal => ({
     ...await importOriginal<typeof import('./chatContextRange')>(),
-    loadCharacterContextMessages: vi.fn(async () => []),
+    loadCharacterContextMessages: vi.fn(async () => mocks.contextMessages),
 }));
 vi.mock('./visionApi', () => ({ materializeVisionDescriptions: vi.fn(async messages => messages) }));
 vi.mock('./safeApi', () => ({ safeResponseJson: vi.fn(async () => ({})), extractContent: vi.fn(() => '测试开场正文') }));
@@ -50,6 +51,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     localStorage.setItem('sully-date-entry-guide-v1', 'seen');
     mocks.rows = [];
+    mocks.contextMessages = [];
     mocks.session = null;
     mocks.fetch.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', mocks.fetch);
@@ -84,12 +86,18 @@ const clickText = async (text: string) => {
     await act(async () => { element!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
 };
 
-it('首次到达三个选项才展示说明，确认后重新打开也不再提示', async () => {
+const flushEntryContinue = async () => {
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+};
+
+it('首次到达选项才展示说明，确认后重新打开也不再提示', async () => {
     localStorage.removeItem('sully-date-entry-guide-v1');
     await act(async () => root.render(React.createElement(DateApp)));
     expect(container.textContent).not.toContain('选择这次见面的开场方式');
     await clickText('测试角色');
     expect(container.textContent).toContain('选择这次见面的开场方式');
+    expect(container.textContent).toContain('接着见他 · 回到未完的那一刻');
     expect(container.textContent).toContain('你主动走过去');
     expect(container.textContent).toContain('他主动来见你');
     expect(container.textContent).toContain('直接见面 · 不生成开场白');
@@ -104,13 +112,14 @@ it('首次到达三个选项才展示说明，确认后重新打开也不再提�
     expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
-it('有旧快照仍显示三个入口；直接见面不请求开场，退出无弹窗，再进入是独立场次', async () => {
+it('上下文范围内没有见面记录时不显示继续上次；直接见面不请求开场，退出无弹窗，再进入是独立场次', async () => {
     await act(async () => root.render(React.createElement(DateApp)));
     await clickText('测试角色');
+    await flushEntryContinue();
     expect(container.textContent).toContain('靠近他');
     expect(container.textContent).toContain('让他靠近');
     expect(container.textContent).toContain('直接见面');
-    expect(container.textContent).not.toContain('继续上次');
+    expect(container.textContent).not.toContain('从你们停住的地方，再往前走一步');
     await clickText('直接见面');
     const firstId = mocks.session.encounterId;
     expect(firstId).toBeTruthy();
@@ -122,8 +131,36 @@ it('有旧快照仍显示三个入口；直接见面不请求开场，退出无�
     expect(container.textContent).not.toContain('保存并退出');
     mocks.rows = [{ id: 1, role: 'assistant', content: '上一场', timestamp: 1,
         metadata: { source: 'date', dateEncounterId: firstId } }];
+    // 库里有见面，但上下文范围模拟为空 → 仍不显示继续
+    mocks.contextMessages = [];
     await clickText('测试角色');
+    await flushEntryContinue();
+    expect(container.textContent).not.toContain('从你们停住的地方，再往前走一步');
     await clickText('直接见面');
     expect(mocks.session.encounterId).not.toBe(firstId);
     expect(mocks.session.messages.map((message: any) => message.content)).toEqual(['上一场']);
+});
+
+it('上下文范围内有见面记录时显示继续上次，沿用场次并铺末句', async () => {
+    mocks.contextMessages = [{
+        id: 5, charId: 'c', role: 'assistant', type: 'text', timestamp: 5,
+        content: '[happy] 抬眼。\n[shy] "还在等你。"',
+        metadata: { source: 'date', dateEncounterId: 'enc-keep' },
+    }];
+    mocks.rows = [...mocks.contextMessages];
+    await act(async () => root.render(React.createElement(DateApp)));
+    await clickText('测试角色');
+    await flushEntryContinue();
+    expect(container.textContent).toContain('接着见他');
+    expect(container.textContent).toContain('从你们停住的地方，再往前走一步');
+    await clickText('接着见他');
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.session.encounterId).toBe('enc-keep');
+    expect(mocks.session.peekStatus).toBe('');
+    expect(mocks.session.initialState).toMatchObject({
+        currentText: '"还在等你。"',
+        currentSpriteKey: 'shy',
+        dialogueQueue: [],
+    });
+    expect(mocks.session.initialState.dialogueBatch.length).toBe(2);
 });

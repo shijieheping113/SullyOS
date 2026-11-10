@@ -20,7 +20,7 @@ import {
 } from '../../utils/ttsRouter';
 
 import { getPendingReplyText } from '../../utils/pendingReply';
-import { fetchBlobForShare } from '../../utils/shareExport';
+import { fetchBlobForShare, shareOrDownloadBlob } from '../../utils/shareExport';
 import VoiceFavoriteActionSheet from '../voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, makeVoiceFavoriteId, removeVoiceFavorite, saveVoiceFavorite } from '../../utils/voiceFavorites';
 import { MEETING_CONTINUE_DISPLAY_TEXT } from '../../utils/meetingContinue';
@@ -226,7 +226,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Interaction State
     const messages = React.useMemo(() => encounterId ? historyMessages.filter(message => message.metadata?.dateEncounterId === encounterId) : historyMessages, [historyMessages, encounterId]);
     const [input, setInput] = useState('');
-    const [showInputBox, setShowInputBox] = useState(!peekStatus && !initialState);
+    // 续场停在末句（dialogueQueue 已空）时默认打开输入框，方便接着说；中途队列未播完则先收起。
+    const [showInputBox, setShowInputBox] = useState(
+        !peekStatus && (!initialState || (initialState.dialogueQueue?.length ?? 0) === 0),
+    );
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!!peekStatus && !initialState); // True until first user interaction
     // API 失败时本地记住本轮输入，不依赖父组件的 DB 刷新是否已经完成；用户可直接点重试。
@@ -267,8 +270,19 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [galVoiceLoading, setGalVoiceLoading] = useState(false);
     const [showVoiceLangPicker, setShowVoiceLangPicker] = useState(false);
     const voiceCacheRef = useRef<Record<string, DateSpeechResult>>({});
+    // 缓存写入后刷新一次，让「下载」出现在已生成语音的播放键旁
+    const [voiceCacheTick, setVoiceCacheTick] = useState(0);
+    const [voiceDownloadingKey, setVoiceDownloadingKey] = useState<string | null>(null);
     const [novelVoiceLoading, setNovelVoiceLoading] = useState<Set<string>>(new Set());
     const [novelPlayingId, setNovelPlayingId] = useState<string | null>(null);
+    const rememberDateSpeech = (cacheKey: string, speech: DateSpeechResult) => {
+        voiceCacheRef.current[cacheKey] = speech;
+        setVoiceCacheTick(tick => tick + 1);
+    };
+    const hasCachedDateSpeech = (cacheKey: string) => {
+        void voiceCacheTick;
+        return !!voiceCacheRef.current[cacheKey];
+    };
 
     const dateAudioRef = useRef<HTMLAudioElement | null>(null);
     const streamingVoice = useStreamingVoice(char.id);
@@ -379,7 +393,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         const dialogueText = extractDialogueText(galShownText, preserveAudioTags);
         if (apiConfig.ttsProvider === 'elevenlabs') {
             void translateAndSpeak(dialogueText, currentLineEmotionRef.current, 'gal').then(speech => {
-                if (speech && !cancelled) voiceCacheRef.current[dialogueText] = speech;
+                if (speech && !cancelled) rememberDateSpeech(dialogueText, speech);
             });
             return () => { cancelled = true; stopDateStream(); };
         }
@@ -393,7 +407,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 if (cancelled) return;
                 setGalVoiceLoading(false);
                 if (!speech) return;
-                voiceCacheRef.current[cacheKey] = speech;
+                rememberDateSpeech(cacheKey, speech);
             }
             if (cancelled) return;
             if (!dateAudioRef.current) dateAudioRef.current = new Audio();
@@ -414,7 +428,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             stopDateStream();
             const text = extractDialogueText(galShownText, preserveAudioTags);
             const speech = await translateAndSpeak(text, currentLineEmotionRef.current, 'gal');
-            if (speech) voiceCacheRef.current[text] = speech;
+            if (speech) rememberDateSpeech(text, speech);
             return;
         }
         // If playing, pause
@@ -431,7 +445,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             speech = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || undefined;
             setGalVoiceLoading(false);
             if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-            voiceCacheRef.current[cacheKey] = speech;
+            rememberDateSpeech(cacheKey, speech);
         }
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
         dateAudioRef.current.src = speech.url;
@@ -449,7 +463,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (streamingVoice.state?.id === lineKey && ['loading', 'playing'].includes(streamingVoice.state.status)) { stopDateStream(); return; }
             stopDateStream();
             const speech = await translateAndSpeak(dialogueText, voiceEmotion, lineKey);
-            if (speech) voiceCacheRef.current[dialogueText] = speech;
+            if (speech) rememberDateSpeech(dialogueText, speech);
             return;
         }
         const cached = voiceCacheRef.current[dialogueText];
@@ -471,7 +485,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         const speech = await translateAndSpeak(dialogueText, voiceEmotion);
         setNovelVoiceLoading(prev => { const n = new Set(prev); n.delete(lineKey); return n; });
         if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-        voiceCacheRef.current[dialogueText] = speech;
+        rememberDateSpeech(dialogueText, speech);
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
         dateAudioRef.current.src = speech.url;
         dateAudioRef.current.onended = () => setNovelPlayingId(null);
@@ -548,10 +562,12 @@ const DateSession: React.FC<DateSessionProps> = ({
             let speech: DateSpeechResult | undefined = voiceCacheRef.current[speechText];
             if (!speech) {
                 speech = await translateAndSpeak(speechText, target.voiceEmotion) || undefined;
-                if (speech) voiceCacheRef.current[speechText] = speech;
+                if (speech) rememberDateSpeech(speechText, speech);
             }
             if (!speech) throw new Error('语音合成失败，请稍后重试');
-            const blob = await fetchBlobForShare(speech.url, 'audio/mpeg');
+            const blob = speech.recording?.blob instanceof Blob
+                ? speech.recording.blob
+                : await fetchBlobForShare(speech.url, 'audio/mpeg');
             await saveVoiceFavorite({
                 source: 'date',
                 sourceKey: target.sourceKey,
@@ -569,6 +585,38 @@ const DateSession: React.FC<DateSessionProps> = ({
             addToast(error?.message || '收藏失败，请检查浏览器存储空间', 'error');
         } finally {
             setVoiceFavoriteBusy(false);
+        }
+    };
+
+    /** 下载已生成的见面语音；仅缓存里已有音频时由按钮露出。 */
+    const handleDownloadDateVoice = async (dialogueText: string) => {
+        const cacheKey = dialogueText;
+        if (!cacheKey || voiceDownloadingKey === cacheKey) return;
+        const speech = voiceCacheRef.current[cacheKey];
+        if (!speech) {
+            addToast('这条还没有可下载的语音', 'error');
+            return;
+        }
+        setVoiceDownloadingKey(cacheKey);
+        try {
+            const blob = speech.recording?.blob instanceof Blob
+                ? speech.recording.blob
+                : await fetchBlobForShare(speech.url, 'audio/mpeg');
+            const safeName = (char.name || '见面').replace(/[\\/:*?"<>|]/g, '_');
+            const ext = blob.type.includes('wav') ? 'wav' : 'mp3';
+            const result = await shareOrDownloadBlob({
+                blob,
+                fileName: `${safeName}_见面_${Date.now()}.${ext}`,
+                shareTitle: `${char.name || '角色'}的见面语音`,
+                preferDownloadOnWeb: true,
+            });
+            if (result === 'cancelled') return;
+            addToast(result === 'shared' ? '已打开系统保存/分享' : '语音已开始下载', 'success');
+            trackEvent('下载见面语音');
+        } catch {
+            addToast('语音下载失败', 'error');
+        } finally {
+            setVoiceDownloadingKey(null);
         }
     };
 
@@ -638,7 +686,14 @@ const DateSession: React.FC<DateSessionProps> = ({
         return { key: fallback.key, src: state.currentSprite || fallback.src };
     };
 
-    const visibleSessionMessages = historyMessages;
+    // 阅读模式只看本场：有 encounterId 时沿用已按场次过滤的 messages，不再铺全角色见面史。
+    const visibleSessionMessages = messages;
+    // 已加载窗口的最早一条已不属于本场 → 再往上不会再有本场内容，当作本场读完。
+    const readingReachedEnd = !!historyReachedEnd || (
+        !!encounterId
+        && historyMessages.length > 0
+        && historyMessages[0].metadata?.dateEncounterId !== encounterId
+    );
 
     // Initialization
     useEffect(() => {
@@ -696,7 +751,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         messages: visibleSessionMessages,
         layoutKey: showInputBox,
         onLoadOlder: () => {
-            if (!historyLoading && !historyReachedEnd && !historyError) void onLoadMoreHistory?.();
+            if (!historyLoading && !readingReachedEnd && !historyError) void onLoadMoreHistory?.();
         },
     });
 
@@ -757,8 +812,11 @@ const DateSession: React.FC<DateSessionProps> = ({
         return '';
     }, [messages]);
     const dialogueSyncMountRef = useRef(false);
+    // 续场已用 initialState 停在末句；消息列表稍后到齐时不要把立绘拨回该轮第一句。
+    const resumeSkipDialogueSyncRef = useRef(!!initialState);
     useEffect(() => {
         if (!dialogueSyncMountRef.current) { dialogueSyncMountRef.current = true; return; }
+        if (resumeSkipDialogueSyncRef.current) { resumeSkipDialogueSyncRef.current = false; return; }
         if (isTyping || !lastAssistantContent) return;
         const { rest } = extractObservation(lastAssistantContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
         const items = parseDialogue(rest, 'normal');
@@ -1111,12 +1169,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     </>
                                 );
                             })()}
-                            {(!historyReachedEnd || historyError) && (
+                            {(!readingReachedEnd || historyError) && (
                                 <div className="flex flex-col items-center gap-2">
                                     {historyError && <p role="alert" className="text-xs text-rose-400">{historyError}</p>}
-                                    <button disabled={historyLoading} onClick={e => { e.stopPropagation(); void onLoadMoreHistory?.(); }}
+                                    <button disabled={historyLoading} onClick={e => {
+                                        e.stopPropagation();
+                                        if (readingReachedEnd) return;
+                                        void onLoadMoreHistory?.();
+                                    }}
                                         className={`px-4 py-2 rounded-full text-xs font-bold border disabled:opacity-50 ${lightReading ? 'bg-stone-100 text-stone-500 border-stone-200' : 'bg-white/10 text-white/60 border-white/10'}`}>
-                                        {historyLoading ? '正在读取…' : historyError ? '重试读取记录' : '加载更早见面记录'}
+                                        {historyLoading ? '正在读取…' : historyError ? '重试读取记录' : '加载更早本场记录'}
                                     </button>
                                 </div>
                             )}
@@ -1212,31 +1274,52 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         >{cleanLine}</p>
                                                         {/* Voice button: only for dialogue lines, not opening */}
                                                         {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    if (voiceFavoriteLongPressTriggered.current) { voiceFavoriteLongPressTriggered.current = false; return; }
-                                                                    handleNovelLinePlay(lineKey, dialogueText, parsedVoiceLine.voiceEmotion);
-                                                                }}
-                                                                onTouchStart={(e) => startDateVoiceLongPress(e, voiceTarget)}
-                                                                onTouchMove={endDateVoiceLongPress}
-                                                                onTouchEnd={endDateVoiceLongPress}
-                                                                onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(voiceTarget); }}
-                                                                title="播放；长按可收藏"
-                                                                className={`shrink-0 mt-2 w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 select-none ${
-                                                                    novelPlayingId === lineKey
-                                                                        ? (lightReading ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-500/20 text-emerald-300')
-                                                                        : (lightReading ? 'bg-stone-100 text-stone-400 hover:bg-stone-200' : 'bg-white/5 text-white/40 hover:bg-white/10')
-                                                                }`}
-                                                            >
-                                                                {novelVoiceLoading.has(lineKey) ? (
-                                                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                                                                ) : novelPlayingId === lineKey ? (
-                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
-                                                                ) : (
-                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                                            <div className="shrink-0 mt-2 flex flex-col items-center gap-1">
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        if (voiceFavoriteLongPressTriggered.current) { voiceFavoriteLongPressTriggered.current = false; return; }
+                                                                        handleNovelLinePlay(lineKey, dialogueText, parsedVoiceLine.voiceEmotion);
+                                                                    }}
+                                                                    onTouchStart={(e) => startDateVoiceLongPress(e, voiceTarget)}
+                                                                    onTouchMove={endDateVoiceLongPress}
+                                                                    onTouchEnd={endDateVoiceLongPress}
+                                                                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(voiceTarget); }}
+                                                                    title="播放；长按可收藏"
+                                                                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 select-none ${
+                                                                        novelPlayingId === lineKey
+                                                                            ? (lightReading ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-500/20 text-emerald-300')
+                                                                            : (lightReading ? 'bg-stone-100 text-stone-400 hover:bg-stone-200' : 'bg-white/5 text-white/40 hover:bg-white/10')
+                                                                    }`}
+                                                                >
+                                                                    {novelVoiceLoading.has(lineKey) ? (
+                                                                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                                                    ) : novelPlayingId === lineKey ? (
+                                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
+                                                                    ) : (
+                                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                                                    )}
+                                                                </button>
+                                                                {hasCachedDateSpeech(dialogueText) && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            void handleDownloadDateVoice(dialogueText);
+                                                                        }}
+                                                                        title="下载语音"
+                                                                        aria-label="下载语音"
+                                                                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 select-none ${
+                                                                            lightReading ? 'bg-transparent text-stone-400 hover:text-stone-600' : 'bg-transparent text-white/35 hover:text-white/70'
+                                                                        }`}
+                                                                    >
+                                                                        {voiceDownloadingKey === dialogueText ? (
+                                                                            <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                                                        ) : (
+                                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M7.5 12 12 16.5m0 0L16.5 12M12 16.5V3" /></svg>
+                                                                        )}
+                                                                    </button>
                                                                 )}
-                                                            </button>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 );
@@ -1278,30 +1361,52 @@ const DateSession: React.FC<DateSessionProps> = ({
                             >
                                 <div className="absolute -top-3 left-6 flex items-center gap-2">
                                     <div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div>
-                                    {/* Voice play button next to name */}
-                                    {voiceEnabled && !isTextAnimating && !isShowingOpening && isDialogueLine(galShownText) && (
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (voiceFavoriteLongPressTriggered.current) { voiceFavoriteLongPressTriggered.current = false; return; }
-                                                handleGalVoiceToggle();
-                                            }}
-                                            onTouchStart={(e) => startDateVoiceLongPress(e, resolveCurrentDateVoiceTarget())}
-                                            onTouchMove={endDateVoiceLongPress}
-                                            onTouchEnd={endDateVoiceLongPress}
-                                            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(resolveCurrentDateVoiceTarget()); }}
-                                            title="播放；长按可收藏"
-                                            className={`w-6 h-6 rounded-full flex items-center justify-center transition-all active:scale-90 ${dateVoicePlaying ? 'bg-white/30 text-white/90' : 'bg-white/10 text-white/40 hover:bg-white/20'}`}
-                                        >
-                                            {galVoiceLoading ? (
-                                                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                                            ) : dateVoicePlaying ? (
-                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
-                                            ) : (
-                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
-                                            )}
-                                        </button>
-                                    )}
+                                    {/* Voice play + download next to name；下载仅在本句已生成后出现 */}
+                                    {voiceEnabled && !isTextAnimating && !isShowingOpening && isDialogueLine(galShownText) && (() => {
+                                        const galDialogueText = extractDialogueText(galShownText, preserveAudioTags);
+                                        return (
+                                            <>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (voiceFavoriteLongPressTriggered.current) { voiceFavoriteLongPressTriggered.current = false; return; }
+                                                        handleGalVoiceToggle();
+                                                    }}
+                                                    onTouchStart={(e) => startDateVoiceLongPress(e, resolveCurrentDateVoiceTarget())}
+                                                    onTouchMove={endDateVoiceLongPress}
+                                                    onTouchEnd={endDateVoiceLongPress}
+                                                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(resolveCurrentDateVoiceTarget()); }}
+                                                    title="播放；长按可收藏"
+                                                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all active:scale-90 ${dateVoicePlaying ? 'bg-white/30 text-white/90' : 'bg-white/10 text-white/40 hover:bg-white/20'}`}
+                                                >
+                                                    {galVoiceLoading ? (
+                                                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                                    ) : dateVoicePlaying ? (
+                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
+                                                    ) : (
+                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                                    )}
+                                                </button>
+                                                {hasCachedDateSpeech(galDialogueText) && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            void handleDownloadDateVoice(galDialogueText);
+                                                        }}
+                                                        title="下载语音"
+                                                        aria-label="下载语音"
+                                                        className="w-6 h-6 rounded-full flex items-center justify-center transition-all active:scale-90 bg-transparent text-white/40 hover:text-white/80"
+                                                    >
+                                                        {voiceDownloadingKey === galDialogueText ? (
+                                                            <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                                        ) : (
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M7.5 12 12 16.5m0 0L16.5 12M12 16.5V3" /></svg>
+                                                        )}
+                                                    </button>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                                 {currentSarPair && (
                                     <div className="sar-date-gal-speech-control">

@@ -1,17 +1,18 @@
 # 传统见面：入口与场次
 
-选择角色后选择「靠近他」「让他靠近」「直接见面」，聊天页跳转也走同一入口。
+选择角色后选择开场方式，聊天页跳转也走同一入口。
 
+- **接着见他**（界面文案；逻辑上即继续上次见面）：仅当该角色**当前 AI 上下文原文范围**内仍有 `source=date` 的见面消息时显示。沿用范围内最近一场的 `dateEncounterId`（旧数据没有场次号则新开一场次号），不请求开场；立绘停在该场最后一条角色回复的末句并打开输入框。范围随手动条数 / 自适应水位 / 用户断点变化，入口随之出现或消失。不读写 `savedDateState` 播放快照。
 - 靠近他：原感知开场，第三人称描写角色当下状态。
 - 让他靠近：沿用相同角色上下文与世界书，由角色根据既有地点、关系和约定合理靠近用户；不代写用户反应。
-- 直接见面：不请求开场，直接打开输入框。
+- 直接见面：不请求开场，直接打开输入框（新开场次）。
 
-入口只决定开场方式，不强制续接旧话题或开启新剧情。退出立即离开，无确认框或保存提示。消息逐条落库，不再写入或恢复 `savedDateState` 播放快照。
+新开三种入口只决定开场方式，不强制续接旧话题。退出立即离开，无确认框或保存提示。消息逐条落库，不再写入或恢复 `savedDateState` 播放快照。
 
-每次选择角色生成独立 `dateEncounterId`，本场所有消息携带该 metadata；开场另带 `isOpening` 与 `dateOpeningMode`，重生成保留这些标记。异步回复捕获发起时的场次 ID，退出后返回的回复仍属于原场次，不更新新场次 UI。
+每次选择角色先生成独立 `dateEncounterId`；点「接着见他」会改回上一场场次号。本场所有消息携带该 metadata；开场另带 `isOpening` 与 `dateOpeningMode`，重生成保留这些标记。异步回复捕获发起时的场次 ID，退出后返回的回复仍属于原场次，不更新新场次 UI。
 
-阅读模式连续显示该角色的见面历史，包括旧场次和没有场次标记的旧记录。进入时读取最新 50 条，向上滚动或点击「加载更早」按消息 ID 游标再取 50 条；追加旧记录保留滚动位置，新回复不收起已经展开的历史。列表沿用原有正文、语音、SAR 与 OBSERVE 渲染，离屏正文延迟绘制。
-立绘播放、失败重试与重掷仍仅操作当前场次，不因浏览旧记录而恢复旧播放快照。模型输入仍走完整的角色上下文管线，UI 的 50 条分页不限制模型上下文。
+阅读模式只显示**当前场次**（`dateEncounterId`）的消息；其他场次与无场次号的旧记录不进本场阅读列表。底层仍可按 50 条分页取库，但展示与「加载更早」以本场为界：已加载窗口的最早一条不属于本场时视为本场读完。追加本场新回复保留滚动位置。列表沿用原有正文、语音、SAR 与 OBSERVE 渲染，离屏正文延迟绘制。
+立绘播放、失败重试与重掷仍仅操作当前场次。模型输入仍走完整的角色上下文管线，UI 的本场阅读范围不限制模型上下文。
 记录按次优先使用场次 ID，同场跨日不拆分，无开场或开场被删也不串场。旧数据继续按 `isOpening`，更早无锚点数据按日期兼容；按日期查看仍按设备当地日期归组。
 
-测试：`utils/dateEntryFlow.test.ts`、`utils/dateMessagePagination.test.ts`、`utils/useDateMessageHistory.test.ts`、`utils/meetingReading.test.ts`、`utils/dateHistory.test.ts`、`utils/datePrompts.test.ts`。
+测试：`utils/dateContinue.test.ts`、`utils/dateEntryFlow.test.ts`、`utils/dateMessagePagination.test.ts`、`utils/useDateMessageHistory.test.ts`、`utils/meetingReading.test.ts`、`utils/dateHistory.test.ts`、`utils/datePrompts.test.ts`。

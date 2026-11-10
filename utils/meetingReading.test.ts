@@ -42,17 +42,17 @@ it('story novel mode keeps prose outside a collapsed supplement; none keeps the 
     expect(host.textContent).not.toContain('场景与补充');
 });
 
-it('reading shows previous encounters, prepends without jumping to the bottom, and keeps scroll position for new replies', async () => {
+it('reading stays inside the current encounter, prepends without jumping, and keeps scroll for new replies', async () => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     const host = document.createElement('div'); document.body.append(host);
     const root = createRoot(host), loadOlder = vi.fn(async () => {});
     const makeRows = (start: number, end: number) => Array.from({length:end-start+1},(_,i)=>({
         id:start+i, charId:'c', role:'assistant', type:'text', timestamp:1, content:`历史正文 ${start+i}`,
-        metadata:{source:'date', dateEncounterId:'previous'},
+        metadata:{source:'date', dateEncounterId:'e1'},
     }));
     const props = {
         char:{id:'c',name:'角色',avatar:'',dateAppearance:{preset:'novel'}},userProfile:{name:'用户'},
-        encounterId:'new',peekStatus:'',onSendMessage:async()=>'',onReroll:async()=>'',onExit:()=>{},
+        encounterId:'e1',peekStatus:'',onSendMessage:async()=>'',onReroll:async()=>'',onExit:()=>{},
         onEditMessage:()=>{},onDeleteMessage:()=>{},onDeleteMessages:async()=>{},onSettings:()=>{},
         onLoadMoreHistory:loadOlder, historyReachedEnd:false,
     };
@@ -76,10 +76,35 @@ it('reading shows previous encounters, prepends without jumping to the bottom, a
         await act(async()=>page.dispatchEvent(new Event('scroll')));
         expect(loadOlder).toHaveBeenCalledTimes(1);
         await act(async()=>root.render(React.createElement(Reading,{messages:makeRows(1,100)})));
-        expect(page.scrollTop).toBe(5040);
+        expect(page.querySelectorAll('[data-date-message-id]')).toHaveLength(100);
+        expect(page.textContent).toContain('历史正文 1');
+        expect(page.textContent).toContain('历史正文 100');
+        const topAfterPrepend = page.scrollTop;
         await act(async()=>root.render(React.createElement(Reading,{messages:makeRows(1,101)})));
-        expect(page.scrollTop).toBe(5040);
-        // Current encounter has no reply: old history must not enable reroll.
+        // 本场追加新回复时，不应把读者拽回底部。
+        expect(page.scrollTop).toBe(topAfterPrepend);
         expect(host.querySelector('button[title="重新生成"]')).toBeNull();
     } finally { await act(async()=>root.unmount()); host.remove(); height.mockRestore(); viewport.mockRestore(); }
+});
+
+it('reading hides other encounters even when they sit in the loaded history window', () => {
+    const rows = [
+        {id:1,role:'assistant',content:'旧场',metadata:{source:'date',dateEncounterId:'old'}},
+        {id:2,role:'user',content:'本场问',metadata:{source:'date',dateEncounterId:'now'}},
+        {id:3,role:'assistant',content:'本场答',metadata:{source:'date',dateEncounterId:'now'}},
+        {id:4,role:'assistant',content:'无场次号旧文',metadata:{source:'date'}},
+    ].map(message=>({...message,charId:'c',type:'text',timestamp:message.id}));
+    const markup = renderToStaticMarkup(React.createElement(DateSession, {
+        char:{id:'c',name:'角色',avatar:'',dateAppearance:{preset:'novel'}},
+        userProfile:{name:'用户'},messages:rows,encounterId:'now',peekStatus:'',
+        onSendMessage:async()=>'',onReroll:async()=>'',onExit:()=>{},onEditMessage:()=>{},onDeleteMessage:()=>{},onDeleteMessages:async()=>{},onSettings:()=>{},
+        historyReachedEnd:false,
+    } as any));
+    const host=document.createElement('div');host.innerHTML=markup;
+    const page = host.querySelector('.meeting-reading-page');
+    expect(page?.textContent).toContain('本场问');
+    expect(page?.textContent).toContain('本场答');
+    expect(page?.textContent).not.toContain('旧场');
+    expect(page?.textContent).not.toContain('无场次号旧文');
+    expect(host.querySelectorAll('[data-date-message-id]')).toHaveLength(2);
 });

@@ -5,7 +5,7 @@ import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { CharacterProfile, Message, AppID } from '../types';
+import { CharacterProfile, Message, AppID, DateState } from '../types';
 import { DatePrompts, ApiMessage } from '../utils/datePrompts';
 import { processNewMessagesWithAutoArchive } from '../utils/memoryPalace/autoArchive';
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
@@ -28,6 +28,7 @@ import { getLocalDateKey } from '../utils/localDate';
 import { materializeVisionDescriptions } from '../utils/visionApi';
 import { shareOrDownloadFile } from '../utils/shareExport';
 import { buildInPersonContinueInstruction } from '../utils/meetingContinue';
+import { resolveDateContinueFromContext, type DateContinuePlan } from '../utils/dateContinue';
 import {
     advanceSARModuleAfterReply,
     createSARModuleEventMeta,
@@ -140,6 +141,10 @@ const DateApp: React.FC = () => {
     };
     const peekRequestRef = useRef(0);
     const enteringSessionRef = useRef(false);
+    const entryContinueRequestRef = useRef(0);
+    const [entryContinuePlan, setEntryContinuePlan] = useState<DateContinuePlan | null>(null);
+    const [entryContinueLoading, setEntryContinueLoading] = useState(false);
+    const [sessionInitialState, setSessionInitialState] = useState<DateState | undefined>(undefined);
 
     // --- NEW: Editing State lifted to here for DB sync ---
     const { messages: dateMessages, setMessages: setDateMessages, refresh: loadDateMessages,
@@ -183,6 +188,10 @@ const DateApp: React.FC = () => {
     const handleBack = () => {
         if (mode === 'peek' || mode === 'entry') {
             peekRequestRef.current++;
+            entryContinueRequestRef.current++;
+            setEntryContinuePlan(null);
+            setEntryContinueLoading(false);
+            setSessionInitialState(undefined);
             encounterIdRef.current = '';
             // 来自聊天：从感知页退出直接回聊天，不落在见面选择页
             if (cameFromChat) { returnToChat(); return; }
@@ -223,9 +232,13 @@ const DateApp: React.FC = () => {
         return content;
     };
 
-    // 每次进入独立记次；模型上下文仍由共享管线决定。
+    // 每次进入独立记次；模型上下文仍由共享管线决定。续场会覆盖 encounterId。
     const handleCharClick = (c: CharacterProfile) => {
         clearDateResumeAttempt();
+        entryContinueRequestRef.current++;
+        setEntryContinuePlan(null);
+        setEntryContinueLoading(false);
+        setSessionInitialState(undefined);
         setActiveCharacterId(c.id);
         encounterIdRef.current = crypto.randomUUID();
         setDateMessages([]);
@@ -233,6 +246,41 @@ const DateApp: React.FC = () => {
         setHasSavedOpening(false);
         if (c.savedDateState) updateCharacter(c.id, { savedDateState: undefined });
         setMode('entry');
+    };
+
+    // 开场页：当前上下文原文范围内有见面记录才显示「继续上次见面」。
+    useEffect(() => {
+        if (mode !== 'entry' || !char) {
+            return;
+        }
+        const requestId = ++entryContinueRequestRef.current;
+        const target = char;
+        setEntryContinueLoading(true);
+        setEntryContinuePlan(null);
+        void (async () => {
+            try {
+                const contextMsgs = await loadCharacterContextMessages(target);
+                if (requestId !== entryContinueRequestRef.current) return;
+                setEntryContinuePlan(resolveDateContinueFromContext(contextMsgs, {
+                    custom: target.dateObserve?.custom,
+                    lenientObserve: !!target.dateObserve?.enabled,
+                }));
+            } catch {
+                if (requestId === entryContinueRequestRef.current) setEntryContinuePlan(null);
+            } finally {
+                if (requestId === entryContinueRequestRef.current) setEntryContinueLoading(false);
+            }
+        })();
+    }, [mode, char?.id]);
+
+    const handleContinueLastDate = () => {
+        if (!char || !entryContinuePlan) return;
+        encounterIdRef.current = entryContinuePlan.encounterId || crypto.randomUUID();
+        setPeekStatus('');
+        setHasSavedOpening(true);
+        setSessionInitialState(entryContinuePlan.initialState);
+        setMode('session');
+        trackEvent('继续上次见面');
     };
 
     // 从聊天「见面」按钮跳进来，同样选择本次开场方式。
@@ -643,6 +691,7 @@ const DateApp: React.FC = () => {
     const onExitSession = () => {
         clearDateResumeAttempt();
         encounterIdRef.current = '';
+        setSessionInitialState(undefined);
         // 来自聊天：退出见面回聊天
         if (cameFromChat) { returnToChat(); return; }
         setMode('select');
@@ -690,7 +739,12 @@ const DateApp: React.FC = () => {
         } else if (intent.entryId === 'settings') setMode('settings');
         else {
             // Opening a shortcut must not discard savedDateState or generate an opening.
-            clearDateResumeAttempt(); encounterIdRef.current = crypto.randomUUID();
+            clearDateResumeAttempt();
+            entryContinueRequestRef.current++;
+            setEntryContinuePlan(null);
+            setEntryContinueLoading(false);
+            setSessionInitialState(undefined);
+            encounterIdRef.current = crypto.randomUUID();
             setDateMessages([]); setPeekStatus(''); setHasSavedOpening(false); setMode('entry');
         }
     });
@@ -1030,30 +1084,48 @@ const DateApp: React.FC = () => {
     }
 
     if (mode === 'entry' && char) {
+        // 四钮时：上头身份区固定，选项组在剩余高度里垂直居中；钮间距与内边距比顶对齐更松，避免顶上一坨、底下空一大片。
+        const entryOptionClass = 'text-left rounded-2xl border border-neutral-700 px-5 py-4 hover:bg-neutral-900 shrink-0';
         return (
-            <div className="h-full w-full bg-black text-white flex flex-col px-8 pb-12 pt-16">
-                <button onClick={handleBack} className="self-start p-3 text-neutral-400" aria-label="返回"><CaretLeft size={22} /></button>
-                <div className="flex-1 flex flex-col justify-center max-w-sm w-full mx-auto gap-4">
-                    <TokenImg value={char.avatar} className="w-20 h-20 rounded-full object-cover mb-3" alt={char.name} />
-                    <h2 className="text-3xl font-light mb-2">{char.name}</h2>
-                    <p className="text-sm text-neutral-400 mb-6">这次，怎样见面？</p>
-                    <button onClick={() => startPeek(char, 'approach')} className="text-left rounded-2xl border border-neutral-700 px-6 py-5 hover:bg-neutral-900">
-                        <span className="block text-lg">靠近他</span><span className="block text-xs text-neutral-400 mt-2">看看他此刻在做什么，再走过去</span>
-                    </button>
-                    <button onClick={() => startPeek(char, 'invite')} className="text-left rounded-2xl border border-neutral-700 px-6 py-5 hover:bg-neutral-900">
-                        <span className="block text-lg">让他靠近</span><span className="block text-xs text-neutral-400 mt-2">由他自然地来到你面前</span>
-                    </button>
-                    <button onClick={() => { setPeekStatus(''); setMode('session'); }} className="text-left rounded-2xl border border-neutral-700 px-6 py-5 hover:bg-neutral-900">
-                        <span className="block text-lg">直接见面</span><span className="block text-xs text-neutral-400 mt-2">不生成开场白，直接开始互动</span>
-                    </button>
+            <div className="h-full w-full bg-black text-white flex flex-col px-8 pb-10 pt-14">
+                <button onClick={handleBack} className="self-start p-3 text-neutral-400 shrink-0" aria-label="返回"><CaretLeft size={22} /></button>
+                <div className="max-w-sm w-full mx-auto flex flex-col flex-1 min-h-0">
+                    <div className="shrink-0 pt-1 pb-2">
+                        <TokenImg value={char.avatar} className="w-[4.5rem] h-[4.5rem] rounded-full object-cover mb-3" alt={char.name} />
+                        <h2 className="text-3xl font-light mb-2">{char.name}</h2>
+                        <p className="text-sm text-neutral-400">这次，怎样见面？</p>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                        <div className="min-h-full flex flex-col justify-center gap-3.5 py-3">
+                            {entryContinuePlan && (
+                                <button onClick={handleContinueLastDate} className={`${entryOptionClass} border-white/35 bg-white/[0.04]`}>
+                                    <span className="block text-lg">接着见他</span>
+                                    <span className="block text-xs text-neutral-400 mt-2">从你们停住的地方，再往前走一步</span>
+                                </button>
+                            )}
+                            {!entryContinuePlan && entryContinueLoading && (
+                                <p className="text-xs text-neutral-600 tracking-wider shrink-0">看看还能不能回去…</p>
+                            )}
+                            <button onClick={() => { setSessionInitialState(undefined); startPeek(char, 'approach'); }} className={entryOptionClass}>
+                                <span className="block text-lg">靠近他</span><span className="block text-xs text-neutral-400 mt-2">看看他此刻在做什么，再走过去</span>
+                            </button>
+                            <button onClick={() => { setSessionInitialState(undefined); startPeek(char, 'invite'); }} className={entryOptionClass}>
+                                <span className="block text-lg">让他靠近</span><span className="block text-xs text-neutral-400 mt-2">由他自然地来到你面前</span>
+                            </button>
+                            <button onClick={() => { setSessionInitialState(undefined); setPeekStatus(''); setHasSavedOpening(false); setMode('session'); }} className={entryOptionClass}>
+                                <span className="block text-lg">直接见面</span><span className="block text-xs text-neutral-400 mt-2">不生成开场白，直接开始互动</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 <Modal isOpen={showEntryNotice} title="选择这次见面的开场方式" onClose={dismissEntryNotice}
                     footer={<button onClick={dismissEntryNotice} className="w-full py-3 rounded-2xl bg-slate-800 text-white font-bold">知道了</button>}>
                     <div className="space-y-4 text-sm leading-6 text-slate-600">
+                        <p><strong className="block text-slate-800">接着见他 · 回到未完的那一刻</strong>最近还记得的见面里，若你们中途分开了，可以从停住的地方接着往下走。</p>
                         <p><strong className="block text-slate-800">靠近他 · 你主动走过去</strong>先生成一段开场，看看他此刻在做什么，再由你走过去与他互动。</p>
                         <p><strong className="block text-slate-800">让他靠近 · 他主动来见你</strong>由角色结合上下文，以合理的方式来到你面前并开场，接下来由你回应。</p>
                         <p><strong className="block text-slate-800">直接见面 · 不生成开场白</strong>直接进入对话，你可以输入内容，也可以点“继续”让他先回应。</p>
-                        <p className="text-xs text-slate-400">三种方式都会参考已有上下文，只是开场方式不同，不会清空之前的互动。</p>
+                        <p className="text-xs text-slate-400">四种方式都会参考已有记忆，只是开场不同；「接着见他」会回到同一场未完的见面。</p>
                     </div>
                 </Modal>
             </div>
@@ -1109,6 +1181,7 @@ const DateApp: React.FC = () => {
                     userProfile={userProfile}
                     messages={dateMessages}
                     peekStatus={peekStatus}
+                    initialState={sessionInitialState}
                     encounterId={encounterIdRef.current}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
