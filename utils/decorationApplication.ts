@@ -31,7 +31,7 @@ export async function prepareDecorationApplication(
         return portable.get(bubble.id)!;
     };
     const sourceOrigin = originKey(origin);
-    const bubbleOnly = !validated.parts.css && !validated.parts.layout;
+    const bubbleOnly = validated.parts.css === undefined && !validated.parts.layout;
     for (const character of targets) {
         // CSS, sounds and background preservation are still computed separately for each character.
         const changes = await decorationPatches(validated, parts.filter(part => part !== 'bubbles'), 'character', character, theme);

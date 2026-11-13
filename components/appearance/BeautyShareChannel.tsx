@@ -49,7 +49,7 @@ import { BeautyRepoLibrary } from '../share/BeautyRepoInvitation';
 import BeautyWardrobe, { type WardrobeEntry } from './BeautyWardrobe';
 import DecorationDraftEditor from '../chat/DecorationDraftEditor';
 import {readDecorationFile,portableDecoration,readBubbleDecoration} from '../../utils/chatDecoration';
-import {readDecorationOrigin,writeDecorationOrigin,saveLibraryDecoration,saveLibraryDecorationBatch,canEditDecoration,importedOrigin,type DecorationOrigin} from '../../utils/decorationLibrary';
+import {readDecorationOrigin,writeDecorationOrigin,saveLibraryDecoration,saveLibraryDecorationBatch,importedOrigin,type DecorationOrigin} from '../../utils/decorationLibrary';
 import {shareOrDownloadBlob} from '../../utils/shareExport';
 import {safeShareFileName,isPng,pngHasShare,extractShareFromPng} from '../../utils/pngShare';
 import {snapshotDecoration} from '../../utils/chatDecoration';
@@ -156,8 +156,8 @@ export default function BeautyShareChannel({ presets, onExport, onImport, onBusy
   const refreshSaved=async()=>setSaved(await readLibraryDecorations());
   const editEntry=async(entry:WardrobeEntry)=>{
     setBusy(true);onBusyChange(true);setError('');
-    if(mode==='atelier'&&entry.kind==='chat-decoration'){try{const preset=validateDecoration(await(entry.readLocal||entry.read)());const component=ATELIER_CSS_COMPONENTS.find(([kind])=>readComposedCss(preset.parts.css||'',kind));if(component&&composedCssOnly(preset.parts.css||'')){const key=await entry.attributionKey();const origin=await readDecorationOrigin(key);if(!canEditDecoration(origin))throw Error('作者禁止二改');setAtelierSpecial({kind:component[0],preset,origin,originalKey:entry.id.startsWith('local-chat-')?key:undefined});setBusy(false);onBusyChange(false);return;}}catch(e){setError(e instanceof Error?e.message:'作品读取失败');setBusy(false);onBusyChange(false);return;}}
-    try{const key=await entry.attributionKey();const origin=await readDecorationOrigin(key);if(!canEditDecoration(origin))throw Error('作者禁止二改，这份作品已锁定编辑');if(entry.kind==='appearance'){setDesktopEdit({entry,name:entry.name,origin,useCurrent:false});return;}const preset=validateDecoration(await (entry.readLocal || entry.read)());const categories=decorationCategories(preset).filter(item=>item!=='chat');const maker=(categories.length===1?categories[0]:'whitebox') as DecorationWorkshop;setDraft({preset:projectWorkshopPreset(preset,maker),origin,originalKey:entry.id.startsWith('local-chat-')?key:undefined,originalEntryId:entry.id,maker});}
+    if(mode==='atelier'&&entry.kind==='chat-decoration'){try{const preset=validateDecoration(await(entry.readLocal||entry.read)());const component=ATELIER_CSS_COMPONENTS.find(([kind])=>readComposedCss(preset.parts.css||'',kind));if(component&&composedCssOnly(preset.parts.css||'')){const key=await entry.attributionKey();const origin=await readDecorationOrigin(key);setAtelierSpecial({kind:component[0],preset,origin,originalKey:entry.id.startsWith('local-chat-')?key:undefined});setBusy(false);onBusyChange(false);return;}}catch(e){setError(e instanceof Error?e.message:'作品读取失败');setBusy(false);onBusyChange(false);return;}}
+    try{const key=await entry.attributionKey();const origin=await readDecorationOrigin(key);if(entry.kind==='appearance'){setDesktopEdit({entry,name:entry.name,origin,useCurrent:false});return;}const preset=validateDecoration(await (entry.readLocal || entry.read)());const categories=decorationCategories(preset).filter(item=>item!=='chat');const maker=(categories.length===1?categories[0]:'whitebox') as DecorationWorkshop;setDraft({preset:projectWorkshopPreset(preset,maker),origin,originalKey:entry.id.startsWith('local-chat-')?key:undefined,originalEntryId:entry.id,maker});}
     catch(e){setError(e instanceof Error?e.message:'无法打开编辑');}finally{setBusy(false);onBusyChange(false);}
   };
   const customize=async()=>{setBusy(true);setError('');try{

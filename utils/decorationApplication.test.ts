@@ -20,6 +20,15 @@ const preset = (bubble = PRESET_THEMES.dream, more = {}) => validateDecoration({
 beforeEach(() => vi.clearAllMocks());
 
 describe('装扮应用共享气泡', () => {
+    it('显式空 CSS 视为清除，不再保留旧头像框', async () => {
+        const previous = { ...structuredClone(PRESET_THEMES.default), id: 'prev', type: 'custom' as const };
+        previous.user.avatarDecoration = 'data:image/png;base64,AA==';
+        const cleared = validateDecoration({ format: 'sullyos-chat-decoration', version: 1, name: '默认', parts: { bubbles: structuredClone(PRESET_THEMES.default), css: '' } });
+        const result = await prepareDecorationApplication(cleared, ['bubbles', 'css'], [{ ...chars[0], bubbleStyle: 'prev' }], base, [previous], self, readSelf);
+        expect(result.prepared[0].changes.character.chromeCustomCss).toBe('');
+        expect(result.prepared[0].changes.character.bubbleStyle).not.toBe('prev');
+        expect(result.bubbles[0].user.avatarDecoration).toBeUndefined();
+    });
     it('12 个角色只安装一份，重复应用和另一个角色继续复用同一 ID', async () => {
         const first = await prepareDecorationApplication(preset(), ['bubbles'], chars, base, [], self, readSelf);
         expect(first.bubbles).toHaveLength(1);

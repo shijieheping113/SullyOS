@@ -1,7 +1,7 @@
 import {UPLOADED_AVATAR_FRAME_STYLE} from '../../utils/avatarFrameUpload';
 import AtelierIcon from './appearance/AtelierIcon';
 import {ChatAppearanceModeSwitch,useChatAppearance} from './appearance/ChatAppearanceMode';
-import {readDecorationOrigin,writeDecorationOrigin,importedOrigin,remixOrigin,canEditDecoration} from '../../utils/decorationLibrary';
+import {readDecorationOrigin,writeDecorationOrigin,importedOrigin,remixOrigin} from '../../utils/decorationLibrary';
 import { avatarDecorationImageStyle } from '../../utils/anniversaryGifts';
 
 
@@ -834,7 +834,6 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
         let savedTheme=editingTheme;
         try{
             const origin=existing?await readDecorationOrigin('bubble-'+editingTheme.id):{kind:'self' as const};
-            if(!canEditDecoration(origin)){addToast('作者禁止二改，这份作品已锁定编辑','error');return;}
             if(origin.kind==='imported')savedTheme={...editingTheme,id:'custom-'+crypto.randomUUID()};
             await addCustomTheme(savedTheme);await writeDecorationOrigin('bubble-'+savedTheme.id,remixOrigin(origin));
             setEditingTheme(savedTheme);

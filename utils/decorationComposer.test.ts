@@ -27,7 +27,7 @@ it('recovers the current legacy psyche CSS without a matching library preset and
   expect(document.querySelector('[aria-label="心象 CSS"]')).toBeNull();
  }finally{await act(async()=>root.unmount());host.remove();}
 });
-it('keeps the preview mounted, combines a permitted preset, and rejects a locked one',async()=>{
+it('keeps the preview mounted, combines a permitted preset, and composes a locked one too',async()=>{
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
  const source=(id:string,name:string)=>({id,name,kind:'chat-decoration' as const,categories:['psyche' as const],attributionKey:async()=>id,read:async()=>({format:'sullyos-chat-decoration',version:1,name,parts:{psyche:{styleId:'echo'}}})});
  mocks.origin.mockImplementation(async(key:string)=>({kind:'imported',allowRemix:key!=='locked',credit:key}));
@@ -35,12 +35,13 @@ it('keeps the preview mounted, combines a permitted preset, and rejects a locked
  try{
   await act(async()=>root.render(React.createElement(DecorationDraftEditor,{preset:{format:'sullyos-chat-decoration',version:1,name:'测试组合',parts:{css:''}},origin:{kind:'self'},theme:{} as any,sources:[source('allowed','允许作品'),source('locked','锁定作品')],onClose:()=>{},onOpenWorkshop:()=>{},onSaved:()=>{}})));
   expect(document.querySelector('textarea')).toBeNull();
-  expect(document.querySelectorAll('.decoration-current-grid>button')).toHaveLength(6);
+  expect(document.querySelectorAll('.decoration-current-grid>.atelier-component-row')).toHaveLength(6);
   const preview=document.querySelector('[data-testid=preview]');
   expect(preview?.getAttribute('data-scope')).toBe('all');
   await click('心象');await click('锁定作品');
-  expect(document.body.textContent).toContain('作者禁止二改');expect(preview?.textContent).not.toContain('psyche');
-  await click('允许作品');expect(preview?.textContent).toContain('echo');
+  expect(document.body.textContent).not.toContain('作者禁止二改');
+  expect(document.body.textContent).toContain('锁定作品');
+  await click('心象');await click('允许作品');expect(preview?.textContent).toContain('echo');
   expect(document.querySelector('textarea')).toBeNull();
   expect(document.querySelector('[data-testid=preview]')).toBe(preview);
   await click('应用搭配');

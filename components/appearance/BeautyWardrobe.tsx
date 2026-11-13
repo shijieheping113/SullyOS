@@ -10,7 +10,7 @@ import './BeautyWardrobe.css';
 import {useAtelierSurface,useChatAppearance} from '../chat/appearance/ChatAppearanceMode';
 import { BeautyRepoBadge } from '../share/BeautyRepoInvitation';
 import {hasFileOnlyComponents} from '../../utils/atelierComponentCss';
-import {readDecorationOrigin,originLabel,canEditDecoration,type DecorationOrigin} from '../../utils/decorationLibrary';
+import {readDecorationOrigin,originLabel,type DecorationOrigin} from '../../utils/decorationLibrary';
 
 export interface WardrobeEntry extends BeautySource { attributionKey: () => Promise<string>; contents?: string; readLocal?: () => Promise<unknown> }
 interface WardrobeActions {getUsage?:WardrobeUsageReader;onEdit?:(entry:WardrobeEntry)=>void;onExport?:(entry:WardrobeEntry)=>void;onShare?:(entry:WardrobeEntry)=>void;onDelete?:(entry:WardrobeEntry)=>void;onUpdate?:(entry:WardrobeEntry)=>void|Promise<void>}
@@ -41,7 +41,7 @@ function WardrobeTile({ entry, onOpen, getUsage, ...actions }: WardrobeActions &
     <div className="wardrobe-cover" aria-hidden="true">
       {loaded ? <BeautyPresetPreview data={loaded.pack} compact/> : <span className="wardrobe-placeholder">{error ? '点按重试预览' : '预览载入中'}</span>}
     </div>
-    <strong>{entry.name}</strong>{usage&&<span className="wardrobe-usage">{usage}</span>}<span className="wardrobe-credit">{loaded ? `${originLabel(loaded.origin)}${loaded.origin.credit?' · '+loaded.origin.credit:''}${!canEditDecoration(loaded.origin)?' · 禁止二改':''}` : error ? '读取失败 · 可重试或删除' : '正在读取来源'}</span>
+    <strong>{entry.name}</strong>{usage&&<span className="wardrobe-usage">{usage}</span>}<span className="wardrobe-credit">{loaded ? `${originLabel(loaded.origin)}${loaded.origin.credit?' · '+loaded.origin.credit:''}` : error ? '读取失败 · 可重试或删除' : '正在读取来源'}</span>
   </button>{error&&<p className="wardrobe-credit" role="alert">{error}</p>}<CardActions entry={entry} origin={loaded?.origin} {...actions}/ >{loaded?.share && <BeautyRepoBadge share={loaded.share}/>}</article>;
 }
 
@@ -54,7 +54,7 @@ function CardActions({entry,origin,onEdit,onExport,onShare,onDelete,onUpdate}:Wa
   if(origin.kind==='builtin')return mode==='atelier'&&onEdit?<div className="wardrobe-card-actions"><button onClick={()=>onEdit(entry)}>编辑并另存</button></div>:null;
  return <div className="wardrobe-card-actions" aria-label={`${entry.name}的操作`}>
   {origin.kind==='imported'&&origin.share&&onUpdate&&<button disabled={checking} onClick={async()=>{setChecking(true);try{await onUpdate(entry);}finally{setChecking(false);}}}>{checking?'检查中…':'检查更新'}</button>}
-   {onEdit&&<button disabled={!canEditDecoration(origin)} title={!canEditDecoration(origin)?'作者禁止二改':undefined} onClick={()=>onEdit(entry)}>编辑</button>}
+   {onEdit&&<button onClick={()=>onEdit(entry)}>编辑</button>}
    {mode==='atelier'&&onExport&&origin.allowRedistribute!==false&&<button onClick={()=>onExport(entry)}>导出</button>}
    {origin.kind==='self'&&onShare&&!hasFileOnlyComponents(entry.revision)&&<button onClick={()=>onShare(entry)}>分享</button>}
   {onDelete&&<button className="is-danger" onClick={()=>onDelete(entry)}>删除</button>}
@@ -92,7 +92,7 @@ function WardrobeDetail({ entry, initial, onClose, onApply,onEdit,onExport,onSha
     <div className="wardrobe-detail-scroll">
       <div className="wardrobe-detail-stage">{loaded ? <BeautyPresetPreview data={loaded.pack}/> : error ? <div role="alert"><p>{error}</p><button onClick={() => setAttempt(v => v + 1)}>重新载入</button></div> : <p role="status">正在载入预览…</p>}</div>
       <div className="wardrobe-detail-info"><h2 id="wardrobe-detail-title">{entry.name}</h2><p>{metadata ? `作者 · ${metadata.credit}` : '保存在这台设备上的装扮'}</p>
-        {loaded&&<p>{originLabel(loaded.origin)}{!canEditDecoration(loaded.origin)?' · 作者禁止二改，编辑已锁定':''}</p>}
+        {loaded&&<p>{originLabel(loaded.origin)}</p>}
         <CardActions entry={entry} origin={loaded?.origin} onEdit={onEdit?item=>{onClose();onEdit(item);}:undefined} onExport={onExport} onShare={onShare?item=>{onClose();onShare(item);}:undefined} onUpdate={onUpdate?item=>{onClose();onUpdate(item);}:undefined} onDelete={onDelete?item=>{onClose();onDelete(item);}:undefined}/>
         {entry.contents && <p>会应用：{entry.contents}。按作者提供的完整作品应用。</p>}
         {metadata && <details><summary>作者留言与使用规范</summary>
