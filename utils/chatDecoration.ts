@@ -10,6 +10,7 @@ import {resolveActiveSound,stripWhiteboxSoundDirective,decodeSoundShare,parseWhi
 import {resolveRefToDataUrl,blobToDataUrl,migrateDataUrlToRef,migrateChatThemeBlobRefs} from './blobRef';
 import {extractShareFromPng,isPng,pngHasShare,SHARE_KINDS} from './pngShare';
 import {replaceWorkshopCss,workshopBlock} from './decorationWorkshop';
+import {COMPOSED_CSS_KINDS,composedCssOnly,writeComposedCss,type ComposedCssComponent} from './atelierComponentCss';
 
 // Explicit allowlist: presets never carry API keys, character prompts, history or system settings.
 export const LAYOUT_DEFAULTS = {
@@ -136,10 +137,10 @@ export async function decorationPatches(preset:DecorationPreset,parts:Decoration
  if(parts.includes('bubbles')&&p.bubbles){bubble=await migrateChatThemeBlobRefs({...p.bubbles,id:'decoration-'+crypto.randomUUID(),type:'custom'});if(scope==='global')theme.chatDefaultBubbleStyle=bubble.id;else character.bubbleStyle=bubble.id;}
  if(parts.includes('background')&&p.background){const ref=p.background.image?await migrateDataUrlToRef(p.background.image):'';if(scope==='global'){theme.chatBackground=ref;theme.chatBackgroundStyle=p.background.style;}else{character.chatBackground=ref;character.chatAppearance={...(character.chatAppearance||char.chatAppearance),chatBackgroundStyle:p.background.style};}}
  if(parts.includes('css')&&p.css!==undefined){
-  const blocks=[...p.css.matchAll(/\/\* sully-composer:(avatar|background) \*\/\n?([\s\S]*?)\/\* end-sully-composer:\1 \*\//g)];
-  const scopedOnly=blocks.length>0&&!p.css.replace(workshopBlock('avatar'),'').replace(workshopBlock('background'),'').trim();
+   const blocks=[...p.css.matchAll(new RegExp(`/\\* sully-composer:(${COMPOSED_CSS_KINDS}) \\*/\\n?([\\s\\S]*?)/\\* end-sully-composer:\\1 \\*/`,'g'))];
+   const scopedOnly=composedCssOnly(p.css);
   let appliedCss=p.css;
-  if(scopedOnly){appliedCss=scope==='global'?base.chatChromeCustomCss||'':char.chromeCustomCss||'';for(const block of blocks)appliedCss=replaceWorkshopCss(appliedCss,block[1] as 'avatar'|'background',block[2]);}
+   if(scopedOnly){appliedCss=scope==='global'?base.chatChromeCustomCss||'':char.chromeCustomCss||'';for(const block of blocks)appliedCss=writeComposedCss(appliedCss,block[1] as ComposedCssComponent,block[2]);}
   appliedCss=await localizeCssImages(appliedCss);
   // Importing just CSS must not silently change the current sound stored in a CSS comment.
   const keep=scope==='global'?resolveActiveSound(undefined,undefined,base.chatChromeCustomCss,base.chatSound):resolveActiveSound(char.chromeCustomCss,char.chatSound,base.chatChromeCustomCss,base.chatSound);

@@ -5,7 +5,7 @@ import {LAYOUT_DEFAULTS, pickDecorationLayout, resolveDecorationTheme} from './c
 import {mergeChatFineTune} from './chatFineTuneCss';
 import {resolvePsycheAppearance} from './psycheAppearance';
 import {resolveActiveSound, stripWhiteboxSoundDirective} from './whiteboxSound';
-import {workshopBlock} from './decorationWorkshop';
+import {COMPOSED_CSS_KINDS,composedCssOnly,readComposedCss,type ComposedCssComponent} from './atelierComponentCss';
 import {resolveRefToDataUrl, blobToDataUrl} from './blobRef';
 import {portableCssImages} from './cssImageAssets';
 
@@ -68,9 +68,9 @@ export function createWardrobeUsageReader(theme: OSTheme, char: CharacterProfile
     if(['date','story','schedule','journal'].includes(key))expected=app(value,key==='date'||key==='story'?'none':'original');
     if(key==='css'){
      const source=String(value||'');
-     const blocks=[...source.matchAll(/\/\* sully-composer:(avatar|background) \*\/\n?([\s\S]*?)\/\* end-sully-composer:\1 \*\//g)];
-     if(blocks.length&&!source.replace(workshopBlock('avatar'),'').replace(workshopBlock('background'),'').trim()){
-      for(const block of blocks){const installed=[...String(actual).matchAll(workshopBlock(block[1] as 'avatar'|'background'))].map(m=>m[1]).join('\n');matches.push(await equal(targetAvatarFrameCss(css(block[2]),'both').trim(),targetAvatarFrameCss(css(installed),'both').trim()));}
+     const blocks=[...source.matchAll(new RegExp(`/\\* sully-composer:(${COMPOSED_CSS_KINDS}) \\*/\\n?([\\s\\S]*?)/\\* end-sully-composer:\\1 \\*/`,'g'))];
+     if(blocks.length&&composedCssOnly(source)){
+      for(const block of blocks){const installed=readComposedCss(String(actual),block[1] as ComposedCssComponent);matches.push(await equal(targetAvatarFrameCss(css(block[2]),'both').trim(),targetAvatarFrameCss(css(installed),'both').trim()));}
       continue;
      }
      expected=css(source);actual=css(actual);

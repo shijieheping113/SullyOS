@@ -1,5 +1,7 @@
 import {expect,it} from 'vitest';
-import {makeWorkshopPreset,projectWorkshopPreset,replaceWorkshopCss,checkWorkshopCss} from './decorationWorkshop';
+import {makeWorkshopPreset,projectWorkshopPreset,replaceWorkshopCss,workshopPreview,checkWorkshopCss} from './decorationWorkshop';
+import {PRESET_THEMES} from '../components/chat/ChatConstants';
+import {validateDecoration} from './chatDecoration';
 import {decorationPatches} from './chatDecoration';
 import {decorationCategories} from './beautyCategories';
 
@@ -42,4 +44,30 @@ it('summarizes repeated validation problems instead of flooding the editor',()=>
   expect((e as Error).message.split('超出限定范围')).toHaveLength(4);
   expect((e as Error).message).toContain('其余提示已收起');
  }
+});
+it('shows an empty avatar editor without saving the preview fallback',()=>{
+ const empty=projectWorkshopPreset(makeWorkshopPreset('avatar'),'avatar');
+ expect(empty.parts).toEqual({});
+ expect(()=>validateDecoration(workshopPreview(empty,'avatar'))).not.toThrow();
+ expect(empty.parts).toEqual({});
+});
+it('previews every empty standalone maker without writing invented content into its preset',()=>{
+ for(const category of ['whitebox','avatar','background','psyche','sound','bubbles','collaboration','date','story','schedule','journal'] as const){
+  const preset=projectWorkshopPreset(makeWorkshopPreset(category),category),before=JSON.stringify(preset);
+  expect(()=>validateDecoration(workshopPreview(preset,category))).not.toThrow();
+  expect(JSON.stringify(preset)).toBe(before);
+ }
+});
+it('preserves existing image avatar frames and previews them on the current outfit',()=>{
+ const current=makeWorkshopPreset('whitebox');current.parts.bubbles=structuredClone(PRESET_THEMES.default);
+ current.parts.bubbles.ai.avatarDecoration='data:image/png;base64,AA==';current.parts.bubbles.ai.avatarDecorationScale=1.2;
+ current.parts.css='.sully-chat-header{color:red}';current.parts.background={image:null,style:'plain'};
+ const isolated=projectWorkshopPreset(current,'avatar');
+ expect(isolated.parts.bubbles?.ai.avatarDecoration).toBe('data:image/png;base64,AA==');
+ expect(isolated.parts.css).toBeUndefined();
+ const preview=workshopPreview(isolated,'avatar',current);
+ expect(preview.parts.css).toContain('color:red');expect(preview.parts.background).toEqual(current.parts.background);
+ current.parts.bubbles.user.backgroundColor='#123456';
+ expect(workshopPreview(isolated,'avatar',current).parts.bubbles?.user.backgroundColor).toBe('#123456');
+ expect(isolated.parts.background).toBeUndefined();
 });

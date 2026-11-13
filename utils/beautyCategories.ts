@@ -1,10 +1,12 @@
 import type { DecorationPreset } from './chatDecoration';
+import {ATELIER_CSS_COMPONENTS,COMPOSED_CSS_KINDS,readComposedCss} from './atelierComponentCss';
 export const BEAUTY_CATEGORIES = [['all', '全部'], ['appearance', '桌面主题'], ['chat', '全部聊天'], ['whitebox', '白框'], ['bubbles', '气泡'], ['avatar', '头像框'], ['background', '聊天背景'], ['psyche', '心象'], ['sound', '提示音'], ['collaboration', '协同工作'], ['date', '见面界面'], ['story', '剧情界面'], ['schedule', '日程表'], ['journal', '交换日记']] as const;
-export type BeautyCategory = typeof BEAUTY_CATEGORIES[number][0];
+export type BeautyCategory = typeof BEAUTY_CATEGORIES[number][0] | typeof ATELIER_CSS_COMPONENTS[number][0];
 /** Classify structured content only. Never try to split or infer the scope of arbitrary CSS. */
 export function decorationCategories(preset: DecorationPreset): BeautyCategory[] {
   const p = preset.parts; if(p.collaboration)return ['collaboration']; if(p.date)return ['date']; if(p.story)return ['story']; if(p.schedule||p.journal)return [...(p.schedule?['schedule' as const]:[]),...(p.journal?['journal' as const]:[])]; const categories: BeautyCategory[] = ['chat'];
-  const extraCss=(p.css||'').replace(/\/\* sully-composer:(avatar|background) \*\/[\s\S]*?\/\* end-sully-composer:\1 \*\//g,'').trim();
+  const extraCss=(p.css||'').replace(new RegExp(`/\\* sully-composer:(${COMPOSED_CSS_KINDS}) \\*/[\\s\\S]*?/\\* end-sully-composer:\\1 \\*/`,'g'),'').trim();
+  for(const [kind] of ATELIER_CSS_COMPONENTS)if(readComposedCss(p.css||'',kind))categories.push(kind);
   if (p.layout || extraCss || Object.keys(p).filter(key=>key!=='css').length > 1) categories.push('whitebox');
   if (p.psyche) categories.push('psyche');
   if (p.bubbles) categories.push('bubbles');
@@ -15,6 +17,7 @@ export function decorationCategories(preset: DecorationPreset): BeautyCategory[]
 }
 export function decorationContents(preset: DecorationPreset): string {
   const p = preset.parts; const labels: string[] = [];
+  for(const [kind,label] of ATELIER_CSS_COMPONENTS)if(readComposedCss(p.css||'',kind))labels.push(label);
   if(p.collaboration)labels.push('协同工作（全局）'); if(p.date)labels.push('见面界面'); if(p.story)labels.push('剧情界面（全局）');
   if (p.journal) labels.push('交换日记（全局）');
   if (p.schedule) labels.push('日程表（全局）');
@@ -24,7 +27,7 @@ export function decorationContents(preset: DecorationPreset): string {
   if (p.bubbles?.user.avatarDecoration || p.bubbles?.ai.avatarDecoration || p.css?.includes('/* sully-composer:avatar */')) labels.push('头像框');
   if (p.background || p.css?.includes('/* sully-composer:background */')) labels.push('聊天背景');
   if (p.sound !== undefined) labels.push('提示音');
-  if (p.css?.replace(/\/\* sully-composer:(avatar|background) \*\/[\s\S]*?\/\* end-sully-composer:\1 \*\//g,'').trim()) labels.push('白框 / 自定义样式（以预览为准）');
+  if (p.css?.replace(new RegExp(`/\\* sully-composer:(${COMPOSED_CSS_KINDS}) \\*/[\\s\\S]*?/\\* end-sully-composer:\\1 \\*/`,'g'),'').trim()) labels.push('白框 / 自定义样式（以预览为准）');
   return labels.join(' · ') || '作者提供的聊天样式';
 }
 

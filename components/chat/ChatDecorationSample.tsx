@@ -17,18 +17,15 @@ import {validateDecoration} from '../../utils/chatDecoration';
 import {buildChatFineTuneCss} from '../../utils/chatFineTuneCss';
 import {CHAT_PREVIEW_SCENES} from '../../utils/chatPreviewFixtures';
 import {BEAUTY_PREVIEW_AVATAR} from '../../utils/beautyPreviewAssets';
-import type {CharacterBuff} from '../../types';
 import baseCss from './chatPreview.generated.css?inline';
 import cardCss from './ChatCardSurface.css?inline';
 import qixiCss from './QixiEventCard.css?inline';
 import sarCss from '../sar/sar-speech.css?inline';
+import runtimeCss from './chatRuntime.generated.css?inline';
+import {chatSurface} from '../../utils/chatSurface';
+import {startsNewMessageGroup} from '../../utils/chatMessageGrouping';
 
 const noop=()=>{};
-// Fictional fixture states only; never read or update a real character's emotions.
-const previewBuffs:CharacterBuff[]=[
- {id:'preview-calm',name:'preview_calm',label:'安心',emoji:'🍃',color:'#059669',intensity:2},
- {id:'preview-anticipation',name:'preview_anticipation',label:'期待见面',emoji:'✨',color:'#d97706',intensity:2},
-];
 const defaultBubble=PRESET_THEMES.default;
 
 /** Static rendering intentionally never mounts effects or binds actual message actions. */
@@ -62,19 +59,18 @@ export function renderChatDecorationSample(value:unknown,sceneId:string,thumbnai
   {thumbnailPart==='avatar'&&<div className={`sample-avatar sully-chat-message sully-chat-message-${readAvatarFrameTarget(p.css||'')==='user'?'user':'ai'}`}><span className="sully-chat-avatar-wrap" style={{position:'relative',display:'block',width:100,height:100,margin:'auto'}}><img className="sully-chat-message-avatar-img" src={BEAUTY_PREVIEW_AVATAR} alt="示例头像" style={{width:'100%',height:'100%',borderRadius:'50%'}}/>{p.bubbles?.ai.avatarDecoration&&<img className="sully-chat-avatar-frame" src={p.bubbles.ai.avatarDecoration} alt="" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}}/>}</span></div>}
   {thumbnailPart==='psyche'&&<div className="sample-psyche"><ThinkingChainBlock chain="听到开门的声音，忽然想把刚才看到的那朵云也分享给你。" styleId={p.psyche?.styleId} customColors={p.psyche?.customColors}/></div>}
   {thumbnailPart==='bubbles'&&<div className="sully-chat-messages sample-bubbles">{CHAT_PREVIEW_SCENES.find(item=>item.id==='conversation')!.messages.map((message,index)=><MessageItem key={message.id} msg={message} activeTheme={p.bubbles||defaultBubble} isFirstInGroup={index%2===0} isLastInGroup={index%2===1} charAvatar={BEAUTY_PREVIEW_AVATAR} userAvatar={BEAUTY_PREVIEW_AVATAR} charName="示例角色" onLongPress={noop} onReply={noop} selectionMode={false} isSelected={false} onToggleSelect={noop} showTimestamp="never" suppressEntranceAnimation/>)}</div>}
- </main>:<main className="sully-chat-root sample-chat">
-  <ChatHeaderShell selectionMode={false} selectedCount={0} onCancelSelection={noop} activeCharacter={{id:'whitebox-preview',name:'示例角色',avatar:BEAUTY_PREVIEW_AVATAR,activeBuffs:previewBuffs}} isTyping={false} isSummarizing={false} lastTokenUsage={1200} statusText="在线" onClose={noop} onTriggerAI={noop} onShowCharsPanel={noop} hideBuffs={(l.chatHideHeaderBuffs??false)||l.chatEmotionView==='peek'} headerStyle={l.chatHeaderStyle} avatarShape={l.chatAvatarShape} headerAlign={l.chatHeaderAlign} headerDensity={l.chatHeaderDensity} statusStyle={l.chatStatusStyle} chromeStyle={l.chatChromeStyle}/>
-  <div className="sully-chat-messages sample-messages">
+  </main>:<main className={`sully-chat-root sample-chat ${chatSurface(l).className}`} style={chatSurface({...l,chatBackgroundStyle:p.background?.style||'plain'},p.background?.image).style}>
+   <ChatHeaderShell selectionMode={false} selectedCount={0} onCancelSelection={noop} activeCharacter={{id:'whitebox-preview',name:'示例角色',avatar:BEAUTY_PREVIEW_AVATAR}} isTyping={false} isSummarizing={false} lastTokenUsage={null} onClose={noop} onTriggerAI={noop} onShowCharsPanel={noop} hideBuffs={(l.chatHideHeaderBuffs??false)||l.chatEmotionView==='peek'} headerStyle={l.chatHeaderStyle} avatarShape={l.chatAvatarShape} headerAlign={l.chatHeaderAlign} headerDensity={l.chatHeaderDensity} statusStyle={l.chatStatusStyle} chromeStyle={l.chatChromeStyle}/>
+   <div className="sully-chat-messages sample-messages flex-1 overflow-y-auto overflow-x-hidden pt-6 no-scrollbar">
    {(scene.id==='schedule'||scene.id==='all') && <ScheduleChangeNotice onDone={noop} detail={{eventId:'preview',charId:'whitebox-preview',date:'2026-09-26',schedule:{} as any,changes:[{startTime:'18:00',before:'整理房间',after:'一起散步'},{startTime:'20:00',before:'看书',after:'一起看电影'}]}}/>}
-   {messages.map((message,index)=><div key={message.id} data-preview-message={message.id} style={{display:"contents"}}><MessageItem msg={message} isFirstInGroup={index===0||messages[index-1].role!==message.role} isLastInGroup={index===messages.length-1||messages[index+1].role!==message.role} activeTheme={p.bubbles||defaultBubble} charAvatar={BEAUTY_PREVIEW_AVATAR} userAvatar={BEAUTY_PREVIEW_AVATAR} charName="示例角色" onLongPress={noop} onReply={noop} selectionMode={false} isSelected={false} onToggleSelect={noop} avatarShape={l.chatAvatarShape} avatarSize={l.chatAvatarSize} avatarMode={l.chatAvatarMode} bubbleVariant={l.chatBubbleStyle} messageSpacing={l.chatMessageSpacing} showTimestamp={l.chatShowTimestamp} timestampPlacement={l.chatTimestampPlacement} moduleAlign={l.chatModuleAlign} suppressEntranceAnimation thinkingChainOptions={p.psyche} previewExpanded={state.psyche?.[message.id]??scene.expanded} previewTransferOpen={state.transferOpen===String(message.id)} onResolveTransfer={noop} voiceData={scene.voicePlaying?{url:'data:audio/wav;base64,',originalText:'晚安，明天见。',spokenText:'晚安，明天见。'}:undefined} voiceLoading={scene.voiceLoading} isVoicePlaying={scene.voicePlaying} translationEnabled translationExpanded/></div>) }
+    {messages.map((message,index)=><div key={message.id} data-preview-message={message.id} className="transition-all duration-300"><MessageItem msg={message} isFirstInGroup={startsNewMessageGroup(index>0?messages[index-1]:null,message)} isLastInGroup={!messages[index+1]||startsNewMessageGroup(message,messages[index+1])} activeTheme={p.bubbles||defaultBubble} charAvatar={BEAUTY_PREVIEW_AVATAR} userAvatar={BEAUTY_PREVIEW_AVATAR} charName="示例角色" onLongPress={noop} onReply={noop} selectionMode={false} isSelected={false} onToggleSelect={noop} avatarShape={l.chatAvatarShape} avatarSize={l.chatAvatarSize} avatarMode={l.chatAvatarMode} bubbleVariant={l.chatBubbleStyle} messageSpacing={l.chatMessageSpacing} showTimestamp={l.chatShowTimestamp} timestampPlacement={l.chatTimestampPlacement} moduleAlign={l.chatModuleAlign||'center'} suppressEntranceAnimation thinkingChainOptions={p.psyche} previewExpanded={state.psyche?.[message.id]??scene.expanded} previewTransferOpen={state.transferOpen===String(message.id)} onResolveTransfer={noop} voiceData={scene.voicePlaying?{url:'data:audio/wav;base64,',originalText:'晚安，明天见。',spokenText:'晚安，明天见。'}:undefined} voiceLoading={scene.voiceLoading} isVoicePlaying={scene.voicePlaying} translationEnabled translationExpanded/></div>) }
   </div>
-  <ChatInputArea input="" setInput={noop} isTyping={false} selectionMode={false} showPanel={state.panel?"actions":"none"} previewActionsPage={state.actionsPage} setShowPanel={noop} onSend={noop} onDeleteSelected={noop} selectedCount={0} emojis={[]} onPanelAction={noop} onImageSelect={noop} isSummarizing={false} onReroll={noop} canReroll={false} inputStyle={l.chatInputStyle} sendButtonStyle={l.chatSendButtonStyle} chromeStyle={l.chatChromeStyle}/>
+   <ChatInputArea input="" setInput={noop} isTyping={false} selectionMode={false} showPanel={state.panel?"actions":"none"} previewActionsPage={state.actionsPage} setShowPanel={noop} onSend={noop} onDeleteSelected={noop} selectedCount={0} emojis={[]} onPanelAction={noop} onImageSelect={noop} isSummarizing={false} onReroll={noop} canReroll={false} onToggleVoice={noop} inputStyle={l.chatInputStyle} sendButtonStyle={l.chatSendButtonStyle} chromeStyle={l.chatChromeStyle}/>
  </main>);
- const background=p.background?.image?`url(${JSON.stringify(p.background.image)}) center/cover`:'#f4f2f5';
- return {markup,css:`${baseCss}\n${cardCss}\n${qixiCss}\n${sarCss}
- .beauty-preview-body{width:360px;height:600px;font:14px/1.6 system-ui;--app-font:system-ui;--safe-top:0px;--safe-bottom:0px;--primary-hue:265;--primary-sat:30%;--primary-lightness:60%;}
- .sample-chat{height:600px;display:flex;flex-direction:column;background:${background};overflow:hidden;position:relative;color:#38323e}
- .sample-messages{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 0 28px}
+  return {markup,css:`${baseCss}\n${runtimeCss}\n${cardCss}\n${qixiCss}\n${sarCss}
+  .beauty-preview-body{width:360px;height:600px;font-family:var(--app-font,system-ui);font-size:inherit;line-height:1.5;--safe-top:0px;--safe-bottom:0px;}
+  .sample-chat{height:600px;display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .sample-messages{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:24px 0 0}
  .sample-chat .sully-schedule-change{transform:translateX(-50%)}
  ${scene.id==='all'?'.sample-chat .sully-schedule-change{position:relative;left:auto;top:auto;transform:none;margin:0 auto 16px}':''}
  ${buildChatFineTuneCss(l)}

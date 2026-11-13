@@ -321,7 +321,7 @@ const ChoiceGroup: React.FC<{
 );
 
 
-export default function ChatLayoutSettings({theme,updateTheme}:{theme:OSTheme;updateTheme:(patch:Partial<OSTheme>)=>void}){
+export default function ChatLayoutSettings({theme,updateTheme,group}:{theme:OSTheme;updateTheme:(patch:Partial<OSTheme>)=>void;group?:string}){
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
     const avatarMode = theme.chatAvatarMode || defaults.chatAvatarMode;
@@ -341,7 +341,7 @@ export default function ChatLayoutSettings({theme,updateTheme}:{theme:OSTheme;up
     const showHeaderBuffs = theme.chatHideHeaderBuffs !== true;
     const emotionView = theme.chatEmotionView === 'peek' ? 'peek' : (showHeaderBuffs ? 'header' : 'hidden');
 
-return <div><details className="chat-decoration-layout-group"><summary>内置布局</summary><div>
+const content=<div><details className="chat-decoration-layout-group"><summary>内置布局</summary><div>
                     <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {presets.map((preset) => (
@@ -424,4 +424,8 @@ return <div><details className="chat-decoration-layout-group"><summary>内置布
                         <ChoiceGroup title="发送按钮" items={choices.send} value={sendButtonStyle} onPick={(value) => updateTheme({ chatSendButtonStyle: value as OSTheme['chatSendButtonStyle'] })} />
                     </div>
                 </div></details></div>;
+ if(!group)return content;
+ const selected=React.Children.toArray(content.props.children).find(child=>React.isValidElement(child)&&React.Children.toArray((child.props as any).children).some(item=>React.isValidElement(item)&&item.type==='summary'&&(item.props as any).children===group));
+ if(!React.isValidElement(selected))return content;
+ return <div className="atelier-layout-group-content">{React.Children.toArray((selected.props as any).children).filter(item=>!React.isValidElement(item)||item.type!=='summary')}</div>;
 }

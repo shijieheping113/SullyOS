@@ -3,17 +3,21 @@ import type { BeautyCategory } from './beautyCategories';
 import { LAYOUT_DEFAULTS } from './chatDecoration';
 import { replaceWorkshopCss } from './decorationWorkshop';
 import { resolveActiveSound, stripWhiteboxSoundDirective } from './whiteboxSound';
+import {writeComposedCss} from './atelierComponentCss';
 
 /** Explicit defaults override inherited global settings; saved presets remain intact. */
 export function resetChatDecoration(category: BeautyCategory, char: CharacterProfile, theme: OSTheme, activeBubble: ChatTheme) {
     const character: Partial<CharacterProfile> = {};
     let bubble: ChatTheme | undefined;
     const effectiveCss = stripWhiteboxSoundDirective([char.chatDecorationCssIsolated ? '' : theme.chatChromeCustomCss, char.chromeCustomCss].filter(Boolean).join('\n'));
-    if (category === 'avatar' || category === 'background') {
+    if (category === 'avatar' || category === 'background' || category==='motion'||category==='transfer'||category==='voice') {
         character.chatSound = resolveActiveSound(char.chromeCustomCss, char.chatSound, theme.chatChromeCustomCss, theme.chatSound) || { src: 'none' };
         character.chatSoundBound = false;
     }
-    if (category === 'avatar') {
+    if(category==='motion'||category==='transfer'||category==='voice'){
+        character.chromeCustomCss=writeComposedCss(effectiveCss,category,'');
+        character.chatDecorationCssIsolated=true;
+    } else if (category === 'avatar') {
         bubble = structuredClone(activeBubble);
         bubble.id = 'decoration-reset-' + crypto.randomUUID();
         bubble.name += '（无头像框）';

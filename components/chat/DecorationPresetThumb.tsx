@@ -4,20 +4,22 @@ import BeautyPresetPreview from '../share/BeautyPresetPreview';
 import type {WardrobeEntry} from '../appearance/BeautyWardrobe';
 import {validateDecoration,type DecorationPreset} from '../../utils/chatDecoration';
 import {PRESET_THEMES} from './ChatConstants';
+import {readComposedCss,writeComposedCss,type AtelierCssComponent} from '../../utils/atelierComponentCss';
 
-export type DecorationShelf='whitebox'|'bubbles'|'avatar'|'background'|'psyche'|'sound'|'schedule'|'journal'|'date'|'story'|'collaboration';
+export type DecorationShelf='whitebox'|'bubbles'|'avatar'|'background'|'psyche'|'sound'|'schedule'|'journal'|'date'|'story'|'collaboration'|AtelierCssComponent;
 
 /** Show the selected part using the same renderer as the main preview. */
 export function DecorationMiniPreview({preset,category}:{preset:DecorationPreset;category:DecorationShelf}){
  const sample=useMemo(()=>{
   if(category==='whitebox'||category==='collaboration')return preset;
+  if(category==='motion'||category==='transfer'||category==='voice')return {...preset,parts:{css:writeComposedCss('',category,readComposedCss(preset.parts.css||'',category))}};
   const parts:DecorationPreset['parts']=category==='date'?{date:preset.parts.date||{preset:'none'}}:category==='story'?{story:preset.parts.story||{preset:'none'}}:category==='journal'?{journal:preset.parts.journal||{preset:'original'}}:category==='schedule'?{schedule:preset.parts.schedule||{preset:'original'}}:category==='psyche'?{psyche:preset.parts.psyche||{styleId:'echo'}}:
    category==='avatar'?{bubbles:preset.parts.bubbles||PRESET_THEMES.default,css:preset.parts.css}:category==='bubbles'?{bubbles:preset.parts.bubbles||PRESET_THEMES.default}:
    category==='background'?{background:preset.parts.background||{image:null,style:'plain'},css:preset.parts.css}:{};
   return {...preset,parts};
  },[preset,category]);
  if(category==='sound')return <div className="decoration-sound-thumb" aria-hidden="true"><svg viewBox="0 0 80 48" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round"><path d="M8 21v6m10-12v18m11-23v28m11-34v40m11-32v24m11-19v14m10-10v6"/></svg><small>{preset.parts.sound?.src&&preset.parts.sound.src!=='none'?'消息提示音':'默认提示音'}</small></div>;
- return <div className="decoration-mini-preview" aria-hidden="true"><BeautyPresetPreview data={sample} compact thumbnailPart={category==='whitebox'?'full':category}/></div>;
+  return <div className="decoration-mini-preview" aria-hidden="true"><BeautyPresetPreview data={sample} compact thumbnailPart={category==='whitebox'||category==='motion'||category==='transfer'||category==='voice'?'full':category}/></div>;
 }
 
 export default function DecorationPresetThumb({getUsage,entry,category,disabled,onChoose}:{getUsage?:WardrobeUsageReader;entry:WardrobeEntry;category:DecorationShelf;disabled:boolean;onChoose:()=>void}){

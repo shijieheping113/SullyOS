@@ -1,4 +1,5 @@
 import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
+import {useAtelierSurface,useChatAppearance,ChatAppearanceModeSwitch} from './appearance/ChatAppearanceMode';
 import PsycheAppearanceEditor from './PsycheAppearanceEditor';
 import {resolvePsycheAppearance} from '../../utils/psycheAppearance';
 import React, {useState} from 'react';
@@ -23,9 +24,10 @@ interface Props {
  onSaveBubble:(bubble:ChatTheme)=>void|Promise<void>;
  updateTheme:(patch:Partial<OSTheme>)=>void|Promise<void>;
  onBgUpload:(file:File)=>void; backgroundUrl?:string|null;
- onOpenWorkshop:()=>void; onClose:()=>void; initialTab?:DecorationTab;
+ onOpenWorkshop:()=>void; onClose:()=>void; initialTab?:DecorationTab; closing?:boolean;
 }
-export default function ChatDecorationPanel({character:char,theme,themes,updateCharacter,updateTheme,onBgUpload,backgroundUrl,onOpenWorkshop,onClose,onSaveBubble,initialTab='layout'}:Props){
+export default function ChatDecorationPanel({character:char,theme,themes,updateCharacter,updateTheme,onBgUpload,backgroundUrl,onOpenWorkshop,onClose,onSaveBubble,initialTab='layout',closing=false}:Props){
+ const atelierSurface=useAtelierSurface();const {mode}=useChatAppearance();const [layoutGroup,setLayoutGroup]=useState('内置布局');
  const [tab,setTab]=useState<DecorationTab>(initialTab);
  const [scope,setScope]=useState<'character'|'global'>('character');
  const [collapsed,setCollapsed]=useState(false);
@@ -54,10 +56,10 @@ export default function ChatDecorationPanel({character:char,theme,themes,updateC
  const switchTab=(next:DecorationTab)=>setTab(next);
  return createPortal(<>
   {collapsed&&<button type="button" className="chat-decoration-return" onClick={()=>setCollapsed(false)}>返回装扮</button>}
-  <aside className={`chat-decoration ${collapsed?'is-collapsed':''}`} aria-label="ChatApp 装扮" style={{backgroundColor:`rgba(250,249,252,${panelOpacity/100})`}}>
+   <aside {...atelierSurface} className={`chat-decoration ${collapsed?'is-collapsed':''} ${closing?'is-closing':''}`} aria-label="ChatApp 装扮" style={{backgroundColor:`rgba(250,249,252,${panelOpacity/100})`}}>
    <header className="chat-decoration-heading">
-    <div><small>CHATAPP</small><h2>装扮</h2></div>
-    <label className="chat-decoration-opacity"><span>透明度 <output>{panelOpacity}%</output></span><input type="range" aria-label="面板透明度" min="30" max="100" step="5" value={panelOpacity} style={{['--slider-fill' as string]:`${(panelOpacity-30)/70*100}%`}} onChange={event=>setPanelOpacity(Number(event.target.value))}/></label>
+     <div><small>CHATAPP</small><h2>{mode==='atelier'?'全局样式':'装扮'}</h2></div><ChatAppearanceModeSwitch/>
+    {mode!=='atelier'&&<label className="chat-decoration-opacity"><span>透明度 <output>{panelOpacity}%</output></span><input type="range" aria-label="面板透明度" min="30" max="100" step="5" value={panelOpacity} style={{['--slider-fill' as string]:`${(panelOpacity-30)/70*100}%`}} onChange={event=>setPanelOpacity(Number(event.target.value))}/></label>}
     <div className="chat-decoration-tools"><button type="button" disabled={presetBusy} onClick={()=>setCollapsed(!collapsed)}>{collapsed?'展开':'看效果'}</button><button type="button" disabled={presetBusy} onClick={onClose}>完成</button></div>
    </header>
    {!collapsed&&<>
@@ -69,7 +71,8 @@ export default function ChatDecorationPanel({character:char,theme,themes,updateC
      {tab==='layout'&&<>
       <h3>界面与头像</h3>
       {!global&&<label className="chat-decoration-toggle"><span>为 {char.name} 单独调整布局<small>关闭后跟随全局，已调好的内容会保留。</small></span><input type="checkbox" checked={customized} onChange={()=>updateCharacter({chatFineTune:{...override,enabled:!customized}})}/></label>}
-      {(global||customized)?<ChatLayoutSettings theme={effective} updateTheme={patch=>{if(global){void updateTheme(patch);return;}const fine=Object.fromEntries(Object.entries(patch).filter(([key])=>(CHAT_FINE_TUNE_KEYS as readonly string[]).includes(key)));void updateCharacter({chatAppearance:{...char.chatAppearance,...patch},chatFineTune:{...override,...fine,enabled:true}});}}/>:<p className="chat-decoration-note">想一起调整所有聊天，可以在上方切换到「全局默认」。</p>}
+       {mode==='atelier'&&<label className="atelier-layout-group-picker">设置分组<select value={layoutGroup} onChange={e=>setLayoutGroup(e.target.value)}>{['内置布局','界面风格','头部与在线状态','气泡与头像','细节微调','表情包与输入栏'].map(group=><option key={group}>{group}</option>)}</select></label>}
+       {(global||customized)?<ChatLayoutSettings group={mode==='atelier'?layoutGroup:undefined} theme={effective} updateTheme={patch=>{if(global){void updateTheme(patch);return;}const fine=Object.fromEntries(Object.entries(patch).filter(([key])=>(CHAT_FINE_TUNE_KEYS as readonly string[]).includes(key)));void updateCharacter({chatAppearance:{...char.chatAppearance,...patch},chatFineTune:{...override,...fine,enabled:true}});}}/>:<p className="chat-decoration-note">想一起调整所有聊天，可以在上方切换到「全局默认」。</p>}
       <p className="chat-decoration-note">{char.chromeCustomCss||theme.chatChromeCustomCss?'当前有进阶 CSS，可能覆盖布局和气泡的部分效果。可在「白框」查看。':'布局调整会实时显示在聊天中。'}</p>
      </>}
      {tab==='bubbles'&&<>

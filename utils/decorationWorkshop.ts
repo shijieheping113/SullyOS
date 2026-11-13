@@ -32,8 +32,27 @@ export function projectWorkshopPreset(preset:DecorationPreset,category:Decoratio
   const css=replaceWorkshopCss('',category,workshopCss(preset,category));
   if(css)out.parts.css=css;else delete out.parts.css;
   if(category==='background'&&preset.parts.background)out.parts.background=preset.parts.background;
+  if(category==='avatar'&&preset.parts.bubbles&&(preset.parts.bubbles.user.avatarDecoration||preset.parts.bubbles.ai.avatarDecoration)){
+   const bubbles=structuredClone(PRESET_THEMES.default);
+   for(const side of ['user','ai'] as const)for(const field of ['avatarDecoration','avatarDecorationX','avatarDecorationY','avatarDecorationScale','avatarDecorationRotate'] as const){
+    const value=preset.parts.bubbles[side][field];if(value!==undefined)(bubbles[side] as any)[field]=value;
+   }
+   out.parts.bubbles=bubbles;
+  }
  }else if(preset.parts[category]!==undefined)out.parts={[category]:preset.parts[category]};
  return out;
+}
+/** Preview the isolated editor over the current outfit; never persist the preview fallback. */
+export function workshopPreview(preset:DecorationPreset,category:DecorationWorkshop|undefined,context?:DecorationPreset):DecorationPreset{
+ const parts={...context?.parts,...preset.parts};
+ if(context&&(category==='avatar'||category==='background'))parts.css=replaceWorkshopCss(context.parts.css||'',category,workshopCss(preset,category));
+ if(context?.parts.bubbles&&category==='avatar'&&preset.parts.bubbles){
+  const bubbles=structuredClone(context.parts.bubbles);
+  for(const side of ['user','ai'] as const)for(const field of ['avatarDecoration','avatarDecorationX','avatarDecorationY','avatarDecorationScale','avatarDecorationRotate'] as const){const value=preset.parts.bubbles[side][field];if(value!==undefined)(bubbles[side] as any)[field]=value;else delete (bubbles[side] as any)[field];}
+  parts.bubbles=bubbles;
+ }
+ if(!Object.values(parts).some(value=>typeof value==='string'?!!value.trim():value!==undefined&&value!==null))parts.bubbles=structuredClone(PRESET_THEMES.default);
+ return {...preset,parts};
 }
 const scopes={
  date:[MEETING_CSS_SCOPE,MEETING_CSS_HINT],

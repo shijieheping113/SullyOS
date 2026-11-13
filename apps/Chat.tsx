@@ -1,5 +1,6 @@
 import {avatarFrameLayer} from '../utils/avatarFrameTarget';
 import ChatRuntimeStyle from '../components/chat/ChatRuntimeStyle';
+import {chatSurface} from '../utils/chatSurface';
 import {homePhoneAppearance,HOME_PHONE_BUBBLES} from './room3d/homePhoneAppearance';
 
 import { publishReplyDisplay, stopReplyRuns } from '../utils/chatReplyCancellation';
@@ -5125,55 +5126,19 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     // 动森彩蛋模式（受「聊天联动」开关控制：关掉则聊天保持原样式）
     const acnh = osTheme.skin === 'animalcrossing' && osTheme.acnhChatSync !== false;
     const chatChromeStyle = osTheme.chatChromeStyle || 'soft';
-    const chatBackgroundStyle = osTheme.chatBackgroundStyle || 'plain';
-    const chatRootClass =
-        chatChromeStyle === 'pixel'
-            ? 'flex flex-col h-full bg-[#efe1cf] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
-            : chatChromeStyle === 'flat'
-              ? 'flex flex-col h-full bg-white overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
-              : chatChromeStyle === 'floating'
-                ? 'flex flex-col h-full bg-[#eef2ff] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
-                : 'flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500';
     // 令牌还在读盘、或者图已经丢了时 resolvedChatBackground 是 undefined，这一帧按「没设背景」
     // 的样式走，免得渲染出一个 url("undefined")。
-    const chatRootStyle: React.CSSProperties = resolvedChatBackground
-        ? {
-            backgroundImage: `url("${resolvedChatBackground}")`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-        }
-        : chatBackgroundStyle === 'grid'
-          ? {
-              backgroundColor: chatChromeStyle === 'pixel' ? '#efe1cf' : '#f8fafc',
-              backgroundImage:
-                  'linear-gradient(rgba(148,163,184,0.14) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.14) 1px, transparent 1px)',
-              backgroundSize: '20px 20px',
-            }
-          : chatBackgroundStyle === 'paper'
-            ? {
-                backgroundColor: chatChromeStyle === 'pixel' ? '#f4e8d9' : '#f9f7f2',
-                backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(148,163,184,0.12) 1px, transparent 0)',
-                backgroundSize: '16px 16px',
-              }
-            : chatBackgroundStyle === 'mesh'
-              ? {
-                  backgroundColor: '#f8fafc',
-                  backgroundImage:
-                      'radial-gradient(circle at 15% 20%, rgba(59,130,246,0.18), transparent 28%), radial-gradient(circle at 85% 15%, rgba(244,114,182,0.18), transparent 24%), radial-gradient(circle at 60% 75%, rgba(45,212,191,0.18), transparent 26%)',
-                }
-              : {
-                  backgroundImage: 'none',
-                };
+    const surface = chatSurface(osTheme,resolvedChatBackground);
     // 动森彩蛋：浅奶油米黄中心（上下绿条由 header/输入栏负责），配色参考 Pocket Camp。
     const acnhRootClass = 'flex flex-col h-full overflow-hidden relative font-sans transition-[background-color] duration-500';
     const acnhRootStyle: React.CSSProperties = {
         backgroundColor: '#F6F0D8',
         backgroundImage: 'none',
     };
-    const finalRootClass = acnh ? acnhRootClass : chatRootClass;
+    const finalRootClass = acnh ? acnhRootClass : surface.className;
     // 动森下强制覆盖角色自定义聊天背景，保证整机一致的彩蛋观感
     // 进入/切换的过场由 CharacterEntryTransition 覆盖层负责，根容器不再自己做淡入。
-    const finalRootStyle = acnh ? acnhRootStyle : chatRootStyle;
+    const finalRootStyle = acnh ? acnhRootStyle : surface.style;
     const chatAvatarSizeClass = osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const chatAvatarRadiusClass = osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const chatPendingAvatarClass = `${chatAvatarSizeClass} ${chatAvatarRadiusClass} object-cover`;

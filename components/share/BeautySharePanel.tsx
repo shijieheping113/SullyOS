@@ -1,4 +1,5 @@
 import BeautyShareContents from './BeautyShareContents';
+import {hasFileOnlyComponents} from '../../utils/atelierComponentCss';
 import {DEFAULT_SHARE_SELECTION,selectBeautyShareContents,type BeautyShareSelection} from '../../utils/beautyShareContents';
 import {trackBeauty} from '../../utils/beautyAnalytics';
 import {readRememberedBeautyAuthor,rememberBeautyAuthor,forgetBeautyAuthor} from '../../utils/beautyAuthorBackup';
@@ -135,7 +136,8 @@ export default function BeautySharePanel({ kind, sources, onReceive, onBusyChang
     const m = validateBeautyMetadata({ ...metadata, exportVersion: APP_VERSION });
     const selected = sources.find(s => s.id === confirmedWork.source);
     if(confirmedWork.source!=='file')await selected?.beforeSubmit?.();
-    const pack = normalizeBeautyPackage(selectedWork, confirmedWork.kind);
+     const pack = normalizeBeautyPackage(selectedWork, confirmedWork.kind);
+     if(hasFileOnlyComponents(pack))throw Error('消息动画、转账卡组和独立语音仅支持文件导入导出，请使用文件分享。');
     if (!(await confirmExportSafety(pack))) return;
     const fingerprint=await beautyFingerprint(pack,confirmedWork.kind);
     const result=await beautyRequest<{id:string;revision:string}>(editing ? `/submissions/${editing.id}` : '/submissions', { method: 'POST', token: session.token, body: { metadata: m, package: pack, ...(m.allowPublicListing?{catalogCover:validateCatalogCover(catalogCover)}:{}), ...(editing ? { expectedRevision: editing.latestRevision } : {}) } });
@@ -152,7 +154,8 @@ export default function BeautySharePanel({ kind, sources, onReceive, onBusyChang
     if(!binding||!original)throw Error('本机没有关联的原始装扮，请用「选择文件更新」重新选择并关联作品。');
     if(binding.revision!==item.latestRevision)throw Error('此作品已在其他地方更新，请用「选择文件更新」确认并重新关联。');
     await original.beforeSubmit?.();
-    const pack=normalizeBeautyPackage(await (original.readCurrent||original.read)(),item.kind);
+     const pack=normalizeBeautyPackage(await (original.readCurrent||original.read)(),item.kind);
+     if(hasFileOnlyComponents(pack))throw Error('消息动画、转账卡组和独立语音仅支持文件导入导出，请使用文件分享。');
     const selection=binding.selection||{...DEFAULT_SHARE_SELECTION};
     const fingerprint=await beautyFingerprint(selectBeautyShareContents(pack,selection),item.kind);
     if(fingerprint===binding.fingerprint){setNotice('原始装扮没有变化，无需重复提交。');return;}
@@ -234,6 +237,7 @@ export default function BeautySharePanel({ kind, sources, onReceive, onBusyChang
       if(!session)throw Error('请重新登录作者身份');
       const candidate=updateCandidate;
       const pack=normalizeBeautyPackage(selectedCandidate,candidate.item.kind);
+      if(hasFileOnlyComponents(pack))throw Error('消息动画、转账卡组和独立语音仅支持文件导入导出，请使用文件分享。');
       const fingerprint=await beautyFingerprint(pack,candidate.item.kind);
       await candidate.source.beforeSubmit?.();
       if(!(await confirmExportSafety(pack)))throw Error('尚未确认文件分享');

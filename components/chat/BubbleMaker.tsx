@@ -1,4 +1,6 @@
 import {UPLOADED_AVATAR_FRAME_STYLE} from '../../utils/avatarFrameUpload';
+import AtelierIcon from './appearance/AtelierIcon';
+import {ChatAppearanceModeSwitch,useChatAppearance} from './appearance/ChatAppearanceMode';
 import {readDecorationOrigin,writeDecorationOrigin,importedOrigin,remixOrigin,canEditDecoration} from '../../utils/decorationLibrary';
 import { avatarDecorationImageStyle } from '../../utils/anniversaryGifts';
 
@@ -488,6 +490,7 @@ const PREVIEW_SCENES: PreviewScene[] = [
 
 interface ThemeMakerProps { embedded?:boolean; initialTheme?:ChatTheme; onClose?:()=>void; onSaveTheme?:(theme:ChatTheme)=>Promise<void> }
 const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onClose,onSaveTheme}) => {
+    const {mode:appearanceMode}=useChatAppearance();
     const { closeApp:closeOSApp, addCustomTheme, removeCustomTheme, addToast, characters, updateCharacter, customThemes } = useOS();
     const closeApp=onClose||closeOSApp;
     const [initialThemeId] = useState(() => `theme-${Date.now()}`);
@@ -1193,7 +1196,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
     }, [customThemes, themeLibrarySearch]);
 
     return (
-        <div className="h-full w-full bg-slate-50 flex flex-col font-light relative">
+        <div className={`h-full w-full bg-slate-50 flex flex-col font-light relative ${appearanceMode==='atelier'?'atelier-bubble-maker':''}`}>
             {/* Header */}
             <div className="bg-white/70 backdrop-blur-md border-b border-white/40 shrink-0 z-20 sticky top-0" style={{ paddingTop: 'max(var(--safe-top, 0px), env(safe-area-inset-top, 0px))' }}>
             <div className="flex items-center px-4 py-3 justify-between">
@@ -1204,7 +1207,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                         </svg>
                     </button>
                     <div className="flex flex-col">
-                        <h1 className="text-xl font-medium text-slate-700">气泡制作器</h1>
+                        <h1 className="text-xl font-medium text-slate-700">气泡制作器</h1><ChatAppearanceModeSwitch/>
                         <div className="text-[10px] flex items-center gap-1.5 text-slate-500">
                             <span className={`inline-flex w-2 h-2 rounded-full ${isAppliedToPreview && !isDirty ? 'bg-emerald-500' : 'bg-amber-400'}`}></span>
                             {isAppliedToPreview && !isDirty ? '已保存到气泡库' : '有未保存的改动'}
@@ -1228,7 +1231,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] text-slate-400">{customThemes.length} 套</span>
-                        <span className={`text-slate-400 transition-transform ${isThemeLibraryOpen ? 'rotate-180' : ''}`} aria-hidden>⌄</span>
+                        <span className={`atelier-bubble-chevron text-slate-400 transition-transform ${isThemeLibraryOpen ? 'rotate-180' : ''}`} aria-hidden>⌄</span>
                     </div>
                 </button>
                 {isThemeLibraryOpen && (
@@ -1298,7 +1301,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     <div className={`absolute right-3 top-3 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-sm ${overallContrastScore.grade === 'A' ? 'bg-emerald-100 text-emerald-700' : overallContrastScore.grade === 'B' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
                         可读性 {overallContrastScore.grade}
                     </div>
-                    <div className="flex flex-wrap gap-2 mb-3">
+                    <div className="flex flex-wrap gap-2 mb-3 pr-20">
                         {PREVIEW_SCENES.map(scene => (
                             <button
                                 key={scene.id}
@@ -1386,16 +1389,16 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     aria-label={editorPanelOpen ? '收起气泡编辑面板' : '展开气泡编辑面板'}
                     title="点按开关设置 · 按住拖动"
                 >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6" aria-hidden="true">
+                    {appearanceMode==='atelier'?<><AtelierIcon kind="pencil"/><span>编辑</span></>:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6" aria-hidden="true">
                         <path strokeLinecap="round" d="M4 7h10M18 7h2M4 17h2M10 17h10M8 4v6M8 14v6M16 4v6M16 14v6" />
-                    </svg>
+                    </svg>}
                 </button>
             )}
 
             {/* Editor Controls：悬浮在完整预览上方，不再挤占一半预览高度。 */}
             {!isPreviewFullscreen && editorPanelOpen && (
             <div
-                className="fixed left-1/2 z-[135] flex w-[94%] max-w-md -translate-x-1/2 flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white/95 shadow-[0_14px_50px_rgba(15,23,42,0.24)] ring-1 ring-slate-100 backdrop-blur-xl"
+                className={`fixed left-1/2 z-[135] flex w-[94%] max-w-md -translate-x-1/2 flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white/95 shadow-[0_14px_50px_rgba(15,23,42,0.24)] ring-1 ring-slate-100 backdrop-blur-xl ${appearanceMode==='atelier'?'atelier-bubble-sheet':''}`}
                 style={{
                     bottom: 'calc(14px + var(--safe-bottom, 0px))',
                     height: 'min(62vh, 620px)',
@@ -1403,29 +1406,30 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                 }}
             >
                 {/* Main Tabs (User / AI / CSS) */}
-                <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+                {appearanceMode==='atelier'&&<header className="atelier-editor-heading"><AtelierIcon kind="pencil"/><strong>气泡<span className="atelier-editor-side">·{activeTab==='user'?'用户侧':'角色侧'}</span></strong><button type="button" onClick={() => setEditorPanelOpen(false)} className="atelier-editor-close" aria-label="收起气泡编辑面板">×</button></header>}
+                <div className="atelier-bubble-tabs flex items-center gap-3 px-5 pt-4 pb-2">
                     <div className="flex min-w-0 flex-1 gap-5 overflow-x-auto no-scrollbar">
-                        <button onClick={() => requestTabSwitch('user')} className={`text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'user' ? 'text-slate-800' : 'text-slate-300'}`}>用户气泡</button>
-                        <button onClick={() => requestTabSwitch('ai')} className={`text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'ai' ? 'text-slate-800' : 'text-slate-300'}`}>角色气泡</button>
-                        <button onClick={() => requestTabSwitch('css')} className={`text-sm font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${activeTab === 'css' ? 'text-indigo-600' : 'text-slate-300'}`}>
+                        <button onClick={() => requestTabSwitch('user')} aria-pressed={activeTab==='user'} className={`atelier-bubble-tab text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'user' ? 'text-slate-800' : 'text-slate-300'}`}>用户气泡</button>
+                        <button onClick={() => requestTabSwitch('ai')} aria-pressed={activeTab==='ai'} className={`atelier-bubble-tab text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'ai' ? 'text-slate-800' : 'text-slate-300'}`}>角色气泡</button>
+                        {appearanceMode!=='atelier'&&<button onClick={() => requestTabSwitch('css')} className={`text-sm font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${activeTab === 'css' ? 'text-indigo-600' : 'text-slate-300'}`}>
                             <span>⚡</span> 自定义CSS
-                        </button>
+                        </button>}
                     </div>
-                    <button
+                    {appearanceMode!=='atelier'&&<button
                         type="button"
                         onClick={() => setEditorPanelOpen(false)}
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-lg leading-none text-slate-400 transition active:scale-90"
                         aria-label="收起气泡编辑面板"
-                    >×</button>
+                    >×</button>}
                 </div>
 
-                <div className="px-8 pb-2 flex items-center gap-2">
+                <div className="atelier-bubble-history px-8 pb-2 flex items-center gap-2">
                     <button onClick={handleUndo} disabled={undoStack.length === 0} className="text-[11px] px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 disabled:opacity-40">撤销</button>
                     <button onClick={handleRedo} disabled={redoStack.length === 0} className="text-[11px] px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 disabled:opacity-40">重做</button>
                 </div>
 
                 {/* Conditional Sub-Tool Tabs */}
-                {activeTab !== 'css' && (
+                {activeTab !== 'css' && appearanceMode!=='atelier' && (
                     <div className="flex px-6 border-b border-slate-100 mb-2 overflow-x-auto no-scrollbar">
                         <button onClick={() => requestToolSectionSwitch('base')} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 ${toolSection === 'base' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}>基础样式</button>
                         <button onClick={() => requestToolSectionSwitch('sticker')} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 ${toolSection === 'sticker' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}>气泡贴纸</button>
@@ -1433,11 +1437,11 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     </div>
                 )}
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar pb-20">
+                <div className="atelier-bubble-scroll flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar pb-20">
                     
                     {/* --- CSS EDITOR --- */}
-                    {activeTab === 'css' && (
-                        <div className="space-y-6 animate-fade-in h-full flex flex-col">
+                    {(activeTab === 'css'||appearanceMode==='atelier') && (
+                        <div className="space-y-6 animate-fade-in h-full flex flex-col atelier-bubble-css">
                             <div className="text-[10px] text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed space-y-2">
                                 <span className="font-bold block mb-1 text-slate-500">CSS 增强模式</span>
                                 可使用 <code className="bg-slate-200 px-1 rounded">.sully-bubble-user</code>、<code className="bg-slate-200 px-1 rounded">.sully-bubble-ai</code> 定制气泡，使用 <code className="bg-slate-200 px-1 rounded">.sully-voice-bar</code>、<code className="bg-slate-200 px-1 rounded">.sully-voice-bar-button</code>、<code className="bg-slate-200 px-1 rounded">.sully-voice-bar-wave-segment</code> 单独定制语音条。
@@ -1520,8 +1524,8 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     )}
 
                     {/* --- BASE STYLE TOOLS --- */}
-                    {activeTab !== 'css' && toolSection === 'base' && (
-                        <div className="space-y-6 animate-fade-in"> 
+                    {(activeTab !== 'css'||appearanceMode==='atelier') && (toolSection === 'base'||appearanceMode==='atelier') && (
+                        <div className="space-y-6 animate-fade-in atelier-bubble-base">
                             {/* Name Input (Only on Base) */}
                             <div>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">主题名称 (Theme Name)</label>
@@ -1808,8 +1812,8 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     )}
 
                     {/* --- STICKER TOOLS --- */}
-                    {activeTab !== 'css' && toolSection === 'sticker' && (
-                        <div className="space-y-6 animate-fade-in">
+                    {(activeTab !== 'css'||appearanceMode==='atelier') && (toolSection === 'sticker'||appearanceMode==='atelier') && (
+                        <div className="space-y-6 animate-fade-in atelier-bubble-sticker">
                             <div onClick={() => decorationInputRef.current?.click()} className="cursor-pointer group relative h-20 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 hover:border-primary/50 hover:text-primary transition-all">
                                  {activeStyle.decoration ? <TokenImg value={activeStyle.decoration} className="h-10 w-10 object-contain" /> : <span className="text-xs font-bold">+ 上传气泡角标/贴纸</span>}
                                  <input type="file" ref={decorationInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleImageUpload(e.target.files[0], 'deco')} />
@@ -1827,9 +1831,9 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                             </div>
 
                             {activeStyle.decoration && (
-                                <details className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={showAdvancedSettings}>
-                                    <summary onClick={(e) => { e.preventDefault(); setShowAdvancedSettings(prev => !prev); }} className="text-xs font-semibold text-slate-600 cursor-pointer">高级设置 · 贴纸坐标与旋转</summary>
-                                    {showAdvancedSettings && (
+                                <details className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={appearanceMode==='atelier'||showAdvancedSettings}>
+                                    <summary onClick={(e) => { e.preventDefault(); if(appearanceMode!=='atelier')setShowAdvancedSettings(prev => !prev); }} className="text-xs font-semibold text-slate-600 cursor-pointer">高级设置 · 贴纸坐标与旋转</summary>
+                                    {(appearanceMode==='atelier'||showAdvancedSettings) && (
                                         <div className="grid grid-cols-2 gap-x-6 gap-y-6 pt-4">
                                             <div className="col-span-2"><label className="text-[10px] text-slate-400 uppercase block mb-2">位置坐标 (X / Y)</label>
                                                 <div className="flex gap-3">
@@ -1851,8 +1855,8 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                     )}
 
                     {/* --- AVATAR TOOLS --- */}
-                    {activeTab !== 'css' && toolSection === 'avatar' && (
-                        <div className="space-y-6 animate-fade-in">
+                    {(activeTab !== 'css'||appearanceMode==='atelier') && (toolSection === 'avatar'||appearanceMode==='atelier'&&!embedded) && (
+                        <div className="space-y-6 animate-fade-in atelier-bubble-avatar">
                             <div onClick={() => avatarDecoInputRef.current?.click()} className="cursor-pointer group relative h-20 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 hover:border-primary/50 hover:text-primary transition-all">
                                  {activeStyle.avatarDecoration ? <TokenImg value={activeStyle.avatarDecoration} className="h-10 w-10 object-contain" /> : <span className="text-xs font-bold">+ 上传头像框/挂件</span>}
                                  <input type="file" ref={avatarDecoInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleImageUpload(e.target.files[0], 'avatarDeco')} />
@@ -1870,9 +1874,9 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({embedded=false,initialTheme,onCl
                             </div>
 
                             {activeStyle.avatarDecoration && (
-                                <details className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={showAdvancedSettings}>
-                                    <summary onClick={(e) => { e.preventDefault(); setShowAdvancedSettings(prev => !prev); }} className="text-xs font-semibold text-slate-600 cursor-pointer">高级设置 · 挂件偏移与旋转</summary>
-                                    {showAdvancedSettings && (
+                                <details className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={appearanceMode==='atelier'||showAdvancedSettings}>
+                                    <summary onClick={(e) => { e.preventDefault(); if(appearanceMode!=='atelier')setShowAdvancedSettings(prev => !prev); }} className="text-xs font-semibold text-slate-600 cursor-pointer">高级设置 · 挂件偏移与旋转</summary>
+                                    {(appearanceMode==='atelier'||showAdvancedSettings) && (
                                         <div className="grid grid-cols-2 gap-x-6 gap-y-6 pt-4">
                                             <div className="col-span-2"><label className="text-[10px] text-slate-400 uppercase block mb-2">中心偏移 (Offset X / Y)</label>
                                                 <div className="flex gap-3">

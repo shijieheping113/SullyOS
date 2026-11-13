@@ -3,6 +3,7 @@ import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
 import {it,expect,vi} from 'vitest';
 import BeautyPresetPreview from '../components/share/BeautyPresetPreview';
+import {ChatAppearanceProvider} from '../components/chat/appearance/ChatAppearanceMode';
 
 const renderer=vi.hoisted(()=>vi.fn((_data:unknown,..._options:unknown[])=>({markup:'<main class="sully-chat-root">preview</main>',css:'.sully-chat-root{color:red}'})));
 vi.mock('../components/chat/ChatDecorationSample',()=>({renderChatDecorationSample:renderer}));
@@ -43,4 +44,20 @@ it('awaits desktop preview rendering before parsing its markup',async()=>{
   expect(shadow?.textContent).toContain('desktop preview ready');
   expect(host.querySelector('[role=alert]')).toBeNull();
  }finally{await act(async()=>root.unmount());vi.unstubAllGlobals();}
+});
+
+it('starts the atelier with ordinary conversation and matches live typography without reading messages',async()=>{
+ vi.stubGlobal('ResizeObserver',class {observe(){}disconnect(){}});
+ const live=document.createElement('main');live.className='sully-chat-root';live.style.cssText='font-size:16px;font-family:Arial;color:rgb(15,23,42)';document.body.append(live);
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+ const data={format:'sullyos-chat-decoration',version:1,name:'current',parts:{css:'.sully-chat-root{color:red}'}};
+ try{
+  await act(async()=>root.render(React.createElement(ChatAppearanceProvider,{mode:'atelier',children:React.createElement(BeautyPresetPreview,{data,sceneScope:'all'})})));
+  const call=renderer.mock.calls.at(-1)!;
+  expect(call[1]).toBe('conversation');
+  const shadow=Array.from(host.querySelectorAll('*')).find(element=>element.shadowRoot)?.shadowRoot;
+  const body=shadow?.querySelector<HTMLElement>('.beauty-preview-body');
+  expect(body?.style.fontSize).toBe('16px');expect(body?.style.fontFamily).toBe('Arial');
+  expect(host.querySelector('[role=alert]')).toBeNull();
+ }finally{await act(async()=>root.unmount());host.remove();live.remove();vi.unstubAllGlobals();}
 });

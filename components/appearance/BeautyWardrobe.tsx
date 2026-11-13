@@ -7,7 +7,9 @@ import type { BeautyShare } from '../../utils/beautyShareContract';
 import BeautyPresetPreview from '../share/BeautyPresetPreview';
 import type { BeautySource } from '../share/BeautySharePanel';
 import './BeautyWardrobe.css';
+import {useAtelierSurface,useChatAppearance} from '../chat/appearance/ChatAppearanceMode';
 import { BeautyRepoBadge } from '../share/BeautyRepoInvitation';
+import {hasFileOnlyComponents} from '../../utils/atelierComponentCss';
 import {readDecorationOrigin,originLabel,canEditDecoration,type DecorationOrigin} from '../../utils/decorationLibrary';
 
 export interface WardrobeEntry extends BeautySource { attributionKey: () => Promise<string>; contents?: string; readLocal?: () => Promise<unknown> }
@@ -43,16 +45,18 @@ function WardrobeTile({ entry, onOpen, getUsage, ...actions }: WardrobeActions &
   </button>{error&&<p className="wardrobe-credit" role="alert">{error}</p>}<CardActions entry={entry} origin={loaded?.origin} {...actions}/ >{loaded?.share && <BeautyRepoBadge share={loaded.share}/>}</article>;
 }
 
-function CardActions({entry,origin,onEdit,onShare,onDelete,onUpdate}:WardrobeActions & {entry:WardrobeEntry;origin?:DecorationOrigin}){
+function CardActions({entry,origin,onEdit,onExport,onShare,onDelete,onUpdate}:WardrobeActions & {entry:WardrobeEntry;origin?:DecorationOrigin}){
+ const {mode}=useChatAppearance();
  const [checking,setChecking]=useState(false);
  // Removal only needs the local identity, never a readable preview or author metadata.
  // Unknown permissions must not unlock editing or sharing.
  if(!origin)return onDelete?<div className="wardrobe-card-actions" aria-label={`${entry.name}的操作`}><button className="is-danger" onClick={()=>onDelete(entry)}>删除</button></div>:null;
- if(origin.kind==='builtin')return null;
+  if(origin.kind==='builtin')return mode==='atelier'&&onEdit?<div className="wardrobe-card-actions"><button onClick={()=>onEdit(entry)}>编辑并另存</button></div>:null;
  return <div className="wardrobe-card-actions" aria-label={`${entry.name}的操作`}>
   {origin.kind==='imported'&&origin.share&&onUpdate&&<button disabled={checking} onClick={async()=>{setChecking(true);try{await onUpdate(entry);}finally{setChecking(false);}}}>{checking?'检查中…':'检查更新'}</button>}
-  {onEdit&&<button disabled={!canEditDecoration(origin)} title={!canEditDecoration(origin)?'作者禁止二改':undefined} onClick={()=>onEdit(entry)}>编辑</button>}
-  {origin.kind==='self'&&onShare&&<button onClick={()=>onShare(entry)}>分享</button>}
+   {onEdit&&<button disabled={!canEditDecoration(origin)} title={!canEditDecoration(origin)?'作者禁止二改':undefined} onClick={()=>onEdit(entry)}>编辑</button>}
+   {mode==='atelier'&&onExport&&origin.allowRedistribute!==false&&<button onClick={()=>onExport(entry)}>导出</button>}
+   {origin.kind==='self'&&onShare&&!hasFileOnlyComponents(entry.revision)&&<button onClick={()=>onShare(entry)}>分享</button>}
   {onDelete&&<button className="is-danger" onClick={()=>onDelete(entry)}>删除</button>}
  </div>;
 }
@@ -69,6 +73,7 @@ async function loadEntry(entry: WardrobeEntry): Promise<Loaded> {
 }
 
 function WardrobeDetail({ entry, initial, onClose, onApply,onEdit,onExport,onShare,onDelete,onUpdate }: WardrobeActions & { entry: WardrobeEntry; initial?: Loaded; onClose: () => void; onApply: (entry: WardrobeEntry) => void;onEdit?:(entry:WardrobeEntry)=>void;onExport?:(entry:WardrobeEntry)=>void }) {
+  const atelierSurface=useAtelierSurface();
   const dialog = useRef<HTMLDialogElement>(null);
   const [loaded, setLoaded] = useState(initial);
   const [error, setError] = useState('');
@@ -82,13 +87,13 @@ function WardrobeDetail({ entry, initial, onClose, onApply,onEdit,onExport,onSha
     return () => { alive = false; };
   }, [entry, initial, attempt]);
   const metadata = loaded?.share?.metadata;
-  return createPortal(<dialog ref={dialog} className="wardrobe-detail" aria-labelledby="wardrobe-detail-title" onCancel={onClose}>
+  return createPortal(<dialog ref={dialog} {...atelierSurface} className="wardrobe-detail" aria-labelledby="wardrobe-detail-title" onCancel={onClose}>
     <header><button type="button" onClick={onClose} aria-label="返回我的装扮">‹</button><span>装扮预览</span>{loaded?.share ? <BeautyRepoBadge share={loaded.share}/> : <span className="wardrobe-detail-label">本机</span>}</header>
     <div className="wardrobe-detail-scroll">
       <div className="wardrobe-detail-stage">{loaded ? <BeautyPresetPreview data={loaded.pack}/> : error ? <div role="alert"><p>{error}</p><button onClick={() => setAttempt(v => v + 1)}>重新载入</button></div> : <p role="status">正在载入预览…</p>}</div>
       <div className="wardrobe-detail-info"><h2 id="wardrobe-detail-title">{entry.name}</h2><p>{metadata ? `作者 · ${metadata.credit}` : '保存在这台设备上的装扮'}</p>
         {loaded&&<p>{originLabel(loaded.origin)}{!canEditDecoration(loaded.origin)?' · 作者禁止二改，编辑已锁定':''}</p>}
-        <CardActions entry={entry} origin={loaded?.origin} onEdit={onEdit?item=>{onClose();onEdit(item);}:undefined} onShare={onShare?item=>{onClose();onShare(item);}:undefined} onUpdate={onUpdate?item=>{onClose();onUpdate(item);}:undefined} onDelete={onDelete?item=>{onClose();onDelete(item);}:undefined}/>
+        <CardActions entry={entry} origin={loaded?.origin} onEdit={onEdit?item=>{onClose();onEdit(item);}:undefined} onExport={onExport} onShare={onShare?item=>{onClose();onShare(item);}:undefined} onUpdate={onUpdate?item=>{onClose();onUpdate(item);}:undefined} onDelete={onDelete?item=>{onClose();onDelete(item);}:undefined}/>
         {entry.contents && <p>会应用：{entry.contents}。按作者提供的完整作品应用。</p>}
         {metadata && <details><summary>作者留言与使用规范</summary>
           {metadata.message && <p className="wardrobe-message">{metadata.message}</p>}
