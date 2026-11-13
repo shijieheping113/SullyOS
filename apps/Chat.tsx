@@ -25,6 +25,7 @@ import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, Dail
 import { processImage, processImageToBlob } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
+import { PAREN_TRANSLATION_LOCK_CSS } from '../utils/parenTranslation';
 import TokenImg from '../components/os/TokenImg';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
@@ -5336,6 +5337,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                  .sully-chat-inputbar textarea,.sully-chat-inputbar button{pointer-events:auto!important;visibility:visible!important;}
                `}</style>
              )}
+             {/* 气泡下中文锁：必须在气泡美化 CSS 之后，钉死白字黑边/字重，并压过伪元素小尾巴。 */}
+             <style>{PAREN_TRANSLATION_LOCK_CSS}</style>
 
              {/* 动森彩蛋：作用域 CSS 覆盖气泡——奶油 AI 气泡 + 蜜桃用户气泡，暖棕文字，绕开 MessageItem 复杂逻辑 */}
              {acnh && <style>{`

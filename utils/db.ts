@@ -2511,7 +2511,12 @@ export const DB = {
               request.onsuccess = () => {
                   const cursor = request.result;
                   if (!cursor) store.put(schedule);
-                  else if (cursor.value.charId === schedule.charId && cursor.value.coverImage) {
+                  else if (cursor.value.charId === schedule.charId && cursor.value.coverImage
+                      && !String(cursor.value.coverImage).startsWith('blob:')
+                      && (String(cursor.value.coverImage).startsWith('blobref:')
+                          || String(cursor.value.coverImage).startsWith('data:')
+                          || /^https?:\/\//i.test(String(cursor.value.coverImage))
+                          || String(cursor.value.coverImage).startsWith('/'))) {
                       store.put({ ...schedule, coverImage: cursor.value.coverImage });
                   } else cursor.continue();
               };
@@ -2593,7 +2598,13 @@ export const DB = {
               const cursor = req.result;
               if (cursor) {
                   const val = cursor.value as DailySchedule;
-                  if (val.charId === charId && val.coverImage) {
+                  // 跳过会话级 blob: 等不可持久地址，避免生成日程时又写回破图头图。
+                  if (val.charId === charId && val.coverImage && (
+                      val.coverImage.startsWith('blobref:')
+                      || val.coverImage.startsWith('data:')
+                      || /^https?:\/\//i.test(val.coverImage)
+                      || val.coverImage.startsWith('/')
+                  )) {
                       resolve(val.coverImage);
                       return;
                   }

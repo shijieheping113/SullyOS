@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { splitParenTranslation } from './parenTranslation';
+import { PAREN_TRANSLATION_LOCK_CSS, splitParenTranslation } from './parenTranslation';
+
+describe('气泡下中文样式锁', () => {
+    it('钉死白字黑边，带 !important 压过美化', () => {
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('.sully-paren-translation');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('color:#ffffff!important');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('-webkit-text-fill-color:#ffffff!important');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('text-shadow:');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toMatch(/text-shadow:[\s\S]*!important/);
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('font-weight:700!important');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('z-index:20!important');
+    });
+});
 
 const SAMPLE = 'コートの襟ちゃんと閉めて帰りなよ、俺も今から運転して帰るから家着いたらまた言うね（把外套领子拢好再走啊，我也现在开车回去了，到家再跟你说）';
 

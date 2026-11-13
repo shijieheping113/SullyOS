@@ -15,7 +15,10 @@
 .atelier-current-edit .atelier-icon{width:42px;height:46px}
 .beauty-wardrobe[data-atelier]:has(.atelier-current-stage) .wardrobe-content>fieldset,.beauty-wardrobe[data-atelier]:has(.atelier-current-stage) .wardrobe-content>.wardrobe-library{display:none}
 .decoration-draft[data-atelier]>.atelier-masthead{padding:10px 20px;min-height:64px}
-.beauty-preset-preview[data-atelier-preview=true]{display:flex;flex-direction:column;background:var(--at-writing);border-radius:22px;overflow:hidden;padding:0!important}
+.beauty-preset-preview[data-atelier-preview=true]{display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;min-height:0}
+.atelier-role-preview>.beauty-preset-preview[data-atelier-preview=true]{background:#fff;border-radius:28px;padding:12px 9px 0;box-shadow:0 10px 32px rgba(53,68,89,.14),inset 0 0 0 1px rgba(53,68,89,.08)}
+/* 装修单预览用 DecorationDraftEditor.css 的原尺寸，不要强行铺满。 */
+.decoration-composer-preview>.beauty-preset-preview[data-atelier-preview=true]{border-radius:18px}
 .beauty-preset-preview[data-atelier-preview=true]>div:has(>select[aria-label="预览聊天内容"]){order:2!important;margin:0!important;padding:10px 72px 10px 14px;background:var(--at-glass);color:var(--at-ink)!important;flex-wrap:wrap}
 .beauty-preset-preview[data-atelier-preview=true] select[aria-label="预览聊天内容"]{background:transparent!important;border:0!important;font:12px var(--at-body);color:var(--at-ink)!important;padding:6px 0!important}
 .beauty-preset-preview[data-atelier-preview=true]>div:has(>select[aria-label="预览聊天内容"])>button{border:0;background:transparent;color:var(--at-ink);min-height:30px!important}
@@ -23,9 +26,9 @@
 .beauty-preset-preview[data-atelier-preview=true]>.beauty-preview-caption button{background:transparent;border:0;color:var(--at-ink);font:inherit;min-height:26px}
 .atelier-current-stage{padding:8px 8px 0}
 .atelier-current-stage .atelier-current-edit{bottom:14px;z-index:2;background:var(--at-writing)}
-.decoration-current[data-atelier] .decoration-side-toggle{top:auto;right:20px;bottom:18px;width:62px;height:73px;border:0;border-radius:12px;box-shadow:none;background:var(--at-writing);display:flex;z-index:4}
-.decoration-current[data-atelier] .decoration-side-toggle>.atelier-icon{width:43px;height:46px}
-.decoration-current[data-atelier] .decoration-side-toggle>span{font-size:10px;line-height:1.4}
+.decoration-current[data-atelier] .decoration-side-toggle{top:auto;right:20px;bottom:18px;width:62px;height:auto;min-height:64px;border:0;border-radius:12px;box-shadow:none!important;background:transparent!important;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;z-index:4;padding:4px;-webkit-tap-highlight-color:transparent}
+.decoration-current[data-atelier] .decoration-side-toggle>.atelier-icon{width:43px;height:46px;background:transparent!important;box-shadow:none!important;filter:drop-shadow(0 1px 2px rgba(53,68,89,.18))}
+.decoration-current[data-atelier] .decoration-side-toggle>span{font-size:10px;line-height:1.4;background:transparent!important;padding:0;color:var(--at-ink)}
 .decoration-current[data-atelier] .decoration-outfit-toggle{top:auto;bottom:20px;right:94px}
 .decoration-current[data-atelier] .decoration-current-grid{display:flex;flex-direction:column;gap:0;padding:0}
 .decoration-current[data-atelier] .decoration-current-grid>button{display:grid;grid-template-columns:44px minmax(0,1fr);column-gap:12px;padding:12px 0;border-bottom:1px solid var(--at-glass);border-radius:0;align-items:center}
@@ -171,18 +174,18 @@
 .atelier-library-view .wardrobe-cover{aspect-ratio:1.35!important;background:var(--at-glass);border-radius:16px}
 .atelier-library-view .wardrobe-grid{gap:24px 20px}
 .atelier-library-view .wardrobe-tile>strong{font:17px/1.5 var(--at-serif)}
-.atelier-role-preview{position:relative;flex:1;min-height:0;align-self:center;width:100%;max-width:660px;margin:0 auto 20px;border-radius:24px;background:var(--at-writing);display:flex;flex-direction:column;overflow:hidden}
-.atelier-role-preview>.beauty-preset-preview{height:100%;flex:1;min-height:0;max-width:none;width:100%;display:flex;align-items:center}
-.atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){flex:1;min-height:0}
-.atelier-preview-dock{position:relative;display:flex;align-items:center;gap:12px;min-height:55px;border-top:1px solid color-mix(in srgb,var(--at-metal) 35%,transparent);padding:8px 82px 8px 15px;background:transparent;align-self:stretch;flex:none;order:4}
-.atelier-preview-selector{display:flex;align-items:center;gap:8px;min-width:0}
-.atelier-preview-dock button{display:flex;align-items:center;gap:6px;background:transparent!important;border:0;color:var(--at-ink);min-height:32px;padding:2px;font-size:11px;white-space:nowrap}
-.atelier-preview-selector .atelier-icon{width:23px;height:26px}
-.atelier-dock-divider{height:17px;width:1px;background:var(--at-metal);opacity:.6}
+.atelier-role-preview{position:relative;flex:1;min-height:0;align-self:stretch;width:100%;max-width:660px;margin:0 auto 8px;border-radius:0;background:transparent;display:flex;flex-direction:column;align-items:stretch;justify-content:stretch;overflow:hidden}
+.atelier-role-preview>.beauty-preset-preview{flex:1 1 auto;min-height:0;max-width:100%;max-height:100%;width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;overflow:hidden;box-sizing:border-box}
+.atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){flex:none;min-height:0}
+.atelier-preview-dock{position:relative;display:flex;align-items:center;gap:8px;min-height:44px;height:44px;border-top:1px solid rgba(53,68,89,.1);padding:4px 10px;background:#fff;align-self:stretch;flex:none;order:4;box-sizing:border-box}
+.atelier-preview-selector{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+.atelier-preview-dock button{display:flex;align-items:center;gap:5px;background:transparent!important;border:0;color:#354459;min-height:32px;padding:2px;font-size:11px;white-space:nowrap}
+.atelier-preview-selector .atelier-icon{width:22px;height:24px}
+.atelier-dock-divider{height:16px;width:1px;background:rgba(53,68,89,.2);opacity:1}
 .atelier-replay svg{width:14px;height:14px}
-.atelier-clipboard{position:absolute;bottom:5px;right:8px;width:65px;height:73px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:0;border-radius:0;background:transparent;color:var(--at-ink);font-size:10px;z-index:3}
-.atelier-clipboard .atelier-icon{width:54px;height:55px}
-.atelier-clipboard span{background:var(--at-writing);padding:0 7px;border-radius:9px}
+.atelier-clipboard{position:absolute;bottom:10px;right:10px;width:auto;min-width:52px;height:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:0;border-radius:0;background:transparent!important;box-shadow:none!important;outline:0;color:var(--at-ink);font-size:10px;z-index:3;padding:4px;-webkit-tap-highlight-color:transparent}
+.atelier-clipboard .atelier-icon{width:44px;height:44px;background:transparent!important;box-shadow:none!important;filter:drop-shadow(0 1px 2px rgba(53,68,89,.18))}
+.atelier-clipboard span{display:block;background:transparent!important;padding:0;border-radius:0;line-height:1.3;color:inherit}
 .atelier-scene-menu{position:absolute;bottom:calc(100% + 12px);left:8px;width:min(330px,calc(100vw - 56px));max-height:360px;overflow:auto;background:var(--at-writing);border-radius:18px;padding:16px;box-shadow:0 12px 40px var(--at-shadow);backdrop-filter:blur(18px);z-index:8}
 .atelier-scene-menu header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .atelier-scene-menu header strong{font:20px var(--at-serif)}
@@ -200,7 +203,7 @@
 .atelier-category-picker>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .atelier-category-picker>div>button{display:flex;align-items:center;gap:10px;border:0;border-radius:10px;min-height:52px;background:var(--at-glass);text-align:left;padding:10px;font-size:13px}
 .atelier-reset{display:block;margin-left:auto;border:0;background:transparent;color:var(--at-muted);font-size:12px;padding:10px}
-@media(max-width:600px){.beauty-wardrobe[data-atelier]{padding-inline:16px}.atelier-content-heading{min-height:64px}.atelier-content-heading h1{font-size:30px}.atelier-role-preview{margin-bottom:18px}.atelier-category-heading{padding:6px 0 18px}.atelier-category-heading>span{max-width:130px}.atelier-library-view .wardrobe-grid{gap:22px 14px}.atelier-library-view .wardrobe-cover{aspect-ratio:1!important}.atelier-preview-dock{gap:8px;padding-left:12px}.atelier-preview-selector{gap:6px}.atelier-preview-dock button{font-size:10px}.atelier-catalogue-tools{gap:5px}.atelier-catalogue-tools button{padding:7px;font-size:11px}.atelier-catalogue-tools svg{width:20px}.atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){width:100%!important}.atelier-role-preview [data-beauty-preview-source]{margin:auto}}
+@media(max-width:600px){.beauty-wardrobe[data-atelier]{padding-inline:16px}.atelier-content-heading{min-height:52px}.atelier-content-heading h1{font-size:30px}.atelier-role-preview{margin-bottom:4px}.atelier-category-heading{padding:6px 0 18px}.atelier-category-heading>span{max-width:130px}.atelier-library-view .wardrobe-grid{gap:22px 14px}.atelier-library-view .wardrobe-cover{aspect-ratio:1!important}.atelier-preview-dock{gap:6px;padding:4px 8px}.atelier-preview-selector{gap:4px}.atelier-preview-dock button{font-size:10px}.atelier-catalogue-tools{gap:5px}.atelier-catalogue-tools button{padding:7px;font-size:11px}.atelier-catalogue-tools svg{width:20px}.atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){width:100%!important}.atelier-role-preview [data-beauty-preview-source]{margin:auto}}
 .decoration-draft[data-atelier] .atelier-draft-topline{display:flex;gap:10px;min-height:48px;padding:4px 20px}
 .atelier-draft-topline>strong{flex:1;min-width:0;font:25px var(--at-serif)!important}
 .atelier-draft-topline>button{border:0;background:transparent!important}
@@ -265,6 +268,11 @@
 .chat-decoration[data-atelier] .chat-decoration-scope-buttons button{border-color:var(--at-metal);background:var(--at-writing);color:var(--at-muted)}
 .chat-decoration[data-atelier] .chat-decoration-scope-buttons button[aria-pressed=true]{background:var(--at-blue);border-color:var(--at-blue);color:var(--at-ink);box-shadow:none}
 .chat-decoration[data-atelier] .chat-decoration-tabs button[aria-pressed=true]{border-bottom-color:var(--at-ink);color:var(--at-ink)}
+/* 全局样式 ChoiceGroup：atelier 统一按钮底会盖掉 Tailwind 选中态，用 aria-pressed 钉回可辨认样式 */
+.chat-decoration[data-atelier] .chat-decoration-body button[aria-pressed=true]{background:color-mix(in srgb,var(--at-blue) 72%,#fff);box-shadow:inset 0 0 0 1px var(--at-accent);color:var(--at-accent);font-weight:600}
+.chat-decoration[data-atelier] .chat-decoration-body button[aria-pressed=false]{background:var(--at-writing);box-shadow:inset 0 0 0 1px var(--at-metal);color:var(--at-muted)}
+.decoration-draft[data-atelier] .decoration-layout-fields button[aria-pressed=true]{background:color-mix(in srgb,var(--at-blue) 72%,#fff)!important;box-shadow:inset 0 0 0 1px var(--at-accent);color:var(--at-accent)!important;font-weight:600}
+.decoration-draft[data-atelier] .decoration-layout-fields button[aria-pressed=false]{background:var(--at-writing)!important;box-shadow:inset 0 0 0 1px var(--at-metal);color:var(--at-muted)!important}
 .chat-decoration[data-atelier] .chat-decoration-field select,.chat-decoration[data-atelier] .chat-decoration-scope select{background:var(--at-writing);border-color:var(--at-metal);color:var(--at-ink)}
 .atelier-special-maker{position:fixed;inset:0;z-index:12000;height:var(--visual-viewport-height,100dvh);background:var(--at-bg);display:flex;flex-direction:column;padding-top:max(var(--safe-top,0px),env(safe-area-inset-top,0px));overflow:hidden}
 .atelier-special-maker>header{display:flex;align-items:center;gap:12px;padding:12px 20px;flex:none}
@@ -532,12 +540,14 @@
 }
 .decoration-maker[data-atelier] .decoration-composer-controls:before,.atelier-special-sheet:before{background:rgba(255,255,255,.90);backdrop-filter:blur(24px) saturate(.4)}
 .decoration-maker[data-atelier=stone] .decoration-composer-controls:before{background:rgba(255,254,249,.90)}
-.decoration-maker[data-atelier] .decoration-composer-preview>.beauty-preset-preview,.decoration-current[data-atelier] .decoration-composer-preview>.beauty-preset-preview{height:100%;width:100%;max-width:660px;min-height:0;position:relative}
+/* 制作器可铺满；装修单（decoration-current）保持原编辑页比例，禁止 width/height:100% 挤变形。 */
+.decoration-maker[data-atelier] .decoration-composer-preview>.beauty-preset-preview{height:100%;width:100%;max-width:none;min-height:0;position:relative;display:flex;flex-direction:column}
 .decoration-draft[data-atelier] .decoration-composer-preview{padding:12px 16px 20px}
+.decoration-current[data-atelier] .decoration-composer-preview>.beauty-preset-preview{width:min(100%,420px);max-width:420px;margin:auto!important;height:auto;min-height:0}
 .beauty-preset-preview[data-atelier-preview=true]{position:relative;min-height:0}
-.beauty-preset-preview[data-atelier-preview=true]>.atelier-preview-viewport{flex:1 1 auto;min-height:0;border-radius:0!important;margin:0!important}
-.beauty-preset-preview[data-atelier-preview=true]>.atelier-preview-sound{position:absolute;right:80px;bottom:12px;z-index:5;min-height:28px;padding:4px 8px;border:0;background:var(--at-writing);border-radius:8px;color:var(--at-ink);font-size:10px}
-.beauty-preset-preview[data-atelier-preview=true]>.atelier-preview-dock{height:55px;min-height:55px;box-sizing:border-box}
+.atelier-role-preview>.beauty-preset-preview[data-atelier-preview=true]>.atelier-preview-viewport{flex:1 1 auto;min-height:0;border-radius:18px!important;margin:0!important;overflow:hidden}
+.atelier-preview-dock>.atelier-preview-sound{position:static;order:0;flex:none;align-self:center;z-index:1;min-height:32px;margin:0;padding:2px 6px;border:0;background:transparent;border-radius:8px;color:#354459;font-size:11px;box-shadow:none;white-space:nowrap}
+.beauty-preset-preview[data-atelier-preview=true]>.atelier-preview-dock{height:44px;min-height:44px;box-sizing:border-box;background:#fff!important;order:4}
 .atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){width:100%!important;min-width:0;max-width:100%;align-self:stretch}
 .atelier-role-preview [data-beauty-preview-source]{margin:0!important}
 .beauty-wardrobe[data-atelier]:has(.atelier-author-shell){display:flex;flex-direction:column}
@@ -549,10 +559,8 @@
 .atelier-content-heading:has(.atelier-back-chat) .atelier-role-name{flex:1}
 .atelier-content-heading:has(.atelier-back-chat)>.atelier-settings-button{margin-left:auto}
 .classic-atelier-entry{display:block;margin:6px 16px;border:0;border-radius:10px;background:#e1e7ed;color:#354459;padding:8px 12px;min-height:36px;font-size:12px}
-.atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){width:min(100%,360px)!important;align-self:center}
+.atelier-role-preview .beauty-preset-preview>div:has(>[data-beauty-preview-source]){width:100%!important;max-width:100%;align-self:stretch}
 .atelier-role-preview .beauty-preset-preview [data-beauty-preview-source]{margin:0!important}
-.decoration-draft[data-atelier] .decoration-composer-preview>.beauty-preset-preview{max-width:420px}
-.decoration-draft[data-atelier] .atelier-preview-viewport{max-width:360px;align-self:center}
 .decoration-draft[data-atelier] .decoration-shelf-overlay{align-items:flex-end;justify-content:flex-end;padding:16px 16px 64px;background:rgba(53,68,89,.12)}
 .decoration-draft[data-atelier] .decoration-shelf-overlay>section{width:350px;max-width:100%;max-height:70%;padding:16px;background:#f8fafc;border:1px solid rgba(255,255,255,.82)}
 .decoration-draft[data-atelier] .decoration-shelf-overlay header{padding:4px 0 12px}

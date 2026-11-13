@@ -1624,22 +1624,55 @@ const MessageItem = React.memo(({
         if (spacer) spacer.style.height = '0px';
         if (avatar) avatar.style.bottom = '';
         if (!row || !el || !cap) return;
+        const wrap = cap.parentElement;
+        if (!wrap) return;
         const cs = getComputedStyle(el);
         const padLeft = parseFloat(cs.paddingLeft) || 0;
         const padRight = parseFloat(cs.paddingRight) || 0;
         const padBottom = parseFloat(cs.paddingBottom) || 0;
         const inset = Math.max(0, padBottom - 6) + 8;
-        // 左边跟气泡正文同一条内边距；绝对定位，不挤小尾巴布局
-        cap.style.left = `${padLeft}px`;
-        cap.style.maxWidth = `calc(100% - ${padLeft + padRight}px)`;
+        // 挂在气泡外后不能再用 %。量「气泡里原文墨迹」的实际行宽（Range），
+        // 不要量整块 text 盒子——短句盒子会拉满气泡，中文就会显得比原文长一截。
+        const wrapRect = wrap.getBoundingClientRect();
+        const bubbleRect = el.getBoundingClientRect();
+        const textProbe = el.querySelector('[class*="text-[15px]"]') as HTMLElement | null;
+        const blockW = textProbe
+            ? textProbe.getBoundingClientRect().width
+            : Math.max(0, bubbleRect.width - padLeft - padRight);
+        let alignLeft = textProbe
+            ? textProbe.getBoundingClientRect().left
+            : bubbleRect.left + padLeft;
+        let alignW = blockW;
+        if (textProbe) {
+            const range = document.createRange();
+            range.selectNodeContents(textProbe);
+            const rects = Array.from(range.getClientRects()).filter(r => r.width > 1 && r.height > 1);
+            if (rects.length) {
+                alignLeft = Math.min(...rects.map(r => r.left));
+                alignW = Math.max(...rects.map(r => r.width));
+            }
+        }
+        // 多行原文取最长一行；再不超过正文盒子，避免描边/测量误差撑破气泡。
+        alignW = Math.min(alignW, blockW);
+        // 往右挪一点，吃掉换行后右侧留白；右缘仍卡在正文盒子右边界。
+        const RIGHT_NUDGE_PX = 8;
+        const blockRight = textProbe
+            ? textProbe.getBoundingClientRect().right
+            : bubbleRect.right - padRight;
+        const leftPx = Math.max(0, alignLeft - wrapRect.left + RIGHT_NUDGE_PX);
+        const widthPx = Math.max(0, Math.min(alignW, blockRight - wrapRect.left - leftPx));
+        cap.style.left = `${Math.round(leftPx)}px`;
+        cap.style.maxWidth = `${Math.round(widthPx)}px`;
+        cap.style.width = `${Math.round(widthPx)}px`;
+        cap.style.boxSizing = 'border-box';
         cap.style.top = `calc(100% - ${inset}px)`;
         // 字号比这句气泡正文小 0.5px（CSS 支持小数）。只量正文 text-[15px]。
         // 下限 11，避免正文很小或量歪时缩得过头。
-        const textProbe = el.querySelector('[class*="text-[15px]"]') as HTMLElement | null;
         const bodyFs = textProbe ? (parseFloat(getComputedStyle(textProbe).fontSize) || 15) : 15;
         const capFs = Math.max(11, Math.round((bodyFs - 0.5) * 10) / 10);
         cap.style.setProperty('font-size', `${capFs}px`, 'important');
-        // 字号定完再量探出高度，两行大字也能把下面表情包/气泡让开
+        // 字号定完再量探出高度，两行大字也能把下面表情包/气泡让开。
+        // 消息密度（compact/default/spacious）仍走 row 的 mb-*；这里只补「探出超过原间距」的差额。
         const base = parseFloat(getComputedStyle(row).marginBottom) || 0;
         const hang = Math.max(0, Math.ceil(cap.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + 3);
         const extra = Math.max(0, hang - base);
@@ -4211,9 +4244,11 @@ const MessageItem = React.memo(({
         : undefined;
     return commonLayout(
         <>
+        {/* 翻译挂在气泡外：躲开气泡 opacity / ::after。淡入挂在外壳，气泡和翻译一起弹出。 */}
+        <div className={`relative w-fit max-w-full ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`}>
         <div ref={bubbleBoxRef} className={isVoiceOnlyMsg
-            ? `relative ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`
-            : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${suppressEntranceAnimation ? '' : 'animate-fade-in'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'} ${bubbleGroupClasses}`}
+            ? 'relative'
+            : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'} ${bubbleGroupClasses}`}
             style={isVoiceOnlyMsg ? undefined : containerStyle}>
 
             {/* Layer 1: Background Image with Independent Opacity */}
@@ -4504,12 +4539,14 @@ const MessageItem = React.memo(({
                 </div>
                 );
             })()}
+        </div>
         {parenSplit && (
             <div
                 ref={translationBoxRef}
                 className="sully-paren-translation select-text whitespace-pre-wrap break-normal [overflow-wrap:anywhere]"
                 style={{
                     position: 'absolute',
+                    zIndex: 20,
                     fontSize: 13,
                     fontWeight: 700,
                     lineHeight: 1.35,

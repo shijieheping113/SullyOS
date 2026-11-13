@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useBlobRefUrl } from '../../utils/blobRef';
 
 /**
@@ -7,16 +7,20 @@ import { useBlobRefUrl } from '../../utils/blobRef';
  * 令牌解析出的 objectURL 会在卸载 / value 变化时自动回收，不泄漏。
  * 非令牌值原样透传，行为与普通 <img> 一致。
  * 令牌尚未解析完时不挂空 src 的 <img>（避免浏览器破图图标），改用同 class/style 占位。
+ * 加载失败（过期 blob:、永恒等浏览器拒载）也不挂破图图标，退回同尺寸占位。
  */
 const TokenImg: React.FC<{ value?: string | null } & React.ImgHTMLAttributes<HTMLImageElement>> = ({
     value,
     className,
     style,
     alt,
+    onError,
     ...rest
 }) => {
     const src = useBlobRefUrl(value ?? undefined);
-    if (!src) {
+    const [failed, setFailed] = useState(false);
+    useEffect(() => { setFailed(false); }, [src]);
+    if (!src || failed) {
         return (
             <span
                 className={className}
@@ -27,7 +31,19 @@ const TokenImg: React.FC<{ value?: string | null } & React.ImgHTMLAttributes<HTM
             />
         );
     }
-    return <img src={src} className={className} style={style} alt={alt} {...rest} />;
+    return (
+        <img
+            src={src}
+            className={className}
+            style={style}
+            alt={alt}
+            onError={(event) => {
+                setFailed(true);
+                onError?.(event);
+            }}
+            {...rest}
+        />
+    );
 };
 
 export default TokenImg;

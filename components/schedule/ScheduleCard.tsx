@@ -7,6 +7,7 @@ import { useOS } from '../../context/OSContext';
 import { resolveScheduleCardPalette } from '../../utils/scheduleAppearance';
 import ScheduleAppearanceButton, { ScheduleCustomCssStyle } from './ScheduleAppearanceButton';
 import TokenImg from '../os/TokenImg';
+import { isImageValue } from '../../utils/blobRef';
 import {homePositionLabel} from '../../utils/homeSchedule';
 
 import { putImageBlob } from '../../utils/blobRef';
@@ -111,7 +112,9 @@ export const ScheduleCardView: React.FC<ScheduleCardProps & {theme:OSTheme;previ
     })();
     const charAvatar = character?.avatar;
     const charName = character?.name || '角色';
-    const coverImage = schedule?.coverImage;
+    // 过期 blob: 地址仍是非空字符串，会挡住头像回退并在永恒等浏览器上变成破图图标。
+    const coverImage = isImageValue(schedule?.coverImage) ? schedule!.coverImage : undefined;
+    const bannerImage = coverImage || (isImageValue(charAvatar) ? charAvatar : undefined);
 
     const startEdit = (idx: number, slot: ScheduleSlot) => {
         setEditingIdx(idx);
@@ -228,9 +231,9 @@ export const ScheduleCardView: React.FC<ScheduleCardProps & {theme:OSTheme;previ
             <div className="flex flex-col">
                 {/* Character Image Banner */}
                 <div className="sully-schedule-cover relative w-full h-32 overflow-hidden flex-shrink-0">
-                    {(coverImage || charAvatar) ? (
+                    {bannerImage ? (
                         <TokenImg
-                            value={coverImage || charAvatar}
+                            value={bannerImage}
                             alt=""
                             className="absolute inset-0 w-full h-full object-cover opacity-70"
                             style={{ objectPosition: 'center 30%' }}

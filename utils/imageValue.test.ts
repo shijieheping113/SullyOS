@@ -32,6 +32,8 @@ describe('是图还是文字', () => {
         expect(isImageValue(undefined)).toBe(false);
         expect(isImageValue(null)).toBe(false);
         expect(isImageValue(123)).toBe(false);
+        // 会话级 blob: 刷新即废，不能当持久头图（永恒上常变破图图标）
+        expect(isImageValue('blob:https://192.168.0.1/abc')).toBe(false);
     });
 
     it('长得像但不是的：不会把 database / httpd 这类词当成图', () => {

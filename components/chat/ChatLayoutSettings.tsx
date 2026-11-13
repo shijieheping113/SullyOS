@@ -311,7 +311,13 @@ const ChoiceGroup: React.FC<{
         <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">{title}</div>
         <div className="flex flex-wrap gap-2">
             {items.map((item) => (
-                <button key={item.value} onClick={() => onPick(item.value)} className={cardButton(value === item.value)}>
+                <button
+                    key={item.value}
+                    type="button"
+                    aria-pressed={value === item.value}
+                    onClick={() => onPick(item.value)}
+                    className={cardButton(value === item.value)}
+                >
                     <div className="text-[11px] font-bold">{item.label}</div>
                     {item.desc && <div className="mt-0.5 text-[9px] opacity-70">{item.desc}</div>}
                 </button>

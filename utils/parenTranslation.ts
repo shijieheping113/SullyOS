@@ -2,6 +2,14 @@
 
 export type ParenTranslationFormat = 'paren' | 'quoted';
 
+/** 白字黑描边 + 字重/层级；挂在美化 CSS 之后，用 !important 钉死，不被气泡美化改色或压细。 */
+const PAREN_OUTLINE_SHADOW = '0.65px 0 0 #000,0.56px 0.32px 0 #000,0.33px 0.56px 0 #000,0 0.65px 0 #000,-0.32px 0.56px 0 #000,-0.56px 0.32px 0 #000,-0.65px 0 0 #000,-0.56px -0.32px 0 #000,-0.33px -0.56px 0 #000,0 -0.65px 0 #000,0.33px -0.56px 0 #000,0.56px -0.33px 0 #000,1.25px 0 0 #000,1.15px 0.48px 0 #000,0.88px 0.88px 0 #000,0.48px 1.15px 0 #000,0 1.25px 0 #000,-0.48px 1.15px 0 #000,-0.88px 0.88px 0 #000,-1.15px 0.48px 0 #000,-1.25px 0 0 #000,-1.15px -0.48px 0 #000,-0.88px -0.88px 0 #000,-0.48px -1.15px 0 #000,0 -1.25px 0 #000,0.48px -1.15px 0 #000,0.88px -0.88px 0 #000,1.15px -0.48px 0 #000';
+export const PAREN_TRANSLATION_LOCK_CSS = [
+    // 挂在气泡外时仍要压过伪元素小尾巴；字重钉死，避免美化把字压成细体。
+    `.sully-chat-root .sully-paren-translation{z-index:20!important;font-weight:700!important;opacity:1!important;color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;-webkit-text-stroke:0!important;background:transparent!important;text-shadow:${PAREN_OUTLINE_SHADOW}!important;}`,
+    `.sully-chat-root .sully-paren-translation *{font-weight:700!important;opacity:1!important;color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;-webkit-text-stroke:0!important;background:transparent!important;text-shadow:${PAREN_OUTLINE_SHADOW}!important;}`,
+].join('');
+
 export interface ParenTranslationSplit {
     original: string;
     translations: string[];
