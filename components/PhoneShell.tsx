@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, Suspense } from 'react';
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import { SARModuleMonitor } from './sar/SARModuleMonitor';
@@ -813,10 +813,11 @@ const PhoneShell: React.FC = () => {
       window.scrollTo(0, 0);
   }, [activeApp]);
 
-  useEffect(() => {
+  // 锁屏时用锁屏壁纸写 body（layout 同步），避免 lockReveal/透明底下先露桌面壁纸。
+  useLayoutEffect(() => {
     if (typeof document === 'undefined') return;
 
-    const wallpaper = theme.wallpaper;
+    const wallpaper = isLocked ? (theme.lockWallpaper || theme.wallpaper) : theme.wallpaper;
     const backgroundValue = !wallpaper
       ? '#0f1115'
       : (wallpaper.startsWith('http') || wallpaper.startsWith('data:') || wallpaper.startsWith('blob:') || wallpaper.startsWith('./') || wallpaper.startsWith('/'))
@@ -829,7 +830,7 @@ const PhoneShell: React.FC = () => {
       element.style.backgroundSize = 'cover';
       element.style.backgroundRepeat = 'no-repeat';
     });
-  }, [theme.wallpaper]);
+  }, [theme.wallpaper, theme.lockWallpaper, isLocked]);
 
   // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
   // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
@@ -870,10 +871,11 @@ const PhoneShell: React.FC = () => {
             unlock();
         }}
         className="relative w-full h-full bg-cover bg-center cursor-pointer overflow-hidden group font-light select-none overscroll-none"
-        style={{ backgroundImage: lockBgImageValue, color: contentColor, animation: 'lockReveal 600ms ease-out both' }}
+        style={{ backgroundImage: lockBgImageValue, color: contentColor }}
       >
-        {/* 锁屏柔和淡入：与开机「世界入场」退场衔接；body 背景本就是壁纸，故是无缝融入而非硬切。 */}
+        {/* 壁纸立刻到位（与 body 锁屏壁纸一致，不闪桌面）；只让磨砂与时钟淡入，保留 iOS 感。 */}
         <style>{`@keyframes lockReveal{from{opacity:0}to{opacity:1}}`}</style>
+        <div className="absolute inset-0" style={{ animation: 'lockReveal 600ms ease-out both' }}>
         {acnhSkin ? (
             <div className="absolute inset-0 transition-all duration-700 group-hover:opacity-0"
                  style={{ background: 'linear-gradient(180deg, rgba(188,231,245,0.25) 0%, rgba(255,247,176,0.15) 45%, rgba(124,186,76,0.28) 100%)' }} />
@@ -938,6 +940,7 @@ const PhoneShell: React.FC = () => {
           <div className="w-1 h-8 rounded-full bg-gradient-to-b from-transparent to-current"></div>
           <span className="text-[10px] tracking-widest uppercase font-semibold">Tap to Unlock</span>
         </div>}
+        </div>
       </div>
     );
   }

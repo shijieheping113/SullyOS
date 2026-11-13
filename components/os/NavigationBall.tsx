@@ -52,6 +52,8 @@ export function DraggableNavigationBall({ onBack, onHome, onApi, onShortcut, onC
     const constrain = () => {
       const { bounds } = measure(parent);
       setParentSize({ width: bounds.parentW, height: bounds.parentH, top: bounds.insetTop, bottom: bounds.insetBottom });
+      // 父容器还没量出真实尺寸时不能 clamp：否则会把已存坐标挤到左上角，且写进 latest，后续 Resize 也回不来。
+      if (bounds.parentW < SIZE * 2 || bounds.parentH < SIZE * 2) return;
       const value = latest.current || { x: bounds.parentW - SIZE - 12, y: bounds.parentH - SIZE - 96 };
       const next = clampBubblePos(value.x, value.y, bounds);
       latest.current = next; setPosition(next);
