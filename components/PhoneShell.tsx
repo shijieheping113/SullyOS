@@ -108,7 +108,8 @@ import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/s
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp, resolveStatusBarMode } from '../utils/iosStandalone';
-import { canHideShellBackdropWhenSettled, useReducedBlur } from '../utils/blurPolicy';
+import { canHideShellBackdropWhenSettled, shouldSkipShellWallpaperBlur, useReducedBlur } from '../utils/blurPolicy';
+import { isBlobRef, warmBlobRefUrls } from '../utils/blobRef';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import NavigationBall from './os/NavigationBall';
@@ -116,7 +117,8 @@ import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
-import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
+import { setAppPayloadWarmer, setAppBeautyWarmer, shouldUseIdleAppPreload } from './os/appPreload';
+import { listCssBlobRefTokens } from '../utils/cssImageAssets';
 import { isBrowserBackGuardState, makeBrowserBackGuardState, stripBrowserBackGuardState } from '../utils/browserBackGuard';
 import IncomingCallOverlay from './call/IncomingCallOverlay';
 
@@ -420,22 +422,24 @@ const AppEnterStage: React.FC<{
     return () => window.clearTimeout(timer);
   }, [appId, onSettled]);
 
+  // 回桌面不再淡入：Launcher 会整页重挂 33 个自定义图标，再叠 opacity 0→1 会感觉「空一下」。
+  const skipFade = appId === AppID.Launcher;
   return (
     <div
       className="w-full h-full"
-      style={{ animation: 'appEnterFade 200ms ease-out both' }}
+      style={skipFade ? undefined : { animation: 'appEnterFade 200ms ease-out both' }}
       onAnimationEnd={(e) => {
         if (e.target === e.currentTarget) onSettled(appId);
       }}
     >
-      <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>
+      {!skipFade && <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>}
       {children}
     </div>
   );
 };
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, groups, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, groups, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler, customIcons } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
   const reducedBlur = useReducedBlur();
   const [settledApp, setSettledApp] = useState<AppID>(activeApp);
@@ -476,6 +480,81 @@ const PhoneShell: React.FC = () => {
     // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
     if (!bootAnimationEnabled) setBootDone(true);
   }, [bootAnimationEnabled]);
+
+  // 出图预热：开机动画结束后再跑，不挡 BootSequence。
+  // 自定义图标立刻先暖（数量少、桌面空白短）；头像与小组件下一拍 idle。
+  // 美化 CSS 图不在开机暖——Ann：开机还要继续提速，不许再加压。
+  useEffect(() => {
+    if (!bootDone || !isDataLoaded) return;
+    let cancelled = false;
+    const iconRefs: string[] = [];
+    for (const value of Object.values(customIcons || {})) {
+      if (typeof value === 'string' && isBlobRef(value)) iconRefs.push(value);
+    }
+    if (iconRefs.length) void warmBlobRefUrls(iconRefs);
+
+    const collectSecondaryRefs = (): string[] => {
+      const refs: string[] = [];
+      for (const char of characters || []) {
+        if (char?.avatar && isBlobRef(char.avatar)) refs.push(char.avatar);
+      }
+      const widgets = theme.launcherWidgets;
+      if (widgets) {
+        for (const value of Object.values(widgets)) {
+          if (typeof value === 'string' && isBlobRef(value)) refs.push(value);
+        }
+      }
+      return refs;
+    };
+    const runSecondaryWarm = () => {
+      if (cancelled) return;
+      void warmBlobRefUrls(collectSecondaryRefs());
+    };
+    let idleHandle: number | null = null;
+    let timeoutHandle: number | null = null;
+    if (typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(runSecondaryWarm, { timeout: 2500 });
+    } else {
+      timeoutHandle = window.setTimeout(runSecondaryWarm, 400);
+    }
+    return () => {
+      cancelled = true;
+      if (idleHandle != null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
+    };
+  }, [bootDone, isDataLoaded, customIcons, characters, theme.launcherWidgets]);
+
+  // 回到桌面再暖一遍自定义图标（命中会话缓存几乎零成本），减少偶发空图标。
+  useEffect(() => {
+    if (!bootDone || !isDataLoaded || activeApp !== AppID.Launcher) return;
+    const iconRefs: string[] = [];
+    for (const value of Object.values(customIcons || {})) {
+      if (typeof value === 'string' && isBlobRef(value)) iconRefs.push(value);
+    }
+    if (iconRefs.length) void warmBlobRefUrls(iconRefs);
+  }, [activeApp, bootDone, isDataLoaded, customIcons]);
+
+  // 按下私聊/群聊图标时暖当前装扮图（不挡开机；pointerdown 比打开早约一拍）。
+  useEffect(() => {
+    setAppBeautyWarmer((id) => {
+      if (id !== AppID.Chat && id !== AppID.GroupChat) return;
+      const refs: string[] = [];
+      if (typeof theme.chatChromeCustomCss === 'string') {
+        refs.push(...listCssBlobRefTokens(theme.chatChromeCustomCss));
+      }
+      if (id === AppID.Chat) {
+        const activeChar = (characters || []).find((c) => c.id === activeCharacterId);
+        if (typeof activeChar?.chromeCustomCss === 'string') {
+          refs.push(...listCssBlobRefTokens(activeChar.chromeCustomCss));
+        }
+      }
+      if (!refs.length) return;
+      void warmBlobRefUrls(refs);
+    });
+    return () => setAppBeautyWarmer(null);
+  }, [theme.chatChromeCustomCss, characters, activeCharacterId]);
 
   // 折中预热策略：首屏/开机完全让路；桌面稳定约 600ms 后，能力足够的设备就逐个预热。
   // 每次严格等待当前 chunk 下载 + 解析完成，再空一拍取下一个。用户一按屏幕或进入 App，
@@ -863,28 +942,31 @@ const PhoneShell: React.FC = () => {
     );
   }
 
-  const renderApp = () => {
+  const isLauncher = activeApp === AppID.Launcher;
+
+  /** 前台非桌面 App；桌面单独常驻，切走只藏不拆，避免 33 个自定义图标反复空闪。 */
+  const renderForegroundApp = () => {
     switch (activeApp) {
       case AppID.Settings: return <Settings />;
       case AppID.Character: return <Character />;
       case AppID.Chat: return <Chat />;
-      case AppID.GroupChat: return <GroupChat />; 
+      case AppID.GroupChat: return <GroupChat />;
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Appearance: return <Appearance />;
       case AppID.Gallery: return <Gallery />;
-      case AppID.Date: return <DateApp />; 
+      case AppID.Date: return <DateApp />;
       case AppID.User: return <UserApp />;
-      case AppID.Journal: return <JournalApp />; 
+      case AppID.Journal: return <JournalApp />;
       case AppID.Schedule: return <ScheduleApp />;
-      case AppID.Room: return <RoomApp />; 
+      case AppID.Room: return <RoomApp />;
       case AppID.CheckPhone: return <CheckPhone />;
       case AppID.FriendFeed: return <FriendFeedApp />;
       case AppID.Social: return <SocialApp />;
-      case AppID.Study: return <StudyApp />; 
-      case AppID.FAQ: return <FAQApp />; 
-      case AppID.Game: return <GameApp />; 
+      case AppID.Study: return <StudyApp />;
+      case AppID.FAQ: return <FAQApp />;
+      case AppID.Game: return <GameApp />;
       case AppID.Worldbook: return <WorldbookApp />;
-      case AppID.Novel: return <NovelApp />; 
+      case AppID.Novel: return <NovelApp />;
       case AppID.Bank: return <BankApp />;
       case AppID.XhsStock: return <XhsStockApp />;
       case AppID.XhsFreeRoam: return <XhsFreeRoamApp />;
@@ -905,7 +987,7 @@ const PhoneShell: React.FC = () => {
       case AppID.LiveStream: return <LiveStreamApp />;
       case AppID.CharCreatorDev: return <CharCreatorDevApp />;
       case AppID.Launcher:
-      default: return <Launcher />;
+      default: return null;
     }
   };
 
@@ -938,8 +1020,8 @@ const PhoneShell: React.FC = () => {
          className="sully-shell-wallpaper absolute inset-0 bg-cover bg-center transition-opacity duration-500 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
          style={{
              backgroundImage: bgImageValue,
-             filter: activeApp === AppID.Launcher || reducedBlur || shellBackdropHidden ? 'none' : 'blur(24px)',
-             opacity: activeApp === AppID.Launcher ? 1 : reducedBlur ? 0.25 : 0.6,
+             filter: activeApp === AppID.Launcher || reducedBlur || shellBackdropHidden || shouldSkipShellWallpaperBlur(activeApp) ? 'none' : 'blur(24px)',
+             opacity: activeApp === AppID.Launcher ? 1 : (reducedBlur || shouldSkipShellWallpaperBlur(activeApp)) ? 0.25 : 0.6,
              visibility: shellBackdropHidden ? 'hidden' : undefined,
              backfaceVisibility: 'hidden',
              contain: useIOSStandaloneLayout ? undefined : 'strict'
@@ -950,7 +1032,7 @@ const PhoneShell: React.FC = () => {
          className={`sully-shell-wash absolute inset-0 transition-colors duration-500 ${
            activeApp === AppID.Launcher
              ? 'bg-transparent'
-             : reducedBlur
+             : reducedBlur || shouldSkipShellWallpaperBlur(activeApp)
                ? 'bg-slate-50/95'
                : 'bg-white/55'
          }`}
@@ -973,16 +1055,30 @@ const PhoneShell: React.FC = () => {
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
-              <Suspense fallback={<AppLoadingFallback key={activeApp} onReturn={closeApp} animationEnabled={theme.appLoadingAnimationEnabled !== false} />}>
-                {/* 统一「淡入」过渡：每次切换 App 时 key 变化 → 重新挂载并淡入，
-                    让所有 App 都像个人档案那样「渐变进去」，而非瞬间咚一下。
-                    关键：只动 opacity、不做 scale/translate —— 否则会把整棵（常含大量头像图片的）
-                    App 子树栅格化进 transform 图层，角色列表类 App 首帧会卡顿一下（停顿一秒）。
-                    时长也压短，进重 App 时不至于多等。 */}
-                <AppEnterStage key={activeApp} appId={activeApp} onSettled={setSettledApp}>
-                  {renderApp()}
-                </AppEnterStage>
-              </Suspense>
+              {/* 桌面常驻：切走只藏不拆（日志回桌面 iconHits 已满仍空闪，是因为整页重挂 33 个 img）。
+                  懒加载 Suspense 只包前台 App，避免挂起时把桌面一起卸掉。 */}
+              <div
+                className="absolute inset-0 w-full h-full"
+                style={{
+                  visibility: isLauncher ? 'visible' : 'hidden',
+                  pointerEvents: isLauncher ? 'auto' : 'none',
+                  zIndex: isLauncher ? 1 : 0,
+                }}
+                aria-hidden={!isLauncher}
+              >
+                <Launcher />
+              </div>
+              {!isLauncher && (
+                <div className="absolute inset-0 w-full h-full z-[1]">
+                  <Suspense fallback={<AppLoadingFallback key={activeApp} onReturn={closeApp} animationEnabled={theme.appLoadingAnimationEnabled !== false} />}>
+                    {/* 统一「淡入」过渡：每次切换 App 时 key 变化 → 重新挂载并淡入。
+                        关键：只动 opacity、不做 scale/translate。 */}
+                    <AppEnterStage key={activeApp} appId={activeApp} onSettled={setSettledApp}>
+                      {renderForegroundApp()}
+                    </AppEnterStage>
+                  </Suspense>
+                </div>
+              )}
             </AppErrorBoundary>
           </div>
 

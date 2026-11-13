@@ -1,4 +1,5 @@
-import {dataUrlToBlob, getBlobForRef, putImageBlobDeduped, resolveRefToDataUrl} from './blobRef';
+import {dataUrlToBlob, putImageBlobDeduped, resolveRefToDataUrl} from './blobRef';
+import {getCachedBlobRefUrl, loadBlobRefUrl} from './blobRefSessionCache';
 
 // Scan once, including large data URLs. Avoid selector/URL regex backtracking on
 // multi-megabyte images, and leave comments and CSS string literals untouched.
@@ -100,21 +101,41 @@ export function portableCssImages(css: string): Promise<string> {
     });
 }
 
-/** Each mounted consumer owns its URLs; late/cancelled loads must also dispose. */
+/** Unique blobref tokens used as CSS url(...) values. */
+export function listCssBlobRefTokens(css: string): string[] {
+    if (!css.includes('blobref:')) return [];
+    return [...new Set(urls(css).map(url => url.value).filter(value => value.startsWith('blobref:')))];
+}
+
+/** Sync map when every CSS blobref is already in the session cache; otherwise null. */
+export function peekCachedCssImageUrls(css: string): ReadonlyMap<string, string> | null {
+    const tokens = listCssBlobRefTokens(css);
+    if (!tokens.length) return new Map();
+    const replacements = new Map<string, string>();
+    for (const token of tokens) {
+        const cached = getCachedBlobRefUrl(token);
+        if (!cached) return null;
+        replacements.set(token, cached);
+    }
+    return replacements;
+}
+
+/** CSS blobref → objectURL via session cache (same as TokenImg); dispose is a no-op. */
 export async function resolveCssImageUrls(css: string, allowMissing = false): Promise<{css: string; dispose: () => void; replacements: ReadonlyMap<string, string>}> {
     if (!css.includes('blobref:')) return {css, dispose: () => {}, replacements: new Map()};
-    const owned: string[] = [];
     const replacements = new Map<string, string>();
-    const dispose = () => {for (const url of owned.splice(0)) URL.revokeObjectURL(url);};
+    const dispose = () => {};
     try {
         const resolved = await mapUrls(css, async value => {
             if (!value.startsWith('blobref:')) return value;
-            const blob = await getBlobForRef(value);
-            if (!blob) {
+            const cached = getCachedBlobRefUrl(value);
+            if (cached) {replacements.set(value, cached); return cached;}
+            const url = await loadBlobRefUrl(value);
+            if (!url) {
                 if (allowMissing) {replacements.set(value, ''); return '';}
                 throw Error('部分图片素材已丢失，请重新上传');
             }
-            const url = URL.createObjectURL(blob); owned.push(url); replacements.set(value, url); return url;
+            replacements.set(value, url); return url;
         }, 4);
         return {css: resolved, dispose, replacements};
     } catch (error) {dispose(); throw error;}

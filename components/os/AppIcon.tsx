@@ -28,10 +28,11 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
   const { customIcons, theme } = useOS();
   const reducedBlur = isReducedBlurActive();
   const IconComponent = Icons[app.icon] || Icons.Settings;
-  const customIconUrl = useBlobRefUrl(customIcons[app.id]);
+  const customIconToken = customIcons[app.id];
+  const customIconUrl = useBlobRefUrl(customIconToken);
   const isNook = theme.skin === 'animalcrossing';
   const isPaperDesktop = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
-  const preserveCustomOutline = !!customIconUrl && theme.preserveCustomIconOutlines === true;
+  const preserveCustomOutline = !!customIconToken && theme.preserveCustomIconOutlines === true;
   // 动森皮肤下标签用深棕色，普通皮肤沿用主题 contentColor。
   const contentColor = isNook ? '#725d42' : (theme.contentColor || '#ffffff');
 
@@ -98,13 +99,20 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
         } : undefined}
       >
 
-        {customIconUrl ? (
+        {customIconToken ? (
+            // 有自定义图标令牌时：地址未就绪先留空位，不要退回系统矢量图标造成「闪原生」。
+            // decoding=sync：桌面每次重挂都会新建 <img>；async 解码时常空一帧，同一套图也会时好时坏。
+            customIconUrl ? (
             <img
               src={customIconUrl}
               className={`w-full h-full ${preserveCustomOutline ? 'object-contain' : 'object-cover rounded-[1.2rem]'}`}
               alt={app.name}
-              loading="lazy"
+              loading="eager"
+              decoding="sync"
             />
+            ) : (
+              <div className="w-full h-full" aria-hidden />
+            )
         ) : (
             <div 
                 className={isPaperDesktop

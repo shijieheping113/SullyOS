@@ -641,6 +641,12 @@ export function openSpaceDB(id: string): Promise<IDBDatabase> {
 }
 export const openDB = () => { assertUserSpaceAvailable(SESSION_SPACE_ID); return openSpaceDB(SESSION_SPACE_ID); };
 
+/** 私聊首屏倒序游标最多扫多少行（含见面/通话等被过滤行）。超出则返回已凑到的可见条。 */
+export const RECENT_MESSAGES_SCAN_CAP = 800;
+
+/** 桌面消息框只要最近一条预览，扫幅收窄，避免回桌面扫几百行。 */
+export const DESKTOP_PREVIEW_SCAN_CAP = 80;
+
 /**
  * 家园关系条读时迁移：早期格式是无序对 {aId,bId}（双方共用一个数值），
  * 现为有向 {fromId,toId}（你对ta ≠ ta对你）。旧边拆成两条对称有向边，数值/关系名照抄，
@@ -1007,7 +1013,13 @@ export const DB = {
   // UI 读取不受记忆水位影响。先按展示范围筛选，再凑满 N 条，避免见面/通话占满窗口。
   // 有 charId_timestamp 时按时间从新到旧取。补记挂断的编号比后来的聊天还大，按编号取会把它留在最新一页，排序后又被切掉。
   // totalCount 仍是廉价的索引计数上限；游标已取尽时，调用方用实际展示条数替代它。
-  getRecentMessagesWithCount: async (charId: string, limit: number, accept?: (message: Message) => boolean): Promise<{ messages: Message[], totalCount: number }> => {
+  // maxScan：倒序最多看多少行（含被过滤的）。尾部大量见面/通话时宁可首屏略少，也不扫整库卡死。
+  getRecentMessagesWithCount: async (
+    charId: string,
+    limit: number,
+    accept?: (message: Message) => boolean,
+    maxScan: number = RECENT_MESSAGES_SCAN_CAP,
+  ): Promise<{ messages: Message[], totalCount: number }> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
@@ -1016,6 +1028,8 @@ export const DB = {
       countReq.onsuccess = () => {
           const totalCount = countReq.result;
           const collected: Message[] = [];
+          let scanned = 0;
+          const scanCap = Math.max(limit, maxScan);
           const byTime = store.indexNames.contains('charId_timestamp');
           const index = byTime ? store.index('charId_timestamp') : store.index('charId');
           const range = byTime
@@ -1024,7 +1038,8 @@ export const DB = {
           const cursorReq = index.openCursor(range, 'prev');
           cursorReq.onsuccess = () => {
               const cursor = cursorReq.result;
-              if (cursor && collected.length < limit) {
+              if (cursor && collected.length < limit && scanned < scanCap) {
+                  scanned += 1;
                   const m = cursor.value as Message;
                   if (!m.groupId && (!accept || accept(m))) collected.push(m);
                   cursor.continue();

@@ -269,6 +269,9 @@ const tuckChatInnerPeek = (scroller: HTMLElement, wrap: HTMLElement) => {
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
+/** 按角色缓存最近一屏气泡，退回再进时先显示再后台刷新，避免空列表等库。 */
+const chatRecentMessagesCache = new Map<string, { messages: Message[]; totalMsgCount: number }>();
+
 export interface HomePhoneChatProps {characterId:string;getContext:()=>string;onBack:()=>void;emojiPickerEnabled?:boolean}
 const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const { activeApp, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, openDateWithChar, registerBackHandler } = useOS();
@@ -343,6 +346,11 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const historyJumpUnlockTimerRef = useRef<number | null>(null);
     const historyWindowScrollEnabledRef = useRef(false);
     const activeCharIdRef = useRef(activeCharacterId);
+    // 切角色时首屏 effect 已 reload；同一次提交里 lastMsgTimestamp effect 跳过，避免双读库。
+    const skipTimestampReloadForCharRef = useRef<string | null>(null);
+    // 本轮 reloadMessages 已落地（或放弃）的角色；日程等杂活等它再跑。
+    const messagesReadyCharRef = useRef<string | null>(null);
+    const [messagesReadyTick, setMessagesReadyTick] = useState(0);
     // 流式预览接棒过的正式消息在当前会话内始终跳过入场动画，避免后续 DB 刷新时动画类又被加回来。
     const streamPreviewHandoverIdsRef = useRef<Set<number>>(new Set());
     const registerStreamPreviewHandover = useCallback((charId: string, messageIds: number[]) => {
@@ -1245,7 +1253,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         const toFetch = messages.filter(m => m.id && m.type === 'text' && (m.role !== 'user' || !!(m.metadata as any)?.stt) && !map[m.id]);
         if (!toFetch.length) return;
         let cancelled = false;
-        (async () => {
+        const runHydrate = () => {
+            if (cancelled) return;
+            void (async () => {
             const updates: Record<number, VoiceData> = {};
             const favoriteKeys = new Set(
                 (await listVoiceFavorites().catch(() => []))
@@ -1254,6 +1264,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             );
             if (!cancelled) setChatFavoriteKeys(favoriteKeys);
             for (const m of toFetch) {
+                if (cancelled) return;
                 try {
                     const stored = await DB.getAssetRaw(voiceAssetKey(m.id)) as StoredVoice | null;
                     if (!stored) continue;
@@ -1298,8 +1309,23 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             }
             if (cancelled || !Object.keys(updates).length) return;
             setVoiceDataMap(prev => ({ ...updates, ...prev }));
-        })();
-        return () => { cancelled = true; };
+            })();
+        };
+        // 等气泡首帧后再读语音资产，避免与消息首屏抢 IndexedDB。
+        let idleHandle: number | null = null;
+        let timeoutHandle: number | null = null;
+        if (typeof window.requestIdleCallback === 'function') {
+            idleHandle = window.requestIdleCallback(runHydrate, { timeout: 1500 });
+        } else {
+            timeoutHandle = window.setTimeout(runHydrate, 0);
+        }
+        return () => {
+            cancelled = true;
+            if (idleHandle != null && typeof window.cancelIdleCallback === 'function') {
+                window.cancelIdleCallback(idleHandle);
+            }
+            if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
+        };
     }, [messages]);
 
     // ---- 旧用户语音消息的识别字补正（进聊天扫一遍，静默改同一条）----
@@ -1320,7 +1346,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         });
         if (!pending.length) return;
         let cancelled = false;
-        (async () => {
+        const runBackfill = () => {
+            if (cancelled) return;
+            void (async () => {
             for (const m of pending) {
                 voiceBackfillTriedRef.current.add(m.id);
                 if (cancelled) return;
@@ -1348,8 +1376,22 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     console.warn('[Chat] 用户语音消息补标签失败', m.id, e);
                 }
             }
-        })();
-        return () => { cancelled = true; };
+            })();
+        };
+        let idleHandle: number | null = null;
+        let timeoutHandle: number | null = null;
+        if (typeof window.requestIdleCallback === 'function') {
+            idleHandle = window.requestIdleCallback(runBackfill, { timeout: 2500 });
+        } else {
+            timeoutHandle = window.setTimeout(runBackfill, 0);
+        }
+        return () => {
+            cancelled = true;
+            if (idleHandle != null && typeof window.cancelIdleCallback === 'function') {
+                window.cancelIdleCallback(idleHandle);
+            }
+            if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
+        };
     }, [messages]);
 
     // The archive can remove an item while this chat stays mounted. Keep the
@@ -1421,8 +1463,16 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             // 有计数、点击却加载不出任何东西的幽灵按钮。倒序游标没取满 fetchLimit 条
             // 即说明该角色的单聊消息已全部在手，此时把总数钳到实际可展示的条数。
             const exhausted = recent.length < fetchLimit;
-            setTotalMsgCount(exhausted ? chatScopeMsgs.length : totalCount);
-            setMessages(sortChatMessages(chatScopeMsgs).slice(-requestedVisibleCount));
+            const nextTotal = exhausted ? chatScopeMsgs.length : totalCount;
+            const nextMessages = sortChatMessages(chatScopeMsgs).slice(-requestedVisibleCount);
+            setTotalMsgCount(nextTotal);
+            setMessages(nextMessages);
+            chatRecentMessagesCache.set(charIdAtStart, { messages: nextMessages, totalMsgCount: nextTotal });
+        };
+        const markReady = () => {
+            if (activeCharIdRef.current !== charIdAtStart) return;
+            messagesReadyCharRef.current = charIdAtStart;
+            setMessagesReadyTick((tick) => tick + 1);
         };
         try {
             const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit, accept);
@@ -1430,6 +1480,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             // while the DB query was in flight, discard this result.
             if (activeCharIdRef.current !== charIdAtStart) return;
             applyResult(recent, totalCount);
+            markReady();
         } catch (e) {
             // DB read failed — retry once after a short delay
             if (activeCharIdRef.current !== charIdAtStart) return;
@@ -1439,7 +1490,10 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit, accept);
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 applyResult(recent, totalCount);
-            } catch { /* give up silently */ }
+                markReady();
+            } catch {
+                markReady();
+            }
         }
     }, [activeCharacterId]);
 
@@ -1449,20 +1503,51 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             // from a previous character can detect the switch and bail out.
             activeCharIdRef.current = activeCharacterId;
 
-            // Clear messages immediately to prevent showing stale chat from previous character
-            setMessages([]);
+            // 有本角色缓存则先铺上气泡再后台刷新；没有才清空，避免错角色串台。
+            const cached = chatRecentMessagesCache.get(activeCharacterId);
             setAllHistoryMessages([]);
-            setTotalMsgCount(0);
+            if (cached) {
+                setMessages(cached.messages);
+                setTotalMsgCount(cached.totalMsgCount);
+                messagesReadyCharRef.current = activeCharacterId;
+                setMessagesReadyTick((tick) => tick + 1);
+            } else {
+                setMessages([]);
+                setTotalMsgCount(0);
+                messagesReadyCharRef.current = null;
+            }
             // Reset voice map — stale blob: URLs from the previous char are revoked
             // by the cleanup effect and must not be reused against new messages.
             setVoiceDataMap({});
             setPlayingMsgId(null);
             if (chatAudioRef.current) { try { stopVoiceAudio(chatAudioRef.current); } catch { /* ignore */ } }
 
-            void purgeOrphanBatteryHints(activeCharacterId).finally(() => {
-                if (activeCharIdRef.current === activeCharacterId) reloadMessages(LOAD_BATCH_SIZE);
-            });
-            loadEmojiData();
+            // 首屏立刻拉最近 N 条；电量孤儿清理改轻量并放到空闲时，不再挡住气泡渲染。
+            skipTimestampReloadForCharRef.current = activeCharacterId;
+            void reloadMessages(LOAD_BATCH_SIZE);
+            const charIdForPurge = activeCharacterId;
+            const runOrphanPurge = () => {
+                if (activeCharIdRef.current !== charIdForPurge) return;
+                void purgeOrphanBatteryHints(charIdForPurge);
+            };
+            let idlePurgeHandle: number | null = null;
+            let idlePurgeTimeout: number | null = null;
+            let idleEmojiHandle: number | null = null;
+            let idleEmojiTimeout: number | null = null;
+            if (typeof window.requestIdleCallback === 'function') {
+                idlePurgeHandle = window.requestIdleCallback(runOrphanPurge, { timeout: 2000 });
+                // 表情全表 getAll 挪到空闲；打开表情面板时也会立刻拉。
+                idleEmojiHandle = window.requestIdleCallback(() => {
+                    if (activeCharIdRef.current !== charIdForPurge) return;
+                    void loadEmojiData();
+                }, { timeout: 4000 });
+            } else {
+                idlePurgeTimeout = window.setTimeout(runOrphanPurge, 0);
+                idleEmojiTimeout = window.setTimeout(() => {
+                    if (activeCharIdRef.current !== charIdForPurge) return;
+                    void loadEmojiData();
+                }, 4000);
+            }
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
             if (char) {
@@ -1525,6 +1610,16 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 historyJumpUnlockTimerRef.current = null;
             }
             setFlashMsgId(null);
+            return () => {
+                if (idlePurgeHandle != null && typeof window.cancelIdleCallback === 'function') {
+                    window.cancelIdleCallback(idlePurgeHandle);
+                }
+                if (idlePurgeTimeout != null) window.clearTimeout(idlePurgeTimeout);
+                if (idleEmojiHandle != null && typeof window.cancelIdleCallback === 'function') {
+                    window.cancelIdleCallback(idleEmojiHandle);
+                }
+                if (idleEmojiTimeout != null) window.clearTimeout(idleEmojiTimeout);
+            };
         }
     }, [activeCharacterId, reloadMessages]);
 
@@ -1537,6 +1632,19 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         }
         setShowEntry(true);
     }, [activeCharacterId, osTheme.chatCharacterSwitchAnimationEnabled]);
+
+    // 气泡已到则收起登场遮罩，避免库好了还被过场再盖一秒。
+    useEffect(() => {
+        if (showEntry && messages.length > 0) {
+            setShowEntry(false);
+        }
+    }, [showEntry, messages.length]);
+
+    // 用户打开表情面板时立刻拉库（若空闲预热还没跑完）。
+    useEffect(() => {
+        if (showPanel !== 'emojis') return;
+        void loadEmojiData();
+    }, [showPanel]);
 
     useEffect(() => {
         const onScheduleChange = (event: Event) => {
@@ -1553,21 +1661,42 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
     // Auto-generate daily schedule (fire-and-forget on chat load)
     // 总开关关闭时完全跳过：不查询 DB、不调用副 API、不跑兜底
+    // 等本轮消息落地后再双 rAF + 短延迟，避免与消息首屏抢主线程和 IndexedDB
     useEffect(() => {
         if (!char || (!apiConfig.apiKey && !char.scheduleApi?.apiKey)) return;
         if (!isScheduleFeatureOn(char)) {
             setScheduleData(null);
             return;
         }
-        getDailyScheduleForChar(char).then(existing => {
-            if (!existing || (getScheduleMode(char) === 'fate' && !hasActiveFateSlot(existing))) {
-                // Generate in background, don't block chat
-                generateDailySchedule(char, false);
-            } else {
-                setScheduleData(existing);
-            }
-        }).catch(() => {});
-    }, [activeCharacterId, char?.scheduleFeatureEnabled, char?.scheduleMode, char?.scheduleApi?.baseUrl, char?.scheduleApi?.model, char?.scheduleApi?.apiKey, char?.customTimezoneEnabled, char?.customTimezone, charDateKey]);
+        if (messagesReadyCharRef.current !== char.id) return;
+        let cancelled = false;
+        let timer: number | null = null;
+        let raf2 = 0;
+        const targetChar = char;
+        const run = () => {
+            if (cancelled || activeCharIdRef.current !== targetChar.id) return;
+            getDailyScheduleForChar(targetChar).then(existing => {
+                if (cancelled || activeCharIdRef.current !== targetChar.id) return;
+                if (!existing || (getScheduleMode(targetChar) === 'fate' && !hasActiveFateSlot(existing))) {
+                    // Generate in background, don't block chat
+                    generateDailySchedule(targetChar, false);
+                } else {
+                    setScheduleData(existing);
+                }
+            }).catch(() => {});
+        };
+        const raf1 = window.requestAnimationFrame(() => {
+            raf2 = window.requestAnimationFrame(() => {
+                timer = window.setTimeout(run, 120);
+            });
+        });
+        return () => {
+            cancelled = true;
+            window.cancelAnimationFrame(raf1);
+            if (raf2) window.cancelAnimationFrame(raf2);
+            if (timer != null) window.clearTimeout(timer);
+        };
+    }, [activeCharacterId, char?.scheduleFeatureEnabled, char?.scheduleMode, char?.scheduleApi?.baseUrl, char?.scheduleApi?.model, char?.scheduleApi?.apiKey, char?.customTimezoneEnabled, char?.customTimezone, charDateKey, messagesReadyTick]);
 
     // 页面可运行时续写当前活动；恢复前台立即检查，不补离线的空白时间。
     useEffect(() => {
@@ -1643,10 +1772,15 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     }, []);
 
     useEffect(() => {
-        if (activeCharacterId) {
-            reloadMessages(visibleCountRef.current);
+        if (!activeCharacterId) return;
+        // 与切角色首屏 effect 同一次提交：那边已经 reload，这里只清未读。
+        if (skipTimestampReloadForCharRef.current === activeCharacterId) {
+            skipTimestampReloadForCharRef.current = null;
             clearUnread(activeCharacterId);
+            return;
         }
+        reloadMessages(visibleCountRef.current);
+        clearUnread(activeCharacterId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clearUnread is stable (useCallback with []), omit to prevent stale-dep lint noise
     }, [lastMsgTimestamp, activeCharacterId, char?.hideSystemLogs, reloadMessages, clearUnread]);
 
@@ -1939,6 +2073,10 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             if (scroller.scrollTop <= 96) extendHistoryWindow('older');
             else if (distanceFromBottom <= 96) extendHistoryWindow('newer');
         }
+        const peekOpen = !!(innerPeekWrapRef.current && !innerPeekWrapRef.current.hidden);
+        const nearPeek = distanceFromBottom < 240 || peekOpen || innerPeekMayEnterRef.current === true;
+        // 远离底边时不做心里话高度测量与吸附调度，减轻长列表滑动主线程负担。
+        if (!nearPeek) return;
         const peekHeight = readChatInnerPeekHeight(scroller);
         // 已经展开给用户看时不要再往回拽。从上面滑下来时这行不在滚动高度里，这里只是兜底。
         if (!innerPeekLockRef.current && innerPeekPinRef.current !== 'show' && peekHeight > 0 && innerPeekMayEnterRef.current !== true) {

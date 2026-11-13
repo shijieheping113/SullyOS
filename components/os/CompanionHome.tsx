@@ -63,7 +63,7 @@ import {
   createAvatarTouchVoiceUrl,
   generateAvatarTouchVoicePack,
 } from '../../utils/avatarTouchVoice';
-import { DB } from '../../utils/db';
+import { DB, DESKTOP_PREVIEW_SCAN_CAP } from '../../utils/db';
 import { isChatPreviewMessage } from '../../utils/chatMessageVisibility';
 import { getLastInnerState } from '../../utils/emotionApply';
 import { getFlowNarrativeKey } from '../../utils/scheduleFeature';
@@ -399,6 +399,9 @@ const COMPANION_STAR_APPS: Array<{
   .filter(app => app.id !== AppID.CharCreatorDev || import.meta.env.DEV)
   .map(app => ({ id: app.id, label: app.name, icon: app.icon as keyof typeof Icons }));
 
+/** HUD 最近聊天跨重挂载缓存。 */
+let _companionRecentChatCache: { charId: string; text: string } | null = null;
+
 const CompanionHome: React.FC = () => {
   const {
     characters,
@@ -538,11 +541,15 @@ const CompanionHome: React.FC = () => {
 
   const period = periodForHour(virtualTime.hours);
   const characterDateKey = useLocalDateKey(resolveCharTimeZone(character));
-  const [hudContent, setHudContent] = useState<{ thought: string; recentChat: string; schedule: DailySchedule | null }>({
+  const [hudContent, setHudContent] = useState<{ thought: string; recentChat: string; schedule: DailySchedule | null }>(() => ({
     thought: '',
-    recentChat: '',
+    recentChat: (_companionRecentChatCache
+      && character
+      && _companionRecentChatCache.charId === character.id)
+      ? _companionRecentChatCache.text
+      : (_companionRecentChatCache?.text || ''),
     schedule: null,
-  });
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -551,13 +558,13 @@ const CompanionHome: React.FC = () => {
       return () => { cancelled = true; };
     }
     void Promise.all([
-      DB.getRecentMessagesWithCount(character.id, 1, message =>
+      DB.getRecentMessagesWithCount(character.id, 1, (message) => (
         isChatPreviewMessage(message)
         && message.role === 'assistant'
         && (!message.type || message.type === 'text')
         && typeof message.content === 'string'
-        && !!message.content.trim(),
-      ),
+        && !!message.content.trim()
+      ), DESKTOP_PREVIEW_SCAN_CAP),
       getDailyScheduleForChar(character),
     ]).then(([recent, schedule]) => {
       if (cancelled) return;
@@ -565,9 +572,11 @@ const CompanionHome: React.FC = () => {
       const scheduleThought = schedule?.flowNarrative?.[
         getFlowNarrativeKey(getScheduleWallClock(character).getHours())
       ];
+      const recentChat = compactCompanionHudText(latestAssistant?.content, '还没有聊天记录');
+      _companionRecentChatCache = { charId: character.id, text: recentChat };
       setHudContent({
         thought: compactCompanionHudText(getLastInnerState(character.id) || scheduleThought, '尚未记录心声'),
-        recentChat: compactCompanionHudText(latestAssistant?.content, '还没有聊天记录'),
+        recentChat,
         schedule,
       });
     }).catch(() => {

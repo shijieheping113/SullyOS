@@ -170,6 +170,10 @@ export const canHideShellBackdropWhenSettled = (
     return OPAQUE_FULLSCREEN_APPS.has(activeApp);
 };
 
+/** 私聊/群聊滚动时不做外壳壁纸实时 blur(24px)，只靠 wash 压暗，减轻安卓滑动合成成本。 */
+export const shouldSkipShellWallpaperBlur = (activeApp: AppID): boolean =>
+    activeApp === AppID.Chat || activeApp === AppID.GroupChat;
+
 export const updateVirtualTimeIfChanged = <
     T extends { hours: number; minutes: number; day: string },
 >(

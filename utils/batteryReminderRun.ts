@@ -100,11 +100,14 @@ const callAux = async (
     return text;
 };
 
+/** 进聊天清理只扫最近一段，避免四万条 getAll 卡住首屏。更早的孤儿留给历史管理全量读。 */
+export const ORPHAN_BATTERY_HINT_PURGE_LIMIT = 300;
+
 /** 卡片已经删掉、隐藏提示还留在库里的，清掉。不碰电量次数账本。 */
 export async function purgeOrphanBatteryHints(charId: string): Promise<number> {
     if (!charId) return 0;
     try {
-        const messages = await DB.getMessagesByCharId(charId, true);
+        const messages = await DB.getRecentMessagesByCharId(charId, ORPHAN_BATTERY_HINT_PURGE_LIMIT, true);
         const ids = orphanBatteryHintIds(messages);
         if (!ids.length) return 0;
         await DB.deleteMessages(ids);

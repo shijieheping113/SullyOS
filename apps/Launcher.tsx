@@ -5,7 +5,7 @@ import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../utils/dev
 import AppIcon from '../components/os/AppIcon';
 import TokenImg from '../components/os/TokenImg';
 import { useBlobRefUrl } from '../utils/blobRef';
-import { DB } from '../utils/db';
+import { DB, DESKTOP_PREVIEW_SCAN_CAP } from '../utils/db';
 import { isChatPreviewMessage, chatPreviewText } from '../utils/chatMessageVisibility';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
@@ -478,6 +478,8 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
 
 // --- Persist scroll page across remounts (e.g. returning from apps) ---
 let _lastPageIndex = 0;
+/** 消息框文案跨重挂载缓存，回桌面先显示再后台刷新。 */
+let _lastDesktopPreview: { charId: string; text: string } | null = null;
 
 // --- Main Launcher ---
 
@@ -486,7 +488,13 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
 
   // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(staticPreview ? characters[0] || null : null);
-  const [lastMessage, setLastMessage] = useState<string>(staticPreview ? '今天也有想和你分享的小事。' : '');
+  const [lastMessage, setLastMessage] = useState<string>(() => {
+      if (staticPreview) return '今天也有想和你分享的小事。';
+      if (_lastDesktopPreview && (!activeCharacterId || _lastDesktopPreview.charId === activeCharacterId)) {
+          return _lastDesktopPreview.text;
+      }
+      return '';
+  });
   const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
   const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
   const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
@@ -627,21 +635,24 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
 
           try {
               const [recent, annis] = await Promise.all([
-                  DB.getRecentMessagesWithCount(targetChar.id, 1, isChatPreviewMessage),
+                  DB.getRecentMessagesWithCount(targetChar.id, 1, isChatPreviewMessage, DESKTOP_PREVIEW_SCAN_CAP),
                   DB.getAllAnniversaries()
               ]);
               if (cancelled) return;
               const last = recent.messages[0];
+              let previewText: string;
               if (last) {
                   if (last.type === 'video') {
                       const vt = typeof last.metadata?.videoTitle === 'string' ? last.metadata.videoTitle.trim() : '';
-                      setLastMessage(vt || '[视频]');
+                      previewText = vt || '[视频]';
                   } else {
-                      setLastMessage(chatPreviewText(last));
+                      previewText = chatPreviewText(last);
                   }
               } else {
-                  setLastMessage(targetChar.description || "System Ready.");
+                  previewText = targetChar.description || "System Ready.";
               }
+              _lastDesktopPreview = { charId: targetChar.id, text: previewText };
+              setLastMessage(previewText);
               setAnniversaries(annis);
           } catch (e) {
               console.error(e);

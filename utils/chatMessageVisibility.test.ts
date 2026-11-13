@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { DB } from './db';
+import { DB, DESKTOP_PREVIEW_SCAN_CAP, RECENT_MESSAGES_SCAN_CAP } from './db';
 import { isChatPreviewMessage, isVisibleChatMessage, chatPreviewText } from './chatMessageVisibility';
 import type { Message } from '../types';
 
@@ -136,5 +136,24 @@ describe('先按显示范围过滤，再计算最近 N 条', () => {
         const preview = await DB.getRecentMessagesWithCount(charId, 1, isChatPreviewMessage);
         expect(preview.messages.map(m => m.id)).toEqual([id]);
         expect(localStorage.getItem(`mp_lastMsgId_${charId}`)).toBe(String(id));
+    });
+
+    it('扫描硬顶：尾部大量不可见消息时提前返回，扫够后仍能找到可见条', async () => {
+        expect(RECENT_MESSAGES_SCAN_CAP).toBe(800);
+        expect(DESKTOP_PREVIEW_SCAN_CAP).toBe(80);
+        const charId = nextCharId();
+        const saved = await DB.saveMessage({ charId, role: 'assistant', type: 'text', content: '该出门了' });
+        for (let i = 0; i < 40; i++) {
+            await DB.saveMessage({
+                charId, role: 'user', type: 'text', content: '见面',
+                metadata: { source: 'date' },
+            });
+        }
+        const capped = await DB.getRecentMessagesWithCount(charId, 30, isVisibleChatMessage, 20);
+        expect(capped.messages).toEqual([]);
+        const enough = await DB.getRecentMessagesWithCount(charId, 30, isVisibleChatMessage, 50);
+        expect(enough.messages.map(m => m.id)).toEqual([saved]);
+        const preview = await DB.getRecentMessagesWithCount(charId, 1, isChatPreviewMessage, DESKTOP_PREVIEW_SCAN_CAP);
+        expect(preview.messages.map(m => m.id)).toEqual([saved]);
     });
 });

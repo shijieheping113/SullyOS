@@ -21,6 +21,7 @@
 // 的可移植令牌会按当前部署 BASE_URL 解开，避免备份跨域/跨壳恢复后家具路径失效。
 // 惰性迁移由各消费方（壁纸加载、进入小屋）在读到 data: 时顺手 put 成 Blob 完成。
 
+import { useEffect, useState } from 'react';
 import { useBlobUrl } from '@rei-standard/blob-store/react';
 import { dataUrlToBlob, blobToDataUrl, hashBlob } from '@rei-standard/blob-store';
 import { DB } from './db';
@@ -28,6 +29,13 @@ import { blobStore } from './blobStore';
 import { REF_SOURCE_STORES } from './blobGc';
 import type { AppearancePreset, ChatTheme } from '../types';
 import { resolveBuiltinRoomAssetUrl } from './roomTemplateAssets';
+import { getCachedBlobRefUrl, loadBlobRefUrl } from './blobRefSessionCache';
+
+export {
+    warmBlobRefUrls,
+    clearBlobRefSessionCache,
+    getCachedBlobRefUrl,
+} from './blobRefSessionCache';
 
 // 与 SDK 默认前缀一致（DEFAULT_PREFIX），保留字面量避免消费方多绕一层。
 export const BLOBREF_PREFIX = 'blobref:';
@@ -356,15 +364,47 @@ export async function resolveBlobRefsDeep(root: unknown): Promise<void> {
 
 /**
  * 把一个图片字段值解析成可直接用于 <img src>/CSS url() 的字符串。
- *   · blobref 令牌 → 交给 SDK 读 Blob 建 objectURL，组件卸载 / value 变化时 revoke，绝不泄漏；
- *     解析完成前返回 undefined —— 首帧无图、令牌间切换时先空一帧再出新图，
- *     绝不把上一个（已 revoke 的）objectURL 吐给渲染层；
+ *   · blobref 令牌 → 会话缓存：命中则首帧同步出图；未命中再读 IndexedDB，写入会话缓存（不中途 revoke）；
+ *     令牌切换时不吐上一张的地址；
  *   · builtin-room-asset 令牌 / 旧样板房绝对 URL → 当前部署下的内置资源 URL；
- *   · 其它（data: / http(s) / 渐变 / undefined）→ 渲染期直接透传，不等 effect、无一帧滞后。
+ *   · 其它（data: / http(s) / 渐变 / undefined）→ 渲染期直接透传（走 SDK）。
  * 语义契约钉在 ./blobRefHook.contract.test.ts。
  */
 export function useBlobRefUrl(value: string | undefined | null): string | undefined {
-    // builtin 分支在 SDK 之前解析；blobref 令牌绕过它直接交给 SDK。
     const resolved = isBlobRef(value) ? value : resolveBuiltinRoomAssetUrl(value);
-    return useBlobUrl(blobStore, resolved);
+    const token = isBlobRef(resolved) ? resolved : null;
+
+    // 非令牌走 SDK 透传；令牌占住 hooks 顺序，避免 SDK 再为同令牌建可被 revoke 的 URL。
+    const passthrough = useBlobUrl(blobStore, token ? undefined : resolved);
+
+    const [held, setHeld] = useState<{ ref: string; url: string } | null>(() => {
+        if (!token) return null;
+        const cached = getCachedBlobRefUrl(token);
+        return cached ? { ref: token, url: cached } : null;
+    });
+
+    useEffect(() => {
+        if (!token) {
+            setHeld(null);
+            return;
+        }
+        const cached = getCachedBlobRefUrl(token);
+        if (cached) {
+            setHeld({ ref: token, url: cached });
+            return;
+        }
+        let alive = true;
+        setHeld(null);
+        void loadBlobRefUrl(token).then((url) => {
+            if (!alive || !url) return;
+            setHeld({ ref: token, url });
+        });
+        return () => { alive = false; };
+    }, [token]);
+
+    if (token) {
+        if (held && held.ref === token) return held.url;
+        return getCachedBlobRefUrl(token);
+    }
+    return passthrough;
 }

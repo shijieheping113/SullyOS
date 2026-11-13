@@ -13,6 +13,7 @@ import {
     installReducedBlurPolicy,
     isGeckoEngine,
     resolveReducedGlassCardStyle,
+    shouldSkipShellWallpaperBlur,
     shouldUseReducedBlur,
     updateVirtualTimeIfChanged,
 } from './blurPolicy';
@@ -131,6 +132,15 @@ describe('外壳底层壁纸虚化层与时钟状态更新守卫', () => {
         expect(
             canHideShellBackdropWhenSettled(AppID.Settings, { iosStandalone: true }),
         ).toBe(false);
+    });
+
+    it('私聊与群聊跳过外壳壁纸实时 blur，减轻滑动合成', () => {
+        expect(shouldSkipShellWallpaperBlur(AppID.Chat)).toBe(true);
+        expect(shouldSkipShellWallpaperBlur(AppID.GroupChat)).toBe(true);
+        expect(shouldSkipShellWallpaperBlur(AppID.Launcher)).toBe(false);
+        expect(shouldSkipShellWallpaperBlur(AppID.Settings)).toBe(false);
+        const shell = readSource('../components/PhoneShell.tsx');
+        expect(shell).toContain('shouldSkipShellWallpaperBlur(activeApp)');
     });
 
     it('updateVirtualTimeIfChanged 在分/时/星期未变时复用原对象引用，跨分钟时返回新值', () => {

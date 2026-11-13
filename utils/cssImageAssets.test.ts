@@ -2,6 +2,7 @@ import {afterEach, expect, it, vi} from 'vitest';
 import JSZip from 'jszip';
 import {DB} from './db';
 import {dataUrlToBlob, getBlobForRef, restoreBlobRef, deleteBlobRef, resolveBlobRefsDeep} from './blobRef';
+import {clearBlobRefSessionCache} from './blobRefSessionCache';
 import {localizeCssImages, portableCssImages, resolveCssImageUrls} from './cssImageAssets';
 import {decorationPatches, portableDecoration, snapshotDecoration, exportDecoration, type DecorationPreset} from './chatDecoration';
 import {decorationSourceKey} from './beautyUsage';
@@ -13,7 +14,7 @@ import {PRESET_THEMES} from '../components/chat/ChatConstants';
 const image = 'data:image/webp;base64,UklGRgAAAABXRUJQ';
 const css = `.sully-chat-avatar-wrap::after {background: url('${image}');mask:URL( ${image} );color:red}`;
 const preset: DecorationPreset = {format:'sullyos-chat-decoration',version:1,name:'透明动画框',parts:{css}};
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {clearBlobRefSessionCache(); vi.restoreAllMocks();});
 
 it('stores original bytes once, preserves quoting and identity, and exports portable CSS', async () => {
     const local = await localizeCssImages(css);
@@ -90,17 +91,21 @@ it('backs up CSS references and protects images still used by a character after 
     expect(await getBlobForRef(token)).not.toBeNull();
 });
 
-it('deduplicates object URLs per consumer, releases them on failure, and refuses missing exports', async () => {
+it('deduplicates object URLs via session cache, keeps them after dispose, and refuses missing exports', async () => {
     const local = await localizeCssImages(css);
     const create = vi.spyOn(URL,'createObjectURL').mockReturnValue('blob:frame');
     const revoke = vi.spyOn(URL,'revokeObjectURL').mockImplementation(() => {});
     const result = await resolveCssImageUrls(local);
     expect(create).toHaveBeenCalledTimes(1);
     expect(result.css.match(/blob:frame/g)).toHaveLength(2);
-    result.dispose(); result.dispose(); expect(revoke).toHaveBeenCalledTimes(1);
+    result.dispose(); result.dispose(); expect(revoke).not.toHaveBeenCalled();
+    const again = await resolveCssImageUrls(local);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(again.css.match(/blob:frame/g)).toHaveLength(2);
+    again.dispose();
     const broken = local + '.missing{background:url("blobref:img_missing")}';
     await expect(resolveCssImageUrls(broken)).rejects.toThrow('丢失');
-    expect(revoke).toHaveBeenCalledTimes(2);
+    expect(revoke).not.toHaveBeenCalled();
     await expect(portableCssImages(broken)).rejects.toThrow('丢失');
     const partial = await resolveCssImageUrls(broken,true);
     expect(partial.css).toContain('.missing{background:url("")}');

@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { Icons, INSTALLED_APPS } from '../../constants';
 import { AppID, CharacterProfile } from '../../types';
-import { DB } from '../../utils/db';
-import { isChatPreviewMessage } from '../../utils/chatMessageVisibility';
+import { DB, DESKTOP_PREVIEW_SCAN_CAP } from '../../utils/db';
+import { isChatPreviewMessage, chatPreviewText } from '../../utils/chatMessageVisibility';
 import AppIcon from './AppIcon';
 import TokenImg from './TokenImg';
 import { getMobileGameArt } from './mobilegameArt';
@@ -232,16 +232,16 @@ const MobileGameHome: React.FC = () => {
         const target = characters.find(c => c.id === activeCharacterId) || characters[0];
         setWidgetChar(target);
         let cancelled = false;
-        DB.getMessagesByCharId(target.id).then(msgs => {
+        // 消息框只取最近一条；计数用廉价 index.count，不再全量 getAll。
+        void Promise.all([
+            DB.getRecentMessagesWithCount(target.id, 1, isChatPreviewMessage, DESKTOP_PREVIEW_SCAN_CAP),
+            DB.countMessagesByCharId(target.id),
+        ]).then(([recent, msgCount]) => {
             if (cancelled) return;
-            const visible = msgs.filter(isChatPreviewMessage);
-            // 真实数值来源：聊天消息数（Lv/EXP/钻石）+ 最早消息时间（认识天数→星星）
-            const interactionMessages = msgs.filter(m => m.role !== 'system');
-            setStat({ msgCount: interactionMessages.length, firstTs: interactionMessages[0]?.timestamp || 0 });
-            if (visible.length > 0) {
-                const last = visible[visible.length - 1];
-                const clean = last.content.replace(/\[.*?\]/g, '').trim();
-                setLastMessage(clean || (last.type === 'image' ? '[图片]' : '[消息]'));
+            setStat(prev => ({ msgCount, firstTs: prev.firstTs || Date.now() }));
+            const last = recent.messages[0];
+            if (last) {
+                setLastMessage(chatPreviewText(last));
             } else {
                 setLastMessage(target.description || '');
             }

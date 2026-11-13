@@ -75,12 +75,18 @@ const requested = new Set<AppID>();
 let payloadWarmer: ((id: AppID) => Promise<unknown> | undefined) | null = null;
 export const setAppPayloadWarmer = (fn: (id: AppID) => Promise<unknown> | undefined): void => { payloadWarmer = fn; };
 
+// 美化图预热：按下私聊/群聊图标时暖当前装扮 blobref（不挡开机；会话缓存命中后几乎零成本）。
+let beautyWarmer: ((id: AppID) => void) | null = null;
+export const setAppBeautyWarmer = (fn: ((id: AppID) => void) | null): void => { beautyWarmer = fn; };
+
 /**
  * 「按下即预取」：手指刚按到图标（pointerdown，早于 tap 完成约 100ms）即预热该 App。
  * 这里只加载用户正在按下的一个 App，不在冷启动时批量预取。优先复用 PhoneShell 的模块 Promise；
  * 未注入时退化为直接预取 Vite 模块。
+ * 美化图暖每次按下都可触发（warm 自身按令牌去重），不依赖 requested。
  */
 export const preloadApp = (id: AppID): void => {
+  try { beautyWarmer?.(id); } catch { /* 美化预热失败不影响打开 App */ }
   if (requested.has(id)) return;
   requested.add(id);
   const request = payloadWarmer ? payloadWarmer(id) : importers[id]?.();

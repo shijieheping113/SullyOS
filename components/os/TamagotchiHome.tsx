@@ -3,7 +3,7 @@ import { useOS } from '../../context/OSContext';
 import { INSTALLED_APPS, Icons } from '../../constants';
 import { createPortal } from 'react-dom';
 import { AppID, CharacterProfile, RoomItem, DailySchedule, ScheduleSlot } from '../../types';
-import { DB } from '../../utils/db';
+import { DB, DESKTOP_PREVIEW_SCAN_CAP } from '../../utils/db';
 import { isChatPreviewMessage } from '../../utils/chatMessageVisibility';
 import { getLastInnerState } from '../../utils/emotionApply';
 import { getFlowNarrativeKey } from '../../utils/scheduleInjection';
@@ -890,30 +890,38 @@ const TamagotchiHome: React.FC = () => {
         }
     }, [char?.id]);
 
-    // 取数：消息数（Lv/经验条）+ ta 最近 30 条文字回复（戳一戳台词，最新在前按顺序循环）
-    // + 消息卡的最近 3 条文本气泡预览（同一次查询顺手带出，不多读一次库）
+    // 取数：计数走 index.count；预览/戳一戳走窄幅 getRecentMessagesWithCount，不再全量 getAll。
     useEffect(() => {
         if (!isDataLoaded || !char) { setStat({ msgCount: 0, pokeLines: [], recent: [] }); return; }
         let cancelled = false;
-        DB.getMessagesByCharId(char.id).then(msgs => {
+        const acceptAssistant = (m: Parameters<typeof isChatPreviewMessage>[0]) =>
+            isChatPreviewMessage(m)
+            && m.role === 'assistant'
+            && typeof m.content === 'string'
+            && !!m.content.replace(/\[.*?\]/g, '').trim();
+        const acceptBubble = (m: Parameters<typeof isChatPreviewMessage>[0]) =>
+            isChatPreviewMessage(m)
+            && (m.role === 'user' || m.role === 'assistant')
+            && (!m.type || m.type === 'text')
+            && typeof m.content === 'string'
+            && !!m.content.trim();
+        void Promise.all([
+            DB.countMessagesByCharId(char.id),
+            DB.getRecentMessagesWithCount(char.id, 30, acceptAssistant, Math.max(DESKTOP_PREVIEW_SCAN_CAP, 200)),
+            DB.getRecentMessagesWithCount(char.id, 3, acceptBubble, DESKTOP_PREVIEW_SCAN_CAP),
+        ]).then(([msgCount, pokePage, recentPage]) => {
             if (cancelled) return;
-            const visible = msgs.filter(isChatPreviewMessage);
-            const lines = visible
-                .filter(m => m.role === 'assistant')
+            const lines = pokePage.messages
                 .map(m => m.content.replace(/\[.*?\]/g, '').trim())
                 .filter(t => t.length > 0)
-                .slice(-30)
                 .reverse()
                 .map(t => t.length > 42 ? t.slice(0, 42) + '…' : t);
-            const recent = visible
-                .filter(m => (m.role === 'user' || m.role === 'assistant') && (!m.type || m.type === 'text') && typeof m.content === 'string' && m.content.trim())
-                .slice(-3)
-                .map(m => ({
-                    id: m.id,
-                    mine: m.role === 'user',
-                    text: m.content.length > 56 ? m.content.slice(0, 56) + '…' : m.content,
-                }));
-            setStat({ msgCount: msgs.filter(m => m.role !== 'system').length, pokeLines: lines, recent });
+            const recent = recentPage.messages.map(m => ({
+                id: m.id,
+                mine: m.role === 'user',
+                text: m.content.length > 56 ? m.content.slice(0, 56) + '…' : m.content,
+            }));
+            setStat({ msgCount, pokeLines: lines, recent });
         }).catch(() => {});
         return () => { cancelled = true; };
     }, [char?.id, lastMsgTimestamp, isDataLoaded]);
