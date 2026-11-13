@@ -19,6 +19,7 @@ export function decorationThumbnailPart(value:unknown):DecorationThumbnailPart|u
  return present.length===1&&present[0]!=='sound'?present[0]:undefined;
 }
 
+const ALL_SCOPE_SCENES = new Set(['all','conversation','transfer','transfer-accepted','transfer-returned','voice','voice-loading','voice-playing','psyche','psyche-open','music_card','collaboration_file']);
 /** Limit the menu to the preset's parts and explicit CSS targets, not the fixture catalog. */
 export function decorationPreviewScenes(value: unknown, scope: 'preset'|'all' = 'preset'): ChatPreviewScene[] {
   if((value as Partial<DecorationPreset>|null)?.parts?.collaboration)return [{id:'collaboration',label:'协同工作',messages:[]}];
@@ -28,7 +29,7 @@ export function decorationPreviewScenes(value: unknown, scope: 'preset'|'all' = 
   if((value as Partial<DecorationPreset>|null)?.parts?.journal)return [{id:'journal-app',label:'交换日记',messages:[]}];
   const scheduleScene={id:'schedule-card',label:'日程表',messages:[]};
   const hasSchedule=!!(value as Partial<DecorationPreset>|null)?.parts?.schedule;
-  if (scope === 'all') return hasSchedule?[...CHAT_PREVIEW_SCENES,scheduleScene]:CHAT_PREVIEW_SCENES;
+  if (scope === 'all') return [...CHAT_PREVIEW_SCENES.filter(scene=>ALL_SCOPE_SCENES.has(scene.id)),...(hasSchedule?[scheduleScene]:[])];
   const p = (value as Partial<DecorationPreset> | null)?.parts || {};
   const css = [p.css, p.bubbles?.customCss, p.psyche?.customCss].filter(Boolean).join('\n');
   // Ignore comments and declaration values (including URLs and textual examples).

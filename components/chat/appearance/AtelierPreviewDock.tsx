@@ -8,7 +8,7 @@ const groups=[
  {id:'transfer',label:'转账卡组',scenes:['transfer','transfer-accepted','transfer-returned']},
  {id:'voice',label:'语音消息',scenes:['voice','voice-loading','voice-playing']},
  {id:'psyche',label:'心象',scenes:['psyche','psyche-open']},
- {id:'music',label:'音乐分享',scenes:['music']},
+ {id:'music',label:'音乐分享',scenes:['music_card']},
  {id:'collaboration_file',label:'文件附件',scenes:['collaboration_file']},
 ];
 export default function AtelierPreviewDock({scenes,scene,onScene,onReplay,sound}:{scenes:ChatPreviewScene[];scene:string;onScene:(id:string)=>void;onReplay:()=>void;sound?:React.ReactNode}){

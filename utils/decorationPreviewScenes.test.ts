@@ -9,9 +9,10 @@ describe('preset-specific previews',()=>{
   expect(performance.now()-started).toBeLessThan(1500);
   expect(scenes({css:'@media(max-width:600px){.sully-psyche-card{color:red}}'})).toEqual(['psyche','psyche-open']);
  });
- it('offers the full fixture catalog in the composer, even for a standalone part',()=>{
+ it('offers only the conversation-focused scenes in the composer menu',()=>{
   const ids=decorationPreviewScenes({parts:{psyche:{styleId:'echo'}}},'all').map(scene=>scene.id);
-  expect(ids).toEqual(expect.arrayContaining(['all','conversation','emoji','image','music_card','world_card','html_card','collaboration_file','transfer','voice','psyche']));
+  expect(ids).toEqual(expect.arrayContaining(['all','conversation','music_card','collaboration_file','transfer','voice','psyche']));
+  expect(ids).not.toEqual(expect.arrayContaining(['emoji','image','world_card','html_card','whiteday','quiz','qixi']));
   expect(decorationPreviewScenes({parts:{}},'all').map(scene=>scene.id)).toEqual(ids);
  });
  it('shows only psyche states for standalone psyche',()=>{
