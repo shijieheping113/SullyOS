@@ -10,6 +10,9 @@ describe('气泡下中文样式锁', () => {
         expect(PAREN_TRANSLATION_LOCK_CSS).toMatch(/text-shadow:[\s\S]*!important/);
         expect(PAREN_TRANSLATION_LOCK_CSS).toContain('font-weight:700!important');
         expect(PAREN_TRANSLATION_LOCK_CSS).toContain('z-index:20!important');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('sully-paren-fade-in');
+        expect(PAREN_TRANSLATION_LOCK_CSS).toContain('@keyframes sully-paren-fade-in');
+        expect(PAREN_TRANSLATION_LOCK_CSS).not.toMatch(/sully-paren-fade-in\{[^}]*transform/);
     });
 });
 

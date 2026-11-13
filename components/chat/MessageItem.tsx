@@ -1673,8 +1673,9 @@ const MessageItem = React.memo(({
         cap.style.setProperty('font-size', `${capFs}px`, 'important');
         // 字号定完再量探出高度，两行大字也能把下面表情包/气泡让开。
         // 消息密度（compact/default/spacious）仍走 row 的 mb-*；这里只补「探出超过原间距」的差额。
+        // 用 offset*：进场动画 translateY 时 getBoundingClientRect 会量短，空隙被挤掉。
         const base = parseFloat(getComputedStyle(row).marginBottom) || 0;
-        const hang = Math.max(0, Math.ceil(cap.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) + 3);
+        const hang = Math.max(0, Math.ceil((cap.offsetTop + cap.offsetHeight) - (el.offsetTop + el.offsetHeight)) + 3);
         const extra = Math.max(0, hang - base);
         if (spacer) spacer.style.height = extra + 'px';
         if (avatar && extra) avatar.style.bottom = extra + 'px';
@@ -4244,8 +4245,8 @@ const MessageItem = React.memo(({
         : undefined;
     return commonLayout(
         <>
-        {/* 翻译挂在气泡外：躲开气泡 opacity / ::after。淡入挂在外壳，气泡和翻译一起弹出。 */}
-        <div className={`relative w-fit max-w-full ${suppressEntranceAnimation ? '' : 'animate-fade-in'}`}>
+        {/* 翻译挂在气泡外：躲开气泡 opacity / ::after。淡入挂在外壳（只用透明度，不用带位移的 animate-fade-in，避免 ::after 尾巴拆层浮出）。 */}
+        <div className={`relative w-fit max-w-full ${suppressEntranceAnimation ? '' : 'sully-paren-fade-in'}`}>
         <div ref={bubbleBoxRef} className={isVoiceOnlyMsg
             ? 'relative'
             : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'} ${bubbleGroupClasses}`}

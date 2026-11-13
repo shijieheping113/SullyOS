@@ -8,6 +8,10 @@ export const PAREN_TRANSLATION_LOCK_CSS = [
     // 挂在气泡外时仍要压过伪元素小尾巴；字重钉死，避免美化把字压成细体。
     `.sully-chat-root .sully-paren-translation{z-index:20!important;font-weight:700!important;opacity:1!important;color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;-webkit-text-stroke:0!important;background:transparent!important;text-shadow:${PAREN_OUTLINE_SHADOW}!important;}`,
     `.sully-chat-root .sully-paren-translation *{font-weight:700!important;opacity:1!important;color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;-webkit-text-stroke:0!important;background:transparent!important;text-shadow:${PAREN_OUTLINE_SHADOW}!important;}`,
+    // 气泡+译文外壳只用透明度淡入。不能用带 translate 的 animate-fade-in：
+    // transform 落在外壳上时，美化 ::after（常 z-index:999）会跟气泡本体拆成两层，开设置遮罩时尾巴单独浮出来。
+    `@keyframes sully-paren-fade-in{from{opacity:0}to{opacity:1}}`,
+    `.sully-chat-root .sully-paren-fade-in{animation:sully-paren-fade-in .35s cubic-bezier(.4,0,.2,1) both}`,
 ].join('');
 
 export interface ParenTranslationSplit {
