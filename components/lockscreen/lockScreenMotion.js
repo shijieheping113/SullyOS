@@ -30,11 +30,12 @@ export function iconCell(element, index, columns) {
 }
 
 export function drawDesktop(iconProgress, cells, dock, homebar, dockTravel = 38) {
-  for (const { element, x, y, delay, initialScale = .59 } of cells) {
+  for (const { element, x, y, delay, initialScale = .59, keepBackdrop } of cells) {
     const local = clamp((iconProgress - delay) / (1 - delay));
     const spring = 1 + Math.pow(1 - local, 3) * (-Math.cos(local * 8) - .25 * Math.sin(local * 8));
     const spread = 1 - spring;
-    element.style.opacity = clamp(local * 1.6);
+    if (keepBackdrop) element.style.visibility = local > 0 ? '' : 'hidden';
+    else element.style.opacity = clamp(local * 1.6);
     element.style.transform = "translate3d(" + (x * spread) + "px," + (y * spread) + "px,0) scale(" + (initialScale + (1 - initialScale) * spring) + ")";
   }
   const dockProgress = clamp(iconProgress * 1.16);
@@ -57,6 +58,8 @@ export function mountLockScreen(root, options) {
   var clockLayer = byId("clockLayer"), lockControls = byId("lockControls"), handle = byId("handle");
   var apps = byId("apps"), dock = byId("dock"), homebar = byId("homebar");
   var homeWallpaperLayer = byId("homeWallpaperLayer");
+  var live = !options.editor && !options.fixture;
+  if (live) homeWallpaperLayer.hidden = true;
   var shades = phone.querySelectorAll(".shade");
   var lockMark = byId("lockMark");
   var queuedProgress, queuedIcons, dragFrame = 0, wakeFrame = 0, lastReveal, lastProgress, settlingTarget;
@@ -402,8 +405,14 @@ export function mountLockScreen(root, options) {
     if (lastProgress !== progress) {
       var fade = ease(clamp((progress - .08) / .69));
       var handoff = ease(clamp((progress - .52) / .48));
-      homeWallpaperLayer.style.opacity = paintingPair ? 0 : fade;
-      frontArt.style.opacity = paintingPair ? 1 - handoff : 1 - fade;
+      if (live) {
+        var departure = paintingPair ? handoff : fade;
+        lockWallpaper.style.opacity = wakeWallpaper.style.opacity = backArt.style.opacity =
+          frontArt.style.opacity = 1 - departure;
+      } else {
+        homeWallpaperLayer.style.opacity = paintingPair ? 0 : fade;
+        frontArt.style.opacity = paintingPair ? 1 - handoff : 1 - fade;
+      }
       for (var i = 0; i < shades.length; i++) shades[i].style.opacity = 1 - handoff;
       lastProgress = progress;
     }

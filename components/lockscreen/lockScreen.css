@@ -358,6 +358,7 @@
   border-radius: 0;
   box-shadow: none;
 }
+.sully-v5.sully-v5-live > .phone { background: transparent; }
 
 .sully-v5-editor .panel-open {
   display: grid;
@@ -420,5 +421,6 @@
 [data-unlock-animating] [data-unlock-cell],
 [data-unlock-animating] [data-unlock-widget],
 [data-unlock-animating] [data-unlock-dock] { will-change: transform, opacity; }
+[data-unlock-animating] [data-unlock-backdrop] { will-change: transform; }
 [data-unlock-animating] .animate-fade-in,
 [data-unlock-entered].animate-fade-in { animation: none; }

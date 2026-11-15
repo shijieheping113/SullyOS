@@ -3,6 +3,7 @@ import { openDB } from '../utils/db';
 import { checkDatabaseReadable, databaseFailure, subscribeDatabaseFailure, type DatabaseFailure } from '../utils/databaseHealth';
 import DatabaseDiagnosticDetails from './DatabaseDiagnosticDetails';
 import './DatabaseGuard.css';
+import { StartupOpening } from './os/BootSequence';
 
 export default function DatabaseGuard({ children, readiness }: { children: React.ReactNode; readiness?: Promise<void> }) {
   const [ready, setReady] = useState(false);
@@ -22,11 +23,9 @@ export default function DatabaseGuard({ children, readiness }: { children: React
     return () => { active = false; unsubscribe(); };
   }, [readiness]);
 
-  if (ready && !failure) return <>{children}</>;
-  // Keep a mounted marker for the pre-React startup watchdog while storage is checked silently.
-  if (!failure) return <div hidden data-database-pending aria-busy="true" />;
-  const duplicateIndex = failure.message.includes('Index with the same ID already exists');
-  return <main className="database-guard">
+  const duplicateIndex = failure?.message.includes('Index with the same ID already exists');
+  return <StartupOpening failed={Boolean(failure)}>
+  {ready && !failure ? children : !failure ? <div hidden data-database-pending aria-busy="true" /> : <main className="database-guard">
     <section aria-labelledby="database-guard-title">
       <span className="database-guard-label">SULLYOS · 本地存档</span>
       <h1 id="database-guard-title">暂时无法读取本地数据</h1>
@@ -42,5 +41,6 @@ export default function DatabaseGuard({ children, readiness }: { children: React
       </div>
       <DatabaseDiagnosticDetails failure={failure} initiallyOpen />
     </section>
-  </main>;
+  </main>}
+  </StartupOpening>;
 }

@@ -20,11 +20,12 @@ export function launcherUnlockMotion(root: HTMLElement): DesktopMotion {
     y: index === 0 ? -36 : 54,
     delay: .035 + index * .045,
     initialScale: .82,
+    keepBackdrop: element.hasAttribute('data-unlock-backdrop'),
   }));
   const indicators = root.querySelector<HTMLElement>('[data-unlock-indicators]');
   const dock = root.querySelector<HTMLElement>('[data-unlock-dock]');
   root.setAttribute('data-unlock-animating', '');
-  const targets = cells.concat(widgets);
+  const targets = [...cells, ...widgets];
   return {
     draw(progress) {
       root.style.opacity = progress > 0 ? '1' : '0';
@@ -39,6 +40,7 @@ export function launcherUnlockMotion(root: HTMLElement): DesktopMotion {
       for (const { element } of targets) {
         element.style.opacity = '';
         element.style.transform = '';
+        element.style.visibility = '';
       }
       if (dock) {
         dock.style.opacity = '';

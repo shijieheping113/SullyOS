@@ -6,6 +6,7 @@ interface IconCell {
   y: number;
   delay: number;
   initialScale?: number;
+  keepBackdrop?: boolean;
 }
 
 export function iconCell(element: HTMLElement, index: number, columns: number): IconCell;

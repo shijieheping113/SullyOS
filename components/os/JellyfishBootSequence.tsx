@@ -35,6 +35,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone, poster }) =
 
   const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
   const startRef = useRef(0);
+  const [skipped, setSkipped] = useState(false);
   if (startRef.current === 0) {
     startRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
   }
@@ -45,7 +46,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone, poster }) =
     let raf = 0;
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      if (dataReady && (!showPoster || posterLoaded) && now - startRef.current >= HOLD) {
+      if (dataReady && (skipped || ((!showPoster || posterLoaded) && now - startRef.current >= HOLD))) {
         setPhase('exit');
         // 只报区间不报精确毫秒。注意这里的时长带 HOLD 下限（完整版 2000ms / 极短版 520ms），
         // 真正有信息量的是 3-8s / 8s+ 这条尾巴 —— 数据加载慢才会落到那儿。
@@ -60,7 +61,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone, poster }) =
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [dataReady, phase, HOLD, showPoster, posterLoaded]);
+  }, [dataReady, phase, HOLD, showPoster, posterLoaded, skipped]);
 
   // 退场动画播完 → 交还控制权。标记挪到退场时才写，避免开发模式 StrictMode 拆装一次就把淡入掐掉。
   useEffect(() => {
@@ -72,8 +73,8 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone, poster }) =
 
   // 轻触跳过：进入平滑退场（非硬切）。
   const skip = () => {
-    if (phase !== 'exit') {
-      setPhase('exit');
+    if (phase !== 'exit' && !skipped) {
+      setSkipped(true);
       trackEvent('跳过开机动画', {
         数据是否已就绪: dataReady ? '是' : '否',
         开场版本: cinematic ? '完整版' : '极短版',

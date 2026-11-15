@@ -41,7 +41,7 @@
 .sully-boot-hint { position:absolute; bottom:max(28px,env(safe-area-inset-bottom)); left:0; right:0; text-align:center; font:10px/1.8 system-ui,sans-serif; letter-spacing:.28em; color:#a69bbb; }
 .sully-boot-star { position:absolute; border-radius:50%; background:#ddd0ff; opacity:.3; }
 .sully-boot[data-cinematic="true"] .sully-boot-art { animation:sullyArtIn 1000ms ease-out both; }
-.sully-boot[data-cinematic="true"] .sully-boot-jelly { animation:sullyFloat 4s ease-in-out infinite; }
+.sully-boot .sully-boot-jelly { animation:sullyFloat 4s ease-in-out infinite; }
 .sully-boot[data-cinematic="true"] .sully-boot-bell { animation:sullyPulse 4s ease-in-out infinite; }
 .sully-boot[data-cinematic="true"] .sully-boot-ribbons { animation:sullySway 4s ease-in-out -.6s infinite; transform-origin:50% 45%; }
 .sully-boot[data-cinematic="true"] .sully-boot-threads { animation:sullySway 5s ease-in-out -1s infinite reverse; transform-origin:50% 45%; }

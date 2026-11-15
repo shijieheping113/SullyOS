@@ -1128,7 +1128,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
                       // Page 1 (original): Clock + Chat + 4x2 App Grid
                       <>
                         <div data-unlock-widget><DesktopClock /></div>
-                        <div data-unlock-widget data-unlock-asset={widgetChar?.avatar || undefined}><CharacterWidget
+                        <div data-unlock-widget data-unlock-backdrop="" data-unlock-asset={widgetChar?.avatar || undefined}><CharacterWidget
                             char={widgetChar}
                             unreadCount={widgetUnread}
                             lastMessage={lastMessage}

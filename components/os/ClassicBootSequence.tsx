@@ -45,6 +45,7 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) 
 
   const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
   const startRef = useRef(0);
+  const [skipped, setSkipped] = useState(false);
   if (startRef.current === 0) {
     startRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
   }
@@ -55,7 +56,7 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) 
     let raf = 0;
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      if (dataReady && now - startRef.current >= HOLD) {
+      if (dataReady && (skipped || now - startRef.current >= HOLD)) {
         setPhase('exit');
         // 只报区间不报精确毫秒。注意这里的时长带 HOLD 下限（完整版 2000ms / 极短版 520ms），
         // 真正有信息量的是 3-8s / 8s+ 这条尾巴 —— 数据加载慢才会落到那儿。
@@ -70,7 +71,7 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) 
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [dataReady, phase, HOLD]);
+  }, [dataReady, phase, HOLD, skipped]);
 
   // 退场动画播完 → 交还控制权。标记挪到退场时才写，避免开发模式 StrictMode 拆装一次就把淡入掐掉。
   useEffect(() => {
@@ -82,8 +83,8 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) 
 
   // 轻触跳过：进入平滑退场（非硬切）。
   const skip = () => {
-    if (phase !== 'exit') {
-      setPhase('exit');
+    if (phase !== 'exit' && !skipped) {
+      setSkipped(true);
       trackEvent('跳过开机动画', {
         数据是否已就绪: dataReady ? '是' : '否',
         开场版本: cinematic ? '完整版' : '极短版',
@@ -180,8 +181,8 @@ const ClassicBootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) 
             left: '50%', top: '42%', width: '120vw', height: '120vw', maxWidth: 900, maxHeight: 900,
             transform: 'translate(-50%,-50%)',
             background: 'radial-gradient(circle, rgba(168,150,255,0.45) 0%, rgba(120,110,220,0.16) 32%, transparent 60%)',
-            animation: cinematic ? 'bootBloom 5.5s ease-in-out infinite' : undefined,
-            opacity: cinematic ? undefined : 0.6,
+            animation: reduced ? undefined : 'bootBloom 5.5s ease-in-out infinite',
+            opacity: reduced ? 0.6 : undefined,
           }} />
 
           {/* 漂浮尘埃 */}

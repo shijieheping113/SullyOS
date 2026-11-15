@@ -119,7 +119,7 @@ import NavigationBall from './os/NavigationBall';
 import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
-import BootSequence from './os/BootSequence';
+import { useStartupOpening } from './os/BootSequence';
 import { setAppPayloadWarmer, setAppBeautyWarmer, shouldUseIdleAppPreload } from './os/appPreload';
 import { listCssBlobRefTokens } from '../utils/cssImageAssets';
 import { isBrowserBackGuardState, makeBrowserBackGuardState, stripBrowserBackGuardState } from '../utils/browserBackGuard';
@@ -476,10 +476,9 @@ const PhoneShell: React.FC = () => {
 
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [spaceArrival] = useState(isUserSpaceArrival);
-  const [bootDone, setBootDone] = useState(spaceArrival);
+  const { bootDone, setReady: setOpeningReady } = useStartupOpening();
   const [lockPrepared, setLockPrepared] = useState(false);
   const [desktopPreviewPrepared, setDesktopPreviewPrepared] = useState(false);
-  const finishBoot = useCallback(() => setBootDone(true), []);
   const prepareLock = useCallback(() => setLockPrepared(true), []);
   const prepareDesktopPreview = useCallback(() => setDesktopPreviewPrepared(true), []);
   const showNewLock = isLocked && lockSettings.enabled && !spaceArrival;
@@ -491,12 +490,10 @@ const PhoneShell: React.FC = () => {
     if (isLocked) unlock();
     else finishUserSpaceTransition();
   }, [spaceArrival, isDataLoaded, isLocked, unlock]);
-  const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
-  const booting = !bootDone && bootAnimationEnabled;
-  useEffect(() => {
-    // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
-    if (!bootAnimationEnabled) setBootDone(true);
-  }, [bootAnimationEnabled]);
+  const booting = !bootDone;
+  useLayoutEffect(() => {
+    setOpeningReady(isDataLoaded && (!showNewLock || lockPrepared) && !waitingForDesktopPreview, theme.wallpaper);
+  }, [isDataLoaded, showNewLock, lockPrepared, waitingForDesktopPreview, theme.wallpaper, setOpeningReady]);
 
   // 出图预热：开机动画结束后再跑，不挡 BootSequence。
   // 自定义图标立刻先暖（数量少、桌面空白短）；头像与小组件下一拍 idle。
@@ -850,13 +847,6 @@ const PhoneShell: React.FC = () => {
     });
   }, [theme.wallpaper, theme.lockWallpaper, isLocked, showNewLock, pairedDesktop, desktopPosition, lockSettings.position]);
 
-  const bootOverlay = booting ? (
-    <BootSequence key="boot" dataReady={isDataLoaded && (!showNewLock || lockPrepared) && !waitingForDesktopPreview} wallpaper={theme.wallpaper} style={theme.bootAnimationStyle} onDone={finishBoot} />
-  ) : null;
-  if (booting && (!showNewLock || !isDataLoaded)) {
-    return <div className="relative h-full w-full">{bootOverlay}</div>;
-  }
-
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
   if (!isDataLoaded) {
     return <div className="w-full h-full" style={{ background: '#05060f' }} />;
@@ -1039,7 +1029,7 @@ const PhoneShell: React.FC = () => {
     <div
       key="shell"
       className="sully-phone-shell relative w-full h-full overflow-hidden bg-cover bg-center text-slate-900 font-sans select-none overscroll-none"
-      style={{ backgroundImage: bgImageValue, backgroundPosition: desktopPosition }}
+      style={{ backgroundImage: bgImageValue, backgroundPosition: desktopPosition || 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' }}
     >
        {/* Optimized Background Layer */}
        {/* 壁纸底层：进 App 时只柔和虚化/压暗作背景，不再做缩放「过场」——
@@ -1052,7 +1042,7 @@ const PhoneShell: React.FC = () => {
              backgroundPosition: desktopPosition,
              filter: activeApp === AppID.Launcher || reducedBlur || shellBackdropHidden || shouldSkipShellWallpaperBlur(activeApp) ? 'none' : 'blur(24px)',
              opacity: activeApp === AppID.Launcher ? 1 : (reducedBlur || shouldSkipShellWallpaperBlur(activeApp)) ? 0.25 : 0.6,
-             visibility: shellBackdropHidden || showNewLock ? 'hidden' : undefined,
+             visibility: shellBackdropHidden || showNewLock || isLauncher ? 'hidden' : undefined,
              backfaceVisibility: 'hidden',
              contain: useIOSStandaloneLayout ? undefined : 'strict'
          }}
@@ -1205,7 +1195,6 @@ const PhoneShell: React.FC = () => {
        )}
        </>}
     </div>
-    {bootOverlay}
     </div>
   );
 };

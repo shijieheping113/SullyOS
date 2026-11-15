@@ -15,6 +15,7 @@ let host: HTMLDivElement;
 afterEach(async () => {
   if (root) await act(async () => root!.unmount());
   host?.remove(); root = undefined; mocks.check.mockReset();
+  localStorage.removeItem('os_theme');
 });
 
 async function mount(child: React.ReactNode, readiness?: Promise<void>) {
@@ -30,12 +31,16 @@ it('does not mount default-seeding/sync providers until storage is readable, inc
   function Child() { React.useEffect(() => { mounted(); }, []); return React.createElement('p', null, '桌面'); }
   await mount(React.createElement(Child));
   expect(mounted).not.toHaveBeenCalled();
-  expect(host.textContent).toBe('');
+  const opening = host.querySelector<HTMLElement>('.sully-boot')!;
+  expect(opening).not.toBeNull();
+  await act(async () => opening.click());
+  expect(opening.dataset.phase).toBe('enter');
   expect(host.querySelector('.database-guard')).toBeNull();
   expect(host.querySelector<HTMLElement>('[data-database-pending]')?.hidden).toBe(true);
   await act(async () => ready());
   expect(mounted).toHaveBeenCalledOnce();
-  expect(host.textContent).toBe('桌面');
+  expect(host.querySelector('p')?.textContent).toBe('桌面');
+  expect(host.querySelector('.sully-boot')).toBe(opening);
   expect(host.querySelector('[data-database-pending]')).toBeNull();
 });
 
@@ -49,8 +54,18 @@ it('shares the entry check through StrictMode and mounts the desktop without wai
   expect(mocks.check).not.toHaveBeenCalled();
   expect(host.querySelector('[data-testid=desktop]')).toBeNull();
   await act(async () => readable());
-  expect(host.textContent).toBe('桌面');
+  expect(host.querySelector('[data-testid=desktop]')?.textContent).toBe('桌面');
   expect(mocks.check).not.toHaveBeenCalled();
+});
+
+it('uses a quiet wait when the saved opening switch is off', async () => {
+  localStorage.setItem('os_theme', JSON.stringify({ bootAnimationEnabled: false }));
+  let readable!: () => void;
+  const readiness = new Promise<void>(resolve => { readable = resolve; });
+  await mount(React.createElement('p', null, '桌面'), readiness);
+  expect(host.textContent).toBe('');
+  await act(async () => readable());
+  expect(host.textContent).toBe('桌面');
 });
 
 it('shows actionable index-conflict diagnostics instead of an empty desktop and does not alter saved settings', async () => {

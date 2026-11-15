@@ -36,10 +36,12 @@ describe('lock screen handoff', () => {
     root.innerHTML = markup;
     const wallpaper = root.querySelector<HTMLElement>('#lockWallpaper')!;
     const phone = root.querySelector<HTMLElement>('#phone')!;
+    const duplicate = root.querySelector<HTMLElement>('#homeWallpaperLayer')!;
     const unlock = vi.fn(() => {
       expect(phone.hidden).toBe(true);
       expect(wallpaper.style.filter).toBe('none');
       expect(wallpaper.style.transform).toBe('scale(1)');
+      expect(wallpaper.style.opacity).toBe('0');
     });
     const motion = mountLockScreen(root, {
       editor: false, reveal: true, holdReveal: true, settings: readLockScreenSettings(),
@@ -48,6 +50,7 @@ describe('lock screen handoff', () => {
     });
     try {
       expect(wallpaper.style.filter).toBe('blur(10px)');
+      expect(duplicate.hidden).toBe(true);
       root.querySelector('#unlockZone')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
       expect(unlock).toHaveBeenCalledOnce();
     } finally {
@@ -83,7 +86,7 @@ describe('lock screen handoff', () => {
 
   it('keeps the entered grid from restarting its original fade on cleanup', () => {
     const launcher = document.createElement('div');
-    launcher.innerHTML = '<div class="animate-fade-in" data-unlock-page="active"><div data-unlock-cell="0"></div><div data-unlock-widget></div></div>';
+    launcher.innerHTML = '<div class="animate-fade-in" data-unlock-page="active"><div data-unlock-cell="0"></div><div data-unlock-widget data-unlock-backdrop></div></div>';
     const grid = launcher.firstElementChild!;
     const cell = launcher.querySelector<HTMLElement>('[data-unlock-cell]')!;
     const widget = launcher.querySelector<HTMLElement>('[data-unlock-widget]')!;
@@ -92,6 +95,7 @@ describe('lock screen handoff', () => {
     desktop.draw(.5);
     expect(cell.style.transform).toContain('translate3d');
     expect(widget.style.transform).toContain('translate3d');
+    expect(widget.style.opacity).toBe('');
     desktop.draw(1);
     desktop.finish();
     desktop.clear();
