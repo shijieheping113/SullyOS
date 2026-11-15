@@ -14,6 +14,8 @@ import {
     normalizeCompanionSkinSetId,
 } from '../utils/companionAvatar';
 import { DB } from '../utils/db';
+import LockScreen, { clearLockScreenForeground } from '../components/lockscreen/LockScreen';
+import { readLockScreenSettings, saveLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
 import { resolveStatusBarMode, type StatusBarMode } from '../utils/iosStandalone';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
@@ -489,6 +491,8 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 
 const Appearance: React.FC = () => {
   const { theme, updateTheme, closeApp, openApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, characters, activeCharacterId, updateCharacter } = useOS();
+  const [lockEditorOpen, setLockEditorOpen] = useState(false);
+  const [newLockEnabled, setNewLockEnabled] = useState(() => readLockScreenSettings().enabled);
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'sharing'>(() => (hasBeautyReceiveRequest()||hasBeautyLibraryRequest()) ? 'sharing' : 'theme');
   useAppShortcut(ShortcutAppID.Appearance, intent => setActiveTab((intent.entryId || 'theme') as typeof activeTab));
   const [shareBusy, setShareBusy] = useState(false);
@@ -728,6 +732,7 @@ const Appearance: React.FC = () => {
           const blob = await processImageToBlob(file, { skipCompression: true });
           const ref = await putImageBlob(blob);
           await updateTheme({ lockWallpaper: ref });
+          await clearLockScreenForeground();
           addToast('锁屏壁纸更新成功', 'success');
       } catch (e: any) {
           addToast(e.message, 'error');
@@ -742,6 +747,7 @@ const Appearance: React.FC = () => {
           return;
       }
       await updateTheme({ lockWallpaper: url });
+      await clearLockScreenForeground();
       setLockWallpaperUrl('');
       addToast('锁屏壁纸已应用', 'success');
   };
@@ -865,7 +871,9 @@ const Appearance: React.FC = () => {
   };
 
   return (
-    <div className="h-full w-full bg-slate-50 flex flex-col font-light">
+    <div className="relative h-full w-full">
+      {lockEditorOpen && <LockScreen onClose={() => setLockEditorOpen(false)} />}
+      <div className="h-full w-full bg-slate-50 flex flex-col font-light" style={{ visibility: lockEditorOpen ? 'hidden' : undefined }}>
       {activeTab !== 'sharing' && <><div className="bg-white/70 backdrop-blur-md border-b border-white/40 shrink-0 z-10 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
         <div className="flex items-center px-4 py-3">
           <div className="flex items-center gap-2 w-full">
@@ -1334,7 +1342,29 @@ const Appearance: React.FC = () => {
                             {theme.lockWallpaper ? '独立设置' : '跟随桌面'}
                         </span>
                     </div>
-                    <p className="text-[10px] text-slate-400 mb-4">单独设置锁屏画面，不会修改桌面壁纸。</p>
+                    <div className="flex items-center justify-between gap-4 py-3">
+                        <label htmlFor="new-lock-screen" className="text-sm font-medium text-slate-700">新版锁屏</label>
+                        <button
+                            id="new-lock-screen"
+                            type="button"
+                            role="switch"
+                            aria-checked={newLockEnabled}
+                            onClick={() => {
+                                try {
+                                    saveLockScreenSettings({ enabled: !newLockEnabled });
+                                    setNewLockEnabled(!newLockEnabled);
+                                } catch {
+                                    addToast("锁屏开关未能保存", "error");
+                                }
+                            }}
+                            className={`relative w-11 h-6 rounded-full shrink-0 transition-colors ${newLockEnabled ? "bg-primary" : "bg-slate-300"}`}
+                        >
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${newLockEnabled ? "translate-x-5" : ""}`} />
+                        </button>
+                    </div>
+                    <button type="button" onClick={() => setLockEditorOpen(true)} className="mb-4 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 active:scale-[0.98]">
+                        预览与编辑锁屏
+                    </button>
                     <LongPressArea
                         className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer"
                         onClick={() => lockWallpaperInputRef.current?.click()}
@@ -1344,6 +1374,7 @@ const Appearance: React.FC = () => {
                                 return;
                             }
                             await updateTheme({ lockWallpaper: undefined });
+                            await clearLockScreenForeground();
                             addToast('锁屏已恢复跟随桌面壁纸', 'success');
                         }}
                     >
@@ -1783,6 +1814,7 @@ const Appearance: React.FC = () => {
         ) : activeTab === 'sharing' ? (
             <BeautyShareChannel presets={appearancePresets} onExport={exportAppearancePreset} onImport={importAppearancePreset} onBusyChange={setShareBusy} onBack={() => setActiveTab('theme')}/>
         ) : null}
+      </div>
       </div>
     </div>
   );

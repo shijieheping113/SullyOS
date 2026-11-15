@@ -75,6 +75,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
 
   return (
     <button
+      data-unlock-asset={customIconToken || undefined}
       onClick={onClick}
       onPointerDown={() => preloadApp(app.id)}
       className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
@@ -111,7 +112,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
               decoding="sync"
             />
             ) : (
-              <div className="w-full h-full" aria-hidden />
+              <div className="w-full h-full" data-icon-pending="" aria-hidden />
             )
         ) : (
             <div 

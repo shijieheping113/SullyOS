@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import { SARModuleMonitor } from './sar/SARModuleMonitor';
 import Launcher from '../apps/Launcher';
+import LockScreen from './lockscreen/LockScreen';
+import { usesV5DesktopEntry } from './lockscreen/launcherUnlockMotion';
+import { readLockScreenSettings } from './lockscreen/lockScreenSettings';
 import CompanionLockChrome from './os/CompanionLockChrome';
 import { loadCompanionFrameStyle } from './os/companionFrameStyles';
 import { createPreloadableLazy, type PreloadableLazy } from './os/preloadableLazy';
@@ -450,8 +453,13 @@ const PhoneShell: React.FC = () => {
     }
   }, [activeApp]);
 
+  const [lockSettings, setLockSettings] = useState(readLockScreenSettings);
+  const unlockDesktopRef = useRef<HTMLDivElement>(null);
   // 三档顶部状态栏：安全显示 / 紧凑显示 / 隐藏。旧存档仍由 hideStatusBar 兼容解析。
   // compact 把时间放进 safe-area，本体顶栏只让出 max(safe-area, 1.5rem)，避免顶部再多一整行。
+  useLayoutEffect(() => {
+    if (!isLocked && activeApp !== AppID.Appearance) setLockSettings(readLockScreenSettings());
+  }, [activeApp, isLocked]);
   const statusBarMode = resolveStatusBarMode(theme.statusBarMode, theme.hideStatusBar);
   useEffect(() => {
     document.documentElement.classList.toggle('sully-statusbar-hidden', statusBarMode === 'hidden');
@@ -469,6 +477,14 @@ const PhoneShell: React.FC = () => {
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [spaceArrival] = useState(isUserSpaceArrival);
   const [bootDone, setBootDone] = useState(spaceArrival);
+  const [lockPrepared, setLockPrepared] = useState(false);
+  const [desktopPreviewPrepared, setDesktopPreviewPrepared] = useState(false);
+  const finishBoot = useCallback(() => setBootDone(true), []);
+  const prepareLock = useCallback(() => setLockPrepared(true), []);
+  const prepareDesktopPreview = useCallback(() => setDesktopPreviewPrepared(true), []);
+  const showNewLock = isLocked && lockSettings.enabled && !spaceArrival;
+  const animateDesktop = showNewLock && activeApp === AppID.Launcher && usesV5DesktopEntry(theme.skin);
+  const waitingForDesktopPreview = animateDesktop && !desktopPreviewPrepared;
   useEffect(() => {
     if (!spaceArrival) return;
     if (!isDataLoaded) return;
@@ -476,6 +492,7 @@ const PhoneShell: React.FC = () => {
     else finishUserSpaceTransition();
   }, [spaceArrival, isDataLoaded, isLocked, unlock]);
   const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
+  const booting = !bootDone && bootAnimationEnabled;
   useEffect(() => {
     // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
     if (!bootAnimationEnabled) setBootDone(true);
@@ -485,7 +502,7 @@ const PhoneShell: React.FC = () => {
   // 自定义图标立刻先暖（数量少、桌面空白短）；头像与小组件下一拍 idle。
   // 美化 CSS 图不在开机暖——Ann：开机还要继续提速，不许再加压。
   useEffect(() => {
-    if (!bootDone || !isDataLoaded) return;
+    if (!bootDone || !isDataLoaded || showNewLock) return;
     let cancelled = false;
     const iconRefs: string[] = [];
     for (const value of Object.values(customIcons || {})) {
@@ -524,17 +541,17 @@ const PhoneShell: React.FC = () => {
       }
       if (timeoutHandle != null) window.clearTimeout(timeoutHandle);
     };
-  }, [bootDone, isDataLoaded, customIcons, characters, theme.launcherWidgets]);
+  }, [bootDone, isDataLoaded, showNewLock, customIcons, characters, theme.launcherWidgets]);
 
   // 回到桌面再暖一遍自定义图标（命中会话缓存几乎零成本），减少偶发空图标。
   useEffect(() => {
-    if (!bootDone || !isDataLoaded || activeApp !== AppID.Launcher) return;
+    if (!bootDone || !isDataLoaded || showNewLock || activeApp !== AppID.Launcher) return;
     const iconRefs: string[] = [];
     for (const value of Object.values(customIcons || {})) {
       if (typeof value === 'string' && isBlobRef(value)) iconRefs.push(value);
     }
     if (iconRefs.length) void warmBlobRefUrls(iconRefs);
-  }, [activeApp, bootDone, isDataLoaded, customIcons]);
+  }, [activeApp, bootDone, isDataLoaded, showNewLock, customIcons]);
 
   // 按下私聊/群聊图标时暖当前装扮图（不挡开机；pointerdown 比打开早约一拍）。
   useEffect(() => {
@@ -560,7 +577,7 @@ const PhoneShell: React.FC = () => {
   // 每次严格等待当前 chunk 下载 + 解析完成，再空一拍取下一个。用户一按屏幕或进入 App，
   // 立刻取消所有尚未开始的任务；已经在飞的一个 import 无法中止，但最多只会与目标 App 并行一个。
   useEffect(() => {
-    if (!bootDone || !isDataLoaded || activeApp !== AppID.Launcher) return;
+    if (!bootDone || !isDataLoaded || showNewLock || activeApp !== AppID.Launcher) return;
     if (!shouldUseIdleAppPreload() || idlePreloadCursor >= APP_IDLE_PRELOAD_ORDER.length) return;
 
     let stoppedByInteraction = false;
@@ -631,7 +648,7 @@ const PhoneShell: React.FC = () => {
       window.removeEventListener('pointerdown', stopForInteraction, { capture: true });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [activeApp, bootDone, isDataLoaded]);
+  }, [activeApp, bootDone, isDataLoaded, showNewLock]);
 
   // 二改：不要作者「使用与授权说明」弹窗，也不再拿它挡导入恢复提醒。
   const showDisclaimer = false;
@@ -813,29 +830,31 @@ const PhoneShell: React.FC = () => {
       window.scrollTo(0, 0);
   }, [activeApp]);
 
-  // 锁屏时用锁屏壁纸写 body（layout 同步），避免 lockReveal/透明底下先露桌面壁纸。
+  const pairedDesktop = lockSettings.enabled && lockSettings.pair && usesV5DesktopEntry(theme.skin) && activeApp === AppID.Launcher;
+  const desktopPosition = pairedDesktop ? `50% ${lockSettings.position}%` : undefined;
   useLayoutEffect(() => {
     if (typeof document === 'undefined') return;
 
-    const wallpaper = isLocked ? (theme.lockWallpaper || theme.wallpaper) : theme.wallpaper;
+    const wallpaper = isLocked || pairedDesktop ? (theme.lockWallpaper || theme.wallpaper) : theme.wallpaper;
     const backgroundValue = !wallpaper
       ? '#0f1115'
-      : (wallpaper.startsWith('http') || wallpaper.startsWith('data:') || wallpaper.startsWith('blob:') || wallpaper.startsWith('./') || wallpaper.startsWith('/'))
-        ? `url(${wallpaper})`
+      : /^(https?:|data:|blob:|\.?\/)/i.test(wallpaper)
+        ? `url(${JSON.stringify(wallpaper)})`
         : wallpaper;
 
     [document.documentElement, document.body].forEach((element) => {
       element.style.background = backgroundValue;
-      element.style.backgroundPosition = 'center';
+      element.style.backgroundPosition = showNewLock ? `50% ${lockSettings.position}%` : desktopPosition || 'center';
       element.style.backgroundSize = 'cover';
       element.style.backgroundRepeat = 'no-repeat';
     });
-  }, [theme.wallpaper, theme.lockWallpaper, isLocked]);
+  }, [theme.wallpaper, theme.lockWallpaper, isLocked, showNewLock, pairedDesktop, desktopPosition, lockSettings.position]);
 
-  // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
-  // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
-  if (!bootDone && bootAnimationEnabled) {
-    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} style={theme.bootAnimationStyle} onDone={() => setBootDone(true)} />;
+  const bootOverlay = booting ? (
+    <BootSequence key="boot" dataReady={isDataLoaded && (!showNewLock || lockPrepared) && !waitingForDesktopPreview} wallpaper={theme.wallpaper} style={theme.bootAnimationStyle} onDone={finishBoot} />
+  ) : null;
+  if (booting && (!showNewLock || !isDataLoaded)) {
+    return <div className="relative h-full w-full">{bootOverlay}</div>;
   }
 
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
@@ -845,17 +864,17 @@ const PhoneShell: React.FC = () => {
 
   const getBgStyle = (wp: string) => {
       const isUrl = wp.startsWith('http') || wp.startsWith('data:') || wp.startsWith('blob:') || wp.startsWith('./') || wp.startsWith('/');
-      return isUrl ? `url(${wp})` : wp;
+      return isUrl ? `url(${JSON.stringify(wp)})` : wp;
   };
 
-  const bgImageValue = getBgStyle(theme.wallpaper);
+  const bgImageValue = getBgStyle(pairedDesktop ? (theme.lockWallpaper || theme.wallpaper) : theme.wallpaper);
   const lockBgImageValue = getBgStyle(theme.lockWallpaper || theme.wallpaper);
   const contentColor = theme.contentColor || '#ffffff';
   const acnhSkin = theme.skin === 'animalcrossing'; // 动森彩蛋：锁屏换暖色草地点缀
   const storedCompanionFrame = theme.skin === 'companion' ? loadCompanionFrameStyle() : null;
   const companionLockFrame = storedCompanionFrame;
 
-  if (isLocked) {
+  if (isLocked && !showNewLock) {
     const unreadCount = Object.values(unreadMessages).reduce((a,b) => a+b, 0);
     const unreadCharId = Object.keys(unreadMessages)[0];
     const unreadChar = unreadCharId ? characters.find(c => c.id === unreadCharId) : null;
@@ -1016,9 +1035,11 @@ const PhoneShell: React.FC = () => {
   // 进桌面闪粉：锁屏卸下后整树换成手机壳，粉紫渐变曾先画出来、壁纸子层晚一拍才盖上。
   // 壳根直接铺同一张桌面壁纸，不垫粉、不垫黑。
   return (
+    <div className="relative h-full w-full">
     <div
+      key="shell"
       className="sully-phone-shell relative w-full h-full overflow-hidden bg-cover bg-center text-slate-900 font-sans select-none overscroll-none"
-      style={{ backgroundImage: bgImageValue }}
+      style={{ backgroundImage: bgImageValue, backgroundPosition: desktopPosition }}
     >
        {/* Optimized Background Layer */}
        {/* 壁纸底层：进 App 时只柔和虚化/压暗作背景，不再做缩放「过场」——
@@ -1028,9 +1049,10 @@ const PhoneShell: React.FC = () => {
          className="sully-shell-wallpaper absolute inset-0 bg-cover bg-center transition-opacity duration-500 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
          style={{
              backgroundImage: bgImageValue,
+             backgroundPosition: desktopPosition,
              filter: activeApp === AppID.Launcher || reducedBlur || shellBackdropHidden || shouldSkipShellWallpaperBlur(activeApp) ? 'none' : 'blur(24px)',
              opacity: activeApp === AppID.Launcher ? 1 : (reducedBlur || shouldSkipShellWallpaperBlur(activeApp)) ? 0.25 : 0.6,
-             visibility: shellBackdropHidden ? 'hidden' : undefined,
+             visibility: shellBackdropHidden || showNewLock ? 'hidden' : undefined,
              backfaceVisibility: 'hidden',
              contain: useIOSStandaloneLayout ? undefined : 'strict'
          }}
@@ -1066,17 +1088,20 @@ const PhoneShell: React.FC = () => {
               {/* 桌面常驻：切走只藏不拆（日志回桌面 iconHits 已满仍空闪，是因为整页重挂 33 个 img）。
                   懒加载 Suspense 只包前台 App，避免挂起时把桌面一起卸掉。 */}
               <div
+                ref={unlockDesktopRef}
+                {...((showNewLock || !isLauncher) ? { inert: "" } : {})}
+                onFocusCapture={showNewLock ? () => document.querySelector<HTMLButtonElement>('.sully-v5-live #unlockZone')?.focus() : undefined}
                 className="absolute inset-0 w-full h-full"
                 style={{
-                  visibility: isLauncher ? 'visible' : 'hidden',
-                  pointerEvents: isLauncher ? 'auto' : 'none',
-                  zIndex: isLauncher ? 1 : 0,
+                  visibility: isLauncher || showNewLock ? 'visible' : 'hidden',
+                  pointerEvents: isLauncher && !showNewLock ? 'auto' : 'none',
+                  zIndex: isLauncher || showNewLock ? 1 : 0,
                 }}
-                aria-hidden={!isLauncher}
+                aria-hidden={!isLauncher || showNewLock}
               >
-                <Launcher />
+                {(!showNewLock || animateDesktop) && <Launcher preparingUnlock={animateDesktop} onPreviewReady={usesV5DesktopEntry(theme.skin) ? prepareDesktopPreview : undefined} />}
               </div>
-              {!isLauncher && (
+              {!isLauncher && !showNewLock && (
                 <div className="absolute inset-0 w-full h-full z-[1]">
                   <Suspense fallback={<AppLoadingFallback key={activeApp} onReturn={closeApp} animationEnabled={theme.appLoadingAnimationEnabled !== false} />}>
                     {/* 统一「淡入」过渡：每次切换 App 时 key 变化 → 重新挂载并淡入。
@@ -1088,10 +1113,12 @@ const PhoneShell: React.FC = () => {
                 </div>
               )}
             </AppErrorBoundary>
+            {showNewLock && <LockScreen desktopRef={animateDesktop ? unlockDesktopRef : undefined} desktopPaired={pairedDesktop} onUnlock={unlock} holdReveal={booting || waitingForDesktopPreview} onPrepared={prepareLock} />}
           </div>
 
           {/* Overlays: Status Bar (Top) —— 常驻渲染：时钟/电量条由开关+平台默认决定显隐（StatusBar 内部 isStatusBarHidden），
               错误指示器、系统调试终端与开关无关、始终在。 */}
+          {!showNewLock && <>
           <StatusBar />
           
           {incomingCall && activeApp !== AppID.Call && (
@@ -1143,8 +1170,10 @@ const PhoneShell: React.FC = () => {
                  </div>
               ))}
            </div>
+          </>}
        </div>
 
+       {!showNewLock && <>
        {/* Global error dialog (长报错走它, 替代单行 toast) */}
        <ErrorDialog
          isOpen={!!errorDialog}
@@ -1174,6 +1203,9 @@ const PhoneShell: React.FC = () => {
            onGoBackup={goBackupFromReminder}
          />
        )}
+       </>}
+    </div>
+    {bootOverlay}
     </div>
   );
 };

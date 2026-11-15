@@ -145,7 +145,7 @@ const CharacterWidget = React.memo(({
                     <div className="relative w-[60px] h-[60px] shrink-0 rounded-[26%] overflow-hidden bg-[#e8e2d6]"
                         style={{ border: '3px solid #ffffff', boxShadow: '0 4px 10px -2px rgba(61,52,40,0.28)' }}>
                         {char?.avatar
-                            ? <TokenImg value={char.avatar} className="w-full h-full object-cover" alt="char" loading="lazy" />
+                            ? <TokenImg value={char.avatar} className="w-full h-full object-cover" alt="char" loading="eager" />
                             : <div className="w-full h-full flex items-center justify-center text-2xl">🍃</div>}
                         {unreadCount > 0 && (
                             <div className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-[#fc736d] rounded-full flex items-center justify-center text-[10px] font-bold text-white"
@@ -213,7 +213,7 @@ const CharacterWidget = React.memo(({
                              boxShadow: paper ? '0 5px 14px rgba(91,72,51,0.13)' : acnh ? '0 4px 12px -4px rgba(61,52,40,0.25)' : '0 4px 14px rgba(0,0,0,0.25)',
                          }}>
                          {char ? (
-                             <TokenImg value={char.avatar} className="w-full h-full object-cover" alt="char" loading="lazy" />
+                             <TokenImg value={char.avatar} className="w-full h-full object-cover" alt="char" loading="eager" />
                          ) : <div className="w-full h-full bg-white/10 animate-pulse" />}
                          {unreadCount > 0 ? (
                             <div className="absolute bottom-0.5 right-0.5 min-w-[16px] h-[16px] px-1 bg-red-500 rounded-full border border-white/30 shadow-sm flex items-center justify-center text-[9px] font-bold text-white">
@@ -266,10 +266,10 @@ const AppGridPage = React.memo(({
     editing?: boolean,
 }) => {
     return (
-        <div className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-4 gap-y-6 gap-x-2' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
-             {apps.map(app => (
+        <div data-unlock-columns="4" className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-4 gap-y-6 gap-x-2' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
+             {apps.map((app, index) => (
+               <div key={app.id} data-unlock-cell={index} className="min-w-0">
                  <div
-                    key={app.id}
                     data-launcher-item={app.id}
                     data-launcher-kind="app"
                     className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}
@@ -280,6 +280,7 @@ const AppGridPage = React.memo(({
                         size="md"
                      />
                  </div>
+               </div>
              ))}
         </div>
     );
@@ -288,11 +289,13 @@ const AppGridPage = React.memo(({
 // 3b. Small 2x2 app grid for pinwheel cells
 const AppQuadGrid = React.memo(({ apps, openApp, editing = false }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void, editing?: boolean }) => {
     return (
-        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
-            {apps.map(app => (
-                <div key={app.id} data-launcher-item={app.id} data-launcher-kind="app" className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}>
+        <div data-unlock-columns="2" className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
+            {apps.map((app, index) => (
+              <div key={app.id} data-unlock-cell={index} className="min-w-0">
+                <div data-launcher-item={app.id} data-launcher-kind="app" className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}>
                     <AppIcon app={app} onClick={() => { if (!editing) openApp(app.id); }} />
                 </div>
+              </div>
             ))}
         </div>
     );
@@ -483,11 +486,27 @@ let _lastDesktopPreview: { charId: string; text: string } | null = null;
 
 // --- Main Launcher ---
 
-const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false }) => {
+const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; onPreviewReady?: () => void }> = ({
+  staticPreview = false, preparingUnlock = false, onPreviewReady,
+}) => {
   const { openApp, characters, activeCharacterId, theme, updateTheme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
+  const [desktopSettled, setDesktopSettled] = useState(!preparingUnlock);
+  const prepareVisiblePage = preparingUnlock || !desktopSettled;
+  useEffect(() => {
+      if (preparingUnlock || desktopSettled) return;
+      let afterPaint = 0;
+      const frame = requestAnimationFrame(() => {
+          afterPaint = requestAnimationFrame(() => setDesktopSettled(true));
+      });
+      return () => {
+          cancelAnimationFrame(frame);
+          cancelAnimationFrame(afterPaint);
+      };
+  }, [preparingUnlock, desktopSettled]);
 
   // Local state for widget data to prevent context trashing
-  const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(staticPreview ? characters[0] || null : null);
+  const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(() =>
+      staticPreview || preparingUnlock ? characters.find(char => char.id === activeCharacterId) || characters[0] || null : null);
   const [lastMessage, setLastMessage] = useState<string>(() => {
       if (staticPreview) return '今天也有想和你分享的小事。';
       if (_lastDesktopPreview && (!activeCharacterId || _lastDesktopPreview.charId === activeCharacterId)) {
@@ -620,13 +639,16 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
   useEffect(() => { activePageIndexRef.current = activePageIndex; }, [activePageIndex]);
 
   useEffect(() => {
+      if (!isDataLoaded || staticPreview || activePageIndex !== 0) {
+          if (isDataLoaded) onPreviewReady?.();
+          return;
+      }
       let cancelled = false;
       const loadData = async () => {
           // SAFEGUARD: If characters array is empty, reset widget char
           if (!characters || characters.length === 0) {
               setWidgetChar(null);
               setLastMessage('No Character Connected');
-              setAnniversaries([]);
               return;
           }
 
@@ -634,10 +656,7 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
           setWidgetChar(targetChar);
 
           try {
-              const [recent, annis] = await Promise.all([
-                  DB.getRecentMessagesWithCount(targetChar.id, 1, isChatPreviewMessage, DESKTOP_PREVIEW_SCAN_CAP),
-                  DB.getAllAnniversaries()
-              ]);
+              const recent = await DB.getRecentMessagesWithCount(targetChar.id, 1, isChatPreviewMessage, DESKTOP_PREVIEW_SCAN_CAP);
               if (cancelled) return;
               const last = recent.messages[0];
               let previewText: string;
@@ -653,17 +672,26 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
               }
               _lastDesktopPreview = { charId: targetChar.id, text: previewText };
               setLastMessage(previewText);
-              setAnniversaries(annis);
           } catch (e) {
               console.error(e);
           }
       };
       
-      if (isDataLoaded) {
-          loadData();
-      }
+      void loadData().finally(() => {
+          if (!cancelled) onPreviewReady?.();
+      });
       return () => { cancelled = true; };
-  }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
+  }, [activeCharacterId, activePageIndex, lastMsgTimestamp, isDataLoaded, characters, onPreviewReady, staticPreview]);
+
+  useEffect(() => {
+      if (prepareVisiblePage || !isDataLoaded || staticPreview) return;
+      let cancelled = false;
+      if (!characters.length) setAnniversaries([]);
+      else void DB.getAllAnniversaries().then(value => {
+          if (!cancelled) setAnniversaries(value);
+      }).catch(console.error);
+      return () => { cancelled = true; };
+  }, [characters, lastMsgTimestamp, isDataLoaded, prepareVisiblePage, staticPreview]);
 
   // Schedule widget data loading (shown below SpecialMoments icon)
   const scheduleChar = useMemo(() => {
@@ -674,9 +702,9 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
   const scheduleDateKey = useLocalDateKey(resolveCharTimeZone(scheduleChar));
 
   useEffect(() => {
-      if (!scheduleChar || !isDataLoaded) return;
+      if (!scheduleChar || !isDataLoaded || prepareVisiblePage) return;
       getDailyScheduleForChar(scheduleChar).then(s => setScheduleData(s)).catch(() => {});
-  }, [scheduleChar, isDataLoaded, scheduleDateKey]);
+  }, [scheduleChar, isDataLoaded, scheduleDateKey, prepareVisiblePage]);
 
   // Restore scroll position BEFORE paint to avoid visible flash/slide
   useLayoutEffect(() => {
@@ -1092,21 +1120,22 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
           {appPages.map((pageApps, idx) => (
               <div
                 key={idx}
+                data-unlock-page={activePageIndex === idx ? "active" : undefined}
                 className="launcher-page w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full"
-                style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
+                style={{ contentVisibility: prepareVisiblePage && activePageIndex === idx ? 'visible' : 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
               >
-                  {idx === 0 ? (
+                  {prepareVisiblePage && idx !== activePageIndex ? null : idx === 0 ? (
                       // Page 1 (original): Clock + Chat + 4x2 App Grid
                       <>
-                        <DesktopClock />
-                        <CharacterWidget
+                        <div data-unlock-widget><DesktopClock /></div>
+                        <div data-unlock-widget data-unlock-asset={widgetChar?.avatar || undefined}><CharacterWidget
                             char={widgetChar}
                             unreadCount={widgetUnread}
                             lastMessage={lastMessage}
                             onClick={() => openApp(AppID.Chat)}
                             contentColor={contentColor}
                             paper={paper}
-                        />
+                        /></div>
                         <div className="flex-1">
                             <AppGridPage apps={pageApps} openApp={openApp} acnh={acnh} editing={layoutEditing} />
                         </div>
@@ -1115,20 +1144,21 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
                       // Page 2: Schedule 4x2 widget on top + Pinwheel (Music / 2x2 icons / 2x2 icons / Image) below
                       <div className="launcher-pinwheel-content w-full flex flex-col gap-5">
                           {scheduleChar && (
-                              <ScheduleHomeWidget
+                              <div data-unlock-widget><ScheduleHomeWidget
                                   schedule={scheduleData}
                                   character={scheduleChar}
                                   contentColor={contentColor}
                                   onOpen={() => { setScheduleViewerOpen(true); trackEvent('打开角色日程面板'); }}
                                   acnh={acnh}
                                   paper={paper}
-                              />
+                              /></div>
                           )}
                           <div className="launcher-pinwheel-grid grid grid-cols-2 gap-x-3 gap-y-5 w-full">
                               {pinwheelOrder.filter(cell => cell === 'music' ? theme.launcherMusicVisible !== false : cell === 'image' ? theme.launcherImageVisible !== false : true).map(cell => (
                                   <div
                                       key={cell}
                                       data-launcher-item={cell}
+                                      data-unlock-widget={cell === "music" || cell === "image" ? "" : undefined}
                                       data-launcher-kind="widget"
                                       className={`relative aspect-square min-w-0 ${layoutEditing ? 'launcher-edit-item' : ''}`}
                                   >
@@ -1225,19 +1255,23 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
           ))}
 
           {/* Final Page: Widgets */}
-          <WidgetsPage
+          {prepareVisiblePage && activePageIndex !== appPages.length ? (
+            <div key="widgets-page" className="w-full flex-shrink-0 snap-center snap-always" aria-hidden="true" />
+          ) : <WidgetsPage
+            key="widgets-page"
             contentColor={contentColor}
             openApp={openApp}
             anniversaries={anniversaries}
             characters={characters}
             acnh={acnh}
             paper={paper}
-          />
+          />}
 
       </div>
 
       {/* Page Indicators */}
       <div
+          data-unlock-indicators
           className="absolute left-0 w-full flex justify-center gap-1 pointer-events-none z-20"
           style={{ bottom: `calc(${launcherBottomInset} + 5.5rem)` }}
           aria-hidden="true"
@@ -1256,6 +1290,7 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
 
       {/* Floating Dock - Updated Margin and Safe Area handling */}
       <div
+           data-unlock-dock
            className="mt-auto flex justify-center w-full px-4 relative z-30"
            style={{ paddingBottom: launcherBottomInset }}
       >
