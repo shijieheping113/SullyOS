@@ -41,6 +41,8 @@ export function launcherUnlockMotion(root: HTMLElement): DesktopMotion {
         element.style.opacity = '';
         element.style.transform = '';
         element.style.visibility = '';
+        element.style.removeProperty('--unlock-preview-alpha');
+        element.style.removeProperty('--unlock-preview-softness');
       }
       if (dock) {
         dock.style.opacity = '';

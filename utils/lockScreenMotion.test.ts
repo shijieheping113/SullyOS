@@ -3,11 +3,199 @@
 import { describe, expect, it, vi } from 'vitest';
 import { launcherUnlockMotion, usesV5DesktopEntry } from '../components/lockscreen/launcherUnlockMotion';
 import { mountLockScreen, unlockFrameSeconds, unlockIconProgress, unlockReleaseDuration, unlockReleaseFrame } from '../components/lockscreen/lockScreenMotion';
-import { readLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_BLUR, LOCK_SCREEN_SETTINGS_KEY, glassSliderValue, readLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
 import { bindLockScreenMedia } from '../components/lockscreen/lockScreenMedia';
 import markup from '../components/lockscreen/lockScreen.html?raw';
 
 describe('lock screen handoff', () => {
+  it('adds the current weather glyph and leaves custom fallback text as written', () => {
+    const root = document.createElement('div');
+    root.innerHTML = markup;
+    const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const motion = mountLockScreen(root, {
+      editor: true, reveal: false, settings: { ...readLockScreenSettings(), weather: '自己的天气文字' },
+      wallpapers: { lock: '', front: '' }, unlock() {}, requestPermission() {},
+    });
+    try {
+      const weather = root.querySelector('#lockWeather')!;
+      const glyph = root.querySelector<HTMLElement>('#lockWeatherIcon')!;
+      const text = root.querySelector('#lockWeatherText')!;
+      expect(weather.textContent).toBe('自己的天气文字');
+      motion.setWeather('22° · 多云', '03d');
+      expect(glyph.textContent).toBe('☁︎');
+      expect(glyph.hidden).toBe(false);
+      expect(text.textContent).toBe('22° · 多云');
+      expect(text.nextElementSibling).toBe(glyph);
+      motion.setWeather('17° · 晴', '01n');
+      expect(glyph.textContent).toBe('☾');
+      expect(text.textContent).toBe('17° · 晴');
+      motion.setWeather('19°', '99d');
+      expect(weather.textContent).toBe('19°');
+      expect(glyph.hidden).toBe(true);
+      motion.setWeather('');
+      expect(weather.textContent).toBe('自己的天气文字');
+    } finally {
+      motion.dispose();
+      canvas.mockRestore();
+    }
+  });
+
+  it('keeps the old effective glass settings and permits separate zero blur on light wallpaper', () => {
+    const edge = CLOCK_GLASS_SLIDERS.find(slider => slider.key === 'edgeStrength')!;
+    const shadow = CLOCK_GLASS_SLIDERS.find(slider => slider.key === 'shadow')!;
+    const legacy = { clock: { blurAmount: .3, blurPx: 99, overLight: true, edge: .58 }, player: { blurAmount: .04, edge: 0 } };
+    expect(glassSliderValue(legacy, 'clock', LOCK_GLASS_BLUR)).toBe(21.6);
+    expect(glassSliderValue(legacy, 'player', LOCK_GLASS_BLUR)).toBe(5.28);
+    expect(glassSliderValue(legacy, 'clock', edge)).toBe(.526);
+    expect(glassSliderValue(legacy, 'player', edge)).toBe(.12);
+    expect(glassSliderValue(legacy, 'caption', shadow)).toBe(.5);
+    const updated = { ...legacy, clock: { ...legacy.clock, blurRadius: 24, lightBlurRadius: 0 } };
+    expect(glassSliderValue(updated, 'clock', LOCK_GLASS_BLUR)).toBe(0);
+    updated.clock.overLight = false;
+    expect(glassSliderValue(updated, 'clock', LOCK_GLASS_BLUR)).toBe(24);
+  });
+
+  it('paints zero blur and edge independently from the expanded maxima', () => {
+    const root = document.createElement('div');
+    root.innerHTML = markup;
+    const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const motion = mountLockScreen(root, {
+      editor: true, reveal: false, settings: readLockScreenSettings(),
+      wallpapers: { lock: '', front: '' }, unlock() {}, requestPermission() {},
+    });
+    try {
+      const clock = root.querySelector<HTMLElement>('.clock-glass-face')!.style;
+      const player = root.querySelector<HTMLElement>('#player')!.style;
+      expect(clock.getPropertyValue('--blur-px')).toBe('13.6px');
+      expect(player.getPropertyValue('--blur-px')).toBe('5.28px');
+      motion.setSettings({
+        ...readLockScreenSettings(),
+        glass: { clock: { overLight: true, lightBlurRadius: 0, edgeStrength: 0, inkOpacity: 0 },
+          player: { blurRadius: 48, saturation: 300, sheen: .7, shadow: .8, fill: .6, edgeStrength: 1 },
+          companion: { blurRadius: 22, fill: .26 }, flashlight: { blurRadius: 0 } },
+      });
+      for (const key of ['--rim', '--rim-soft', '--edge-ring', '--clock-ink-opacity']) {
+        expect(clock.getPropertyValue(key)).toBe('0');
+      }
+      expect(clock.getPropertyValue('--blur-px')).toBe('0px');
+      expect(player.getPropertyValue('--blur-px')).toBe('48px');
+      expect(player.getPropertyValue('--sat')).toBe('300%');
+      expect(player.getPropertyValue('--edge-ring')).toBe('1');
+      expect(player.getPropertyValue('--fill')).toBe('0.6');
+      expect(player.getPropertyValue('--sheen')).toBe('0.7');
+      expect(player.getPropertyValue('--shadow')).toBe('0.8');
+      const battery = root.querySelector<HTMLElement>('#batteryDetails .ring-glass-face')!.style;
+      const companion = root.querySelector<HTMLElement>('#companionRing .ring-glass-face')!.style;
+      expect(battery.getPropertyValue('--blur-px')).toBe('22px');
+      expect(battery.getPropertyValue('--fill')).toBe('0.26');
+      expect(companion.getPropertyValue('--blur-px')).toBe('22px');
+      expect(root.querySelector<HTMLElement>('#lockCamera')!.style.getPropertyValue('--blur-px')).toBe('0px');
+      expect(root.querySelector<HTMLElement>('#lockChat')!.style.getPropertyValue('--blur-px')).toBe('0px');
+    } finally {
+      motion.dispose();
+      canvas.mockRestore();
+    }
+  });
+
+  it('merges separate older glass settings into the shared controls', () => {
+    localStorage.setItem(LOCK_SCREEN_SETTINGS_KEY, JSON.stringify({
+      glass: { companion: { blurRadius: 10 }, battery: { blurRadius: 22 }, camera: { fill: .26 } },
+    }));
+    try {
+      expect(readLockScreenSettings().glass).toEqual({ companion: { blurRadius: 10 }, flashlight: { fill: .26 } });
+    } finally {
+      localStorage.removeItem(LOCK_SCREEN_SETTINGS_KEY);
+    }
+  });
+
+  it('requires a separate unlock gesture after the shortcut is selected', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const root = document.createElement('div');
+    root.innerHTML = markup;
+    const phone = root.querySelector<HTMLElement>('#phone')!;
+    phone.setPointerCapture = vi.fn();
+    Object.defineProperty(phone, 'clientHeight', { value: 844 });
+    const chat = root.querySelector('#lockChat')!;
+    const hint = root.querySelector<HTMLElement>('#lockChatHint')!;
+    const zone = root.querySelector('#unlockZone')!;
+    const openRecentChat = vi.fn();
+    const unlock = vi.fn();
+    const desktop = { draw: vi.fn(), finish: vi.fn(), clear: vi.fn() };
+    const motion = mountLockScreen(root, {
+      editor: false, reveal: false, settings: readLockScreenSettings(),
+      wallpapers: { lock: '', front: '' }, unlock, openRecentChat, desktop, requestPermission() {},
+    });
+    const pointer = (name: string, target = chat, y = 700) => {
+      const event = new PointerEvent(name, { bubbles: true, clientX: 50, clientY: y });
+      Object.defineProperties(event, { isPrimary: { value: true }, pointerId: { value: 1 } });
+      target.dispatchEvent(event);
+    };
+    try {
+      pointer('pointerdown');
+      expect(chat.hasAttribute('data-pressed')).toBe(true);
+      pointer('pointerup');
+      vi.advanceTimersByTime(500);
+      expect(openRecentChat).not.toHaveBeenCalled();
+      pointer('pointerdown');
+      vi.advanceTimersByTime(450);
+      expect(openRecentChat).not.toHaveBeenCalled();
+      expect(hint.hidden).toBe(false);
+      pointer('pointerup');
+      expect(openRecentChat).not.toHaveBeenCalled();
+      expect(phone.hidden).toBe(false);
+      vi.advanceTimersByTime(5000);
+      expect(hint.hidden).toBe(true);
+      pointer('pointerdown');
+      vi.advanceTimersByTime(450);
+      pointer('pointerup');
+      pointer('pointerdown', zone, 780);
+      pointer('pointermove', zone, 430);
+      expect(openRecentChat).not.toHaveBeenCalled();
+      pointer('pointerup', zone, 430);
+      expect(openRecentChat).toHaveBeenCalledOnce();
+      expect(unlock).not.toHaveBeenCalled();
+      expect(desktop.draw.mock.calls.every(([progress]) => progress === 0)).toBe(true);
+      expect(desktop.finish).not.toHaveBeenCalled();
+      expect(phone.hidden).toBe(true);
+    } finally {
+      motion.dispose();
+      canvas.mockRestore();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it('prepares responsive wallpaper layers using the saved crop, without the removed prototype control', () => {
+    const root = document.createElement('div');
+    root.innerHTML = markup;
+    const drawings = vi.fn();
+    const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      filter: 'none', fillRect: vi.fn(), drawImage: drawings,
+    } as unknown as ReturnType<HTMLCanvasElement['getContext']>);
+    const phone = root.querySelector('#phone')!;
+    Object.defineProperties(phone, { clientWidth: { value: 390 }, clientHeight: { value: 844 } });
+    const source = new Image();
+    Object.defineProperties(source, { naturalWidth: { value: 3000 }, naturalHeight: { value: 5000 } });
+    const motion = mountLockScreen(root, {
+      editor: false, reveal: true, holdReveal: true, settings: { ...readLockScreenSettings(), position: 72 },
+      wallpapers: { lock: '/photo.jpg', front: '' }, unlock() {}, requestPermission() {},
+    });
+    try {
+      motion.prepareWakeWallpaper(source, true);
+      const sharp = root.querySelector<HTMLCanvasElement>('#lockWallpaper canvas')!;
+      expect(sharp).toBeTruthy();
+      expect(sharp.height).toBeLessThanOrEqual(1600);
+      expect(root.querySelectorAll('#wakeWallpaper canvas')).toHaveLength(2);
+      expect(drawings.mock.calls.filter(([image]) => image === source)).toHaveLength(1);
+    } finally {
+      motion.dispose();
+      canvas.mockRestore();
+    }
+  });
+
   it('keeps the visible notification during a gesture and animates each new message once', () => {
     const root = document.createElement('div');
     root.innerHTML = markup;
@@ -194,15 +382,25 @@ describe('lock screen handoff', () => {
     const widget = launcher.querySelector<HTMLElement>('[data-unlock-widget]')!;
     const desktop = launcherUnlockMotion(launcher);
 
+    desktop.draw(.05);
+    const earlyAlpha = Number(widget.style.getPropertyValue('--unlock-preview-alpha'));
+    expect(earlyAlpha).toBeGreaterThan(0);
+    expect(earlyAlpha).toBeLessThan(.1);
+    expect(widget.style.getPropertyValue('--unlock-preview-softness')).toContain('blur(');
     desktop.draw(.5);
     expect(cell.style.transform).toContain('translate3d');
     expect(widget.style.transform).toContain('translate3d');
     expect(widget.style.opacity).toBe('');
+    expect(Number(widget.style.getPropertyValue('--unlock-preview-alpha'))).toBeGreaterThan(earlyAlpha);
     desktop.draw(1);
+    expect(widget.style.getPropertyValue('--unlock-preview-alpha')).toBe('1');
+    expect(widget.style.getPropertyValue('--unlock-preview-softness')).toBe('none');
     desktop.finish();
     desktop.clear();
     expect(cell.style.transform).toBe('');
     expect(widget.style.transform).toBe('');
+    expect(widget.style.getPropertyValue('--unlock-preview-alpha')).toBe('');
+    expect(widget.style.getPropertyValue('--unlock-preview-softness')).toBe('');
     expect(launcher.hasAttribute('data-unlock-animating')).toBe(false);
     expect(grid.hasAttribute('data-unlock-entered')).toBe(true);
   });

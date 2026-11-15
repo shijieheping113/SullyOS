@@ -11,7 +11,7 @@
     <div class="shade"></div>
     <div class="features" id="clockLayer">
       <div class="clock" id="clock">
-        <div class="date"><span id="date">11月14日 周六</span><span id="lockWeather" hidden></span></div>
+        <div class="date"><span id="date">11月14日 周六</span><span id="lockWeather" hidden><span id="lockWeatherText"></span><span id="lockWeatherIcon" aria-hidden="true" hidden></span></span></div>
         <time class="time" id="time"><span id="clockDigits">23:13</span><span class="clock-glass-shadow" aria-hidden="true"></span><span class="glass clock-glass-face" aria-hidden="true"><span class="clock-ink"></span></span></time>
         <div class="clock-details">
           <span id="bottomText">留一盏灯，等你回来。</span>
@@ -65,9 +65,9 @@
           <span class="dim" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" style="fill:none"><path d="M4 17a10 10 0 1 1 16 0M7 15a6 6 0 1 1 10 0M10 13a2.7 2.7 0 1 1 4 0"/><path fill="currentColor" stroke="none" d="m12 13 6 7H6z"/></svg></span>
         </div>
       </section>
-      <div class="shortcuts" aria-hidden="true">
-        <span class="shortcut glass" id="lockFlashlight"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="M8 3h8a1 1 0 0 1 1 1v3c0 .3-.1.5-.3.8L14 11.4v8.9c0 .4-.3.7-.7.7h-2.6c-.4 0-.7-.3-.7-.7v-8.9L7.3 7.8A1 1 0 0 1 7 7V4a1 1 0 0 1 1-1Z"/><path d="M7 6.7h10v1H7zM11.3 14h1.4v2h-1.4z" opacity=".5" fill="var(--shortcut-detail,#463e44)"/></svg></span>
-        <span class="shortcut glass" id="lockCamera"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="m8 6 1.6-2h4.8L16 6h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.8" fill="var(--shortcut-detail,#463e44)" opacity=".62"/><circle cx="12" cy="13" r="2.45" opacity=".82"/></svg></span>
+      <div class="shortcuts">
+        <button type="button" class="shortcut glass" id="lockChat" aria-label="长按选择最近私聊，再上滑解锁" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M4 4.5h16A2.5 2.5 0 0 1 22.5 7v9a2.5 2.5 0 0 1-2.5 2.5H9L3.5 22V18.5A2.5 2.5 0 0 1 1.5 16V7A2.5 2.5 0 0 1 4 4.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 11.5h.03m4.95 0h.03m4.95 0H17" stroke="currentColor" stroke-width="2.7" stroke-linecap="round"/></svg></button>
+        <span class="shortcut glass" id="lockCamera" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="m8 6 1.6-2h4.8L16 6h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.8" fill="var(--shortcut-detail,#463e44)" opacity=".62"/><circle cx="12" cy="13" r="2.45" opacity=".82"/></svg></span>
       </div>
     </div>
     <div class="topline" aria-hidden="true">
@@ -76,5 +76,5 @@
     </div>
     <div class="pill" aria-hidden="true"><svg id="lockMark" viewBox="0 0 16 16" fill="none" stroke="white" stroke-linecap="round"><path d="M5 7V5a3 3 0 1 1 6 0v2" stroke-width="1.4"/><rect x="3.5" y="7" width="9" height="6" rx="1.5" fill="white"/></svg></div>
     <div class="light-wash" id="lightWash" aria-hidden="true"></div>
-    <button class="unlock-zone" type="button" id="unlockZone" aria-label="从这里向上滑解锁。键盘按上箭头或回车。"><span class="handle" id="handle"></span></button>
+    <button class="unlock-zone" type="button" id="unlockZone" aria-label="从这里向上滑解锁。键盘按上箭头或回车。"><span class="lock-chat-hint" id="lockChatHint" hidden>上滑解锁去聊天</span><span class="handle" id="handle"></span></button>
   </section>

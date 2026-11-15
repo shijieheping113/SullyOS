@@ -5,7 +5,7 @@ import { SARModuleMonitor } from './sar/SARModuleMonitor';
 import Launcher from '../apps/Launcher';
 import LockScreen from './lockscreen/LockScreen';
 import { usesV5DesktopEntry } from './lockscreen/launcherUnlockMotion';
-import { readLockScreenSettings } from './lockscreen/lockScreenSettings';
+import { LAST_PRIVATE_CHAT_KEY, readLockScreenSettings } from './lockscreen/lockScreenSettings';
 import CompanionLockChrome from './os/CompanionLockChrome';
 import { loadCompanionFrameStyle } from './os/companionFrameStyles';
 import { createPreloadableLazy, type PreloadableLazy } from './os/preloadableLazy';
@@ -454,6 +454,10 @@ const PhoneShell: React.FC = () => {
   }, [activeApp]);
 
   const [lockSettings, setLockSettings] = useState(readLockScreenSettings);
+  useEffect(() => {
+    if (isLocked || activeApp !== AppID.Chat || !characters.some(char => char.id === activeCharacterId)) return;
+    try { localStorage.setItem(LAST_PRIVATE_CHAT_KEY, activeCharacterId); } catch {}
+  }, [isLocked, activeApp, activeCharacterId, characters]);
   const unlockDesktopRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (isLocked || activeApp !== AppID.Launcher) return;
@@ -1109,6 +1113,15 @@ const PhoneShell: React.FC = () => {
               )}
             </AppErrorBoundary>
             {showNewLock && <LockScreen desktopRef={animateDesktop ? unlockDesktopRef : undefined} desktopPaired={pairedDesktop}
+              onOpenRecentChat={() => {
+                let last = '';
+                try { last = localStorage.getItem(LAST_PRIVATE_CHAT_KEY) || ''; } catch {}
+                const target = characters.find(char => char.id === last)
+                  || characters.find(char => char.id === activeCharacterId) || characters[0];
+                if (target) setActiveCharacterId(target.id);
+                openApp(AppID.Chat);
+                unlock();
+              }}
               onUnlock={charId => {
                 unlock();
                 if (charId && characters.some(char => char.id === charId)) {

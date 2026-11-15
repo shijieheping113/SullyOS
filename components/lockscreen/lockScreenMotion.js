@@ -1,5 +1,10 @@
-import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion } from "./lockScreenSettings";
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, isRingGlassRegion } from "./lockScreenSettings";
 import { bindLockScreenMedia } from "./lockScreenMedia";
+const WEATHER_ICONS = {
+  "01d": "☀︎", "01n": "☾", "02d": "⛅︎", "02n": "☁︎",
+  "03": "☁︎", "04": "☁︎", "09": "☂︎", "10": "☂︎",
+  "11": "ϟ", "13": "❄︎", "50": "≋"
+};
 // Drawing and gesture formulas from the frozen v5, scoped to one mounted screen.
 function clamp(number) { return Math.min(1, Math.max(0, number)); }
 function ease(value) { return 1 - Math.pow(1 - value, 3); }
@@ -36,8 +41,12 @@ export function drawDesktop(iconProgress, cells, dock, homebar, dockTravel = 38)
     const local = clamp((iconProgress - delay) / (1 - delay));
     const spring = 1 + Math.pow(1 - local, 3) * (-Math.cos(local * 8) - .25 * Math.sin(local * 8));
     const spread = 1 - spring;
-    if (keepBackdrop) element.style.visibility = local > 0 ? '' : 'hidden';
-    else element.style.opacity = clamp(local * 1.6);
+    const alpha = clamp(local * 1.6);
+    if (keepBackdrop) {
+      element.style.visibility = local > 0 ? '' : 'hidden';
+      element.style.setProperty('--unlock-preview-alpha', alpha);
+      element.style.setProperty('--unlock-preview-softness', alpha < 1 ? 'blur(' + ((1 - alpha) * 3).toFixed(2) + 'px)' : 'none');
+    } else element.style.opacity = alpha;
     element.style.transform = "translate3d(" + (x * spread) + "px," + (y * spread) + "px,0) scale(" + (initialScale + (1 - initialScale) * spring) + ")";
   }
   const dockProgress = clamp(iconProgress * 1.16);
@@ -53,8 +62,11 @@ export function mountLockScreen(root, options) {
   function byId(id) { return root.querySelector("#" + id); }
   function block(element, show) { element.hidden = !show; }
   var phone = byId("phone"), zone = byId("unlockZone");
+  var chatShortcut = byId("lockChat"), chatPress = 0;
+  var chatHint = byId("lockChatHint"), chatSelected = false, chatSelectionTimer = 0;
   var frontArt = byId("frontArt"), lockWallpaper = byId("lockWallpaper");
   var wakeWallpaper = byId("wakeWallpaper"), wakeLayers = [];
+  var sharpWallpaper = null, preparedWidth, preparedHeight;
   var clockLayer = byId("clockLayer"), lockControls = byId("lockControls"), handle = byId("handle");
   var shades = phone.querySelectorAll(".shade");
   var lockMark = byId("lockMark");
@@ -112,7 +124,7 @@ export function mountLockScreen(root, options) {
     paint("fillText");
     clockFace.style.setProperty("--clock-mask", "url(" + clockMaskCanvas.toDataURL() + ")");
     ctx.clearRect(0, 0, width, height);
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3.6;
     paint("strokeText");
     clockFace.style.setProperty("--clock-edge-mask", "url(" + clockMaskCanvas.toDataURL() + ")");
     clockFace.setAttribute("data-glass-clock", "");
@@ -120,47 +132,49 @@ export function mountLockScreen(root, options) {
   }
 
   var face = clockFace.querySelector(".clock-glass-face");
-  var cardSurfaces = { notice: byId("notice"), player: byId("player"), flashlight: byId("lockFlashlight"), camera: byId("lockCamera") };
-  function paintGlass() {
+  var cardSurfaces = { notice: [byId("notice")], player: [byId("player")], flashlight: [chatShortcut, byId("lockCamera")] };
+  function paintSurface(element, region) {
     var values = Object.fromEntries(CLOCK_GLASS_SLIDERS.map(function (slider) {
-      return [slider.key, glassSliderValue(settings.glass, "clock", slider)];
+      return [slider.key, glassSliderValue(settings.glass, region, slider)];
     }));
-    var blur = (settings.glass.clock?.overLight === true ? 12 : 4) + values.blurAmount * 32;
+    var baseEdge = Math.min(1, values.edgeStrength / .12);
+    var extraEdge = Math.max(0, (values.edgeStrength - .12) / .7);
     var vars = {
-      "--blur-px": Math.round(blur * 100) / 100 + "px",
+      "--blur-px": values.blurRadius + "px",
       "--sat": values.saturation + "%",
       "--fill": values.fill,
-      "--rim": .12 + values.edge * .4,
-      "--rim-soft": .05 + values.edge * .2,
-      "--edge-ring": .12 + values.edge * .7,
+      "--rim": .12 * baseEdge + extraEdge * .4,
+      "--rim-soft": .05 * baseEdge + extraEdge * .2,
+      "--edge-ring": values.edgeStrength,
       "--sheen": values.sheen,
+      "--shadow": isRingGlassRegion(region) ? values.shadow * .6 : values.shadow,
       "--clock-ink-opacity": values.inkOpacity
     };
-    clockFace.style.setProperty("--clock-shadow", values.shadow);
-    Object.keys(vars).forEach(function (key) { face.style.setProperty(key, vars[key]); });
+    Object.entries(vars).forEach(function ([key, value]) { element.style.setProperty(key, value); });
+    return values.shadow;
+  }
+
+  function paintGlass(previous) {
+    if (!previous || settings.glass.clock !== previous.clock) {
+      clockFace.style.setProperty("--clock-shadow", paintSurface(face, "clock"));
+    }
     var shadow = CLOCK_GLASS_SLIDERS.find(function (slider) { return slider.key === "shadow"; });
     LOCK_GLASS_REGIONS.filter(function (region) { return region.id !== "clock" && !isCardGlassRegion(region.id); }).forEach(function (region) {
-      clockLayer.style.setProperty("--" + region.id + "-shadow", glassSliderValue(settings.glass, region.id, shadow));
+      if (previous && settings.glass[region.id] === previous[region.id]) return;
+      var strength = glassSliderValue(settings.glass, region.id, shadow);
+      clockLayer.style.setProperty("--" + region.id + "-shadow", strength);
+      if (isRingGlassRegion(region.id)) {
+        paintSurface(byId("companionRing").querySelector(".ring-glass-face"), region.id);
+        paintSurface(byId("batteryDetails").querySelector(".ring-glass-face"), region.id);
+        clockLayer.style.setProperty("--battery-shadow", strength);
+      }
     });
   }
 
   function paintCardGlass(previous) {
-    Object.entries(cardSurfaces).forEach(function ([region, element]) {
+    Object.entries(cardSurfaces).forEach(function ([region, elements]) {
       if (previous && settings.glass[region] === previous[region]) return;
-      var values = Object.fromEntries(CLOCK_GLASS_SLIDERS.map(function (slider) {
-        return [slider.key, glassSliderValue(settings.glass, region, slider)];
-      }));
-      var vars = {
-        "--blur-px": Math.round((4 + values.blurAmount * 32) * 100) / 100 + "px",
-        "--sat": values.saturation + "%",
-        "--fill": values.fill,
-        "--rim": .12 + values.edge * .4,
-        "--rim-soft": .05 + values.edge * .2,
-        "--edge-ring": .12 + values.edge * .7,
-        "--sheen": values.sheen,
-        "--shadow": values.shadow
-      };
-      Object.entries(vars).forEach(function ([key, value]) { element.style.setProperty(key, value); });
+      elements.forEach(function (element) { paintSurface(element, region); });
     });
   }
 
@@ -226,24 +240,45 @@ export function mountLockScreen(root, options) {
     updateBattery();
     info.addEventListener("levelchange",updateBattery);
   }).catch(function () {});
-  function prepareWakeWallpaper(image) {
+  function prepareWakeWallpaper(image, largePhoto) {
     var width = phone.clientWidth, height = phone.clientHeight;
     if (!width || !height || !image.naturalWidth || !image.naturalHeight) return;
+    function crop(scale) {
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      var ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      var fit = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+      var w = image.naturalWidth * fit, h = image.naturalHeight * fit;
+      ctx.fillStyle = "#202a36";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, (canvas.width - w) * .5, (canvas.height - h) * settings.position / 100, w, h);
+      return canvas;
+    }
     var scale = Math.min(1, 720 / Math.max(width, height));
-    var position = Number(byId("position").value) / 100;
+    var photoScale = Math.min(window.devicePixelRatio || 1, 2, 1600 / Math.max(width, height));
+    var source = crop(largePhoto ? Math.max(scale, photoScale) : scale);
+    if (!source) return;
+    preparedWidth = width;
+    preparedHeight = height;
+    if (largePhoto) {
+      sharpWallpaper?.remove();
+      sharpWallpaper = source;
+      lockWallpaper.appendChild(sharpWallpaper);
+      lockWallpaper.style.backgroundImage = "none";
+    }
     var layers = [5, 10].map(function (radius) {
       var canvas = document.createElement("canvas");
       canvas.width = Math.round(width * scale);
       canvas.height = Math.round(height * scale);
       var ctx = canvas.getContext("2d");
       if (!ctx || !("filter" in ctx)) return null;
-      var fit = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
-      var w = image.naturalWidth * fit, h = image.naturalHeight * fit;
       ctx.fillStyle = "#202a36";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.filter = "blur(" + radius * scale + "px)";
       if (ctx.filter === "none") return null;
-      ctx.drawImage(image, (canvas.width - w) * .5, (canvas.height - h) * position, w, h);
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
       canvas.style.opacity = "0";
       return canvas;
     });
@@ -290,15 +325,17 @@ export function mountLockScreen(root, options) {
     if (lastProgress !== progress) {
       var fade = ease(clamp((progress - .08) / .69));
       var handoff = ease(clamp((progress - .52) / .48));
-      var departure = settings.pair ? handoff : fade;
+      var departure = chatSelected ? 0 : settings.pair ? handoff : fade;
       lockWallpaper.style.opacity = wakeWallpaper.style.opacity = frontArt.style.opacity = 1 - departure;
       for (var i = 0; i < shades.length; i++) shades[i].style.opacity = 1 - handoff;
       lastProgress = progress;
     }
-    if (lastIcons !== desktopProgress) {
-      if (options.desktop) options.desktop.draw(desktopProgress);
-      lastIcons = desktopProgress;
+    var visibleDesktopProgress = chatSelected ? 0 : desktopProgress;
+    if (lastIcons !== visibleDesktopProgress) {
+      if (options.desktop) options.desktop.draw(visibleDesktopProgress);
+      lastIcons = visibleDesktopProgress;
     }
+    if (!chatHint.hidden) chatHint.style.opacity = glassAlpha;
     lockMark.style.opacity = clockAlpha * reveal;
   }
 
@@ -316,15 +353,18 @@ export function mountLockScreen(root, options) {
     zone.hidden = unlocked;
     if (!unlocked) media.flushNotice();
     if (!unlocked) media.setMoving(false);
+    if (!unlocked && chatSelected) expireChatSelection();
     byId("statusTime").style.visibility = unlocked ? "visible" : "hidden";
   }
-  function finish(unlock, velocity, charId) {
+  function finish(unlock, velocity, charId, cancelChat) {
     stopMotion();
     stopDrag();
     var from = progress;
     var iconStart = desktopProgress;
     var target = unlock ? 1 : 0;
     var duration = unlock ? unlockReleaseDuration(from, velocity) : 245;
+    var toRecentChat = unlock && !charId && chatSelected;
+    if (unlock) window.clearTimeout(chatSelectionTimer);
     if (unlock && reveal < 1) {
       cancelAnimationFrame(wakeFrame);
       wakeFrame = 0;
@@ -336,9 +376,15 @@ export function mountLockScreen(root, options) {
     settlingTarget = target;
     function done() {
       frame = 0;
+      if (cancelChat) selectRecentChat(false);
       draw(target, target);
       settled(unlock);
       if (unlock) {
+        if (toRecentChat) {
+          phone.hidden = true;
+          options.openRecentChat();
+          return;
+        }
         if (options.desktop) options.desktop.finish();
         phone.hidden = true;
         options.unlock(charId);
@@ -390,9 +436,40 @@ export function mountLockScreen(root, options) {
     draw(0);
     if (play && !hold) startReveal();
   }
-  function gestureStart(id, x, y, fromNotice) {
+  function clearChatPress() {
+    window.clearTimeout(chatPress);
+    chatPress = 0;
+    chatShortcut.removeAttribute("data-pressed");
+  }
+  function selectRecentChat(value) {
+    if (chatSelected === value) return;
+    chatSelected = value;
+    chatShortcut.toggleAttribute("data-selected", value);
+    chatShortcut.setAttribute("aria-pressed", String(value));
+    chatHint.hidden = !value;
+    zone.setAttribute("aria-label", value ? "上滑解锁去最近私聊。键盘按上箭头或回车。"
+      : "从这里向上滑解锁。键盘按上箭头或回车。");
+    lastProgress = undefined;
+    window.clearTimeout(chatSelectionTimer);
+  }
+  function expireChatSelection() {
+    window.clearTimeout(chatSelectionTimer);
+    chatSelectionTimer = window.setTimeout(function () { selectRecentChat(false); }, 5000);
+  }
+  function armRecentChat() {
+    clearChatPress();
+    selectRecentChat(true);
+    draw(progress, desktopProgress);
+    if (mode === "lock") expireChatSelection();
+  }
+  chatShortcut.addEventListener("contextmenu", function (event) { event.preventDefault(); });
+  chatShortcut.addEventListener("click", function (event) {
+    if (event.detail === 0 && options.openRecentChat && !options.editor && mode === "lock" && reveal === 1) armRecentChat();
+  });
+  function gestureStart(id, x, y, fromNotice, fromChat) {
     if (options.editor || mode === "home" || (mode === "settling" && settlingTarget === 1) || gesture || (options.holdReveal && !wakeFrame && reveal === 0)) return false;
     stopMotion();
+    window.clearTimeout(chatSelectionTimer);
     if (reveal < 1) {
       cancelAnimationFrame(wakeFrame);
       wakeFrame = 0;
@@ -405,10 +482,20 @@ export function mountLockScreen(root, options) {
     queuedProgress = progress;
     queuedIcons = desktopProgress;
     gesture = {id:id,x:x,y:y,base:progress,icons:desktopProgress,crossed:false,fromNotice:fromNotice,samples:[{y:y,at:performance.now()}]};
+    if (fromChat && options.openRecentChat) {
+      chatShortcut.setAttribute("data-pressed", "");
+      chatPress = window.setTimeout(function () {
+        if (gesture?.id !== id) return;
+        if (document.hidden) { gestureEnd(id, x, y, true); return; }
+        navigator.vibrate?.(12);
+        armRecentChat();
+      }, 450);
+    }
     return true;
   }
   function gestureMove(id,x,y) {
     if (!gesture || gesture.id !== id) return false;
+    if (chatPress && Math.hypot(x - gesture.x, y - gesture.y) >= 8) clearChatPress();
     var delta = gesture.y - y;
     if (!gesture.crossed) {
       var travel = gesture.base > 0 ? Math.abs(delta) : delta;
@@ -426,6 +513,7 @@ export function mountLockScreen(root, options) {
   }
   function gestureEnd(id,x,y,cancel) {
     if (!gesture || gesture.id !== id) return;
+    clearChatPress();
     var movement = gesture;
     if (!cancel) gestureMove(id,x,y);
     stopDrag();
@@ -439,16 +527,18 @@ export function mountLockScreen(root, options) {
     var reverseFlick = movement.y-y <= -38 && velocity <= -.54;
     if (!cancel && movement.fromNotice && !movement.crossed
       && Math.hypot(x - movement.x, y - movement.y) < 9 && media.noticeTarget()) {
+      selectRecentChat(false);
       finish(true, 0, media.noticeTarget());
       return;
     }
     var unlock = !cancel && movement.crossed && !reverseFlick && (progress >= .25 || flick);
-    finish(unlock,velocity);
+    var cancelChat = cancel || (!unlock && Math.hypot(x - movement.x, y - movement.y) >= 12);
+    finish(unlock,velocity,undefined,cancelChat);
   }
   if (window.PointerEvent) {
     phone.addEventListener("pointerdown",function (event) {
       if (!event.isPrimary || event.button !== 0 || event.target.closest("#player button, #playerSeek")) return;
-      if (gestureStart(event.pointerId,event.clientX,event.clientY,!!event.target.closest("#notice"))) {
+      if (gestureStart(event.pointerId,event.clientX,event.clientY,!!event.target.closest("#notice"),!!event.target.closest("#lockChat"))) {
         event.preventDefault();
         try { phone.setPointerCapture(event.pointerId); }
         catch (error) { gestureEnd(event.pointerId,event.clientX,event.clientY,true); }
@@ -464,7 +554,7 @@ export function mountLockScreen(root, options) {
   } else {
     phone.addEventListener("touchstart",function (event) {
       if (event.target.closest("#player button, #playerSeek")) return; var touch=event.changedTouches[0];
-      if (gestureStart(touch.identifier,touch.clientX,touch.clientY,!!event.target.closest("#notice"))) event.preventDefault();
+      if (gestureStart(touch.identifier,touch.clientX,touch.clientY,!!event.target.closest("#notice"),!!event.target.closest("#lockChat"))) event.preventDefault();
     },{passive:false});
     phone.addEventListener("touchmove",function (event) {
       if (event.target.closest("#player button, #playerSeek")) return; var touch=event.changedTouches[0];
@@ -489,7 +579,7 @@ export function mountLockScreen(root, options) {
   }
   function applyWallpaper() {
     lockWallpaper.classList.toggle("custom", !!lockImage);
-    lockWallpaper.style.backgroundImage = imageStyle(lockImage);
+    lockWallpaper.style.backgroundImage = sharpWallpaper ? "none" : imageStyle(lockImage);
     var pos = "50% " + settings.position + "%";
     lockWallpaper.style.backgroundPosition = frontArt.style.backgroundPosition = pos;
     frontArt.classList.toggle("wallpaper", !!frontImage);
@@ -503,6 +593,8 @@ export function mountLockScreen(root, options) {
   }
   function setWallpapers(values) {
     if (lockImage !== values.lock) {
+      sharpWallpaper?.remove();
+      sharpWallpaper = null;
       wakeLayers = [];
       wakeWallpaper.textContent = "";
       wakeWallpaper.hidden = true;
@@ -516,8 +608,9 @@ export function mountLockScreen(root, options) {
     settings = next;
     if (next.color !== previous.color || next === previous) clockLayer.style.setProperty("--lock-ink", next.color);
     if (next.glass !== previous.glass || next === previous) {
-      paintGlass();
-      paintCardGlass(next === previous ? null : previous.glass);
+      var previousGlass = next === previous ? null : previous.glass;
+      paintGlass(previousGlass);
+      paintCardGlass(previousGlass);
     }
     if (next.clockPosition !== previous.clockPosition || next === previous) byId("clock").style.setProperty("--clock-top", next.clockPosition + "%");
     if (next.clockSize !== previous.clockSize || next === previous) clockFace.style.setProperty("--clock-scale", next.clockSize / 100);
@@ -528,19 +621,26 @@ export function mountLockScreen(root, options) {
   }
 
   var liveWeather = "";
+  var liveWeatherIcon = "";
   function paintWeather() {
     var weather = byId("lockWeather");
-    weather.textContent = liveWeather || settings.weather.trim();
-    weather.hidden = !weather.textContent;
+    var label = liveWeather || settings.weather.trim();
+    var glyph = byId("lockWeatherIcon");
+    glyph.textContent = liveWeatherIcon;
+    glyph.hidden = !liveWeather || !liveWeatherIcon;
+    byId("lockWeatherText").textContent = label;
+    weather.hidden = !label;
   }
   function resize() {
     if (gesture) gestureEnd(gesture.id,0,0,true);
     screenHeight = phone.clientHeight;
-    if (wakeLayers.length) {
+    if ((wakeLayers.length || sharpWallpaper) && (phone.clientWidth !== preparedWidth || phone.clientHeight !== preparedHeight)) {
       wakeLayers = [];
       wakeWallpaper.textContent = "";
       wakeWallpaper.hidden = true;
-      lastReveal = undefined;
+      sharpWallpaper?.remove();
+      sharpWallpaper = null;
+      applyWallpaper();
     }
     updateClockMask();
     draw(progress, desktopProgress);
@@ -564,13 +664,21 @@ export function mountLockScreen(root, options) {
     setSettings: setSettings,
     setPlayer: media.setPlayer,
     setNotice: media.setNotice,
-    setWeather: function (value) { liveWeather = value; paintWeather(); },
+    setWeather: function (value, iconCode) {
+      var code = /^\d{2}[dn]$/.test(iconCode) ? iconCode : "";
+      var icon = WEATHER_ICONS[code] || WEATHER_ICONS[code.slice(0, 2)];
+      liveWeatherIcon = icon || "";
+      liveWeather = value;
+      paintWeather();
+    },
     prepareClock: function () { maskReady = true; updateClockMask(); },
     prepareWakeWallpaper: prepareWakeWallpaper,
     startReveal: startReveal,
     draw: function (value) { reveal = 1; draw(value); },
     dispose: function () {
       disposed = true;
+      clearChatPress();
+      window.clearTimeout(chatSelectionTimer);
       media.dispose();
       stopMotion();
       stopDrag();

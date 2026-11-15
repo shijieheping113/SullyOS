@@ -7,6 +7,7 @@
   inset: 0;
   z-index: 30;
   overflow: hidden;
+  overflow: clip;
   isolation: isolate;
   container-type: size;
   background: #202a36;
@@ -49,6 +50,7 @@
   background: #f8fafc;
   box-shadow: 0 8px 38px #0f172a3d;
   overflow: hidden;
+  overflow: clip;
 }
 .lock-editor-grip {
   position: relative;
@@ -81,6 +83,7 @@
   border-radius: 14px;
   background: #edf1f5;
 }
+.lock-editor-tabs { flex: none; }
 .lock-editor-tabs button, .lock-editor-regions button {
   min-height: 34px;
   padding-inline: 3px;
@@ -95,7 +98,7 @@
   color: #1e293b;
   font-weight: 650;
 }
-.lock-editor-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 12px 10px; scrollbar-width: thin; }
+.lock-editor-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; padding: 0 12px 10px; scrollbar-width: thin; }
 .lock-editor-fields { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .lock-editor-group {
   display: grid;
@@ -138,7 +141,7 @@
   white-space: nowrap;
 }
 .lock-editor-action:focus-within { outline: 2px solid var(--lock-accent); outline-offset: 2px; }
-.lock-editor-action input, .lock-editor-toggle input { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); }
+.lock-editor-action input { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); }
 .lock-editor-link input, .lock-editor-field input, .lock-editor-field select {
   width: 100%;
   min-width: 0;
@@ -153,13 +156,14 @@
 .lock-editor-field select { font-size: 13px; }
 .lock-editor-range { display: block; padding-top: 4px; }
 .lock-editor-range output { color: #475569; font-variant-numeric: tabular-nums; font-size: 11px; }
-.lock-editor-range input { display: block; width: 100%; height: 30px; margin: 0; accent-color: var(--lock-accent); }
-.lock-editor-toggle { min-height: 33px; font-weight: 550; cursor: pointer; }
+.lock-editor-range .lock-editor-range-track { display: block; height: 28px; touch-action: pan-y; cursor: ew-resize; }
+.lock-editor-range input { display: block; width: 100%; height: 28px; margin: 0; accent-color: var(--lock-accent); pointer-events: none; }
+.lock-editor-toggle { min-height: 33px; font-weight: 550; cursor: pointer; text-align: left; }
 .lock-editor-switch { flex: none; position: relative; width: 38px; height: 22px; border-radius: 20px; background: #a9b6c7; }
 .lock-editor-switch::before { content: ''; position: absolute; inset: 3px auto 3px 3px; width: 16px; border-radius: 50%; background: white; }
-.lock-editor-toggle input:checked + .lock-editor-switch { background: var(--lock-accent); }
-.lock-editor-toggle input:checked + .lock-editor-switch::before { transform: translateX(16px); }
-.lock-editor-toggle input:focus-visible + .lock-editor-switch { outline: 2px solid #475569; outline-offset: 3px; }
+.lock-editor-toggle[aria-checked=true] .lock-editor-switch { background: var(--lock-accent); }
+.lock-editor-toggle[aria-checked=true] .lock-editor-switch::before { transform: translateX(16px); }
+.lock-editor-toggle:focus-visible .lock-editor-switch { outline: 2px solid #475569; outline-offset: 3px; }
 .lock-editor-colors { justify-content: start; }
 .lock-editor-colors > span { flex: 1; }
 .lock-editor-colors button, .lock-editor-colors input {
@@ -170,7 +174,7 @@
 }
 .lock-editor-colors button[aria-pressed=true] { outline: 2px solid #64748b; outline-offset: 2px; }
 .lock-editor-colors input { padding: 2px; border-radius: 7px; }
-.lock-editor-regions { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; background: var(--lock-tint); }
+.lock-editor-regions { margin: 0; background: var(--lock-tint); }
 .lock-editor-regions button { font-size: 11px; }
 .lock-editor-reset { justify-self: start; }
 .lock-editor-status { flex: none; padding: 0 15px 7px; font-size: 12px; color: #475569; }

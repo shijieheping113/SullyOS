@@ -8,6 +8,8 @@ import { loadBlobRefUrl } from '../../utils/blobRefSessionCache';
 import { chatCharacterDisplayName } from '../../utils/characterRemark';
 import { chatPreviewText, isChatPreviewMessage } from '../../utils/chatMessageVisibility';
 import { RealtimeContextManager } from '../../utils/realtimeContext';
+import type { RealtimeConfig } from '../../utils/realtimeContext';
+import type { WeatherData } from '../../utils/realtimeWorldCore';
 import type { CharacterProfile } from '../../types';
 import { LOCK_SCREEN_FOREGROUND } from './lockScreenSettings';
 import type { LockScreenMotion } from './lockScreenMotion';
@@ -38,6 +40,29 @@ export function useLockForeground(enabled: boolean) {
 }
 
 type MotionRef = RefObject<LockScreenMotion | null>;
+type LockWeatherSnapshot = Pick<WeatherData, 'temp' | 'description' | 'icon'>;
+const LOCK_WEATHER_CACHE = 'sully-lock-weather-v1';
+const MAX_LOCK_WEATHER_AGE = 3 * 60 * 60000;
+
+export function paintCachedLockWeather(motion: LockScreenMotion, config: RealtimeConfig) {
+  let weather: LockWeatherSnapshot | undefined;
+  if (config.weatherEnabled && config.weatherCity?.trim()) {
+    try {
+      const cache = JSON.parse(localStorage.getItem(LOCK_WEATHER_CACHE) || 'null');
+      const age = Date.now() - cache?.at;
+      if (cache?.city === config.weatherCity.trim() && age >= 0 && age < MAX_LOCK_WEATHER_AGE
+          && Number.isFinite(cache.weather?.temp) && typeof cache.weather.description === 'string'
+          && typeof cache.weather.icon === 'string') weather = cache.weather;
+    } catch {}
+  }
+  paintLockWeather(motion, weather);
+}
+
+function paintLockWeather(motion: LockScreenMotion, weather?: LockWeatherSnapshot) {
+  if (!weather) { motion.setWeather(''); return; }
+  motion.setWeather(Math.round(weather.temp) + '°' + (weather.description ? ' · ' + weather.description : ''),
+    weather.description === '未知' ? undefined : weather.icon);
+}
 
 function LockMusic({ motion, controls, sample }: { motion: MotionRef; controls: MutableRefObject<LockPlayerControls | null>; sample: boolean }) {
   const { current, queue, playing, progress, duration, togglePlay, prevSong, nextSong, seek, lyric, activeLyricIdx } = useMusic();
@@ -138,14 +163,19 @@ function LockWeather({ motion }: { motion: MotionRef }) {
   useEffect(() => {
     let active = true;
     let pending = false;
-    motion.current?.setWeather('');
+    if (motion.current) paintCachedLockWeather(motion.current, realtimeConfig);
     if (!realtimeConfig.weatherEnabled || !realtimeConfig.weatherCity?.trim()) return;
     const refresh = () => {
       if (document.hidden || pending) return;
       pending = true;
       void RealtimeContextManager.fetchWeather(realtimeConfig).then(weather => {
         if (active && weather && Number.isFinite(weather.temp)) {
-          motion.current?.setWeather(Math.round(weather.temp) + '°' + (weather.description ? ' · ' + weather.description : ''));
+          const { temp, description, icon } = weather;
+          const snapshot = { temp, description, icon };
+          try {
+            localStorage.setItem(LOCK_WEATHER_CACHE, JSON.stringify({ city: realtimeConfig.weatherCity.trim(), at: Date.now(), weather: snapshot }));
+          } catch {}
+          if (motion.current) paintLockWeather(motion.current, snapshot);
         }
       }).catch(() => {}).finally(() => { pending = false; });
     };

@@ -29,9 +29,9 @@ export interface LockScreenMotion {
   setSettings(settings: LockScreenSettings): void;
   setPlayer(song: LockSong | null): void;
   setNotice(notice: LockNotice | null): void;
-  setWeather(value: string): void;
+  setWeather(value: string, iconCode?: string): void;
   prepareClock(): void;
-  prepareWakeWallpaper(image: HTMLImageElement): void;
+  prepareWakeWallpaper(image: HTMLImageElement, largePhoto?: boolean): void;
   startReveal(): void;
   draw(progress: number): void;
   dispose(): void;
@@ -46,6 +46,7 @@ export function mountLockScreen(root: HTMLElement, options: {
   desktop?: DesktopMotion;
   player?: LockPlayerControls;
   unlock(charId?: string): void;
+  openRecentChat?(): void;
   requestPermission(): void;
 }): LockScreenMotion;
 

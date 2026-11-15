@@ -97,9 +97,6 @@ const DesktopClock = React.memo(() => {
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
                         <span>{virtualTime.minutes.toString().padStart(2, '0')}</span>
                     </div>
-                    {/* 细光斑 */}
-                    {!paper && <div className="absolute -top-2 -right-3 w-8 h-8 rounded-full pointer-events-none"
-                        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />}
                 </div>
 
                 <div className="flex flex-col justify-end pb-2.5 gap-0.5 shrink-0">
@@ -133,13 +130,14 @@ const CharacterWidget = React.memo(({
     const { theme } = useOS();
     const reducedBlur = useReducedBlur();
     const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：会"说话"的村民卡
+    const translucentCard = !acnh && !paper && !reducedBlur;
     // 卡片底的虚化头像画在 CSS background-image 上，吃不到 TokenImg 的解析，这里自己解析一次。
     const avatarUrl = useBlobRefUrl(char?.avatar);
 
     // 动森：村民头像 + AC 对话气泡（显示最近消息，点开聊天）
     if (acnh) {
         return (
-            <div className="mb-4 animate-fade-in" onClick={onClick}>
+            <div className="mb-4 animate-fade-in" data-unlock-preview-ink="" onClick={onClick}>
                 <div className="flex items-end gap-2.5 cursor-pointer active:scale-[0.98] transition-transform">
                     {/* 村民头像（圆角方块 + 白边） */}
                     <div className="relative w-[60px] h-[60px] shrink-0 rounded-[26%] overflow-hidden bg-[#e8e2d6]"
@@ -173,7 +171,7 @@ const CharacterWidget = React.memo(({
     }
 
     return (
-        <div className="mb-3 group animate-fade-in">
+        <div className="mb-3 group animate-fade-in" data-unlock-preview-ink={translucentCard ? undefined : ''}>
              <div
                 className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
@@ -186,26 +184,29 @@ const CharacterWidget = React.memo(({
                     border: '2px solid #e8e2d6',
                     boxShadow: '0 8px 24px 0 rgba(61,52,40,0.14)',
                 } : reducedBlur ? resolveReducedGlassCardStyle(contentColor) : {
-                    background: 'rgba(255,255,255,0.08)',
-                    backdropFilter: 'blur(24px) saturate(1.4)',
-                    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,calc(0.12 * var(--unlock-preview-alpha, 1)))',
+                    boxShadow: '0 8px 32px rgba(0,0,0,calc(0.15 * var(--unlock-preview-alpha, 1))), inset 0 1px 0 rgba(255,255,255,calc(0.08 * var(--unlock-preview-alpha, 1)))',
                 }}
              >
+                 {translucentCard && (
+                     <div aria-hidden="true" data-unlock-preview-glass="" className="absolute inset-0 rounded-[inherit] pointer-events-none"
+                         style={{ background: 'rgba(255,255,255,0.08)' }}
+                     />
+                 )}
                  {/* 背景虚化角色头像（动森与无实时模糊模式下省略） */}
-                 {!acnh && !paper && !reducedBlur && avatarUrl && (
-                     <div className="absolute inset-0 opacity-25 pointer-events-none"
+                 {translucentCard && avatarUrl && (
+                     <div className="absolute inset-0 pointer-events-none"
                          style={{
                              backgroundImage: `url(${avatarUrl})`,
                              backgroundSize: 'cover',
                              backgroundPosition: 'center',
                              filter: 'blur(30px) saturate(1.6)',
                              transform: 'scale(1.3)',
+                             opacity: 'calc(0.25 * var(--unlock-preview-alpha, 1))',
                          }} />
                  )}
 
-                 <div className="relative flex items-center p-3 gap-3 h-full">
+                 <div className="relative flex items-center p-3 gap-3 h-full" data-unlock-preview-ink={translucentCard ? '' : undefined}>
                      {/* 头像 */}
                      <div className={`w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative ${paper ? 'bg-[#ded2c1]' : 'bg-slate-800'}`}
                          style={{

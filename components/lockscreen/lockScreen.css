@@ -10,6 +10,7 @@
 .sully-v5 .wallpaper.desktop-alt{background:#202e41 linear-gradient(155deg,#102235 10%,#1c3a51 52%,#4a6b78 72%,#243446 100%)}
 .sully-v5 .wallpaper.custom{background-repeat:no-repeat;background-color:#202a36}
 .sully-v5 .wake-wallpaper,.sully-v5 .wake-wallpaper canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.sully-v5 #lockWallpaper canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .sully-v5 .wake-wallpaper canvas{will-change:opacity}
 .sully-v5 .art{overflow:hidden}
 .sully-v5 .art img{display:block;position:absolute;width:160%;max-width:none;left:-30%;top:18%;height:auto}
@@ -190,7 +191,7 @@
 @media(max-height:650px){.sully-v5 .lock-widgets,.sully-v5 #lockControls.has-notice .lock-widgets{top:29%;bottom:auto}.sully-v5 .player{height:auto;min-height:137px;padding:10px 12px;gap:5px}.sully-v5 .player-heading{min-height:43px}.sully-v5 .cover{width:43px;height:43px}.sully-v5 .track strong{font-size:14px}.sully-v5 .track span{font-size:12px}}
 /* v6 glass paint. Placement and geometry belong to the host. */
 .sully-v5 .glass{
-  /* 与 Ann 拍板一致：blurAmount0.04→5.28 / sat116 / fill0 / edge0.32→rim… */
+  /* V5 default glass for cards and shortcuts. */
   --blur-px:5.28px;
   --sat:116%;
   --fill:0;
@@ -235,6 +236,14 @@
 .sully-v5 .clock{top:var(--clock-top,8.7%)}
 .sully-v5 .clock .date{column-gap:.55em;row-gap:.1em;white-space:normal}
 .sully-v5 .clock .date #lockWeather{font:inherit;color:inherit;line-height:inherit;text-shadow:inherit;max-width:100%;overflow-wrap:anywhere}
+.sully-v5 #lockWeatherIcon {
+  display: inline-block;
+  margin-inline-start: .25em;
+  font-size: 1.5em;
+  line-height: .75;
+  vertical-align: -.04em;
+  -webkit-text-stroke: .68px currentColor;
+}
 .sully-v5 .clock-details{position:relative;display:grid;place-items:center;min-height:48px;margin:6px 8% 0;filter:blur(var(--widget-softness,.25px))}
 .sully-v5 #bottomText{max-width:66%;font-size:12px;line-height:1.5;white-space:normal;overflow-wrap:anywhere;text-shadow:0 1px 2px #0009}
 .sully-v5 #batteryDetails{position:absolute;right:0;display:grid;place-items:center;width:46px;height:46px;color:#fffef1;filter:drop-shadow(0 1px 1px #0005)}
@@ -275,6 +284,12 @@
 .sully-v5 .notice small{font-size:12px;opacity:1;margin-top:1px}
 .sully-v5 .notice .notice-stamp{font-size:11px;opacity:1}
 .sully-v5 .shortcut svg{color:#fff}
+.sully-v5 #lockChat { pointer-events: auto; -webkit-touch-callout: none; touch-action: none; }
+.sully-v5-live #lockChat { transition: transform 110ms ease-out; }
+.sully-v5-live #lockChat[data-pressed] { transform: scale(.92); }
+.sully-v5-live #lockChat[data-selected] { outline: 1px solid #fff9; outline-offset: 3px; }
+.sully-v5 .lock-chat-hint { color: white; font-size: 12px; text-shadow: 0 1px 4px #000c; }
+@media (prefers-reduced-motion: reduce) { .sully-v5-live #lockChat { transition: none; } }
 
 /* Shared v6 glass on every wallpaper. Only the independent foreground takes the chosen color. */
 .sully-v5 #clockLayer{will-change:transform;--lock-ink:#fff;--clock-alpha:1}
@@ -304,6 +319,11 @@
 .sully-v5 .clock-glass-face.glass::before{
   z-index:3;
   inset:0;padding:0;
+  opacity:1;
+  background:
+    linear-gradient(155deg,rgba(255,255,255,var(--rim)) 0%,transparent 62%),
+    linear-gradient(330deg,rgba(255,255,255,var(--rim-soft)) 0%,transparent 68%),
+    linear-gradient(135deg,rgba(255,255,255,calc(.55 * var(--edge-ring))) 0%,rgba(255,255,255,calc(.06 * var(--edge-ring))) 48%,rgba(255,255,255,calc(.28 * var(--edge-ring))) 100%);
   -webkit-mask:var(--clock-edge-mask) center / 100% 100% no-repeat;
   mask:var(--clock-edge-mask) center / 100% 100% no-repeat
 }
@@ -352,6 +372,11 @@
 [data-unlock-animating] [data-unlock-widget],
 [data-unlock-animating] [data-unlock-dock] { will-change: transform, opacity; }
 [data-unlock-animating] [data-unlock-backdrop] { will-change: transform; }
+[data-unlock-animating] [data-unlock-preview-ink] {
+  opacity: var(--unlock-preview-alpha, 1);
+  filter: var(--unlock-preview-softness, none);
+}
+[data-unlock-animating] [data-unlock-preview-glass] { opacity: var(--unlock-preview-alpha, 1); }
 [data-unlock-animating] .animate-fade-in,
 [data-unlock-entered].animate-fade-in { animation: none; }
 

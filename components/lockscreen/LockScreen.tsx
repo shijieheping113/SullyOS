@@ -8,7 +8,7 @@ import { mountLockScreen } from './lockScreenMotion';
 import type { LockScreenMotion, Wallpapers } from './lockScreenMotion';
 import { readLockScreenSettings } from './lockScreenSettings';
 import type { LockScreenSettings } from './lockScreenSettings';
-import { LockScreenData, useLockForeground } from './LockScreenData';
+import { LockScreenData, paintCachedLockWeather, useLockForeground } from './LockScreenData';
 import type { LockPlayerControls } from './lockScreenMedia';
 import markup from './lockScreen.html?raw';
 import './lockScreen.css';
@@ -16,6 +16,7 @@ import './lockScreen.css';
 interface Props {
   desktopRef?: RefObject<HTMLDivElement | null>;
   onUnlock?: (charId?: string) => void;
+  onOpenRecentChat?: () => void;
   holdReveal?: boolean;
   onPrepared?: () => void;
   desktopPaired?: boolean;
@@ -44,6 +45,19 @@ function boundedExternalImage(image: HTMLImageElement) {
   });
 }
 
+async function isStillPhoto(url: string) {
+  if (/^data:image\/jpeg[;,]/i.test(url)) return true;
+  if (!url.startsWith('blob:')) return false;
+  try {
+    const response = await fetch(url);
+    const type = response.headers.get('content-type');
+    void response.body?.cancel().catch(() => {});
+    return type === 'image/jpeg';
+  } catch {
+    return false;
+  }
+}
+
 function wakeImageSource(wallpaper: string, width: number, height: number) {
   if (!width || !height || !/^(linear|radial|conic|repeating-linear|repeating-radial|repeating-conic)-gradient\(/i.test(wallpaper)) return '';
   const background = wallpaper.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -51,8 +65,8 @@ function wakeImageSource(wallpaper: string, width: number, height: number) {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
-export default function LockScreen({ desktopRef, onUnlock, holdReveal = false, onPrepared, desktopPaired = false, preview }: Props) {
-  const { theme } = useOS();
+export default function LockScreen({ desktopRef, onUnlock, onOpenRecentChat, holdReveal = false, onPrepared, desktopPaired = false, preview }: Props) {
+  const { theme, realtimeConfig } = useOS();
   const [storedSettings] = useState(readLockScreenSettings);
   const editor = !!preview;
   const settings = preview?.settings || storedSettings;
@@ -63,10 +77,10 @@ export default function LockScreen({ desktopRef, onUnlock, holdReveal = false, o
   const motion = useRef<LockScreenMotion | null>(null);
   const musicControls = useRef<LockPlayerControls | null>(null);
   const wallpapers = preview?.wallpapers || { lock: theme.lockWallpaper || theme.wallpaper || '', front };
-  const latest = useRef({ wallpapers, settings, onUnlock, onPrepared });
+  const latest = useRef({ wallpapers, settings, onUnlock, onOpenRecentChat, onPrepared, realtimeConfig });
 
   useLayoutEffect(() => {
-    latest.current = { wallpapers, settings, onUnlock, onPrepared };
+    latest.current = { wallpapers, settings, onUnlock, onOpenRecentChat, onPrepared, realtimeConfig };
   });
 
   useLayoutEffect(() => {
@@ -88,6 +102,7 @@ export default function LockScreen({ desktopRef, onUnlock, holdReveal = false, o
         seek: fraction => musicControls.current?.seek(fraction),
       },
       unlock: charId => latest.current.onUnlock?.(charId),
+      openRecentChat: editor ? undefined : () => latest.current.onOpenRecentChat?.(),
       requestPermission() {
         if ('Notification' in window && Notification.permission === 'default') {
           void Promise.resolve(Notification.requestPermission()).catch(() => {});
@@ -95,6 +110,7 @@ export default function LockScreen({ desktopRef, onUnlock, holdReveal = false, o
       },
     });
     motion.current = controller;
+    paintCachedLockWeather(controller, latest.current.realtimeConfig);
     return () => {
       controller.dispose();
       motion.current = null;
@@ -131,7 +147,9 @@ export default function LockScreen({ desktopRef, onUnlock, holdReveal = false, o
       const image = new Image();
       image.src = url;
       await boundedExternalImage(image);
-      if (live && (url === wallpapers.lock || url === gradientSource)) motion.current?.prepareWakeWallpaper(image);
+      if (!live || (url !== wallpapers.lock && url !== gradientSource)) return;
+      const largePhoto = image.naturalWidth * image.naturalHeight > 4_000_000 && await isStillPhoto(url);
+      if (live) motion.current?.prepareWakeWallpaper(image, largePhoto);
     });
     const desktopAssets = desktopRef?.current?.querySelectorAll<HTMLElement>(
       '[data-unlock-page="active"] [data-unlock-asset], [data-unlock-dock] [data-unlock-asset]',

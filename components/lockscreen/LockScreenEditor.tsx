@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { ArrowCounterClockwise, CaretDown, CaretLeft, ImageSquare, LinkSimple } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
 import { putImageBlob, deleteBlobRefIfUnreferenced } from '../../utils/blobRef';
 import LockScreen from './LockScreen';
 import { useLockForeground } from './LockScreenData';
-import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, readLockScreenSettings } from './lockScreenSettings';
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, isRingGlassRegion, readLockScreenSettings } from './lockScreenSettings';
 import type { LockImageChanges, LockImageKind, LockScreenSettings } from './lockScreenSettings';
 import './lockScreenEditor.css';
 
@@ -25,24 +26,61 @@ const imageNames = { lock: '锁屏壁纸', home: '桌面壁纸', front: '透明�
 const imageKinds = ['lock', 'home', 'front'] as const;
 type DraftImage = { url: string; file?: File } | null;
 
-function Slider({ label, min, max, step = 1, value, unit = '', onChange }: {
-  label: string; min: number; max: number; step?: number; value: number; unit?: string; onChange(value: number): void;
+function Slider({ label, min, max, step = 1, value, unit = '', fraction = false, onChange }: {
+  label: string; min: number; max: number; step?: number; value: number; unit?: string; fraction?: boolean; onChange(value: number): void;
 }) {
+  const display = (fraction ? Math.round(value * 1000) / 10 : value) + unit;
+  const input = useRef<HTMLInputElement>(null);
+  const gesture = useRef<{ id: number; x: number; y: number; axis: 'pending' | 'x' | 'y' } | null>(null);
+
+  function adjust(event: ReactPointerEvent<HTMLSpanElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const thumbRadius = 8;
+    const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left - thumbRadius) / Math.max(1, bounds.width - 2 * thumbRadius)));
+    const next = Number((min + Math.round(fraction * (max - min) / step) * step).toFixed(4));
+    if (next !== value) onChange(Math.min(max, next));
+  }
+
   return (
     <label className="lock-editor-range">
-      <span>{label}<output>{value}{unit}</output></span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(e.target.valueAsNumber)} />
+      <span>{label}<output>{display}</output></span>
+      <span className="lock-editor-range-track"
+        onPointerDown={event => {
+          if (!event.isPrimary || event.button !== 0 || input.current?.matches(':disabled')) return;
+          const axis = event.pointerType === 'mouse' ? 'x' : 'pending';
+          gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, axis };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          if (axis === 'x') {
+            input.current?.focus({ preventScroll: true });
+            adjust(event);
+          }
+        }}
+        onPointerMove={event => {
+          const active = gesture.current;
+          if (!active || active.id !== event.pointerId) return;
+          if (active.axis === 'pending') {
+            const dx = Math.abs(event.clientX - active.x);
+            const dy = Math.abs(event.clientY - active.y);
+            if (dy >= 8 && dy >= dx) active.axis = 'y';
+            else if (dx >= 8 && dx > dy * 1.2) active.axis = 'x';
+          }
+          if (active.axis === 'x') adjust(event);
+        }}
+        onLostPointerCapture={() => { gesture.current = null; }}
+        onClick={event => event.preventDefault()}>
+        <input ref={input} type="range" min={min} max={max} step={step} value={value}
+          aria-valuetext={display} onChange={e => onChange(e.target.valueAsNumber)} />
+      </span>
     </label>
   );
 }
 
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange(value: boolean): void }) {
   return (
-    <label className="lock-editor-toggle">
+    <button type="button" className="lock-editor-toggle" role="switch" aria-checked={value} onClick={() => onChange(!value)}>
       <span>{label}</span>
-      <input type="checkbox" role="switch" checked={value} onChange={e => onChange(e.target.checked)} />
       <span aria-hidden="true" className="lock-editor-switch" />
-    </label>
+    </button>
   );
 }
 
@@ -112,10 +150,14 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
   }
 
   function changeGlass(key: string, value: number | boolean) {
-    setDraft(previous => ({
-      ...previous,
-      glass: { ...previous.glass, [region]: { ...previous.glass[region], [key]: value } },
-    }));
+    setDraft(previous => {
+      const values = previous.glass[region];
+      const field = region === 'clock' && key === 'blurRadius' && values?.overLight === true ? 'lightBlurRadius' : key;
+      return {
+        ...previous,
+        glass: { ...previous.glass, [region]: { ...values, [field]: value } },
+      };
+    });
   }
 
   function closeConfirm() {
@@ -335,9 +377,10 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
                   {LOCK_GLASS_REGIONS.map(item => <button type="button" key={item.id} aria-pressed={region === item.id} onClick={() => setRegion(item.id)}>{item.label}</button>)}
                 </div>
                 <div className="lock-editor-group">
-                  {CLOCK_GLASS_SLIDERS.filter(slider => region === 'clock' || slider.key === 'shadow' || (isCardGlassRegion(region) && slider.key !== 'inkOpacity')).map(slider =>
+                  {CLOCK_GLASS_SLIDERS.filter(slider => region === 'clock' || slider.key === 'shadow' || ((isCardGlassRegion(region) || isRingGlassRegion(region)) && slider.key !== 'inkOpacity')).map(slider =>
                     <Slider key={slider.key} label={slider.label} min={slider.min} max={slider.max} step={slider.step}
-                      value={glassSliderValue(draft.glass, region, slider)} unit={slider.key === 'saturation' ? '%' : ''}
+                      value={glassSliderValue(draft.glass, region, slider)} unit={slider.key === 'blurRadius' ? ' px' : '%'}
+                      fraction={slider.key !== 'blurRadius' && slider.key !== 'saturation'}
                       onChange={value => changeGlass(slider.key, value)} />)}
                   {region === 'clock' && <Toggle label="浅色壁纸模式" value={draft.glass.clock?.overLight === true} onChange={value => changeGlass('overLight', value)} />}
                   <button type="button" className="lock-editor-action lock-editor-reset" onClick={() => {
