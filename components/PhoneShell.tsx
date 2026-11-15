@@ -1023,22 +1023,25 @@ const PhoneShell: React.FC = () => {
       (activeApp === AppID.Chat && activeCharacter?.chromeCustomCss) ||
       (activeApp === AppID.GroupChat && groups.some(g => Boolean(g.chromeCustomCss))),
   );
-  const shellBackdropHidden =
-    activeApp !== AppID.Launcher &&
-    settledApp === activeApp &&
-    canHideShellBackdropWhenSettled(activeApp, {
-      hasCustomChatChromeCss,
-      iosStandalone: useIOSStandaloneLayout,
-    });
+  const characterShell = activeApp === AppID.Character;
+  const shellBackdropHidden = characterShell ||
+    (activeApp !== AppID.Launcher &&
+      settledApp === activeApp &&
+      canHideShellBackdropWhenSettled(activeApp, {
+        hasCustomChatChromeCss,
+        iosStandalone: useIOSStandaloneLayout,
+      }));
 
   // 进桌面闪粉：锁屏卸下后整树换成手机壳，粉紫渐变曾先画出来、壁纸子层晚一拍才盖上。
-  // 壳根直接铺同一张桌面壁纸，不垫粉、不垫黑。
+  // 桌面仍用同一张壁纸交接。神经链接用与页面根节点相同的底色接住加载和淡入。
   return (
     <div className="relative h-full w-full">
     <div
       key="shell"
-      className="sully-phone-shell relative w-full h-full overflow-hidden bg-cover bg-center text-slate-900 font-sans select-none overscroll-none"
-      style={{ backgroundImage: bgImageValue, backgroundPosition: desktopPosition || 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' }}
+      className={`sully-phone-shell relative w-full h-full overflow-hidden bg-cover bg-center text-slate-900 font-sans select-none overscroll-none ${
+        characterShell ? 'bg-slate-50' : ''
+      }`}
+      style={characterShell ? undefined : { backgroundImage: bgImageValue, backgroundPosition: desktopPosition || 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' }}
     >
        {/* Optimized Background Layer */}
        {/* 壁纸底层：进 App 时只柔和虚化/压暗作背景，不再做缩放「过场」——
