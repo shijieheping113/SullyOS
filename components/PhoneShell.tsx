@@ -442,7 +442,7 @@ const AppEnterStage: React.FC<{
 };
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, groups, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler, customIcons } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, groups, handleBack, suspendedCall, resumeCall, activeCharacterId, setActiveCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler, customIcons } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
   const reducedBlur = useReducedBlur();
   const [settledApp, setSettledApp] = useState<AppID>(activeApp);
@@ -455,6 +455,11 @@ const PhoneShell: React.FC = () => {
 
   const [lockSettings, setLockSettings] = useState(readLockScreenSettings);
   const unlockDesktopRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (isLocked || activeApp !== AppID.Launcher) return;
+    document.documentElement.classList.add('sully-launcher-active');
+    return () => document.documentElement.classList.remove('sully-launcher-active');
+  }, [isLocked, activeApp]);
   // 三档顶部状态栏：安全显示 / 紧凑显示 / 隐藏。旧存档仍由 hideStatusBar 兼容解析。
   // compact 把时间放进 safe-area，本体顶栏只让出 max(safe-area, 1.5rem)，避免顶部再多一整行。
   useLayoutEffect(() => {
@@ -1103,7 +1108,15 @@ const PhoneShell: React.FC = () => {
                 </div>
               )}
             </AppErrorBoundary>
-            {showNewLock && <LockScreen desktopRef={animateDesktop ? unlockDesktopRef : undefined} desktopPaired={pairedDesktop} onUnlock={unlock} holdReveal={booting || waitingForDesktopPreview} onPrepared={prepareLock} />}
+            {showNewLock && <LockScreen desktopRef={animateDesktop ? unlockDesktopRef : undefined} desktopPaired={pairedDesktop}
+              onUnlock={charId => {
+                unlock();
+                if (charId && characters.some(char => char.id === charId)) {
+                  setActiveCharacterId(charId);
+                  openApp(AppID.Chat);
+                }
+              }}
+              holdReveal={booting || waitingForDesktopPreview} onPrepared={prepareLock} />}
           </div>
 
           {/* Overlays: Status Bar (Top) —— 常驻渲染：时钟/电量条由开关+平台默认决定显隐（StatusBar 内部 isStatusBarHidden），

@@ -297,7 +297,7 @@ const GlobalMiniPlayer: React.FC = () => {
     return (
       <div
         ref={wrapRef}
-        className="absolute z-[55] pointer-events-none"
+        className="sully-global-mini-player absolute z-[55] pointer-events-none"
         style={positional}
       >
         <button
@@ -347,7 +347,7 @@ const GlobalMiniPlayer: React.FC = () => {
   return (
     <div
       ref={expandedRef}
-      className="absolute left-3 right-3 z-[55] pointer-events-none"
+      className="sully-global-mini-player absolute left-3 right-3 z-[55] pointer-events-none"
       style={{ bottom: expandedBottom != null ? expandedBottom : 12 }}
     >
       <div

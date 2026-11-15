@@ -8,15 +8,10 @@
 <section class="phone" id="phone" aria-label="锁屏">
     <div class="wallpaper" id="lockWallpaper"></div>
     <div class="wake-wallpaper" id="wakeWallpaper" hidden aria-hidden="true"></div>
-    <div class="art" id="backArt"><img alt=""></div>
     <div class="shade"></div>
-    <div class="layer" id="homeWallpaperLayer" style="opacity:0">
-      <div class="wallpaper desktop-alt" id="homeWallpaper"></div>
-      <div class="shade"></div>
-    </div>
     <div class="features" id="clockLayer">
       <div class="clock" id="clock">
-        <div class="date"><span id="date">11月14日 周六</span><span id="lockWeather">☁ 22° · 多云</span></div>
+        <div class="date"><span id="date">11月14日 周六</span><span id="lockWeather" hidden></span></div>
         <time class="time" id="time"><span id="clockDigits">23:13</span><span class="clock-glass-shadow" aria-hidden="true"></span><span class="glass clock-glass-face" aria-hidden="true"><span class="clock-ink"></span></span></time>
         <div class="clock-details">
           <span id="bottomText">留一盏灯，等你回来。</span>
@@ -35,42 +30,44 @@
               <path id="companionMusic" style="display:none" fill="currentColor" d="M10 4l9-2v13a3 3 0 1 1-2-2.83V6l-5 1v11a3.5 3.5 0 1 1-2-3.16Z"/>
             </svg>
           </span>
-          <span id="batteryDetails" role="meter" aria-label="示例电量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="76">
+          <span id="batteryDetails" role="meter" aria-label="设备电量" aria-valuemin="0" aria-valuemax="100" aria-valuetext="暂不可用">
             <span class="glass ring-glass-face" aria-hidden="true"></span>
             <svg class="battery-ring" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4.6" aria-hidden="true">
               <circle cx="24" cy="24" r="20" opacity=".26"/>
-              <circle id="batteryArc" cx="24" cy="24" r="20" pathLength="100" stroke-dasharray="76 100" stroke-linecap="round"/>
+              <circle id="batteryArc" cx="24" cy="24" r="20" pathLength="100" stroke-dasharray="0 100" stroke-linecap="round"/>
             </svg>
             <span class="battery-phone" aria-hidden="true"></span>
           </span>
         </div>
       </div>
     </div>
-    <div class="art front" id="frontArt" hidden><img alt=""></div>
+    <div class="art front" id="frontArt" hidden></div>
     <div class="features" id="lockControls">
 
-      <div class="notice glass" id="notice" hidden>
-        <img alt="">
-        <div><strong>猫儿</strong><small>有一条新消息</small></div><span class="notice-stamp">刚刚</span>
-      </div>
-      <section class="player glass" id="player" aria-label="锁屏播放器示例">
+      <button type="button" class="notice glass" id="notice" hidden>
+        <span class="notice-avatar"><span id="noticeInitial" aria-hidden="true"></span><img id="noticeAvatar" alt="" hidden></span>
+        <span class="notice-body"><strong id="noticeName"></strong><small id="noticeText"></small></span>
+        <span class="notice-meta"><span class="notice-stamp" id="noticeStamp"></span><span id="noticeCount" hidden></span></span>
+      </button>
+      <div id="noticeStack" aria-hidden="true" hidden><i></i><i></i></div>
+      <section class="player glass" id="player" aria-label="锁屏播放器" hidden>
         <div class="player-heading">
           <div class="cover" id="cover" aria-hidden="true"></div>
-          <div class="track"><strong>Love Language — TOMORROW X</strong><span>What's your love language?</span></div>
+          <div class="track"><strong id="trackTitle"><span id="trackTitleText"></span></strong><span id="playerLyric"></span></div>
           <span class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
         </div>
-        <div class="scrub" aria-hidden="true"><span id="elapsed">0:00</span><span class="scrub-line"><i id="played"></i></span><span id="remaining">−2:57</span></div>
+        <div class="scrub"><span id="elapsed">0:00</span><label class="scrub-target"><span class="scrub-line"><i id="played"></i></span><input type="range" id="playerSeek" min="0" max="1000" value="0" aria-label="播放进度"></label><span id="remaining">−0:00</span></div>
         <div class="player-controls">
           <span class="dim" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 2 3 6.1 6.8 1-4.9 4.8 1.2 6.8-6.1-3.2L5.9 21l1.2-6.9-4.9-4.8 6.8-1z"/></svg></span>
-          <span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 5a1 1 0 0 1 1 1v12a1 1 0 0 1-1.5.9L12 13.6V18a1 1 0 0 1-1.5.9l-9-6a1 1 0 0 1 0-1.8l9-6A1 1 0 0 1 12 6v4.4l8.5-5.3z"/></svg></span>
-          <button class="main-control" type="button" id="playerToggle" aria-label="播放示例"><svg viewBox="0 0 24 24"><path id="playShape" d="M6 3.7c0-1 1.1-1.6 2-1.1l13 8.3a1.3 1.3 0 0 1 0 2.2L8 21.4c-.9.5-2-.1-2-1.1z"/></svg></button>
-          <span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 5a1 1 0 0 0-1 1v12a1 1 0 0 0 1.5.9l8.5-5.3V18a1 1 0 0 0 1.5.9l9-6a1 1 0 0 0 0-1.8l-9-6A1 1 0 0 0 12 6v4.4L3.5 5.1z"/></svg></span>
+          <button type="button" id="playerPrev" aria-label="上一首"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 5a1 1 0 0 1 1 1v12a1 1 0 0 1-1.5.9L12 13.6V18a1 1 0 0 1-1.5.9l-9-6a1 1 0 0 1 0-1.8l9-6A1 1 0 0 1 12 6v4.4l8.5-5.3z"/></svg></button>
+          <button class="main-control" type="button" id="playerToggle" aria-label="播放"><svg viewBox="0 0 24 24"><path id="playShape" d="M6 3.7c0-1 1.1-1.6 2-1.1l13 8.3a1.3 1.3 0 0 1 0 2.2L8 21.4c-.9.5-2-.1-2-1.1z"/></svg></button>
+          <button type="button" id="playerNext" aria-label="下一首"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5a1 1 0 0 0-1 1v12a1 1 0 0 0 1.5.9l8.5-5.3V18a1 1 0 0 0 1.5.9l9-6a1 1 0 0 0 0-1.8l-9-6A1 1 0 0 0 12 6v4.4L3.5 5.1z"/></svg></button>
           <span class="dim" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" style="fill:none"><path d="M4 17a10 10 0 1 1 16 0M7 15a6 6 0 1 1 10 0M10 13a2.7 2.7 0 1 1 4 0"/><path fill="currentColor" stroke="none" d="m12 13 6 7H6z"/></svg></span>
         </div>
       </section>
       <div class="shortcuts" aria-hidden="true">
-        <span class="shortcut glass"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="M8 3h8a1 1 0 0 1 1 1v3c0 .3-.1.5-.3.8L14 11.4v8.9c0 .4-.3.7-.7.7h-2.6c-.4 0-.7-.3-.7-.7v-8.9L7.3 7.8A1 1 0 0 1 7 7V4a1 1 0 0 1 1-1Z"/><path d="M7 6.7h10v1H7zM11.3 14h1.4v2h-1.4z" opacity=".5" fill="var(--shortcut-detail,#463e44)"/></svg></span>
-        <span class="shortcut glass"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="m8 6 1.6-2h4.8L16 6h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.8" fill="var(--shortcut-detail,#463e44)" opacity=".62"/><circle cx="12" cy="13" r="2.45" opacity=".82"/></svg></span>
+        <span class="shortcut glass" id="lockFlashlight"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="M8 3h8a1 1 0 0 1 1 1v3c0 .3-.1.5-.3.8L14 11.4v8.9c0 .4-.3.7-.7.7h-2.6c-.4 0-.7-.3-.7-.7v-8.9L7.3 7.8A1 1 0 0 1 7 7V4a1 1 0 0 1 1-1Z"/><path d="M7 6.7h10v1H7zM11.3 14h1.4v2h-1.4z" opacity=".5" fill="var(--shortcut-detail,#463e44)"/></svg></span>
+        <span class="shortcut glass" id="lockCamera"><svg viewBox="0 0 24 24" fill="currentColor" focusable="false"><path d="m8 6 1.6-2h4.8L16 6h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.8" fill="var(--shortcut-detail,#463e44)" opacity=".62"/><circle cx="12" cy="13" r="2.45" opacity=".82"/></svg></span>
       </div>
     </div>
     <div class="topline" aria-hidden="true">
@@ -78,67 +75,6 @@
       <span class="signal"><svg viewBox="0 0 20 16" fill="currentColor"><rect x="1" y="10" width="3" height="4" rx="1"/><rect x="6" y="7" width="3" height="7" rx="1"/><rect x="11" y="4" width="3" height="10" rx="1"/><rect x="16" y="1" width="3" height="13" rx="1"/></svg><svg viewBox="0 0 24 15" fill="none" stroke="currentColor"><rect x="1" y="2" width="19" height="11" rx="3"/><path d="M22 6v3" stroke-width="2"/><rect x="3" y="4" width="14" height="7" fill="currentColor" rx="1"/></svg></span>
     </div>
     <div class="pill" aria-hidden="true"><svg id="lockMark" viewBox="0 0 16 16" fill="none" stroke="white" stroke-linecap="round"><path d="M5 7V5a3 3 0 1 1 6 0v2" stroke-width="1.4"/><rect x="3.5" y="7" width="9" height="6" rx="1.5" fill="white"/></svg></div>
-    <div class="home-content" id="homeContent" aria-hidden="true">
-      <div class="apps" id="apps"></div>
-      <div class="dock" id="dock"></div>
-      <span class="homebar" id="homebar"></span>
-    </div>
     <div class="light-wash" id="lightWash" aria-hidden="true"></div>
-    <div class="home-tools" id="homeTools" hidden><button class="relock" type="button" id="relock">返回锁屏</button></div>
     <button class="unlock-zone" type="button" id="unlockZone" aria-label="从这里向上滑解锁。键盘按上箭头或回车。"><span class="handle" id="handle"></span></button>
-    <button class="panel-open" type="button" id="panelOpen" aria-label="打开预览设置" aria-controls="panel" aria-expanded="false">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="#283140"/><circle cx="15" cy="12" r="2" fill="#283140"/><circle cx="8" cy="18" r="2" fill="#283140"/></svg>
-    </button>
-    <p id="screenStatus" class="sr" aria-live="polite">锁屏</p>
   </section>
-  <aside class="panel" id="panel" aria-label="预览设置">
-    <button class="panel-close" type="button" id="panelClose" aria-label="关闭预览设置"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
-    <h2>锁屏设置</h2>
-    <details class="clock-tuning" id="clockTuning">
-      <summary>玻璃拉杆</summary>
-      <label class="row">作用区域<select id="clockTuneRegion">
-        <option value="clock">大钟</option><option value="caption">锁屏文案</option>
-        <option value="companion">月亮／进度图标</option><option value="battery">电量图标</option>
-      </select></label>
-      <label class="row">起雾程度<span class="clock-tuning-controls"><input type="range" min="0" max="1" step="0.01" value="0.3" data-clock-param="blurAmount"><output data-clock-value="blurAmount"></output></span></label>
-      <label class="row">颜色鲜艳度<span class="clock-tuning-controls"><input type="range" min="100" max="200" step="1" value="200" data-clock-param="saturation"><output data-clock-value="saturation"></output></span></label>
-      <label class="row">白色底雾<span class="clock-tuning-controls"><input type="range" min="0" max="0.25" step="0.005" value="0.25" data-clock-param="fill"><output data-clock-value="fill"></output></span></label>
-      <label class="row">边缘存在感<span class="clock-tuning-controls"><input type="range" min="0" max="1" step="0.01" value="0.58" data-clock-param="edge"><output data-clock-value="edge"></output></span></label>
-      <label class="row">表面薄亮<span class="clock-tuning-controls"><input type="range" min="0" max="0.35" step="0.01" value="0.17" data-clock-param="sheen"><output data-clock-value="sheen"></output></span></label>
-      <label class="row">玻璃阴影<span class="clock-tuning-controls"><input type="range" min="0" max="0.5" step="0.01" value="0.39" data-clock-param="shadow"><output data-clock-value="shadow"></output></span></label>
-      <label class="row">所选颜色的浓度<span class="clock-tuning-controls"><input type="range" min="0" max="1" step="0.01" value="0.59" data-clock-param="inkOpacity"><output data-clock-value="inkOpacity"></output></span></label>
-      <label class="row">浅色底模式<input type="checkbox" data-clock-param="overLight"></label>
-      <button type="button" class="action" id="clockTuneCopy">复制当前参数</button>
-      <button type="button" class="action" id="clockTuneReset">恢复本区默认</button>
-      <textarea id="clockGlassParams" aria-label="当前时钟玻璃参数" readonly rows="3" spellcheck="false"></textarea>
-      <span id="clockTuneStatus" role="status"></span>
-    </details>
-
-    <div class="actions"><button class="action primary" type="button" id="replay">重播锁屏</button><button class="action" type="button" id="refreshView">模拟刷新</button></div>
-    <div class="wall-control">
-      <label class="file">更换锁屏图<input class="sr" type="file" accept="image/*" id="pickLock"></label>
-      <label class="file">更换桌面图<input class="sr" type="file" accept="image/*" id="pickHome"></label>
-    </div>
-    <label class="row">桌面沿用锁屏图<input type="checkbox" id="pair" checked></label>
-    <label class="row">人物遮住时钟<input type="checkbox" id="depth"></label>
-    <label class="row" id="foregroundRow" hidden>透明前景图<input class="sr" type="file" accept="image/*" id="pickFront"><span class="action">选择</span></label>
-    <label class="row">壁纸上下取景<input type="range" id="position" min="0" max="100" value="50"></label>
-    <label class="row">钟面大小<input type="range" id="clockSize" min="75" max="120" value="100"></label>
-    <label class="row">钟面位置<input type="range" id="clockPosition" min="6" max="25" step="0.1" value="8.7"></label>
-    <div class="row lock-color-row" id="lockColors" role="group" aria-label="锁屏颜色">
-      <span>锁屏颜色</span>
-      <div class="lock-color-options">
-        <button type="button" class="lock-swatch" data-color="#ffffff" style="--swatch:#ffffff" aria-label="白色" title="白色"></button>
-        <button type="button" class="lock-swatch" data-color="#66636a" style="--swatch:#66636a" aria-label="低饱和灰" title="低饱和灰"></button>
-        <button type="button" class="lock-swatch" data-color="#54677d" style="--swatch:#54677d" aria-label="灰蓝" title="灰蓝"></button>
-        <button type="button" class="lock-swatch" data-color="#756784" style="--swatch:#756784" aria-label="灰紫" title="灰紫"></button>
-        <input type="color" id="lockCustomColor" value="#ffffff" aria-label="自定义锁屏颜色" title="自定义锁屏颜色">
-      </div>
-    </div>
-    <label class="row">锁屏文字<input type="text" id="widgetText" maxlength="28" placeholder="写一句喜欢的话"></label>
-    <label class="row">中间圆环<select id="companionMode"><option value="day">一天的进度</option><option value="music">当前歌曲进度</option><option value="moon">晚安小月亮</option></select></label>
-    <label class="row">天气文字<input type="text" id="weatherText" maxlength="24" value="☁ 22° · 多云"></label>
-    <label class="row">显示未读示例<input type="checkbox" id="showNotice"></label>
-    <p class="subnote" id="imageNote" aria-live="polite"></p>
-    <button class="action" type="button" id="reset" style="margin-top:8px" hidden>恢复示例壁纸</button>
-  </aside>

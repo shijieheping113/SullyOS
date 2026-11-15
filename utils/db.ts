@@ -1865,13 +1865,16 @@ export const DB = {
     });
   },
 
-  // Commit a preset together with its provenance so a failed save cannot advance its version.
-  saveAssetBatch: async (entries: Array<{id:string;data:string}>): Promise<void> => {
+  // Commit related assets together, including pointers explicitly removed by an edit.
+  saveAssetBatch: async (entries: Array<{id:string;data:string | null}>): Promise<void> => {
     const db=await openDB();
     return new Promise((resolve,reject)=>{
       const transaction=db.transaction(STORE_ASSETS,'readwrite');
       const store=transaction.objectStore(STORE_ASSETS);
-      for(const entry of entries)store.put(entry);
+      for (const entry of entries) {
+          if (entry.data === null) store.delete(entry.id);
+          else store.put(entry);
+      }
       transaction.oncomplete=()=>resolve();
       transaction.onerror=()=>reject(transaction.error);
       transaction.onabort=()=>reject(transaction.error||new Error('Asset batch aborted'));

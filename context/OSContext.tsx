@@ -31,6 +31,8 @@ import type { AvatarTouchRecord } from '../utils/avatarTouch';
 import { clampClaudeTemperature, modelRejectsSamplingParams, stripSamplingParams } from '../utils/samplingParamCompat';
 import { buildMalformedImageDiagnostics, extractImagesInPlace, deepCloneForExport, stripBackupImages, parseImageDataUrlForBackup, type BackupObjectPath, type MalformedBackupImageDiagnostic } from '../utils/backupExport';
 import { isBlobRef, getBlobForRef, restoreBlobRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, migrateChatThemeBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
+import { LOCK_SCREEN_FOREGROUND, LOCK_SCREEN_SETTINGS_KEY, saveLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
+import type { LockImageChanges, LockImageKind, LockScreenSettings } from '../components/lockscreen/lockScreenSettings';
 import { resolveBlobRefsInRequestBody } from '../utils/apiBlobRefs';
 import { collectBlobRefs, writeBlobsToZip, readBlobsIndex, restoreBlobsFromZip } from '../utils/backupBlobs';
 import { missingBackupAssetsSummary, writeMissingBackupAssets, type BackupExportOptions, type BackupMissingAsset } from '../utils/backupMissingAssets';
@@ -394,6 +396,7 @@ interface OSContextType {
   closeApp: () => void;
   theme: OSTheme;
   updateTheme: (updates: Partial<OSTheme>) => Promise<void>;
+  saveLockScreenAppearance: (settings: LockScreenSettings, images: LockImageChanges) => Promise<void>;
   virtualTime: VirtualTime;
   apiConfig: APIConfig;
   updateApiConfig: (updates: Partial<APIConfig>) => void;
@@ -3078,6 +3081,82 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         addToast('主题没能保存到本地（存储空间可能已满），重启后可能会还原', 'error');
     }
   };
+  const saveLockScreenAppearance = async (settings: LockScreenSettings, changes: LockImageChanges) => {
+    const assetKeys = { lock: 'lock_wallpaper', home: 'wallpaper', front: LOCK_SCREEN_FOREGROUND };
+    const labels = { lock: '锁屏壁纸', home: '桌面壁纸', front: '透明前景图' };
+    const entries = Object.entries(changes) as [LockImageKind, string | null][];
+    if (!entries.length) {
+      saveLockScreenSettings(settings);
+      return;
+    }
+
+    const previousSettings = localStorage.getItem(LOCK_SCREEN_SETTINGS_KEY);
+    const previousTheme = localStorage.getItem('os_theme');
+    const storedTheme = JSON.parse(previousTheme || '{}');
+    const urls = new Map<LockImageKind, string>();
+    const previousAssets: string[] = [];
+    const assets: { id: string; data: string | null }[] = [];
+    const themeUpdates: Partial<OSTheme> = {};
+    const results: { kind: LockImageKind; value: string | undefined }[] = [];
+    let settingsWritten = false;
+    let themeWritten = false;
+    try {
+      for (const [kind, ref] of entries) {
+        const id = assetKeys[kind];
+        const previous = await DB.getAsset(id);
+        if (previous && previous !== ref) previousAssets.push(previous);
+        const blob = ref && isBlobRef(ref) ? await getBlobForRef(ref) : null;
+        if (ref && isBlobRef(ref) && !blob) throw new Error(labels[kind] + '读取失败');
+        assets.push({ id, data: blob ? ref : null });
+        if (kind === 'front') continue;
+        const field = kind === 'lock' ? 'lockWallpaper' : 'wallpaper';
+        const url = blob ? URL.createObjectURL(blob) : undefined;
+        if (url) urls.set(kind, url);
+        const value = url || ref || (kind === 'home' ? DEFAULT_WALLPAPER : undefined);
+        results.push({ kind, value });
+        if (url) delete storedTheme[field];
+        else storedTheme[field] = value;
+      }
+      if (results.length) {
+        localStorage.setItem('os_theme', JSON.stringify(storedTheme));
+        themeWritten = true;
+      }
+      saveLockScreenSettings(settings);
+      settingsWritten = true;
+      try {
+        await DB.saveAssetBatch(assets);
+      } catch {
+        throw new Error(entries.map(([kind]) => labels[kind]).join('、') + '保存失败');
+      }
+    } catch (error) {
+      for (const url of urls.values()) URL.revokeObjectURL(url);
+      if (settingsWritten) {
+        if (previousSettings === null) localStorage.removeItem(LOCK_SCREEN_SETTINGS_KEY);
+        else localStorage.setItem(LOCK_SCREEN_SETTINGS_KEY, previousSettings);
+      }
+      if (themeWritten) {
+        if (previousTheme === null) localStorage.removeItem('os_theme');
+        else localStorage.setItem('os_theme', previousTheme);
+      }
+      throw error;
+    }
+    for (const { kind, value } of results) {
+      if (kind === 'lock') {
+        if (currentLockWallpaperObjUrl) URL.revokeObjectURL(currentLockWallpaperObjUrl);
+        currentLockWallpaperObjUrl = urls.get(kind) || null;
+        themeUpdates.lockWallpaper = value;
+      } else {
+        if (currentWallpaperObjUrl) URL.revokeObjectURL(currentWallpaperObjUrl);
+        currentWallpaperObjUrl = urls.get(kind) || null;
+        themeUpdates.wallpaper = value || DEFAULT_WALLPAPER;
+      }
+    }
+    if (results.length) {
+      stopBeautyForThemeChange(themeUpdates);
+      setTheme(current => ({ ...current, ...themeUpdates }));
+    }
+    for (const previous of previousAssets) void deleteBlobRefIfUnreferenced(previous).catch(() => {});
+  };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = normalizeApiConfig({ ...apiConfig, ...updates }); setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
 
@@ -5485,6 +5564,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     closeApp,
     theme,
     updateTheme,
+    saveLockScreenAppearance,
     virtualTime,
     apiConfig,
     updateApiConfig,

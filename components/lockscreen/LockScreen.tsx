@@ -1,26 +1,25 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { useOS } from '../../context/OSContext';
-import { DB } from '../../utils/db';
-import { deleteBlobRefIfUnreferenced, getBlobForRef, isBlobRef, putImageBlob } from '../../utils/blobRef';
+import { isBlobRef } from '../../utils/blobRef';
 import { loadBlobRefUrl } from '../../utils/blobRefSessionCache';
-import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
-import Launcher from '../../apps/Launcher';
-import { launcherUnlockMotion, usesV5DesktopEntry } from './launcherUnlockMotion';
+import { launcherUnlockMotion } from './launcherUnlockMotion';
 import { mountLockScreen } from './lockScreenMotion';
-import type { LockScreenMotion } from './lockScreenMotion';
-import { LOCK_SCREEN_FOREGROUND, readLockScreenSettings, saveLockScreenSettings } from './lockScreenSettings';
+import type { LockScreenMotion, Wallpapers } from './lockScreenMotion';
+import { readLockScreenSettings } from './lockScreenSettings';
 import type { LockScreenSettings } from './lockScreenSettings';
+import { LockScreenData, useLockForeground } from './LockScreenData';
+import type { LockPlayerControls } from './lockScreenMedia';
 import markup from './lockScreen.html?raw';
 import './lockScreen.css';
 
 interface Props {
   desktopRef?: RefObject<HTMLDivElement | null>;
-  onUnlock?: () => void;
-  onClose?: () => void;
+  onUnlock?: (charId?: string) => void;
   holdReveal?: boolean;
   onPrepared?: () => void;
   desktopPaired?: boolean;
+  preview?: { settings: LockScreenSettings; wallpapers: Wallpapers; glassRegion?: string };
 }
 
 function decodeImage(image: HTMLImageElement) {
@@ -52,134 +51,63 @@ function wakeImageSource(wallpaper: string, width: number, height: number) {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
-export async function clearLockScreenForeground() {
-  const previous = await DB.getAsset(LOCK_SCREEN_FOREGROUND);
-  if (!previous) return;
-  await DB.deleteAsset(LOCK_SCREEN_FOREGROUND);
-  void deleteBlobRefIfUnreferenced(previous).catch(() => {});
-}
-
-export default function LockScreen({ desktopRef, onUnlock, onClose, holdReveal = false, onPrepared, desktopPaired = false }: Props) {
-  const { theme, updateTheme, addToast } = useOS();
-  const [settings] = useState(readLockScreenSettings);
-  const [front, setFront] = useState('');
-  const [foregroundReady, setForegroundReady] = useState(!settings.depth);
-  const [openingReady, setOpeningReady] = useState(false);
-  const [frontRevision, setFrontRevision] = useState(0);
-  const root = useRef<HTMLDivElement>(null);
-  const editorDesktop = useRef<HTMLDivElement>(null);
-  const motion = useRef<LockScreenMotion | null>(null);
-  const pendingSave = useRef<Partial<LockScreenSettings>>({});
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const editor = Boolean(onClose);
+export default function LockScreen({ desktopRef, onUnlock, holdReveal = false, onPrepared, desktopPaired = false, preview }: Props) {
+  const { theme } = useOS();
+  const [storedSettings] = useState(readLockScreenSettings);
+  const editor = !!preview;
+  const settings = preview?.settings || storedSettings;
   const pair = editor ? settings.pair : desktopPaired;
-  const wallpapers = {
-    lock: theme.lockWallpaper || theme.wallpaper || '',
-    home: theme.wallpaper || '',
-    front,
-  };
+  const { url: front, ready: foregroundReady } = useLockForeground(!editor && settings.depth);
+  const [openingReady, setOpeningReady] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const motion = useRef<LockScreenMotion | null>(null);
+  const musicControls = useRef<LockPlayerControls | null>(null);
+  const wallpapers = preview?.wallpapers || { lock: theme.lockWallpaper || theme.wallpaper || '', front };
+  const latest = useRef({ wallpapers, settings, onUnlock, onPrepared });
 
-  function flushSettings() {
-    clearTimeout(saveTimer.current);
-    const changes = pendingSave.current;
-    pendingSave.current = {};
-    if (!Object.keys(changes).length) return;
-    try {
-      saveLockScreenSettings(changes);
-    } catch {
-      addToast('锁屏设置未能保存', 'error');
-    }
-  }
-
-  const latest = useRef({ wallpapers, onUnlock, updateTheme, addToast, flushSettings, onPrepared });
   useLayoutEffect(() => {
-    latest.current = { wallpapers, onUnlock, updateTheme, addToast, flushSettings, onPrepared };
+    latest.current = { wallpapers, settings, onUnlock, onPrepared };
   });
-  useLayoutEffect(() => {
-    motion.current?.setWallpapers(latest.current.wallpapers);
-  }, [wallpapers.lock, wallpapers.home, wallpapers.front]);
-
-  useLayoutEffect(() => {
-    if (!settings.depth && !editor) return;
-    let live = true;
-    let url = '';
-    setFront('');
-    void DB.getAsset(LOCK_SCREEN_FOREGROUND).then(ref => ref ? getBlobForRef(ref) : null).then(blob => {
-      if (!live || !blob) return;
-      url = URL.createObjectURL(blob);
-      setFront(url);
-    }).catch(() => {}).finally(() => {
-      if (live) setForegroundReady(true);
-    });
-    return () => {
-      live = false;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [editor, settings.depth, frontRevision]);
-
-  useLocalBackHandler(() => {
-    if (motion.current?.closePanel()) return true;
-    if (!onClose) return false;
-    onClose();
-    return true;
-  }, 40, editor);
 
   useLayoutEffect(() => {
     const container = root.current;
     if (!container) return;
     container.innerHTML = markup;
-    const desktopElement = desktopRef?.current || (editor && usesV5DesktopEntry(theme.skin) ? editorDesktop.current : null);
+    const desktop = desktopRef?.current;
     const controller = mountLockScreen(container, {
-      settings: { ...settings, pair },
+      settings: { ...latest.current.settings, pair },
       wallpapers: latest.current.wallpapers,
       editor,
       reveal: !editor,
       holdReveal: !editor,
-      desktop: desktopElement ? launcherUnlockMotion(desktopElement) : undefined,
-      unlock: () => latest.current.onUnlock?.(),
+      desktop: desktop ? launcherUnlockMotion(desktop) : undefined,
+      player: {
+        toggle: () => musicControls.current?.toggle(),
+        prev: () => musicControls.current?.prev(),
+        next: () => musicControls.current?.next(),
+        seek: fraction => musicControls.current?.seek(fraction),
+      },
+      unlock: charId => latest.current.onUnlock?.(charId),
       requestPermission() {
-        if (!editor && 'Notification' in window && Notification.permission === 'default') {
+        if ('Notification' in window && Notification.permission === 'default') {
           void Promise.resolve(Notification.requestPermission()).catch(() => {});
-        }
-      },
-      save(changes) {
-        Object.assign(pendingSave.current, changes);
-        clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => latest.current.flushSettings(), 180);
-      },
-      async saveImage(kind, file) {
-        const previous = kind === 'front' ? await DB.getAsset(LOCK_SCREEN_FOREGROUND) : null;
-        const ref = await putImageBlob(file);
-        try {
-          if (kind === 'front') await DB.saveAsset(LOCK_SCREEN_FOREGROUND, ref);
-          else await latest.current.updateTheme(kind === 'lock' ? { lockWallpaper: ref } : { wallpaper: ref });
-        } catch (error) {
-          await deleteBlobRefIfUnreferenced(ref).catch(() => {});
-          throw error;
-        }
-        if (kind === 'front') {
-          setFrontRevision(value => value + 1);
-          void deleteBlobRefIfUnreferenced(previous).catch(() => {});
-        } else if (kind === 'home') {
-          pendingSave.current.pair = false;
-          latest.current.flushSettings();
-        } else {
-          setFront('');
-          await clearLockScreenForeground();
-          setFrontRevision(value => value + 1);
         }
       },
     });
     motion.current = controller;
-    const saveBeforeLeaving = () => latest.current.flushSettings();
-    if (editor) window.addEventListener('pagehide', saveBeforeLeaving);
     return () => {
-      if (editor) window.removeEventListener('pagehide', saveBeforeLeaving);
       controller.dispose();
       motion.current = null;
-      saveBeforeLeaving();
     };
-  }, [desktopRef, editor, pair, settings, theme.skin]);
+  }, [desktopRef, editor]);
+
+  useLayoutEffect(() => {
+    motion.current?.setSettings({ ...latest.current.settings, pair });
+  }, [settings, pair]);
+
+  useLayoutEffect(() => {
+    motion.current?.setWallpapers(latest.current.wallpapers);
+  }, [wallpapers.lock, wallpapers.front]);
 
   useLayoutEffect(() => {
     if (!editor && openingReady && !holdReveal) motion.current?.startReveal();
@@ -195,7 +123,7 @@ export default function LockScreen({ desktopRef, onUnlock, onClose, holdReveal =
       setOpeningReady(true);
       latest.current.onPrepared?.();
     };
-    const imageUrls = pair ? [wallpapers.lock, wallpapers.front] : [wallpapers.lock, wallpapers.home, wallpapers.front];
+    const imageUrls = pair ? [wallpapers.lock, wallpapers.front] : [wallpapers.lock, theme.wallpaper, wallpapers.front];
     const viewport = root.current;
     const gradientSource = wakeImageSource(wallpapers.lock, viewport?.clientWidth || 0, viewport?.clientHeight || 0);
     if (gradientSource) imageUrls.push(gradientSource);
@@ -227,26 +155,12 @@ export default function LockScreen({ desktopRef, onUnlock, onClose, holdReveal =
       live = false;
       cancelAnimationFrame(frame);
     };
-  }, [desktopRef, editor, foregroundReady, openingReady, pair, wallpapers.lock, wallpapers.home, wallpapers.front]);
+  }, [desktopRef, editor, foregroundReady, openingReady, pair, wallpapers.lock, theme.wallpaper, wallpapers.front]);
 
-  if (!editor) return <div ref={root} className="sully-v5 sully-v5-live absolute inset-0" />;
   return (
-    <div className="absolute inset-0 z-30 overflow-hidden bg-slate-50">
-      <div ref={root} className="sully-v5 sully-v5-editor absolute inset-0" />
-      {usesV5DesktopEntry(theme.skin) && <div ref={editorDesktop} {...{ inert: "" }} aria-hidden="true" className="pointer-events-none absolute inset-0 z-[1]">
-        <Launcher staticPreview />
-      </div>}
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="返回外观"
-        className="absolute left-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-600 shadow-sm active:scale-95"
-        style={{ top: 'calc(var(--safe-top) + 12px)' }}
-      >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="m15.75 19.5-7.5-7.5 7.5-7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-    </div>
+    <>
+      <div ref={root} className={`sully-v5 ${editor ? 'sully-v5-editor pointer-events-none' : 'sully-v5-live'} absolute inset-0`} />
+      <LockScreenData motion={motion} controls={musicControls} preview={editor} glassRegion={preview?.glassRegion} />
+    </>
   );
 }

@@ -14,12 +14,12 @@ import {
     normalizeCompanionSkinSetId,
 } from '../utils/companionAvatar';
 import { DB } from '../utils/db';
-import LockScreen, { clearLockScreenForeground } from '../components/lockscreen/LockScreen';
+import LockScreenEditor from '../components/lockscreen/LockScreenEditor';
 import { readLockScreenSettings, saveLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
 import { resolveStatusBarMode, type StatusBarMode } from '../utils/iosStandalone';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
-import { Check, ImageSquare, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
+import { CaretRight, Check, ImageSquare, LockSimple, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
 import AppIconEditor from '../components/appearance/AppIconEditor';
 import BootAnimationSettings from '../components/appearance/BootAnimationSettings';
 import FullscreenSettings from '../components/appearance/FullscreenSettings';
@@ -498,8 +498,9 @@ const Appearance: React.FC = () => {
   const [shareBusy, setShareBusy] = useState(false);
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
-  const lockWallpaperInputRef = useRef<HTMLInputElement>(null);
-  const [lockWallpaperUrl, setLockWallpaperUrl] = useState('');
+  const lockEditorButton = useRef<HTMLButtonElement>(null);
+  const lockThumbnail = theme.lockWallpaper || theme.wallpaper;
+  const lockThumbnailImage = /gradient\(/i.test(lockThumbnail) ? lockThumbnail : `url(${JSON.stringify(lockThumbnail)})`;
   const widgetInputRef = useRef<HTMLInputElement>(null);
   const [activeWidgetSlot, setActiveWidgetSlot] = useState<string | null>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
@@ -726,32 +727,6 @@ const Appearance: React.FC = () => {
       addToast('壁纸已应用', 'success');
   };
 
-  const handleLockWallpaperUpload = async (file: File) => {
-      try {
-          addToast('正在处理锁屏壁纸 (原画质)...', 'info');
-          const blob = await processImageToBlob(file, { skipCompression: true });
-          const ref = await putImageBlob(blob);
-          await updateTheme({ lockWallpaper: ref });
-          await clearLockScreenForeground();
-          addToast('锁屏壁纸更新成功', 'success');
-      } catch (e: any) {
-          addToast(e.message, 'error');
-      }
-  };
-
-  const applyLockWallpaperUrl = async () => {
-      const url = lockWallpaperUrl.trim();
-      if (!url) return;
-      if (!/^https?:\/\//i.test(url) && !url.startsWith('data:') && !url.startsWith('blob:')) {
-          addToast('请填写以 http(s):// 开头的图片地址', 'error');
-          return;
-      }
-      await updateTheme({ lockWallpaper: url });
-      await clearLockScreenForeground();
-      setLockWallpaperUrl('');
-      addToast('锁屏壁纸已应用', 'success');
-  };
-
   const handleWidgetUpload = async (file: File) => {
       if (!activeWidgetSlot) return;
       try {
@@ -872,7 +847,10 @@ const Appearance: React.FC = () => {
 
   return (
     <div className="relative h-full w-full">
-      {lockEditorOpen && <LockScreen onClose={() => setLockEditorOpen(false)} />}
+      {lockEditorOpen && <LockScreenEditor onClose={() => {
+        setLockEditorOpen(false);
+        requestAnimationFrame(() => lockEditorButton.current?.focus({ preventScroll: true }));
+      }} />}
       <div className="h-full w-full bg-slate-50 flex flex-col font-light" style={{ visibility: lockEditorOpen ? 'hidden' : undefined }}>
       {activeTab !== 'sharing' && <><div className="bg-white/70 backdrop-blur-md border-b border-white/40 shrink-0 z-10 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
         <div className="flex items-center px-4 py-3">
@@ -1334,96 +1312,44 @@ const Appearance: React.FC = () => {
                     </div>
                 </section>
 
-                {/* Lock Screen Wallpaper Section */}
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                    <div className="flex items-center justify-between mb-1">
-                        <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest">锁屏壁纸</h2>
-                        <span className="text-[9px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-500 font-bold">
-                            {theme.lockWallpaper ? '独立设置' : '跟随桌面'}
-                        </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4 py-3">
-                        <label htmlFor="new-lock-screen" className="text-sm font-medium text-slate-700">新版锁屏</label>
-                        <button
-                            id="new-lock-screen"
-                            type="button"
-                            role="switch"
-                            aria-checked={newLockEnabled}
-                            onClick={() => {
-                                try {
-                                    saveLockScreenSettings({ enabled: !newLockEnabled });
-                                    setNewLockEnabled(!newLockEnabled);
-                                } catch {
-                                    addToast("锁屏开关未能保存", "error");
-                                }
-                            }}
-                            className={`relative w-11 h-6 rounded-full shrink-0 transition-colors ${newLockEnabled ? "bg-primary" : "bg-slate-300"}`}
-                        >
-                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${newLockEnabled ? "translate-x-5" : ""}`} />
-                        </button>
-                    </div>
-                    <button type="button" onClick={() => setLockEditorOpen(true)} className="mb-4 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 active:scale-[0.98]">
-                        预览与编辑锁屏
-                    </button>
-                    <LongPressArea
-                        className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer"
-                        onClick={() => lockWallpaperInputRef.current?.click()}
-                        onLongPress={async () => {
-                            if (!theme.lockWallpaper) {
-                                addToast('锁屏当前已跟随桌面壁纸', 'info');
-                                return;
-                            }
-                            await updateTheme({ lockWallpaper: undefined });
-                            await clearLockScreenForeground();
-                            addToast('锁屏已恢复跟随桌面壁纸', 'success');
-                        }}
-                    >
-                        <div
-                            className="w-full h-full"
-                            style={{
-                                background: (() => {
-                                    const value = theme.lockWallpaper || theme.wallpaper;
-                                    if (!value) return '#e2e8f0';
-                                    return (value.startsWith('linear-gradient') || value.startsWith('radial-gradient') || value.startsWith('conic-gradient'))
-                                        ? value
-                                        : `url("${value}") center/cover`;
-                                })(),
-                            }}
-                        />
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <span className="text-white text-xs font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-md">更换锁屏</span>
+                <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-4 px-1 pb-3">
+                        <div className="flex items-center gap-2 text-slate-700">
+                            <LockSimple size={17} className="text-slate-500" />
+                            <h2 className="text-sm font-semibold">锁屏</h2>
                         </div>
-                    </LongPressArea>
-                    <input
-                        type="file"
-                        ref={lockWallpaperInputRef}
-                        className="hidden"
-                        accept="image/*"
-                        onChange={(e) => {
-                            if (e.target.files?.[0]) handleLockWallpaperUpload(e.target.files[0]);
-                            e.target.value = '';
-                        }}
-                    />
-                    <p className="text-center text-[10px] text-slate-400 mb-4">点击上传 / 长按恢复跟随桌面</p>
-
-                    <div className="border-t border-slate-100 pt-4 space-y-2">
-                        <p className="text-[11px] font-bold text-slate-500">从 URL 导入</p>
-                        <input
-                            value={lockWallpaperUrl}
-                            onChange={e => setLockWallpaperUrl(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') applyLockWallpaperUrl(); }}
-                            placeholder="输入锁屏图片地址 (https://...)"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none focus:border-primary transition-all"
-                        />
-                        <button
-                            onClick={applyLockWallpaperUrl}
-                            disabled={!lockWallpaperUrl.trim()}
-                            className="w-full py-2 bg-primary text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
-                        >
-                            应用网络锁屏壁纸
-                        </button>
+                        <div className="flex items-center gap-2.5">
+                            <label htmlFor="new-lock-screen" className="text-xs text-slate-600">新版锁屏</label>
+                            <button id="new-lock-screen" type="button" role="switch" aria-checked={newLockEnabled}
+                                onClick={() => {
+                                    try {
+                                        saveLockScreenSettings({ enabled: !newLockEnabled });
+                                        setNewLockEnabled(!newLockEnabled);
+                                    } catch {
+                                        addToast('锁屏开关未能保存', 'error');
+                                    }
+                                }}
+                                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${newLockEnabled ? 'bg-primary' : 'bg-slate-300'}`}>
+                                <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${newLockEnabled ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
                     </div>
-                <BootAnimationSettings theme={theme} updateTheme={updateTheme} />
+                    <button ref={lockEditorButton} type="button" onClick={() => setLockEditorOpen(true)}
+                        className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-2.5 text-left active:bg-slate-100">
+                        <span aria-hidden="true" className="grid h-16 w-11 shrink-0 place-items-start justify-center rounded-xl border border-black/5 bg-slate-300 bg-cover bg-center pt-1.5"
+                            style={{ backgroundImage: lockThumbnailImage }}>
+                            <LockSimple size={12} weight="fill" className="text-white drop-shadow" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-slate-700">编辑锁屏</span>
+                            <span className="mt-1 block text-[11px] text-slate-500">实时预览壁纸、钟面与玻璃</span>
+                        </span>
+                        <CaretRight size={16} className="mr-1 shrink-0 text-slate-500" />
+                    </button>
+                </section>
+
+                <section className="rounded-3xl border border-slate-100 bg-white px-5 pb-5 shadow-sm">
+                    <BootAnimationSettings theme={theme} updateTheme={updateTheme} />
                 </section>
 
                 {/* Page 1 Desktop Square Image */}

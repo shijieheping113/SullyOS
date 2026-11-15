@@ -44,8 +44,6 @@ const TTL_RULES: Array<{ path: string; ttl: number; exact?: boolean }> = [
   // 榜单半小时够了
   { path: '/toplist',            ttl: 30 * 60 * 1000 },
 
-  // CDN 链接一般 ~20min 内有效，给短点避免点进去放不出来
-  { path: '/song/url',           ttl: 90 * 1000 },
 ];
 
 /**

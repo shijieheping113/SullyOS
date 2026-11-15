@@ -235,12 +235,12 @@ export const toHttps = (url: string): string => {
 /* ───────────── API ───────────── */
 export const musicApi = {
   // 内部：真正打网络（不走缓存）
-  async _raw(cfg: MusicCfg, path: string, body: any = {}) {
+  async _raw(cfg: MusicCfg, path: string, body: any = {}, signal?: AbortSignal) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const cookie = normalizeCookie(cfg.cookie);
     if (cookie) headers['X-Netease-Cookie'] = cookie;
     const url = `${resolveMusicWorkerUrl(cfg)}/netease${path.startsWith('/') ? path : '/' + path}`;
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body || {}) });
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body || {}), signal });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j?.error || j?.message || `HTTP ${res.status}`);
     return j;
@@ -252,8 +252,8 @@ export const musicApi = {
   search(cfg: MusicCfg, keyword: string, offset = 0) {
     return musicApi.call(cfg, '/search', { keyword, limit: 30, offset, type: 1 });
   },
-  songUrl(cfg: MusicCfg, id: number) {
-    return musicApi.call(cfg, '/song/url', { ids: [id], level: cfg.quality });
+  songUrl(cfg: MusicCfg, id: number, signal?: AbortSignal) {
+    return musicApi._raw(cfg, '/song/url', { ids: [id], level: cfg.quality }, signal);
   },
   lyric(cfg: MusicCfg, id: number) {
     return musicApi.call(cfg, '/lyric', { id });
@@ -628,6 +628,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const modeRef = useRef(playMode); modeRef.current = playMode;
   const cfgRef = useRef(cfg); cfgRef.current = cfg;
   const endedHandlerRef = useRef<() => void>(() => {});
+  const trackRequest = useRef<AbortController | null>(null);
+  const switchingTrack = useRef(false);
 
   // 初始化 audio（仅 Provider 生命周期创建一次）
   useEffect(() => {
@@ -641,8 +643,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const onTime = () => setProgress(a.currentTime);
     const onMeta = () => setDuration(a.duration || 0);
     // 播放出错 → 清掉 playing 状态 + 清掉"一起听"伙伴（防止 UI 卡在残留状态）
-    const onErr = () => { setPlaying(false); setListeningTogetherWith([]); toast('播放失败', 'error'); };
-    const onEnd = () => { endedHandlerRef.current(); };
+    const onErr = () => {
+      if (!a.error) return;
+      setPlaying(false);
+      if (!switchingTrack.current) {
+        setListeningTogetherWith([]);
+        toast('音源中断，请再点一次播放', 'error');
+      }
+    };
+    const onEnd = () => { if (a.ended) endedHandlerRef.current(); };
 
     a.addEventListener('play', onPlay);
     a.addEventListener('pause', onPause);
@@ -658,48 +667,72 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       a.removeEventListener('loadedmetadata', onMeta);
       a.removeEventListener('error', onErr);
       a.removeEventListener('ended', onEnd);
-      try { a.pause(); a.src = ''; } catch {}
+      trackRequest.current?.abort();
+      trackRequest.current = null;
+      switchingTrack.current = false;
+      audioRef.current = null;
+      const source = a.src;
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+      if (source.startsWith('blob:')) URL.revokeObjectURL(source);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 播放单曲
   const playSong = useCallback(async (song: Song, opts: { alsoSetQueue?: boolean; replaceQueue?: Song[]; startIdx?: number } = {}) => {
+    const a = audioRef.current;
+    if (!a) return;
+    trackRequest.current?.abort();
+    const request = new AbortController();
+    trackRequest.current = request;
+    const isCurrent = () => !request.signal.aborted && audioRef.current === a;
+    switchingTrack.current = true;
     const { alsoSetQueue = true, replaceQueue, startIdx } = opts;
 
     if (replaceQueue) {
+      queueRef.current = replaceQueue;
+      idxRef.current = typeof startIdx === 'number' ? startIdx : replaceQueue.findIndex(s => s.id === song.id);
       setQueueState(replaceQueue);
-      setIdx(typeof startIdx === 'number' ? startIdx : replaceQueue.findIndex(s => s.id === song.id));
+      setIdx(idxRef.current);
     } else if (alsoSetQueue) {
       const qnow = queueRef.current;
       const existing = qnow.findIndex(s => s.id === song.id);
       if (existing >= 0) {
+        idxRef.current = existing;
         setIdx(existing);
       } else {
-        setQueueState(q => [...q, song]);
+        queueRef.current = [...qnow, song];
+        idxRef.current = qnow.length;
+        setQueueState(queueRef.current);
         setIdx(qnow.length);
       }
     }
 
-    setLoadingSong(true); setLyric([]); setTlyric([]); setProgress(0); setDuration(0);
+    const previousSource = a.src;
+    a.pause();
+    a.removeAttribute('src');
+    a.load();
+    if (previousSource.startsWith('blob:')) URL.revokeObjectURL(previousSource);
+    setPlaying(false); setLoadingSong(true); setLyric([]); setTlyric([]); setProgress(0); setDuration(0);
     try {
       // ── Local-source branch ── 本地生成的歌（写歌 App 出歌）从 IndexedDB 取 blob
       if (song.local && song.localAssetKey) {
-        const a = audioRef.current!;
         const entry = await DB.getAssetRaw(song.localAssetKey).catch(() => null) as
           | { blob?: Blob; mimeType?: string }
           | Blob
           | null;
+        if (!isCurrent()) return;
         const blob: Blob | null = entry instanceof Blob ? entry : (entry?.blob instanceof Blob ? entry.blob : null);
         if (!blob) {
           toast('本地歌曲文件丢失', 'error');
-          setLoadingSong(false);
           return;
         }
-        const prevSrc = a.src;
-        if (prevSrc.startsWith('blob:')) URL.revokeObjectURL(prevSrc);
         a.src = URL.createObjectURL(blob);
-        a.play().catch(() => {});
+        void a.play().catch(error => {
+          if (isCurrent()) toast(error?.name === 'NotAllowedError' ? '浏览器需要再点一次才能播放' : '本地歌曲播放失败', 'error');
+        });
 
         // ── 本地歌词时间分布 ──
         // MiniMax / ACE-Step 不返回带时间戳的歌词，但我们写歌时就有原文。
@@ -707,6 +740,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // 实现「跟着歌词滚动」的网易云播放器体验。
         if (song.localLyrics) {
           const distribute = () => {
+            if (!isCurrent()) return;
             const dur = a.duration;
             if (!isFinite(dur) || dur <= 0) return;
             const lines = song.localLyrics!
@@ -743,8 +777,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (a.readyState >= 1 && isFinite(a.duration) && a.duration > 0) {
             distribute();
           } else {
-            const onMeta = () => { distribute(); a.removeEventListener('loadedmetadata', onMeta); };
-            a.addEventListener('loadedmetadata', onMeta);
+            a.addEventListener('loadedmetadata', distribute, { once: true, signal: request.signal });
           }
         } else {
           setLyric([]);
@@ -760,49 +793,81 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             });
           } catch {}
         }
-        setLoadingSong(false);
         return;
       }
 
-      const [urlRes, lyricRes] = await Promise.all([
-        musicApi.songUrl(cfgRef.current, song.id),
-        musicApi.lyric(cfgRef.current, song.id).catch(() => null),
-      ]);
-      const url: string | null = urlRes?.data?.[0]?.url || null;
-      if (!url) {
-        toast(urlRes?.data?.[0]?.fee && !cfgRef.current.cookie ? '需要会员 cookie' : '暂无播放地址', 'error');
-        setLoadingSong(false);
-        return;
+      const cfg = cfgRef.current;
+      const lyricRequest = musicApi.lyric(cfg, song.id).catch(() => null);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const transfer = new AbortController();
+        const cancelTransfer = () => transfer.abort();
+        request.signal.addEventListener('abort', cancelTransfer, { once: true });
+        const fetchTimer = window.setTimeout(cancelTransfer, 9000);
+        let playTimer = 0;
+        try {
+          const urlRes = await musicApi.songUrl(cfg, song.id, transfer.signal);
+          if (!isCurrent()) return;
+          const track = urlRes?.data?.[0];
+          if (!track?.url && track?.fee && !cfg.cookie) {
+            toast('这首歌需要有播放权限的账号', 'error');
+            return;
+          }
+          if (!track?.url) throw new Error('音源未返回播放地址');
+          a.src = String(track.url).replace(/^http:\/\//i, 'https://');
+          await Promise.race([
+            a.play(),
+            new Promise<never>((_, reject) => { playTimer = window.setTimeout(() => reject(new Error('音源连接超时')), 8500); }),
+          ]);
+          if (!isCurrent()) return;
+          break;
+        } catch (error) {
+          if (!isCurrent()) return;
+          if (error instanceof Error && error.name === 'NotAllowedError') {
+            toast('浏览器需要再点一次才能播放', 'error');
+            break;
+          }
+          a.removeAttribute('src');
+          a.load();
+          if (attempt === 1) throw new Error('音源连接失败，请稍后重试');
+        } finally {
+          request.signal.removeEventListener('abort', cancelTransfer);
+          window.clearTimeout(fetchTimer);
+          window.clearTimeout(playTimer);
+        }
       }
-      const a = audioRef.current!;
-      a.src = url.replace(/^http:\/\//i, 'https://');
-      a.play().catch(() => {});
-      if (lyricRes) {
-        setLyric(parseLyric(lyricRes?.lrc?.lyric || ''));
-        setTlyric(parseLyric(lyricRes?.tlyric?.lyric || ''));
-      }
+      void lyricRequest.then(lyricRes => {
+        if (lyricRes && isCurrent()) {
+          setLyric(parseLyric(lyricRes?.lrc?.lyric || ''));
+          setTlyric(parseLyric(lyricRes?.tlyric?.lyric || ''));
+        }
+      });
       // 媒体会话（锁屏 / 通知栏）
       if ('mediaSession' in navigator) {
         try {
           // 锁屏/通知栏的封面不是 DOM，喂不了 blobref 令牌——那边只认能直接加载的地址。
           // 用户自己上传的歌曲封面存的就是令牌，不解析的话锁屏上是空白（而且不报错）。
           // resolveRefToDataUrl 对非令牌原样返回，所以可以无条件走。
-          const artworkSrc = song.albumPic ? await resolveRefToDataUrl(song.albumPic) : '';
-          (navigator as any).mediaSession.metadata = new (window as any).MediaMetadata({
-            title: song.name,
-            artist: song.artists,
-            album: song.album,
-            artwork: artworkSrc ? [
-              { src: artworkSrc, sizes: '300x300', type: 'image/jpeg' },
-              { src: artworkSrc, sizes: '512x512', type: 'image/jpeg' },
-            ] : [],
-          });
+          void (song.albumPic ? resolveRefToDataUrl(song.albumPic) : Promise.resolve('')).then(artworkSrc => {
+            if (!isCurrent()) return;
+            (navigator as any).mediaSession.metadata = new (window as any).MediaMetadata({
+              title: song.name,
+              artist: song.artists,
+              album: song.album,
+              artwork: artworkSrc ? [
+                { src: artworkSrc, sizes: '300x300', type: 'image/jpeg' },
+                { src: artworkSrc, sizes: '512x512', type: 'image/jpeg' },
+              ] : [],
+            });
+          }).catch(() => {});
         } catch {}
       }
     } catch (e: any) {
-      toast(`播放失败：${e.message}`, 'error');
+      if (isCurrent()) toast(`播放失败：${e.message}`, 'error');
     } finally {
-      setLoadingSong(false);
+      if (isCurrent()) {
+        switchingTrack.current = false;
+        setLoadingSong(false);
+      }
     }
   }, [toast]);
 
@@ -813,19 +878,21 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let n: number;
     if (modeRef.current === 'shuffle' && q.length > 1) {
       do { n = Math.floor(Math.random() * q.length); } while (n === cur);
-    } else if (modeRef.current === 'single') {
-      n = cur;
     } else {
       n = (cur + 1) % q.length;
     }
-    setIdx(n); playSong(q[n], { alsoSetQueue: false });
+    idxRef.current = n;
+    setIdx(n);
+    void playSong(q[n], { alsoSetQueue: false });
   }, [playSong]);
 
   const prevSong = useCallback(() => {
     const q = queueRef.current; if (!q.length) return;
     const cur = idxRef.current; if (cur < 0) return;
     const n = (cur - 1 + q.length) % q.length;
-    setIdx(n); playSong(q[n], { alsoSetQueue: false });
+    idxRef.current = n;
+    setIdx(n);
+    void playSong(q[n], { alsoSetQueue: false });
   }, [playSong]);
 
   // 自动下一首（end 事件）— 通过 ref 转发，以免 useEffect([], []) 闭包陷阱
@@ -841,8 +908,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const togglePlay = useCallback(() => {
     const a = audioRef.current; if (!a) return;
+    if (switchingTrack.current) return;
     // 刷新后 audio 元素是新创建的、尚未设置 src；此时按播放键应根据持久化的队列按需加载当前曲目
-    if (!a.src) {
+    if (!a.src || a.error) {
       const q = queueRef.current; const i = idxRef.current;
       const cur = i >= 0 && i < q.length ? q[i] : null;
       if (cur) playSong(cur, { alsoSetQueue: false });
@@ -863,7 +931,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       ms.setActionHandler('play', () => {
         const a = audioRef.current; if (!a) return;
-        if (!a.src) {
+        if (!a.src || a.error) {
           const q = queueRef.current; const i = idxRef.current;
           const cur = i >= 0 && i < q.length ? q[i] : null;
           if (cur) playSong(cur, { alsoSetQueue: false });

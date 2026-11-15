@@ -1,3 +1,5 @@
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion } from "./lockScreenSettings";
+import { bindLockScreenMedia } from "./lockScreenMedia";
 // Drawing and gesture formulas from the frozen v5, scoped to one mounted screen.
 function clamp(number) { return Math.min(1, Math.max(0, number)); }
 function ease(value) { return 1 - Math.pow(1 - value, 3); }
@@ -50,23 +52,17 @@ export function mountLockScreen(root, options) {
 
   function byId(id) { return root.querySelector("#" + id); }
   function block(element, show) { element.hidden = !show; }
-  var phone = byId("phone"), zone = byId("unlockZone"), home = byId("homeContent");
-  var frontArt = byId("frontArt"), backArt = byId("backArt");
-  var lockWallpaper = byId("lockWallpaper"), homeWallpaper = byId("homeWallpaper");
+  var phone = byId("phone"), zone = byId("unlockZone");
+  var frontArt = byId("frontArt"), lockWallpaper = byId("lockWallpaper");
   var wakeWallpaper = byId("wakeWallpaper"), wakeLayers = [];
-  var pair = byId("pair"), depth = byId("depth"), panel = byId("panel");
   var clockLayer = byId("clockLayer"), lockControls = byId("lockControls"), handle = byId("handle");
-  var apps = byId("apps"), dock = byId("dock"), homebar = byId("homebar");
-  var homeWallpaperLayer = byId("homeWallpaperLayer");
-  var live = !options.editor && !options.fixture;
-  if (live) homeWallpaperLayer.hidden = true;
   var shades = phone.querySelectorAll(".shade");
   var lockMark = byId("lockMark");
   var queuedProgress, queuedIcons, dragFrame = 0, wakeFrame = 0, lastReveal, lastProgress, settlingTarget;
   var desktopProgress = 0, lastIcons;
   var mode = "lock", progress = 0, frame = 0, gesture = null, reveal = 1, screenHeight = 1;
   var reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)");
-  var lockImage = "", desktopImage = "", frontImage = "", paintingPair = true;
+  var lockImage = "", frontImage = "", settings = options.settings;
 
   var clockFace = byId("time"), clockLabel = byId("clockDigits").firstChild;
   var clockMaskCanvas = document.createElement("canvas");
@@ -123,43 +119,15 @@ export function mountLockScreen(root, options) {
     maskKey = key;
   }
 
-  var colorPicker = byId("lockCustomColor");
-  var swatches = byId("lockColors").querySelectorAll("button[data-color]");
-  function setLockColor(value, persist) {
-    var color = /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#ffffff";
-    clockLayer.style.setProperty("--lock-ink", color);
-    colorPicker.value = color;
-    Array.prototype.forEach.call(swatches, function (button) {
-      button.setAttribute("aria-pressed", String(button.getAttribute("data-color") === color));
-    });
-    if (persist) options.save({ color: color });
-  }
-  setLockColor(options.settings.color, false);
-  byId("lockColors").addEventListener("click", function (event) {
-    var selected = event.target.closest("button[data-color]");
-    if (selected) setLockColor(selected.getAttribute("data-color"), true);
-  });
-  function chooseCustomColor() { setLockColor(colorPicker.value, true); }
-  colorPicker.addEventListener("input", chooseCustomColor);
-  colorPicker.addEventListener("change", chooseCustomColor);
-  var tuner = byId("clockTuning"), params = byId("clockGlassParams"), tuneStatus = byId("clockTuneStatus");
   var face = clockFace.querySelector(".clock-glass-face");
-  var inputs = tuner.querySelectorAll("[data-clock-param]");
-  var regionPicker = byId("clockTuneRegion");
-  var regionValues = Object.assign({}, options.settings.glass);
-
-  function restoreClockTuning(values) {
-    Array.prototype.forEach.call(inputs, function (input) {
-      var value = values[input.getAttribute("data-clock-param")];
-      if (input.type === "checkbox") input.checked = value === true;
-      else input.value = typeof value === "number" && isFinite(value) && value >= Number(input.min) && value <= Number(input.max) ? value :
-        (regionPicker.value !== "clock" && input.getAttribute("data-clock-param") === "shadow" ? input.max : input.defaultValue);
-    });
-  }
-
-  function paintClockGlass(values) {
+  var cardSurfaces = { notice: byId("notice"), player: byId("player"), flashlight: byId("lockFlashlight"), camera: byId("lockCamera") };
+  function paintGlass() {
+    var values = Object.fromEntries(CLOCK_GLASS_SLIDERS.map(function (slider) {
+      return [slider.key, glassSliderValue(settings.glass, "clock", slider)];
+    }));
+    var blur = (settings.glass.clock?.overLight === true ? 12 : 4) + values.blurAmount * 32;
     var vars = {
-      "--blur-px": values.blurPx + "px",
+      "--blur-px": Math.round(blur * 100) / 100 + "px",
       "--sat": values.saturation + "%",
       "--fill": values.fill,
       "--rim": .12 + values.edge * .4,
@@ -170,118 +138,44 @@ export function mountLockScreen(root, options) {
     };
     clockFace.style.setProperty("--clock-shadow", values.shadow);
     Object.keys(vars).forEach(function (key) { face.style.setProperty(key, vars[key]); });
-  }
-
-  function paintSmallShadows() {
-    ["caption", "companion", "battery"].forEach(function (region) {
-      var value = regionValues[region] && regionValues[region].shadow;
-      var shadow = typeof value === "number" && isFinite(value) ? Math.max(0, Math.min(.5, value)) : .5;
-      clockLayer.style.setProperty("--" + region + "-shadow", shadow);
+    var shadow = CLOCK_GLASS_SLIDERS.find(function (slider) { return slider.key === "shadow"; });
+    LOCK_GLASS_REGIONS.filter(function (region) { return region.id !== "clock" && !isCardGlassRegion(region.id); }).forEach(function (region) {
+      clockLayer.style.setProperty("--" + region.id + "-shadow", glassSliderValue(settings.glass, region.id, shadow));
     });
   }
 
-  function applyClockTuning(persist) {
-    var region = regionPicker.value;
-    var values = {};
-    Array.prototype.forEach.call(inputs, function (input) {
-      var key = input.getAttribute("data-clock-param");
-      if (region !== "clock" && key !== "shadow") return;
-      if (input.type === "checkbox") values[key] = input.checked;
-      else {
-        values[key] = Number(input.value);
-        tuner.querySelector('[data-clock-value="' + key + '"]').value = input.value;
-      }
+  function paintCardGlass(previous) {
+    Object.entries(cardSurfaces).forEach(function ([region, element]) {
+      if (previous && settings.glass[region] === previous[region]) return;
+      var values = Object.fromEntries(CLOCK_GLASS_SLIDERS.map(function (slider) {
+        return [slider.key, glassSliderValue(settings.glass, region, slider)];
+      }));
+      var vars = {
+        "--blur-px": Math.round((4 + values.blurAmount * 32) * 100) / 100 + "px",
+        "--sat": values.saturation + "%",
+        "--fill": values.fill,
+        "--rim": .12 + values.edge * .4,
+        "--rim-soft": .05 + values.edge * .2,
+        "--edge-ring": .12 + values.edge * .7,
+        "--sheen": values.sheen,
+        "--shadow": values.shadow
+      };
+      Object.entries(vars).forEach(function ([key, value]) { element.style.setProperty(key, value); });
     });
-    if (region === "clock") {
-      values.blurPx = Math.round(((values.overLight ? 12 : 4) + values.blurAmount * 32) * 100) / 100;
-      paintClockGlass(values);
-    }
-    regionValues[region] = values;
-    if (region !== "clock") paintSmallShadows();
-    if (persist) options.save({ glass: Object.assign({}, regionValues) });
-    params.value = JSON.stringify(Object.assign(region === "clock" ? {} : { region: region }, values, { color: colorPicker.value }), null, 2);
   }
 
-  function selectTuningRegion() {
-    var region = regionPicker.value;
-    restoreClockTuning(regionValues[region] || {});
-    Array.prototype.forEach.call(inputs, function (input) {
-      input.closest("label").hidden = region !== "clock" && input.getAttribute("data-clock-param") !== "shadow";
-    });
-    tuneStatus.textContent = "";
-    applyClockTuning(false);
-  }
-
-  function changeTuning(event) {
-    if (!event.target.hasAttribute("data-clock-param")) return;
-    tuneStatus.textContent = "";
-    applyClockTuning(true);
-  }
-
-  selectTuningRegion();
-  paintSmallShadows();
-  regionPicker.addEventListener("change", selectTuningRegion);
-  tuner.addEventListener("input", changeTuning);
-  tuner.addEventListener("change", changeTuning);
-  byId("lockColors").addEventListener("click", function () { applyClockTuning(false); });
-  colorPicker.addEventListener("input", function () { applyClockTuning(false); });
-  colorPicker.addEventListener("change", function () { applyClockTuning(false); });
-  byId("clockTuneReset").onclick = function () {
-    restoreClockTuning({});
-    applyClockTuning(true);
-    tuneStatus.textContent = "已恢复本区默认";
-  };
-  byId("clockTuneCopy").onclick = function () {
-    function selectParameters() {
-      params.focus();
-      params.select();
-      tuneStatus.textContent = "已选中参数，可以手动复制。";
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(params.value).then(function () {
-        tuneStatus.textContent = "已复制当前参数";
-      }, selectParameters);
-    } else selectParameters();
-  };
-
-
-  var appCells = [];
-  function icon(target, item, label) {
-    var cell = document.createElement("div");
-    cell.className = "app";
-    var image = document.createElement("img");
-    image.src = item[1];
-    image.alt = "";
-    cell.appendChild(image);
-    if (label) cell.appendChild(document.createTextNode(item[0]));
-    target.appendChild(cell);
-    if (label) {
-      appCells.push(iconCell(cell, appCells.length, 4));
-    }
-  }
-  if (options.fixture) {
-    options.fixture.icons.forEach(function (item) { icon(apps,item,true); });
-    [0,1,10,11].forEach(function (index) { icon(dock,options.fixture.icons[index],false); });
-    byId("backArt").querySelector("img").src = options.fixture.back;
-    byId("frontArt").querySelector("img").src = options.fixture.front;
-    byId("notice").querySelector("img").src = options.fixture.avatar;
-    byId("cover").style.backgroundImage = imageStyle(options.fixture.cover);
-  }
-  var playing = false, seconds = 0;
-  function showPlayer() {
-    var button = byId("playerToggle");
-    button.setAttribute("aria-label", playing ? "暂停示例" : "播放示例");
-    byId("playShape").setAttribute("d",playing ? "M5 3h4a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1m10 0h4a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1" : "M6 3.7c0-1 1.1-1.6 2-1.1l13 8.3a1.3 1.3 0 0 1 0 2.2L8 21.4c-.9.5-2-.1-2-1.1z");
-    function minutes(value) { return Math.floor(value/60) + ":" + ("0"+value%60).slice(-2); }
-    byId("elapsed").textContent=minutes(seconds);
-    byId("remaining").textContent="−"+minutes(177-seconds);
-    byId("played").style.width=(seconds/177)*100+"%";
-  }
-  byId("playerToggle").onclick=function () { if (mode === "lock") { playing=!playing;showPlayer(); } };
+  var media = bindLockScreenMedia(root, {
+    player: options.player,
+    canUsePlayer: function () { return !options.editor && mode === "lock" && reveal > .12; },
+    atRest: function () { return mode === "lock" && reveal === 1; },
+    reducedMotion: function () { return !!reducedMotion?.matches; },
+    openNotice: function (charId) { finish(true, 0, charId); },
+    updateMusicRing: function () { if (settings.ring === "music") updateCompanionRing(); }
+  });
 
   var lastClockMinute;
   function time() {
-    var now = options.fixture ? options.fixture.now : new Date();
+    var now = new Date();
     var minute = Math.floor(now.getTime() / 60000);
     if (minute === lastClockMinute) return false;
     lastClockMinute = minute;
@@ -293,43 +187,38 @@ export function mountLockScreen(root, options) {
     return true;
   }
   time();
-  var companionMode = byId("companionMode");
   function updateCompanionRing() {
-    var mode = companionMode.value;
-    var now = options.fixture ? options.fixture.now : new Date();
+    var mode = settings.ring;
+    var now = new Date();
     var hour = now.getHours();
     var value = 100 - (hour*60 + now.getMinutes())/14.4;
     var night = hour < 6 || hour >= 18;
-    if (mode === "music") value = seconds/177*100;
+    if (mode === "music") value = media.musicFraction() * 100;
     if (mode === "moon") value = 74;
     var ring = byId("companionRing");
     ring.setAttribute("role",mode === "moon" ? "img" : "meter");
     if (mode === "moon") ring.removeAttribute("aria-valuenow");
     else ring.setAttribute("aria-valuenow",Math.round(value));
-    ring.setAttribute("aria-label",mode === "day" ? "今天剩余时间" : companionMode.options[companionMode.selectedIndex].text);
+    ring.setAttribute("aria-label",mode === "day" ? "今天剩余时间" : mode === "music" ? "当前歌曲进度" : "晚安小月亮");
     byId("companionSun").style.display = mode === "day" && !night ? "" : "none";
     byId("companionMoon").style.display = mode === "moon" || (mode === "day" && night) ? "" : "none";
     byId("companionMusic").style.display = mode === "music" ? "" : "none";
     byId("companionArc").setAttribute("stroke-dasharray",value+" 100");
     byId("companionArc").style.visibility=value > 0 ? "visible" : "hidden";
   }
-  companionMode.onchange=updateCompanionRing;
-  updateCompanionRing();
   var timer = setInterval(function () {
-    var minuteChanged = time();
-    if (playing) { seconds=(seconds+1)%178; showPlayer(); }
-    if (minuteChanged || (playing && companionMode.value === "music")) updateCompanionRing();
-  },1000);
+    if (time() && settings.ring === "day") updateCompanionRing();
+  }, 1000);
 
   var lightWash = byId("lightWash");
   var disposed = false, batteryInfo, batteryListener;
-  var battery = !options.fixture && navigator.getBattery ? navigator.getBattery() : null;
+  var battery = navigator.getBattery ? navigator.getBattery() : null;
   if (battery) battery.then(function (info) {
     function updateBattery() {
       var level = Math.round(info.level*100);
       byId("batteryArc").setAttribute("stroke-dasharray", level + " 100");
       byId("batteryDetails").setAttribute("aria-valuenow", level);
-      byId("batteryDetails").setAttribute("aria-label", "设备电量");
+      byId("batteryDetails").removeAttribute("aria-valuetext");
     }
     if (disposed) return;
     batteryInfo = info;
@@ -337,9 +226,6 @@ export function mountLockScreen(root, options) {
     updateBattery();
     info.addEventListener("levelchange",updateBattery);
   }).catch(function () {});
-  byId("widgetText").oninput=function () { byId("bottomText").textContent=this.value.trim(); options.save({ caption: this.value }); };
-  byId("weatherText").oninput=function () { byId("lockWeather").textContent=this.value.trim(); options.save({ weather: this.value }); };
-
   function prepareWakeWallpaper(image) {
     var width = phone.clientWidth, height = phone.clientHeight;
     if (!width || !height || !image.naturalWidth || !image.naturalHeight) return;
@@ -376,7 +262,6 @@ export function mountLockScreen(root, options) {
       lightWash.style.opacity = (1-reveal)*.72;
       var blur = reveal < 1 ? "blur(" + (1-reveal)*10 + "px)" : "none";
       lockWallpaper.style.filter = wakeLayers.length ? "none" : blur;
-      if (!backArt.hidden) backArt.style.filter = blur;
       if (!frontArt.hidden) frontArt.style.filter = blur;
       phone.style.setProperty("--clock-softness", (.35 + (1-reveal)*4)+"px");
       phone.style.setProperty("--widget-softness", (.25 + (1-reveal)*3)+"px");
@@ -405,19 +290,12 @@ export function mountLockScreen(root, options) {
     if (lastProgress !== progress) {
       var fade = ease(clamp((progress - .08) / .69));
       var handoff = ease(clamp((progress - .52) / .48));
-      if (live) {
-        var departure = paintingPair ? handoff : fade;
-        lockWallpaper.style.opacity = wakeWallpaper.style.opacity = backArt.style.opacity =
-          frontArt.style.opacity = 1 - departure;
-      } else {
-        homeWallpaperLayer.style.opacity = paintingPair ? 0 : fade;
-        frontArt.style.opacity = paintingPair ? 1 - handoff : 1 - fade;
-      }
+      var departure = settings.pair ? handoff : fade;
+      lockWallpaper.style.opacity = wakeWallpaper.style.opacity = frontArt.style.opacity = 1 - departure;
       for (var i = 0; i < shades.length; i++) shades[i].style.opacity = 1 - handoff;
       lastProgress = progress;
     }
     if (lastIcons !== desktopProgress) {
-      drawDesktop(desktopProgress, appCells, dock, homebar);
       if (options.desktop) options.desktop.draw(desktopProgress);
       lastIcons = desktopProgress;
     }
@@ -436,13 +314,11 @@ export function mountLockScreen(root, options) {
   function settled(unlocked) {
     mode = unlocked ? "home" : "lock";
     zone.hidden = unlocked;
-    home.setAttribute("aria-hidden", String(!unlocked));
-    block(byId("homeTools"),options.editor && unlocked);
-    byId("playerToggle").tabIndex = unlocked ? -1 : 0;
+    if (!unlocked) media.flushNotice();
+    if (!unlocked) media.setMoving(false);
     byId("statusTime").style.visibility = unlocked ? "visible" : "hidden";
-    byId("screenStatus").textContent = unlocked ? "已解锁，桌面" : "锁屏";
   }
-  function finish(unlock, velocity) {
+  function finish(unlock, velocity, charId) {
     stopMotion();
     stopDrag();
     var from = progress;
@@ -456,6 +332,7 @@ export function mountLockScreen(root, options) {
       draw(from, iconStart);
     }
     mode = "settling";
+    media.setMoving(true);
     settlingTarget = target;
     function done() {
       frame = 0;
@@ -463,18 +340,19 @@ export function mountLockScreen(root, options) {
       settled(unlock);
       if (unlock) {
         if (options.desktop) options.desktop.finish();
-        if (!options.editor) phone.hidden = true;
-        options.unlock();
+        phone.hidden = true;
+        options.unlock(charId);
         options.requestPermission();
       }
     }
     if ((from === target && iconStart === target) || (reducedMotion && reducedMotion.matches)) { done(); return; }
     var previous = performance.now();
+    var deadline = previous + duration + 300;
     var elapsed = 0;
     function tick(now) {
       elapsed += unlockFrameSeconds(previous, now) * 1000;
       previous = now;
-      if (elapsed >= duration) {
+      if (elapsed >= duration || now >= deadline) {
         done();
       } else {
         var next = unlockReleaseFrame(from, iconStart, unlock, elapsed / duration);
@@ -487,7 +365,7 @@ export function mountLockScreen(root, options) {
 
   function startReveal() {
     if (reveal === 1 || wakeFrame) return;
-    if (reducedMotion && reducedMotion.matches) { reveal = 1; draw(progress); return; }
+    if (reducedMotion && reducedMotion.matches) { reveal = 1; draw(progress); media.flushNotice(); return; }
     var previous = performance.now();
     var elapsed = 0;
     function tick(now) {
@@ -496,6 +374,7 @@ export function mountLockScreen(root, options) {
       reveal = ease(clamp(elapsed / 650));
       wakeFrame = reveal < 1 ? requestAnimationFrame(tick) : 0;
       draw(progress, desktopProgress);
+      if (!wakeFrame) media.flushNotice();
     }
     wakeFrame = requestAnimationFrame(tick);
   }
@@ -506,14 +385,13 @@ export function mountLockScreen(root, options) {
     cancelAnimationFrame(wakeFrame);
     wakeFrame = 0;
     screenHeight = phone.clientHeight;
-    settled(false);
     reveal = play ? 0 : 1;
+    settled(false);
     draw(0);
     if (play && !hold) startReveal();
   }
-  function gestureStart(id, x, y) {
-    if (mode === "home" || gesture || (options.holdReveal && !wakeFrame && reveal === 0)) return false;
-    var interruptedTarget = mode === "settling" ? settlingTarget : undefined;
+  function gestureStart(id, x, y, fromNotice) {
+    if (options.editor || mode === "home" || (mode === "settling" && settlingTarget === 1) || gesture || (options.holdReveal && !wakeFrame && reveal === 0)) return false;
     stopMotion();
     if (reveal < 1) {
       cancelAnimationFrame(wakeFrame);
@@ -523,9 +401,10 @@ export function mountLockScreen(root, options) {
     }
     screenHeight = phone.clientHeight;
     mode = "drag";
+    media.setMoving(true);
     queuedProgress = progress;
     queuedIcons = desktopProgress;
-    gesture = {id:id,x:x,y:y,base:progress,icons:desktopProgress,crossed:false,interruptedTarget:interruptedTarget,samples:[{y:y,at:performance.now()}]};
+    gesture = {id:id,x:x,y:y,base:progress,icons:desktopProgress,crossed:false,fromNotice:fromNotice,samples:[{y:y,at:performance.now()}]};
     return true;
   }
   function gestureMove(id,x,y) {
@@ -558,172 +437,102 @@ export function mountLockScreen(root, options) {
     var velocity = cancel ? 0 : (sample.y-y)/Math.max(16,now-sample.at);
     var flick = movement.y-y >= 38 && now-sample.at <= 145 && velocity >= .54;
     var reverseFlick = movement.y-y <= -38 && velocity <= -.54;
-    var unlock = !cancel && (movement.crossed
-      ? !reverseFlick && (progress >= .25 || flick)
-      : movement.interruptedTarget === 1);
+    if (!cancel && movement.fromNotice && !movement.crossed
+      && Math.hypot(x - movement.x, y - movement.y) < 9 && media.noticeTarget()) {
+      finish(true, 0, media.noticeTarget());
+      return;
+    }
+    var unlock = !cancel && movement.crossed && !reverseFlick && (progress >= .25 || flick);
     finish(unlock,velocity);
   }
   if (window.PointerEvent) {
     phone.addEventListener("pointerdown",function (event) {
-      if (!event.isPrimary || event.button !== 0 || event.target.closest("#panelOpen, #playerToggle, #relock")) return;
-      if (gestureStart(event.pointerId,event.clientX,event.clientY)) {
+      if (!event.isPrimary || event.button !== 0 || event.target.closest("#player button, #playerSeek")) return;
+      if (gestureStart(event.pointerId,event.clientX,event.clientY,!!event.target.closest("#notice"))) {
         event.preventDefault();
-        phone.setPointerCapture(event.pointerId);
+        try { phone.setPointerCapture(event.pointerId); }
+        catch (error) { gestureEnd(event.pointerId,event.clientX,event.clientY,true); }
       }
     });
-    phone.addEventListener("pointermove",function (event) { gestureMove(event.pointerId,event.clientX,event.clientY); });
+    phone.addEventListener("pointermove",function (event) {
+      if (event.pointerType === "mouse" && event.buttons === 0) gestureEnd(event.pointerId,event.clientX,event.clientY,true);
+      else gestureMove(event.pointerId,event.clientX,event.clientY);
+    });
     phone.addEventListener("pointerup",function (event) { gestureEnd(event.pointerId,event.clientX,event.clientY,false); });
     phone.addEventListener("pointercancel",function (event) { gestureEnd(event.pointerId,0,0,true); });
     phone.addEventListener("lostpointercapture",function (event) { gestureEnd(event.pointerId,0,0,true); });
   } else {
     phone.addEventListener("touchstart",function (event) {
-      if (event.target.closest("#panelOpen, #playerToggle, #relock")) return; var touch=event.changedTouches[0];
-      if (gestureStart(touch.identifier,touch.clientX,touch.clientY)) event.preventDefault();
+      if (event.target.closest("#player button, #playerSeek")) return; var touch=event.changedTouches[0];
+      if (gestureStart(touch.identifier,touch.clientX,touch.clientY,!!event.target.closest("#notice"))) event.preventDefault();
     },{passive:false});
     phone.addEventListener("touchmove",function (event) {
-      if (event.target.closest("#panelOpen, #playerToggle, #relock")) return; var touch=event.changedTouches[0];
+      if (event.target.closest("#player button, #playerSeek")) return; var touch=event.changedTouches[0];
       if (gestureMove(touch.identifier,touch.clientX,touch.clientY)) event.preventDefault();
     },{passive:false});
     phone.addEventListener("touchend",function (event) {
-      if (event.target.closest("#panelOpen, #playerToggle, #relock")) return; var touch=event.changedTouches[0];
+      if (event.target.closest("#player button, #playerSeek")) return; var touch=event.changedTouches[0];
       gestureEnd(touch.identifier,touch.clientX,touch.clientY,false);
     });
     phone.addEventListener("touchcancel",function (event) { gestureEnd(event.changedTouches[0].identifier,0,0,true); });
   }
   zone.addEventListener("keydown",function (event) {
+    if (options.editor) return;
     if (event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (mode === "lock") finish(true,0);
     }
   });
-  function setPanel(open) {
-    panel.classList.toggle("open",open);
-    byId("panelOpen").setAttribute("aria-expanded", String(open));
+  function imageStyle(value) {
+    if (!value) return "";
+    return /^(?:repeating-)?(?:linear|radial|conic)-gradient\(/i.test(value) ? value : "url(" + JSON.stringify(value) + ")";
   }
-  byId("panelOpen").onclick = function () { setPanel(!panel.classList.contains("open")); };
-  byId("panelClose").onclick = function () { setPanel(false); byId("panelOpen").focus(); };
-  if (options.editor) byId("relock").onclick = function () { startLock(true); };
-  byId("replay").onclick = function () { setPanel(false); startLock(true); };
-  byId("refreshView").onclick = function () { setPanel(false); startLock(false); };
   function applyWallpaper() {
-    paintingPair = sample || pair.checked;
-    lockWallpaper.classList.toggle("custom",!!lockImage);
-    homeWallpaper.classList.toggle("custom",!!desktopImage);
+    lockWallpaper.classList.toggle("custom", !!lockImage);
     lockWallpaper.style.backgroundImage = imageStyle(lockImage);
-    homeWallpaper.style.backgroundImage = imageStyle(desktopImage);
-    var pos = (sample ? 50 : byId("position").value) + "%";
-    lockWallpaper.style.backgroundPosition = "50% " + pos;
-    frontArt.style.backgroundPosition = "50% " + pos;
-    frontArt.classList.toggle("wallpaper",!!lockImage && !!frontImage);
-    frontArt.classList.toggle("custom",!!lockImage && !!frontImage);
+    var pos = "50% " + settings.position + "%";
+    lockWallpaper.style.backgroundPosition = frontArt.style.backgroundPosition = pos;
+    frontArt.classList.toggle("wallpaper", !!frontImage);
+    frontArt.classList.toggle("custom", !!frontImage);
     frontArt.style.backgroundColor = "transparent";
-    frontArt.style.backgroundImage = lockImage && frontImage ? 'url("' + frontImage + '")' : "";
-    var showSampleArt = !lockImage && !!options.fixture;
-    var showDepth = !sample && depth.checked && (showSampleArt || !!frontImage);
-    block(frontArt,showDepth);
-    block(frontArt.querySelector("img"),showSampleArt);
-    block(backArt,showSampleArt && !showDepth);
-    block(byId("foregroundRow"),depth.checked && !showSampleArt);
-    block(byId("reset"),!options.editor);
-    byId("imageNote").textContent = depth.checked && lockImage && !frontImage ? "选一张和壁纸同尺寸的透明前景图，就能盖住钟面的一角。" : "";
+    frontArt.style.backgroundImage = imageStyle(frontImage);
+    block(frontArt, !!lockImage && !!frontImage && settings.depth);
     lastReveal = undefined;
     lastProgress = undefined;
     draw(progress, desktopProgress);
   }
-  byId("showNotice").onchange=function () {
-    var notice = byId("notice");
-    block(notice,this.checked);
-    notice.classList.toggle("notice-arriving",this.checked);
-    lockControls.classList.toggle("has-notice",this.checked);
-    draw(progress, desktopProgress);
-  };
-
-  var settings = options.settings;
-  var sample = false;
-  var wallpapers = options.wallpapers;
-  function imageStyle(value) {
-    if (!value) return "";
-    return /^(linear|radial|conic)-gradient\(/.test(value) ? value : "url(" + JSON.stringify(value) + ")";
-  }
   function setWallpapers(values) {
-    wallpapers = values;
-    var nextLockImage = sample ? "" : values.lock;
-    if (lockImage !== nextLockImage) {
+    if (lockImage !== values.lock) {
       wakeLayers = [];
       wakeWallpaper.textContent = "";
       wakeWallpaper.hidden = true;
     }
-    lockImage = nextLockImage;
-    desktopImage = sample ? "" : values.home;
-    frontImage = sample ? "" : values.front;
+    lockImage = values.lock;
+    frontImage = values.front;
     applyWallpaper();
   }
-  function bindValue(id, field, read, paint, event) {
-    var input = byId(id);
-    if (input.type === "checkbox") input.checked = settings[field];
-    else input.value = settings[field];
-    if (paint) paint(input);
-    input.addEventListener(event || "input", function () {
-      if (paint) paint(input);
-      options.save({ [field]: read(input) });
-    });
+  function setSettings(next) {
+    var previous = settings;
+    settings = next;
+    if (next.color !== previous.color || next === previous) clockLayer.style.setProperty("--lock-ink", next.color);
+    if (next.glass !== previous.glass || next === previous) {
+      paintGlass();
+      paintCardGlass(next === previous ? null : previous.glass);
+    }
+    if (next.clockPosition !== previous.clockPosition || next === previous) byId("clock").style.setProperty("--clock-top", next.clockPosition + "%");
+    if (next.clockSize !== previous.clockSize || next === previous) clockFace.style.setProperty("--clock-scale", next.clockSize / 100);
+    byId("bottomText").textContent = next.caption.trim();
+    paintWeather();
+    if (next.ring !== previous.ring || next === previous) updateCompanionRing();
+    if (next.position !== previous.position || next.depth !== previous.depth || next.pair !== previous.pair) applyWallpaper();
   }
-  bindValue("pair", "pair", function (input) { return input.checked; }, null, "change");
-  bindValue("depth", "depth", function (input) { return input.checked; }, null, "change");
-  bindValue("position", "position", function (input) { return Number(input.value); });
-  pair.addEventListener("change", applyWallpaper);
-  depth.addEventListener("change", applyWallpaper);
-  byId("position").addEventListener("input", applyWallpaper);
-  bindValue("clockPosition", "clockPosition", function (input) { return Number(input.value); }, function (input) {
-    byId("clock").style.setProperty("--clock-top", input.value + "%");
-  });
-  bindValue("clockSize", "clockSize", function (input) { return Number(input.value); }, function (input) {
-    clockFace.style.setProperty("--clock-scale", Number(input.value) / 100);
-  });
-  byId("widgetText").value = settings.caption;
-  byId("bottomText").textContent = settings.caption.trim();
-  byId("weatherText").value = settings.weather;
-  byId("lockWeather").textContent = settings.weather.trim();
-  bindValue("companionMode", "ring", function (input) { return input.value; }, updateCompanionRing, "change");
 
-  var pendingImage = false;
-  if (options.editor) {
-    [["pickLock", "lock"], ["pickHome", "home"], ["pickFront", "front"]].forEach(function (entry) {
-      var input = byId(entry[0]);
-      input.addEventListener("change", async function () {
-        var file = input.files[0];
-        input.value = "";
-        if (!file || pendingImage) return;
-        var url = URL.createObjectURL(file);
-        pendingImage = true;
-        var image = new Image();
-        try {
-          await new Promise(function (resolve, reject) {
-            image.onload = resolve;
-            image.onerror = reject;
-            image.src = url;
-          });
-          if (disposed) return;
-          await options.saveImage(entry[1], file);
-          if (disposed) return;
-          sample = false;
-          byId("reset").textContent = "恢复示例壁纸";
-          if (entry[1] === "home") pair.checked = false;
-          setWallpapers(wallpapers);
-        } catch (error) {
-          if (!disposed) byId("imageNote").textContent = "图片读取或保存失败，请试试 JPG、PNG 或 WebP。";
-        } finally {
-          URL.revokeObjectURL(url);
-          pendingImage = false;
-        }
-      });
-    });
+  var liveWeather = "";
+  function paintWeather() {
+    var weather = byId("lockWeather");
+    weather.textContent = liveWeather || settings.weather.trim();
+    weather.hidden = !weather.textContent;
   }
-  byId("reset").onclick = function () {
-    sample = !sample;
-    setWallpapers(wallpapers);
-    byId("reset").textContent = sample ? "查看当前壁纸" : "恢复示例壁纸";
-  };
   function resize() {
     if (gesture) gestureEnd(gesture.id,0,0,true);
     screenHeight = phone.clientHeight;
@@ -745,36 +554,24 @@ export function mountLockScreen(root, options) {
       updateClockMask();
     }
   });
-  if (options.fixture) {
-    byId("batteryArc").setAttribute("stroke-dasharray", options.fixture.battery + " 100");
-    byId("batteryDetails").setAttribute("aria-valuenow", options.fixture.battery);
-    seconds = options.fixture.seconds;
-    showPlayer();
-    updateCompanionRing();
-  }
-  if (!options.editor) {
-    panel.hidden = true;
-    byId("panelOpen").hidden = true;
-    byId("homeContent").hidden = true;
-  }
-  setWallpapers(wallpapers);
+  if (options.editor) phone.inert = true;
+  setSettings(settings);
+  setWallpapers(options.wallpapers);
   startLock(options.reveal, options.holdReveal);
-  if (options.editor && !options.fixture) setPanel(true);
 
   return {
     setWallpapers: setWallpapers,
+    setSettings: setSettings,
+    setPlayer: media.setPlayer,
+    setNotice: media.setNotice,
+    setWeather: function (value) { liveWeather = value; paintWeather(); },
     prepareClock: function () { maskReady = true; updateClockMask(); },
     prepareWakeWallpaper: prepareWakeWallpaper,
     startReveal: startReveal,
     draw: function (value) { reveal = 1; draw(value); },
-    closePanel: function () {
-      if (!panel.classList.contains("open")) return false;
-      setPanel(false);
-      byId("panelOpen").focus();
-      return true;
-    },
     dispose: function () {
       disposed = true;
+      media.dispose();
       stopMotion();
       stopDrag();
       cancelAnimationFrame(wakeFrame);

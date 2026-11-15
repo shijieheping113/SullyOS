@@ -1,4 +1,5 @@
 import type { LockScreenSettings } from './lockScreenSettings';
+import type { LockNotice, LockPlayerControls, LockSong } from './lockScreenMedia';
 
 interface IconCell {
   element: HTMLElement;
@@ -14,7 +15,6 @@ export function drawDesktop(progress: number, cells: IconCell[], dock: HTMLEleme
 
 export interface Wallpapers {
   lock: string;
-  home: string;
   front: string;
 }
 
@@ -26,10 +26,13 @@ export interface DesktopMotion {
 
 export interface LockScreenMotion {
   setWallpapers(wallpapers: Wallpapers): void;
+  setSettings(settings: LockScreenSettings): void;
+  setPlayer(song: LockSong | null): void;
+  setNotice(notice: LockNotice | null): void;
+  setWeather(value: string): void;
   prepareClock(): void;
   prepareWakeWallpaper(image: HTMLImageElement): void;
   startReveal(): void;
-  closePanel(): boolean;
   draw(progress: number): void;
   dispose(): void;
 }
@@ -41,20 +44,9 @@ export function mountLockScreen(root: HTMLElement, options: {
   reveal: boolean;
   holdReveal?: boolean;
   desktop?: DesktopMotion;
-  unlock(): void;
+  player?: LockPlayerControls;
+  unlock(charId?: string): void;
   requestPermission(): void;
-  save(changes: Partial<LockScreenSettings>): void;
-  saveImage(kind: 'lock' | 'home' | 'front', file: File): Promise<void>;
-  fixture?: {
-    now: Date;
-    battery: number;
-    seconds: number;
-    icons: [string, string][];
-    back: string;
-    front: string;
-    avatar: string;
-    cover: string;
-  };
 }): LockScreenMotion;
 
 export function unlockIconProgress(progress: number): number;
