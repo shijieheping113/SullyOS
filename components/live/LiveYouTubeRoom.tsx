@@ -1213,8 +1213,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
 
   // ============ 公共片段 ============
   const tabLabel = tab === 'chat' ? '实时聊天' : tab === 'script' ? '分镜' : '摘要';
-  const viewerText = `${formatCount(session.viewerCount)} 人正在观看`;
-
   return (
     <div className="dyt">
       <LiveUiStyle />
@@ -1373,8 +1371,6 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
             <div className="dyt-name">{displayName}</div>
             <div className="dyt-subline">
               <span>{channel.handle || `@${displayName}`}</span>
-              <span aria-hidden="true">·</span>
-              <span>{viewerText}</span>
             </div>
           </div>
           <button

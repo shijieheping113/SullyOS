@@ -1203,6 +1203,31 @@
 .dyt-composer .dyt-send {
   margin-bottom: 3px;
 }
+/* 只挪位置，按钮尺寸不动。
+   切拍两钮贴紧，箭头图案各往中间 2px。
+   礼物和导演贴紧，图案再各往中间 2px。
+   省下的行距归输入条。导演方框比礼物低约 1.5px，往上补齐。 */
+.dyt-composer__row > .dyt-field + .dyt-cico {
+  margin-right: -4px;
+}
+.dyt-composer__row > .dyt-field + .dyt-cico > svg {
+  transform: translateX(2px);
+}
+.dyt-composer__row > .dyt-field + .dyt-cico + .dyt-cico {
+  margin-right: -16px;
+}
+.dyt-composer__row > .dyt-field + .dyt-cico + .dyt-cico > svg {
+  transform: translateX(-2px);
+}
+.dyt-composer__row > .dyt-cico:nth-last-child(2) > svg {
+  transform: translateX(2px);
+}
+.dyt-composer__row > .dyt-cico:last-child {
+  margin-left: -4px;
+}
+.dyt-composer__row > .dyt-cico:last-child > svg {
+  transform: translate(-2px, -0.5px);
+}
 .dyt-field {
   flex: 1;
   min-width: 0;

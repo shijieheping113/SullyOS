@@ -289,14 +289,30 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   });
 
   // 第一次进来和新切片落库后，都从最新一轮的第一拍看起；切换场次也重新定位。
+  // 重 Roll 不增加轮数，拍的编号会整轮换新：这时落到被换掉的那一轮的第一拍。
   const prevChunksLenRef = useRef(session.chunks.length);
   const landedRef = useRef(false);
   const previousSessionIdRef = useRef(session.id);
+  const chunkBeatIdsRef = useRef<Map<string, string>>(new Map());
+  const chunkBeatKey = session.chunks
+    .map(chunk => `${chunk.id}:${chunk.beats.map(beat => beat.id).join(',')}`)
+    .join('|');
   useEffect(() => {
+    const nextBeatIds = new Map(
+      session.chunks.map(chunk => [chunk.id, chunk.beats.map(beat => beat.id).join(',')]),
+    );
+    const replacedChunkId = session.chunks.find(chunk => {
+      const prev = chunkBeatIdsRef.current.get(chunk.id);
+      return prev != null && prev !== nextBeatIds.get(chunk.id);
+    })?.id;
+    const rememberBeats = () => {
+      chunkBeatIdsRef.current = nextBeatIds;
+    };
     if (previousSessionIdRef.current !== session.id) {
       previousSessionIdRef.current = session.id;
       prevChunksLenRef.current = session.chunks.length;
       landedRef.current = true;
+      rememberBeats();
       setCurrentGlobalBeatIdx(session.status === 'ended' ? 0 : latestChunkFirstBeatIdx);
       return;
     }
@@ -304,16 +320,21 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       if (allTimelineBeats.length === 0) return;
       landedRef.current = true;
       prevChunksLenRef.current = session.chunks.length;
+      rememberBeats();
       setCurrentGlobalBeatIdx(session.status === 'ended' ? 0 : latestChunkFirstBeatIdx);
       return;
     }
-    if (session.chunks.length > prevChunksLenRef.current && latestChunk) {
+    if (replacedChunkId) {
+      const firstBeatIdx = allTimelineBeats.findIndex(item => item.chunkId === replacedChunkId);
+      if (firstBeatIdx >= 0) setCurrentGlobalBeatIdx(firstBeatIdx);
+    } else if (session.chunks.length > prevChunksLenRef.current && latestChunk) {
       setCurrentGlobalBeatIdx(latestChunkFirstBeatIdx);
     } else if (currentGlobalBeatIdx >= allTimelineBeats.length && allTimelineBeats.length > 0) {
       setCurrentGlobalBeatIdx(allTimelineBeats.length - 1);
     }
     prevChunksLenRef.current = session.chunks.length;
-  }, [session.id, session.chunks.length, allTimelineBeats.length, session.status, latestChunkFirstBeatIdx]);
+    rememberBeats();
+  }, [session.id, session.chunks.length, allTimelineBeats, allTimelineBeats.length, session.status, latestChunkFirstBeatIdx, chunkBeatKey]);
 
   const beatsRef = useRef(allTimelineBeats);
   beatsRef.current = allTimelineBeats;
