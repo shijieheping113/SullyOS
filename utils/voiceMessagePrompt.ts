@@ -1,5 +1,6 @@
 import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
+import { fishDrama3Guide, getDrama3Mode, resolveDrama3Mode, type Drama3CueMode } from './fishDrama3';
 import { getElevenLabsVoiceActingGuide } from './elevenLabsTts';
 import type { APIConfig } from '../types';
 import {
@@ -10,8 +11,16 @@ import {
 } from './ttsProvider';
 import { voiceLanguagePromptLabel } from './voiceLanguage';
 
-function builtinVoiceActingGuide(provider: ReturnType<typeof resolveTtsProvider>, elevenLabsModel?: string): string {
-    if (provider === 'fishaudio') return FISH_VOICE_ACTING_GUIDE;
+function builtinVoiceActingGuide(
+    provider: ReturnType<typeof resolveTtsProvider>,
+    elevenLabsModel?: string,
+    drama3Mode?: Drama3CueMode | null,
+): string {
+    if (provider === 'fishaudio') {
+        // drama-3 按设置里的两套写法给对应那份原文；其余（含所有旧模型）返回原来那份，一个字没动。
+        if (drama3Mode) return fishDrama3Guide(drama3Mode);
+        return FISH_VOICE_ACTING_GUIDE;
+    }
     if (provider === 'elevenlabs') {
         return getElevenLabsVoiceActingGuide(elevenLabsModel || getElevenLabsModel());
     }
@@ -23,13 +32,13 @@ function builtinVoiceActingGuide(provider: ReturnType<typeof resolveTtsProvider>
  * 猫儿修格式等走副 API 的路径应优先用这份，确保设置里自定义的规范一定进提示词。
  */
 export function resolveVoiceActingGuideFromApiConfig(
-    apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel'> | null,
+    apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel' | 'fishAudioModel' | 'fishDrama3CueMode'> | null,
 ): string {
     const provider = resolveTtsProvider(apiConfig);
     const raw = apiConfig?.voicePrompts?.[provider];
     const custom = typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
     if (custom) return custom;
-    return builtinVoiceActingGuide(provider, apiConfig?.elevenLabsModel);
+    return builtinVoiceActingGuide(provider, apiConfig?.elevenLabsModel, resolveDrama3Mode(apiConfig));
 }
 
 /** 与主聊天 `chatPrompts` 同源：按当前 TTS 服务商 + 用户自定义语音提示词（读模块单例） */
@@ -37,7 +46,7 @@ export function getVoiceActingGuideForPrompt(): string {
     const provider = getTtsProvider();
     const custom = getVoicePromptOverride(provider);
     if (custom) return custom;
-    return builtinVoiceActingGuide(provider);
+    return builtinVoiceActingGuide(provider, undefined, getDrama3Mode());
 }
 
 export type ChatVoicePromptOptions = {

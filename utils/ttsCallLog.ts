@@ -19,8 +19,13 @@ export interface TtsCallLogEntry extends ApiCallMeta {
   provider: TtsProviderId;
   /** 模型 / 音色侧标识（能拿多少记多少） */
   model?: string;
-  /** 送去合成的正文字符数（计费主指标） */
+  /** 送去合成的正文字符数（人看的字数口径） */
   textChars: number;
+  /**
+   * 送去合成的正文 UTF-8 字节数。鱼声按字节收钱（日文/中文一个字 3 字节），
+   * 这一列才是和鱼声后台对得上的那个数。其它服务商按字符计费的可以留空。
+   */
+  textBytes?: number;
   /** 请求耗时 ms */
   durationMs?: number;
   /** 是否成功拿到可播音频 */
@@ -34,6 +39,17 @@ export interface TtsCallLogEntry extends ApiCallMeta {
 }
 
 const META_KEYS = ['appId', 'appName', 'charId', 'charName', 'purpose'] as const;
+
+/** 文本的 UTF-8 字节数。鱼声按这个收钱，浏览器/Node 都有 TextEncoder。 */
+export const utf8ByteLength = (text?: string | null): number => {
+  const s = text || '';
+  if (!s) return 0;
+  try {
+    return new TextEncoder().encode(s).length;
+  } catch {
+    return s.length;
+  }
+};
 
 /**
  * 多层 meta 合并：后层非空字段覆盖前层。
@@ -61,6 +77,8 @@ export function recordTtsCall(input: {
   provider: TtsProviderId;
   model?: string;
   textChars: number;
+  /** 正文 UTF-8 字节数。不传 → 按 textChars 当兜底（ASCII 场景两者相同）。 */
+  textBytes?: number;
   ok: boolean;
   status?: number;
   durationMs?: number;
@@ -76,12 +94,16 @@ export function recordTtsCall(input: {
       input.purpose ? { purpose: input.purpose } : undefined,
     );
     const chars = Number.isFinite(input.textChars) ? Math.max(0, Math.floor(input.textChars)) : 0;
+    const bytes = Number.isFinite(input.textBytes) && (input.textBytes as number) >= 0
+      ? Math.max(0, Math.floor(input.textBytes as number))
+      : chars;
     const entry: TtsCallLogEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: Date.now(),
       provider: input.provider || 'unknown',
       model: input.model || undefined,
       textChars: chars,
+      textBytes: bytes,
       durationMs: input.durationMs,
       ok: !!input.ok,
       status: input.status,
@@ -104,12 +126,15 @@ export function recordTtsCall(input: {
 export function summarizeTtsCallLog(entries: TtsCallLogEntry[]): {
   billableCount: number;
   billableChars: number;
+  /** 按 UTF-8 字节算的口径，鱼声后台那个数就是它。 */
+  billableBytes: number;
   cachedCount: number;
-  byProvider: Record<string, { count: number; chars: number }>;
+  byProvider: Record<string, { count: number; chars: number; bytes: number }>;
 } {
-  const byProvider: Record<string, { count: number; chars: number }> = {};
+  const byProvider: Record<string, { count: number; chars: number; bytes: number }> = {};
   let billableCount = 0;
   let billableChars = 0;
+  let billableBytes = 0;
   let cachedCount = 0;
   for (const e of entries) {
     if (e.cached) {
@@ -118,10 +143,12 @@ export function summarizeTtsCallLog(entries: TtsCallLogEntry[]): {
     }
     billableCount += 1;
     billableChars += e.textChars || 0;
+    billableBytes += e.textBytes || 0;
     const key = e.provider || 'unknown';
-    const slot = byProvider[key] || (byProvider[key] = { count: 0, chars: 0 });
+    const slot = byProvider[key] || (byProvider[key] = { count: 0, chars: 0, bytes: 0 });
     slot.count += 1;
     slot.chars += e.textChars || 0;
+    slot.bytes += e.textBytes || 0;
   }
-  return { billableCount, billableChars, cachedCount, byProvider };
+  return { billableCount, billableChars, billableBytes, cachedCount, byProvider };
 }

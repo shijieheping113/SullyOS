@@ -220,6 +220,11 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                     </div>
                                     <div className="w-px h-7 bg-slate-200" />
                                     <div>
+                                        <div className="text-[10px] text-slate-400">计费字节</div>
+                                        <div className="text-sm font-bold text-primary">{fmt(ttsSummary.billableBytes)}</div>
+                                    </div>
+                                    <div className="w-px h-7 bg-slate-200" />
+                                    <div>
                                         <div className="text-[10px] text-slate-400">缓存命中</div>
                                         <div className="text-[11px] font-semibold text-slate-500">{ttsSummary.cachedCount}</div>
                                     </div>
@@ -232,7 +237,7 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                                     {TTS_PROVIDER_LABEL[provider] || provider}
                                                 </span>
                                                 <span className="font-mono text-slate-400">
-                                                    {slot.count} 次 · {fmt(slot.chars)} 字
+                                                    {slot.count} 次 · {fmt(slot.chars)} 字 · {fmt(slot.bytes)} 字节
                                                 </span>
                                             </div>
                                         ))}
@@ -285,6 +290,7 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                             <Field label="服务商" value={providerLabel} accent />
                                             <Field label="模型" value={e.model} mono />
                                             <Field label="字符" value={String(e.textChars ?? 0)} mono accent />
+                                            <Field label="字节" value={e.textBytes != null ? String(e.textBytes) : '—'} mono accent />
                                             <Field
                                                 label="耗时"
                                                 value={e.durationMs != null ? `${e.durationMs} ms` : undefined}

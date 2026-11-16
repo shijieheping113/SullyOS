@@ -21,11 +21,12 @@ import {
 } from './elevenLabsTts';
 import { cleanTextForTts, cleanVoiceMarkupForDisplay } from './minimaxTts';
 import { cleanTextForTtsFish, resolveFishAudioApiKey, stripFishMarkupForDisplay } from './fishAudioTts';
+import { cleanTextForTtsFishDrama3, resolveDrama3Mode, stripFishMarkupForDisplayDrama3 } from './fishDrama3';
 import { TtsCacheMiss } from './ttsCache';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { supportsElevenLabsAudioTags } from './elevenLabsModels';
 import type { ApiCallMeta } from './apiCallLog';
-import { recordTtsCall } from './ttsCallLog';
+import { recordTtsCall, utf8ByteLength } from './ttsCallLog';
 
 export type { TtsResult };
 
@@ -77,6 +78,8 @@ export async function synthesizeSpeechDetailed(
   const model = resolveTtsModelLabel(char, apiConfig, provider);
   const cleaned = cleanTextForTtsProvider(text, apiConfig);
   const textChars = cleaned.length || text.length;
+  // 字节口径：鱼声按 UTF-8 字节收钱。日文/中文一个字 3 字节，用字符数对不上它的后台。
+  const textBytes = utf8ByteLength(cleaned || text);
   const started = Date.now();
   // 纯探缓存（电波回放等）不记账，避免列表被「只读」刷满。
   const shouldLog = !options?.cacheOnly;
@@ -103,6 +106,7 @@ export async function synthesizeSpeechDetailed(
         provider,
         model,
         textChars,
+        textBytes,
         ok: true,
         durationMs: Date.now() - started,
         cached: !!result.cached,
@@ -122,6 +126,7 @@ export async function synthesizeSpeechDetailed(
         provider,
         model,
         textChars,
+        textBytes,
         ok: false,
         status,
         durationMs: Date.now() - started,
@@ -188,14 +193,22 @@ export const canSynthesizeSpeech = (char: CharacterProfile, apiConfig: APIConfig
 /** 按服务商清洗待朗读文本，调用方不应再自己猜哪种标签该保留。 */
 export const cleanTextForTtsProvider = (text: string, apiConfig: APIConfig): string => {
   const provider = resolveTtsProvider(apiConfig);
-  if (provider === 'fishaudio') return cleanTextForTtsFish(text);
+  if (provider === 'fishaudio') {
+    // drama-3 按设置里的两套写法二选一；其余（含所有旧模型）走原来那一行。
+    const mode = resolveDrama3Mode(apiConfig);
+    if (mode) return cleanTextForTtsFishDrama3(text, mode);
+    return cleanTextForTtsFish(text);
+  }
   if (provider === 'elevenlabs') return cleanTextForTtsElevenLabs(text, resolveElevenLabsModel(apiConfig));
   return cleanTextForTts(text);
 };
 
 export const stripTtsMarkupForDisplay = (text: string, apiConfig: APIConfig): string => {
   const provider = resolveTtsProvider(apiConfig);
-  if (provider === 'fishaudio') return stripFishMarkupForDisplay(text);
+  if (provider === 'fishaudio') {
+    if (resolveDrama3Mode(apiConfig)) return stripFishMarkupForDisplayDrama3(text);
+    return stripFishMarkupForDisplay(text);
+  }
   if (provider === 'elevenlabs') return stripElevenLabsMarkupForDisplay(text, resolveElevenLabsModel(apiConfig));
   return cleanVoiceMarkupForDisplay(text);
 };

@@ -108,6 +108,7 @@ import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSyn
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setElevenLabsModel, setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
+import { isDrama3Model, normalizeDrama3Mode, setDrama3Mode } from '../utils/fishDrama3';
 import { APP_TOAST_EVENT, type AppToastDetail } from '../utils/appToast';
 import { DEFAULT_ELEVENLABS_MODEL } from '../utils/elevenLabsModels';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -2590,6 +2591,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   useEffect(() => {
     setVoicePromptOverrides(apiConfig.voicePrompts);
   }, [apiConfig.voicePrompts]);
+  // drama-3 两套写法：提示词拼装 / 气泡剥标签都拿不到 apiConfig，靠这个单例读当前该走哪套。
+  // 不在 drama-3 上时写 null（旧逻辑连读都不读）。
+  useEffect(() => {
+    setDrama3Mode(
+      isDrama3Model(apiConfig.fishAudioModel)
+        ? normalizeDrama3Mode(apiConfig.fishDrama3CueMode)
+        : null,
+    );
+  }, [apiConfig.fishAudioModel, apiConfig.fishDrama3CueMode]);
   const userProfileRef = useRef(userProfile);
   userProfileRef.current = userProfile;
   const groupsRef = useRef(groups);

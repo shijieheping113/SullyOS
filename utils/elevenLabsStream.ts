@@ -8,6 +8,7 @@ import { isStaticWebDeployment } from './staticWebDeployment';
 import { friendlyElevenLabsError, buildElevenLabsRequestBody, normalizeElevenLabsVoiceId, resolveElevenLabsApiKey, resolveElevenLabsModel } from './elevenLabsTts';
 import { isElevenLabsV4Model } from './elevenLabsModels';
 import { decodeVoiceBase64, pcmToWav, readVoiceJsonStream, splitSpeechText, throwIfVoiceAborted, VOICE_SAMPLE_RATE, type VoiceCue } from './voiceStream';
+import { utf8ByteLength } from './ttsCallLog';
 
 export interface StreamedVoice {
   blob: Blob;
@@ -134,6 +135,7 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
       provider: 'elevenlabs',
       model,
       textChars: totalChars,
+      textBytes: utf8ByteLength(parts.map((p: any) => String((p?.body as any)?.text || '')).join('')),
       ok: true,
       cached: true,
       meta: options.meta,
@@ -170,6 +172,7 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
         provider: 'elevenlabs',
         model,
         textChars: String(partText).length,
+        textBytes: utf8ByteLength(partText),
         ok: false,
         durationMs: Date.now() - partStarted,
         meta: options.meta,
@@ -181,6 +184,7 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
         provider: 'elevenlabs',
         model,
         textChars: String(partText).length,
+        textBytes: utf8ByteLength(partText),
         ok: false,
         status: response.status,
         durationMs: Date.now() - partStarted,
@@ -203,6 +207,7 @@ async function generate(parts: RequestPart[], config: APIConfig, options: VoiceS
       provider: 'elevenlabs',
       model,
       textChars: String(partText).length,
+      textBytes: utf8ByteLength(partText),
       ok: true,
       status: response.status,
       durationMs: Date.now() - partStarted,

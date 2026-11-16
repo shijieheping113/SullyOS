@@ -20,6 +20,7 @@ import { fetchViaProxy, workerProxyUrl } from './proxyFallback';
 import type { TtsResult } from './minimaxTts';
 import { isStaticWebDeployment } from './staticWebDeployment';
 import { emitAppToast } from './appToast';
+import { cleanTextForTtsFishDrama3, isDrama3Model, normalizeDrama3Mode } from './fishDrama3';
 
 const FISH_TTS_TIMEOUT_MS = 85_000;
 const FISH_RETRY_TOAST = '鱼声第一次没成功，正在再试一次（会再扣一次费用）';
@@ -425,6 +426,7 @@ const fishFetchAudio = async (
         provider: 'fishaudio',
         model,
         textChars: typeof payload?.text === 'string' ? payload.text.length : 0,
+        textBytes: typeof payload?.text === 'string' ? new TextEncoder().encode(payload.text).length : 0,
         ok: false,
         status: err instanceof FishHttpError ? err.status : undefined,
         purpose: '鱼声重试·首次',
@@ -461,7 +463,15 @@ export async function synthesizeSpeechFishDetailed(
   const model = (vp?.fishModel || apiConfig.fishAudioModel || DEFAULT_FISH_MODEL).trim() || DEFAULT_FISH_MODEL;
 
   // Fish-aware 清洗：保留方括号 cue / 圆括号特效，只清系统标记和 MiniMax 残留。
-  let spoken = cleanTextForTtsFish(text);
+  // drama-3 换另一套清洗（按设置里的两套写法二选一）；其余一律走原来那行。
+  // 注意用 model（本函数已把角色 voiceProfile.fishModel 算进去了），
+  // 不能改用 resolveDrama3Mode(apiConfig) —— 那会看全局默认，角色单独设成 drama-3 时判断不出来。
+  const drama3Mode = isDrama3Model(model)
+    ? normalizeDrama3Mode(apiConfig?.fishDrama3CueMode)
+    : null;
+  let spoken = drama3Mode
+    ? cleanTextForTtsFishDrama3(text, drama3Mode)
+    : cleanTextForTtsFish(text);
   // 兜底：上层传了整条 emotion 属性、且正文没有任何「情绪/语气」cue 时，前置一个 cue。
   // 注意只看情绪类 cue，[break]/[long-break] 这类停顿不算（否则换行插的停顿会顶掉兜底）。
   const emotionCues = (spoken.match(/\[([^\]]+)\]/g) || [])

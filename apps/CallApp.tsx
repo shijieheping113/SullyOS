@@ -12,6 +12,11 @@ import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, getMiniMaxParamVersion, prepareMiniMaxSpeechText, VALID_EMOTIONS, stripEmotionTags, VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
+import {
+  fishDrama3Guide,
+  getDrama3Mode,
+  stripFishMarkupForDisplayDrama3,
+} from '../utils/fishDrama3';
 import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
 import { canSynthesizeSpeech, cleanTextForTtsProvider, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
@@ -442,7 +447,11 @@ const currentVoiceActingGuide = (): string => {
   const provider = getTtsProvider();
   const custom = getVoicePromptOverride(provider);
   if (custom) return custom;
-  if (provider === 'fishaudio') return FISH_VOICE_ACTING_GUIDE;
+  if (provider === 'fishaudio') {
+    // drama-3 按两套写法给对应那份原文；其余（含所有旧模型）返回原来那份，一个字没动。
+    const mode = getDrama3Mode();
+    return mode ? fishDrama3Guide(mode) : FISH_VOICE_ACTING_GUIDE;
+  }
   if (provider === 'elevenlabs') return getElevenLabsVoiceActingGuide(getElevenLabsModel());
   return VOICE_ACTING_GUIDE;
 };
@@ -450,7 +459,10 @@ const currentVoiceActingGuide = (): string => {
 const cleanCurrentVoiceMarkupForDisplay = (text?: string | null): string => {
   if (!text) return '';
   const provider = getTtsProvider();
-  if (provider === 'fishaudio') return stripFishMarkupForDisplay(text);
+  if (provider === 'fishaudio') {
+    if (getDrama3Mode()) return stripFishMarkupForDisplayDrama3(text);
+    return stripFishMarkupForDisplay(text);
+  }
   if (provider === 'elevenlabs') return stripElevenLabsMarkupForDisplay(text, getElevenLabsModel());
   // MiniMax 的 (sighs)/(chuckle) 会在 renderAssistantLine 里渲染成声音动作图标，不能提前剥掉。
   return text;
@@ -1443,6 +1455,8 @@ const CallApp: React.FC = () => {
       speed,
       volumeDb: callVolumeDb,
       meta: callVoiceMeta(),
+      // drama-3 自由描述时换另一套清洗；其余（含所有旧模型）走原来那条路。
+      drama3Mode: refs.drama3Mode,
     });
   };
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
@@ -1525,10 +1539,11 @@ const CallApp: React.FC = () => {
       const cachedChunk = skipCache ? null : await getCachedTts(chunkCacheKey);
       const chunkChars = typeof chunk === 'string' ? chunk.length : 0;
       if (cachedChunk) {
-        import('../utils/ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+        import('../utils/ttsCallLog').then(({ recordTtsCall, utf8ByteLength }) => recordTtsCall({
           provider: 'minimax',
           model,
           textChars: chunkChars,
+          textBytes: utf8ByteLength(chunk),
           ok: true,
           cached: true,
           meta: callVoiceMeta(),
@@ -1550,10 +1565,11 @@ const CallApp: React.FC = () => {
       const data = await response.json();
       const statusCode = data?.base_resp?.status_code;
       if (!response.ok || (typeof statusCode === 'number' && statusCode !== 0)) {
-        import('../utils/ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+        import('../utils/ttsCallLog').then(({ recordTtsCall, utf8ByteLength }) => recordTtsCall({
           provider: 'minimax',
           model,
           textChars: chunkChars,
+          textBytes: utf8ByteLength(chunk),
           ok: false,
           status: response.status,
           durationMs: Date.now() - chunkStarted,
@@ -1574,10 +1590,11 @@ const CallApp: React.FC = () => {
         audio_type: typeof data?.data?.audio,
         audio_preview: normalizedAudio.slice(0, 80),
       });
-      import('../utils/ttsCallLog').then(({ recordTtsCall }) => recordTtsCall({
+      import('../utils/ttsCallLog').then(({ recordTtsCall, utf8ByteLength }) => recordTtsCall({
         provider: 'minimax',
         model,
         textChars: chunkChars,
+        textBytes: utf8ByteLength(chunk),
         ok: true,
         status: response.status,
         durationMs: Date.now() - chunkStarted,

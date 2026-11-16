@@ -1,4 +1,5 @@
 import { FISH_VOICE_ACTING_GUIDE } from '../../utils/fishAudioTts';
+import { fishDrama3Guide, resolveDrama3Mode, type Drama3CueMode } from '../../utils/fishDrama3';
 import { getElevenLabsVoiceActingGuide } from '../../utils/elevenLabsTts';
 import { VOICE_ACTING_GUIDE } from '../../utils/minimaxTts';
 import { getVoicePromptOverride, resolveTtsProvider } from '../../utils/ttsProvider';
@@ -95,6 +96,17 @@ const FISH_VOICE_BLOCK = `${FISH_VOICE_ACTING_GUIDE}
 ${BOX_LINE_RULE}
 鱼声方括号写在引号里面，例如：「[excited] 你终于回了」。不要写 emotion 属性。`;
 
+/** drama-3 两套写法各自跟一句「方括号怎么写才合格」的补充，正文用用户原文。 */
+const drama3VoiceBlock = (mode: Drama3CueMode): string => {
+  const example = mode === 'fixed'
+    ? '「[slightly happy] 你终于回了」'
+    : '「[很轻，像怕吵到人] 你终于回了」';
+  return `${fishDrama3Guide(mode)}
+
+${BOX_LINE_RULE}
+鱼声方括号写在引号里面，例如：${example}。不要写 emotion 属性。`;
+};
+
 const LINE_NO_CHAT_SHAPE = `【这里不要出现线上聊天的样子】
 1. 不要把回复摆成“语音条”“表情包”“戳一戳”“转账”“定时消息”“引用气泡”这类线上聊天的样式，也不要用线上聊天才有的状态话术。
 2. 该说的话要写出来，直接写成谁说了什么，不要摆成消息的样子。`;
@@ -134,10 +146,15 @@ export const STARTER_PROMPTS: Record<MiaomiaoStarter, string> = {
 4. 之后可以顺着这个主题演下去。扒拉爪依然少说话，只负责把场面捞出来。`,
 };
 
-function voiceBlockForProvider(provider: TtsProvider, elevenLabsModel?: string, custom?: string): string {
+function voiceBlockForProvider(
+  provider: TtsProvider,
+  elevenLabsModel?: string,
+  custom?: string,
+  drama3Mode?: Drama3CueMode | null,
+): string {
   const extra = (custom || '').trim();
   if (extra) return extra;
-  if (provider === 'fishaudio') return FISH_VOICE_BLOCK;
+  if (provider === 'fishaudio') return drama3Mode ? drama3VoiceBlock(drama3Mode) : FISH_VOICE_BLOCK;
   if (provider === 'elevenlabs') {
     return `${getElevenLabsVoiceActingGuide(elevenLabsModel)}\n\n${BOX_LINE_RULE}`;
   }
@@ -155,14 +172,15 @@ function quoteStyleHint(style?: MiaomiaoQuoteStyle): string {
 }
 
 export function buildMiaomiaoPlayPrompt(opts: {
-  apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel'> | null;
+  apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel' | 'fishAudioModel' | 'fishDrama3CueMode'> | null;
   worldRules: MiaomiaoWorldRule[];
   starter: MiaomiaoStarter;
   quoteStyle?: MiaomiaoQuoteStyle;
 }): string {
   const provider = resolveTtsProvider(opts.apiConfig);
   const custom = getVoicePromptOverride(provider) || (opts.apiConfig?.voicePrompts?.[provider] || '').trim();
-  const acting = voiceBlockForProvider(provider, opts.apiConfig?.elevenLabsModel, custom);
+  const mode = resolveDrama3Mode(opts.apiConfig);
+  const acting = voiceBlockForProvider(provider, opts.apiConfig?.elevenLabsModel, custom, mode);
   const rules = (opts.worldRules || []).filter(r => r.enabled && (r.body || r.title).trim());
   const ruleBlock = rules.length
     ? `【世界规则｜硬性，高于上面一切】

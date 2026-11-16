@@ -28,7 +28,7 @@ function authorTranslateLine(langLabel: string): string {
 export function buildVoiceLangTranslateSystemPrompt(
     targetLang: string,
     opts?: {
-        apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel'> | null;
+        apiConfig?: Pick<APIConfig, 'ttsProvider' | 'voicePrompts' | 'elevenLabsModel' | 'fishAudioModel' | 'fishDrama3CueMode'> | null;
     },
 ): string {
     const langLabel = voiceLanguagePromptLabel(targetLang);

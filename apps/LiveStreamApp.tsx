@@ -920,6 +920,8 @@ const LiveStreamApp: React.FC = () => {
               model: refs.model,
               proxyBase: refs.proxy,
               speed,
+              // drama-3 自由描述时换另一套清洗；其余（含所有旧模型）走原来那条路。
+              drama3Mode: refs.drama3Mode,
               meta: {
                 appId: 'live_stream',
                 appName: '电波',
@@ -935,6 +937,7 @@ const LiveStreamApp: React.FC = () => {
                   referenceId: refs.referenceId,
                   model: refs.model,
                   speed,
+                  drama3Mode: refs.drama3Mode,
                 });
                 if (key) saveCachedTts(key, stamped.blob).catch(() => { /* 缓存失败仍可先播这一次 */ });
               }
@@ -988,6 +991,7 @@ const LiveStreamApp: React.FC = () => {
       referenceId: refs.referenceId,
       model: refs.model,
       speed: liveFishSpeed(tempChar.voiceProfile?.speed),
+      drama3Mode: refs.drama3Mode,
     });
     if (!key) return null;
     const blob = await getCachedTts(key);

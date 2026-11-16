@@ -15,6 +15,8 @@
 //
 // ⚠️ 旧内核友好：不使用 lookbehind，不用可选链之外的新语法。
 
+import { getDrama3Active } from './fishDrama3';
+
 /** 标点（中英文）——鱼声不给它们时间，我们也不参与配对。 */
 const PUNCT_RE = /[.,!?;:"'()\[\]{}\-—–_/\\|@#$%^&*+=~`。，、；：？！…‥・《》「」『』（）【】〔〕]/;
 /** 表情/舞台记号标签（[excited] / [sighing] / [pause] …）整体跳过。 */
@@ -53,10 +55,17 @@ export function buildMatchableStream(
   lines: string[],
   cleanLine?: (text: string) => string,
 ): { chars: string[]; lineOf: number[] } {
+  // drama-3 两套写法都要把任意长度的方括号整段剥掉：
+  //   · 自由版：清洗会**原样保留**方括号（不查固定词表），长批注会被当成字进字表
+  //   · 死标注版：清理后留下的都是 ≤27 字的官方标签，但白名单外的长批注在「显示层留、
+  //     合成层丢」的分叉里也可能残留，统一按不限长度处理最稳
+  // 字表比音频多字 → 游标卡住 → 整段退回估算，所以这里不能漏。
+  // 未启用时用原来那行（仍卡 1–40），旧模型行为一个字不变。
+  const bracketRe = getDrama3Active() ? /\[[^\[\]]+\]/g : /\[[^\[\]]{1,40}\]/g;
   const cleaned = lines.map(line => {
     const raw = line || '';
     // 先整块剥掉 [xxx] 标签（鱼声会把 cue 演绎掉但不一定回时间，所以不参与配对）。
-    return (cleanLine ? cleanLine(raw) : raw).replace(/\[[^\[\]]{1,40}\]/g, '');
+    return (cleanLine ? cleanLine(raw) : raw).replace(bracketRe, '');
   });
 
   const chars: string[] = [];

@@ -60,8 +60,8 @@ describe('summarizeTtsCallLog', () => {
     expect(summary.billableCount).toBe(2);
     expect(summary.billableChars).toBe(15);
     expect(summary.cachedCount).toBe(1);
-    expect(summary.byProvider.minimax).toEqual({ count: 1, chars: 10 });
-    expect(summary.byProvider.fishaudio).toEqual({ count: 1, chars: 5 });
+    expect(summary.byProvider.minimax).toEqual({ count: 1, chars: 10, bytes: 0 });
+    expect(summary.byProvider.fishaudio).toEqual({ count: 1, chars: 5, bytes: 0 });
   });
 });
 

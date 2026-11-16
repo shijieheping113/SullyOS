@@ -13,6 +13,7 @@ import { dedupeRepeatedLines, spokenWithoutBilingualMarker, textBeforeBilingualM
 import { splitParenTranslation, type ParenTranslationFormat } from '../../utils/parenTranslation';
 import { VALID_INTERJECTION_TAGS, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
 import { stripFishCuesForDisplay } from '../../utils/fishAudioTts';
+import { scrubVoiceBracketsForDisplay } from '../../utils/fishDrama3';
 import { formatStatCount } from '../../utils/videoParser';
 import { trackEvent } from '../../utils/analytics';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../../utils/bubbleAppearance';
@@ -4107,7 +4108,9 @@ const MessageItem = React.memo(({
     };
 
     // Robust content cleanup: strip legacy markers, separators, bilingual tags, stray formatting
-    const stripJunk = (s: string) => stripFishCuesForDisplay(stripLeakedSourceTags(s)
+    // 末了一步 scrubVoiceBracketsForDisplay：drama-3 自由描述时把 41 字以上的长批注也删掉
+    // （未启用时原样返回，一个字符都不改）。
+    const stripJunk = (s: string) => scrubVoiceBracketsForDisplay(stripFishCuesForDisplay(stripLeakedSourceTags(s)
         .replace(/%%TRANS%%[\s\S]*/gi, '')           // legacy translation marker
         .replace(/%%BILINGUAL%%/gi, '\n')            // raw bilingual marker → newline
         // stray bilingual XML tags — 容错版：全角括号/斜杠、标签内空格、简繁、少写 `>` 的截断形态
@@ -4136,7 +4139,7 @@ const MessageItem = React.memo(({
         .replace(/[ \t]{2,}/g, ' ')
         .replace(/[ \t]+([，。！？、；：,.!?…])/g, '$1')
         .replace(/\n{3,}/g, '\n\n')                  // collapse excess newlines
-        .trim());   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
+        .trim()));   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
 
     const sarSurfaceText = typeof m.metadata?.sarModuleSurface?.surface === 'string'
         ? m.metadata.sarModuleSurface.surface.trim()
@@ -4147,7 +4150,7 @@ const MessageItem = React.memo(({
     // 语音文字（转文字面板 / 语音条预览）显示前：先洗 MiniMax 标记，再洗鱼声情绪 cue，
     // 两家服务商的演出标记都不会漏给用户看。
     // 旧数据里口播文本可能混着整块字幕（字幕曾写进语音标签里），字幕另有一行显示，这里剥掉。
-    const cleanVoiceText = (t?: string | null) => stripFishCuesForDisplay(cleanVoiceMarkupForDisplay((t ?? '').replace(/<字幕>[\s\S]*?<\/字幕>/g, '')));
+    const cleanVoiceText = (t?: string | null) => scrubVoiceBracketsForDisplay(stripFishCuesForDisplay(cleanVoiceMarkupForDisplay((t ?? '').replace(/<字幕>[\s\S]*?<\/字幕>/g, ''))));
 
     // 引用快照原样存着 %%BILINGUAL%% 等原始标记（双语消息），预览前先清洗。
     // 历史快照里还可能原样躺着图片令牌 / data: / 图床 URL（用户侧引用图片消息时曾直接落库），

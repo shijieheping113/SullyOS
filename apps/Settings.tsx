@@ -37,6 +37,7 @@ import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, set
 import { consumeProxyWorkerSettingsFocus, getProxyWorkerUrl, getXhsLiteUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
+import { fishDrama3Guide, normalizeDrama3Mode, type Drama3CueMode } from '../utils/fishDrama3';
 import {
     DEFAULT_ELEVENLABS_MODEL,
     ELEVENLABS_MODEL_OPTIONS,
@@ -534,6 +535,10 @@ const Settings: React.FC = () => {
   );
   const [localFishKey, setLocalFishKey] = useState(apiConfig.fishAudioApiKey || '');
   const [localFishModel, setLocalFishModel] = useState(apiConfig.fishAudioModel || 's2.1-pro');
+  // 仅 drama-3 用：两套写法二选一（自由版 / 死标注版）。
+  const [localFishDrama3Mode, setLocalFishDrama3Mode] = useState<Drama3CueMode>(
+    normalizeDrama3Mode(apiConfig.fishDrama3CueMode),
+  );
   const [localElevenLabsKey, setLocalElevenLabsKey] = useState(apiConfig.elevenLabsApiKey || '');
   const [localElevenLabsModel, setLocalElevenLabsModel] = useState(apiConfig.elevenLabsModel || DEFAULT_ELEVENLABS_MODEL);
   const [localElevenLabsStability, setLocalElevenLabsStability] = useState(apiConfig.elevenLabsStability ?? 0.5);
@@ -1257,6 +1262,7 @@ const Settings: React.FC = () => {
       ttsProvider: localTtsProvider,
       fishAudioApiKey: localFishKey,
       fishAudioModel: localFishModel,
+      fishDrama3CueMode: localFishDrama3Mode,
       elevenLabsApiKey: localElevenLabsKey,
       elevenLabsModel: localElevenLabsModel,
       elevenLabsStability: localElevenLabsStability,
@@ -1323,6 +1329,12 @@ const Settings: React.FC = () => {
   const selectFishModel = (model: string) => {
     setLocalFishModel(model);
     updateApiConfig(buildOtherApiConfig({ fishAudioModel: model }));
+  };
+
+  // 仅 drama-3：两套写法切换。立即落库。
+  const selectFishDrama3Mode = (mode: Drama3CueMode) => {
+    setLocalFishDrama3Mode(mode);
+    updateApiConfig(buildOtherApiConfig({ fishDrama3CueMode: mode }));
   };
 
   // ElevenLabs 模型会改变可用的语音标签，因此和鱼声模型一样立即落库。
@@ -3184,7 +3196,32 @@ const Settings: React.FC = () => {
                         <option value="s2.1-pro">s2.1-pro —— 付费，质量/延迟更优，生产推荐</option>
                         <option value="s2-pro">s2-pro —— 上一代，多说话人 / 自然语言控制</option>
                         <option value="s1">s1 —— 旧版，(圆括号) 情绪标签</option>
+                        <option value="drama-3">drama-3</option>
                     </select>
+                    {localFishModel === 'drama-3' && (
+                        <div className="flex items-center gap-2 mt-2 pl-1">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="fish-drama3-mode"
+                                    checked={localFishDrama3Mode === 'free'}
+                                    onChange={() => selectFishDrama3Mode('free')}
+                                    className="w-4 h-4 accent-primary"
+                                />
+                                <span className="text-sm text-slate-600">自由版</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer ml-2">
+                                <input
+                                    type="radio"
+                                    name="fish-drama3-mode"
+                                    checked={localFishDrama3Mode === 'fixed'}
+                                    onChange={() => selectFishDrama3Mode('fixed')}
+                                    className="w-4 h-4 accent-primary"
+                                />
+                                <span className="text-sm text-slate-600">死标注版</span>
+                            </label>
+                        </div>
+                    )}
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">
                         {localFishModel === 's2.1-pro-free'
                             ? '免费版：和 s2.1-pro 同一个模型、$0，但首字延迟和并发稳定性不作保证，适合自用测试。选了立即生效。'
@@ -3316,7 +3353,7 @@ const Settings: React.FC = () => {
 
                             {([
                                 ['minimax', 'MiniMax 语音指南', localVoicePromptMinimax, setLocalVoicePromptMinimax, VOICE_ACTING_GUIDE, '聊天 + 电话 · MiniMax 引擎时生效'] as const,
-                                ['fishaudio', '鱼声 Fish 语音指南', localVoicePromptFish, setLocalVoicePromptFish, FISH_VOICE_ACTING_GUIDE, '聊天 + 电话 · 鱼声引擎时生效'] as const,
+                                ['fishaudio', '鱼声 Fish 语音指南', localVoicePromptFish, setLocalVoicePromptFish, localFishModel === 'drama-3' ? fishDrama3Guide(localFishDrama3Mode) : FISH_VOICE_ACTING_GUIDE, '聊天 + 电话 · 鱼声引擎时生效'] as const,
                                 ['elevenlabs', 'ElevenLabs 语音指南', localVoicePromptElevenLabs, setLocalVoicePromptElevenLabs, getElevenLabsVoiceActingGuide(localElevenLabsModel), '聊天 + 电话 · ElevenLabs 引擎时生效；默认模板随模型变化'] as const,
                                 ['dateVoice', '见面（约会）语音情绪', localVoicePromptDate, setLocalVoicePromptDate, getDateVoiceGuide(localTtsProvider, localElevenLabsModel), '见面专用 [v:xxx] 规则 · v4 默认支持台词内 Audio Tags'] as const,
                             ]).map(([key, title, value, setValue, def, hint]) => {

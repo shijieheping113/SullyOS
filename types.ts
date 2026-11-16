@@ -362,9 +362,14 @@ export interface APIConfig {
   ttsProvider?: TtsProvider;
   // 鱼声 Fish Audio API Key（https://fish.audio/）。仅 ttsProvider === 'fishaudio' 时使用。
   fishAudioApiKey?: string;
-  // 鱼声默认模型（s2.1-pro / s2-pro / s1）。缺省 → 's2.1-pro'。
+  // 鱼声默认模型（s2.1-pro / s2.1-pro-free / s2-pro / s1 / drama-3）。缺省 → 's2.1-pro'。
   // 角色 voiceProfile.fishModel 优先于这个全局默认。
   fishAudioModel?: string;
+  // 仅 drama-3 用：drama-3 的两套写法二选一（见 utils/fishDrama3.ts）。
+  //   'free'  → 自由版：方括号写任意自然语言，原样送鱼声（超 40 字仍丢）
+  //   'fixed' → 死标注版：方括号只能用那 56 个固定标签
+  // 缺省 / 其他值 → 'free'。老模型读都不读这个字段。
+  fishDrama3CueMode?: 'free' | 'fixed';
   // ElevenLabs BYOK 配置。Voice ID 存在角色 voiceProfile.elevenLabsVoiceId，避免角色串音色。
   elevenLabsApiKey?: string;
   // 缺省使用 eleven_v4；也支持 v4 Turbo、Flash v2.5、v3 和 Multilingual v2。

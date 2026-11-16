@@ -14,6 +14,7 @@
 //    地址由用户自己填（utils/callTtsProxy.ts）。没填 → 返回 null，调用方退回老路。
 
 import { resolveFishAudioApiKey, normalizeFishReferenceId, cleanTextForTtsFish } from './fishAudioTts';
+import { cleanTextForTtsFishDrama3, isDrama3Model, normalizeDrama3Mode, type Drama3CueMode } from './fishDrama3';
 import { getCallTtsTimestampProxy } from './callTtsProxy';
 import { hashTtsParams } from './ttsCache';
 import type { SpeechTimeline, SpeechTimelineSegment } from './callSpeechTimeline';
@@ -48,6 +49,9 @@ export type FishTimestampResult = { url: string; blob: Blob; timeline: SpeechTim
 /**
  * 时间轴录音自己的缓存键。不写进普通鱼声那把键，免得聊天里同一句话播到这一段。
  * 文本会先洗一遍，调用方传嘴里的原文即可。
+ *
+ * 清洗按「这次是不是 drama-3 自由描述」二选一：两套清洗产出的文本不同，缓存键自然不同，
+ * 拆掉 drama-3 之后旧路会重新合成一条，不会播到自由描述那条缓存。
  */
 export function fishTimestampCacheKey(params: {
   text: string;
@@ -55,8 +59,12 @@ export function fishTimestampCacheKey(params: {
   model: string;
   speed?: number;
   volumeDb?: number;
+  /** 不传 → 旧模型恒为 null。 */
+  drama3Mode?: Drama3CueMode | null;
 }): string | null {
-  const spoken = cleanTextForTtsFish(params.text);
+  const spoken = params.drama3Mode
+    ? cleanTextForTtsFishDrama3(params.text, params.drama3Mode)
+    : cleanTextForTtsFish(params.text);
   const referenceId = normalizeFishReferenceId(params.referenceId);
   const model = (params.model || '').trim();
   if (!spoken || !referenceId || !model) return null;
@@ -117,6 +125,8 @@ export async function synthesizeFishWithTimestamp(params: {
   volumeDb?: number;
   /** App / 用途；写入语音调用记录 */
   meta?: { appId?: string; appName?: string; charId?: string; charName?: string; purpose?: string };
+  /** drama-3 走哪套清洗；缺省 null → 旧清洗（行为与今天一致）。 */
+  drama3Mode?: Drama3CueMode | null;
 }): Promise<FishTimestampResult | null> {
   const { text, referenceId, apiKey, model } = params;
   if (!apiKey || !referenceId || !text.trim()) return null;
@@ -124,7 +134,10 @@ export async function synthesizeFishWithTimestamp(params: {
   const proxy = (params.proxyBase || '').trim().replace(/\/+$/, '');
   if (!proxy) return null;   // 没配中转 → 完全退回老路
 
-  const spoken = cleanTextForTtsFish(text);
+  // drama-3 换另一套清洗（两套写法二选一）；其余（含所有旧模型）走原来那行。
+  const spoken = params.drama3Mode
+    ? cleanTextForTtsFishDrama3(text, params.drama3Mode)
+    : cleanTextForTtsFish(text);
   if (!spoken) return null;
 
   const payload: Record<string, unknown> = {
@@ -153,6 +166,7 @@ export async function synthesizeFishWithTimestamp(params: {
         provider: 'fishaudio',
         model,
         textChars: spoken.length,
+        textBytes: new TextEncoder().encode(spoken).length,
         ok,
         status,
         durationMs: Date.now() - started,
@@ -251,10 +265,15 @@ export async function synthesizeFishWithTimestamp(params: {
 }
 
 /** 供 CallApp 复用同一套 Key / 音色 / 模型 / 中转解析，避免两处各写一遍。 */
-export const resolveFishCallRefs = (apiConfig: any, char: any) => ({
-  apiKey: resolveFishAudioApiKey(apiConfig),
-  referenceId: normalizeFishReferenceId(char?.voiceProfile?.fishReferenceId),
-  model: (char?.voiceProfile?.fishModel || apiConfig?.fishAudioModel || 's2.1-pro').trim() || 's2.1-pro',
-  proxy: getCallTtsTimestampProxy(),
-});
+export const resolveFishCallRefs = (apiConfig: any, char: any) => {
+  const model = (char?.voiceProfile?.fishModel || apiConfig?.fishAudioModel || 's2.1-pro').trim() || 's2.1-pro';
+  return {
+    apiKey: resolveFishAudioApiKey(apiConfig),
+    referenceId: normalizeFishReferenceId(char?.voiceProfile?.fishReferenceId),
+    model,
+    // 只有 drama-3 才有值（'free' / 'fixed'）；其余全是 null，走旧清洗。
+    drama3Mode: isDrama3Model(model) ? normalizeDrama3Mode(apiConfig?.fishDrama3CueMode) : null,
+    proxy: getCallTtsTimestampProxy(),
+  };
+};
 
