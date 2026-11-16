@@ -525,7 +525,8 @@ export const MAX_SPOKEN_BRACKET_CHARS = 40;
  *   · fixed → 方括号归一到那 56 个，归不了的整段丢掉
  *
  * 与旧 cleanTextForTtsFish 相同部分（系统标记、双语分隔、中文舞台指示、MiniMax 停顿、
- * 西文圆括号转方括号）照抄，因为那些是「不该被念出来的脏东西」，与模型无关。
+ * 音符 ♩♪♫♬、西文圆括号转方括号）照抄，因为那些是「不该被念出来的脏东西」，与模型无关。
+ * 波浪号（~ ～ 〜）留下。
  */
 export const cleanTextForTtsFishDrama3 = (raw: string, mode: Drama3CueMode = 'free'): string => {
   if (!raw) return '';
@@ -536,6 +537,7 @@ export const cleanTextForTtsFishDrama3 = (raw: string, mode: Drama3CueMode = 'fr
     .replace(/%%BILINGUAL%%[\s\S]*/i, '')        // 双语分隔及之后
     .replace(/（[^）]{0,80}）/g, '')              // 中文圆括号舞台指示：上限 80，与旧清洗 / 电话对号字表同口径
     .replace(/<#\s*[\d.]+\s*#>/g, '')            // MiniMax 停顿标记，鱼声不认
+    .replace(/[♩♪♫♬]/g, '')                      // 音符不念，与旧清洗同一条
     .replace(/\(([^)]{1,40})\)/g, '[$1]');       // 西文圆括号按旧习惯转成方括号
   const brackets = mode === 'fixed'
     ? base.replace(ANY_BRACKET_RE, (m) => {

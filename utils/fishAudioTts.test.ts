@@ -38,6 +38,11 @@ describe('cleanTextForTtsFish', () => {
   it('strips MiniMax break marks and system tags', () => {
     expect(cleanTextForTtsFish('你好<#0.5#>[[ACTION:x]]')).toBe('你好');
   });
+
+  it('drops music notes and keeps prolonged-sound marks', () => {
+    expect(cleanTextForTtsFish('[excited] ♪ドスンドスン〜！')).toBe('[excited] ドスンドスン〜！');
+    expect(cleanTextForTtsFish('あ♩♪♫♬~～〜')).toBe('あ~～〜');
+  });
 });
 
 describe('FISH_VOICE_ACTING_GUIDE', () => {

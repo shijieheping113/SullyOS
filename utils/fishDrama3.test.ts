@@ -168,6 +168,11 @@ describe('清洗：自由版', () => {
     expect(cleanTextForTtsFishDrama3(chainOfThought, 'free')).toBe('你好');
   });
 
+  it('音符不念，波浪号留下', () => {
+    expect(cleanTextForTtsFishDrama3('[excited] ♪ドスン〜！', 'free')).toBe('[excited] ドスン〜！');
+    expect(cleanTextForTtsFishDrama3('あ♩♪♫♬~～〜', 'fixed')).toBe('あ~～〜');
+  });
+
   it('系统标记、双语分隔、中文舞台指示、MiniMax 停顿照旧清掉', () => {
     expect(cleanTextForTtsFishDrama3('[[system]]你好', 'free')).toBe('你好');
     expect(cleanTextForTtsFishDrama3('你好%%BILINGUAL%%Hello', 'free')).toBe('你好');

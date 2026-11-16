@@ -50,6 +50,57 @@ describe('buildMatchableStream', () => {
         const s = buildMatchableStream(['[sighing]']);
         expect(s.chars).toEqual([]);
     });
+    it('波浪号和音符不参与配对；全角数字收成半角后仍参与', () => {
+        const s = buildMatchableStream(['チャリ〜ン！', '５００円', '♪ドスン']);
+        expect(s.chars.join('')).toBe('チャリン500円ドスン');
+    });
+});
+
+describe('buildLineTimings digit width and wave marks', () => {
+    it('matches fullwidth 500 against halfwidth timeline digits', () => {
+        const lines = ['からあげレモンさんの５００円……', 'え！？'];
+        const spoken = 'からあげレモンさんの500円え';
+        let t = 0;
+        const segments = [...spoken].map((ch) => {
+            const seg = { text: ch, start: t, end: t + 0.1 };
+            t += 0.1;
+            return seg;
+        });
+        const timings = buildLineTimings(lines, { segments, durationSec: t });
+        expect(timings).not.toBeNull();
+        expect(timings![0]).toBe(0);
+        expect(timings![1]).toBeCloseTo(spoken.indexOf('え') * 0.1, 5);
+    });
+
+    it('same digit match when the live cleanLine path is used', () => {
+        const lines = ['[soft] からあげレモンさんの５００円……', 'え！？'];
+        const spoken = 'からあげレモンさんの500円え';
+        let t = 0;
+        const segments = [...spoken].map((ch) => {
+            const seg = { text: ch, start: t, end: t + 0.1 };
+            t += 0.1;
+            return seg;
+        });
+        const timings = buildLineTimings(lines, { segments, durationSec: t }, cleanTextForTtsFish);
+        expect(timings).not.toBeNull();
+        expect(timings![0]).toBe(0);
+        expect(timings![1]).toBeCloseTo(spoken.indexOf('え') * 0.1, 5);
+    });
+
+    it('continues past wave dash when timeline omits it', () => {
+        const lines = ['チャリ〜ン！', '素直な豚ちゃん！'];
+        const spoken = 'チャリン素直な豚ちゃん';
+        let t = 0;
+        const segments = [...spoken].map((ch) => {
+            const seg = { text: ch, start: t, end: t + 0.1 };
+            t += 0.1;
+            return seg;
+        });
+        const timings = buildLineTimings(lines, { segments, durationSec: t });
+        expect(timings).not.toBeNull();
+        expect(timings![0]).toBe(0);
+        expect(timings![1]).toBeCloseTo(spoken.indexOf('素') * 0.1, 5);
+    });
 });
 
 describe('对号用的字表要和音频同一套清洗（传 cleanLine 时）', () => {

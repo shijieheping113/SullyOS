@@ -19,14 +19,30 @@ import { getDrama3Active } from './fishDrama3';
 
 /** 标点（中英文）——鱼声不给它们时间，我们也不参与配对。 */
 const PUNCT_RE = /[.,!?;:"'()\[\]{}\-—–_/\\|@#$%^&*+=~`。，、；：？！…‥・《》「」『』（）【】〔〕]/;
+/**
+ * 念稿里会写、鱼声时间轴却常常不回的装饰／记号。
+ * 实测（电波跟读日志 26aac2）：波浪「〜」、音符会把游标卡死。
+ * 数字不在这里扔：台词里的「５」和时间轴里的「5」是同一个数，只是全角半角不同，
+ * 对号时用 normalizeMatchChar 收成半角再比。ASCII ~ 已在上面的标点表里。
+ */
+const SKIP_MATCH_RE = /[〜～♩♪♫♬]/;
 /** 表情/舞台记号标签（[excited] / [sighing] / [pause] …）整体跳过。 */
 const TAG_RE = /^\[[^\[\]]{1,40}\]$/;
+
+/** 全角数字 ０-９ → 半角 0-9。别的字原样。只用于对号，不改显示。 */
+const normalizeMatchChar = (ch: string): string => {
+  if (!ch) return ch;
+  const code = ch.charCodeAt(0);
+  if (code >= 0xFF10 && code <= 0xFF19) return String.fromCharCode(code - 0xFF10 + 0x30);
+  return ch;
+};
 
 /** 这一个字符要不要参与「字↔时间」配对。 */
 const isMatchableChar = (ch: string): boolean => {
   if (!ch) return false;
   if (/\s/.test(ch)) return false;      // 空格 / 换行 / 全角空格
   if (PUNCT_RE.test(ch)) return false;  // 标点
+  if (SKIP_MATCH_RE.test(ch)) return false; // 波浪 / 音符：时间轴常缺
   return true;
 };
 
@@ -74,7 +90,7 @@ export function buildMatchableStream(
     for (let li = 0; li < cleaned.length; li += 1) {
       for (const ch of cleaned[li]) {
         if (!isMatchableChar(ch)) continue;
-        chars.push(ch);
+        chars.push(normalizeMatchChar(ch));
         lineOf.push(li);
       }
     }
@@ -101,11 +117,12 @@ export function buildMatchableStream(
     if (doomed[i]) continue;
     const ch = joined[i];
     if (!isMatchableChar(ch)) continue;
-    chars.push(ch);
+    chars.push(normalizeMatchChar(ch));
     lineOf.push(joinedLine[i]);
   }
   return { chars, lineOf };
 }
+
 
 export type SpeechTimelineSegment = { text: string; start: number; end: number };
 export type SpeechTimeline = { segments: SpeechTimelineSegment[]; durationSec?: number };
@@ -137,8 +154,10 @@ export function buildLineTimings(
     const text = (seg && typeof seg.text === 'string') ? seg.text : '';
     if (!text) continue;
     const start = typeof seg.start === 'number' ? seg.start : NaN;
-    for (const ch of text) {
+    for (const rawCh of text) {
       // 逐字符推进：鱼声中文逐字、英文可能整词，都按字符走游标。
+      // 全角数字先收成半角再比，避免「５」对不上时间轴里的「5」。
+      const ch = normalizeMatchChar(rawCh);
       if (ci >= chars.length) break;
       if (chars[ci] === ch) {
         const li = lineOf[ci];

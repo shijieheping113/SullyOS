@@ -97,6 +97,25 @@ describe('spokenLineIndexAt', () => {
     durationSec: 4,
   };
 
+  it('moves past a music note when the timeline has no note character', () => {
+    const lines = [
+      '[whispering] ちゅぱっ、んぐっ……！',
+      '[excited] ♪ドスンドスン！',
+      '床が抜けるぞ、ブタジャンプ〜！',
+    ];
+    const spoken = 'ちゅぱっんぐっドスンドスン床が抜けるぞブタジャンプ〜';
+    let t = 0;
+    const segments = [...spoken].map((ch) => {
+      const seg = { text: ch, start: t, end: t + 0.2 };
+      t += 0.2;
+      return seg;
+    });
+    const timeline = { segments, durationSec: t };
+    expect(spokenLineIndexAt(lines, timeline, spoken.indexOf('ド') * 0.2, t)).toBe(1);
+    expect(spokenLineIndexAt(lines, timeline, spoken.indexOf('床') * 0.2, t)).toBe(2);
+    expect(spokenLineIndexAt(lines, timeline, t - 0.05, t)).toBe(2);
+  });
+
   it('picks Wait, really? at 1 second and That\'s insane. at 2 seconds', () => {
     expect(spokenLineIndexAt(lines, timeline, 1, 4)).toBe(0);
     expect(spokenLineIndexAt(lines, timeline, 2, 4)).toBe(1);
