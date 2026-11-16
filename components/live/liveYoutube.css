@@ -849,6 +849,8 @@
   overflow-y: auto;
   padding: 8px 12px 10px;
   -webkit-overflow-scrolling: touch;
+  /* 只让浏览器管上下滚；左右留给左滑圈弹幕。 */
+  touch-action: pan-y;
 }
 
 /* 公屏：头像 + @名彩色 + 正文黑字同行 */
@@ -1188,6 +1190,18 @@
   background: #0f0f0f;
   color: #ffffff;
   box-shadow: 0 0 0 1.5px #ffffff, 0 0 0 2.5px #0f0f0f;
+}
+/* 身份钮比右边 40px 的钮小一圈，并跟它们的中线对齐。输入条只在电波小窗往右让 8px。 */
+.dyt-composer .dyt-ident {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 6px;
+}
+.dyt-composer .dyt-field {
+  margin-left: 8px;
+}
+.dyt-composer .dyt-send {
+  margin-bottom: 3px;
 }
 .dyt-field {
   flex: 1;

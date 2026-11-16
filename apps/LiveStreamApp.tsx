@@ -838,12 +838,10 @@ const LiveStreamApp: React.FC = () => {
   const buildLiveVoiceChar = useCallback((channel?: StreamerChannelProfile) => {
     if (!currentChar) return null;
     const langOverride = channel?.voiceConfig?.language;
-    const voiceIdOverride = channel?.voiceConfig?.overrideVoiceId;
     return {
       ...currentChar,
       voiceProfile: {
         ...(currentChar.voiceProfile || {}),
-        ...(voiceIdOverride ? { voiceId: voiceIdOverride } : {}),
         ...(langOverride ? { languageBoost: langOverride } : {}),
       },
     };
@@ -903,7 +901,6 @@ const LiveStreamApp: React.FC = () => {
       const synthKey = [
         resolveTtsProvider(apiConfig),
         tempChar.id,
-        channel?.voiceConfig?.overrideVoiceId || '',
         text,
       ].join('|');
       const running = liveSynthInflightRef.current.get(synthKey);

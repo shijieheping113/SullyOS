@@ -285,6 +285,18 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
     if (dm.replyTargetChunkIndex === latestReplyTarget) return 'done';
     return null;
   };
+  // 全屏循环轨存的是塞进去时的旧卡片。黄框和手势改读会话里同一条的现况。
+  const liveDanmakuById = React.useMemo(() => {
+    const map = new Map<string, LiveDanmakuItem>();
+    for (const chunk of session.chunks) {
+      for (const beat of chunk.beats) {
+        for (const item of beat.danmaku || []) {
+          if (item.id) map.set(item.id, item);
+        }
+      }
+    }
+    return map;
+  }, [session.chunks]);
   const [pinDetail, setPinDetail] = useState<LiveDanmakuItem | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [composeFocus, setComposeFocus] = useState(false);
@@ -747,7 +759,8 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
   const renderRailChip = (dm: LiveDanmakuItem, key: string, isFlow = false) => {
     const isSc = Boolean(dm.scAmount && dm.scAmount > 0);
     const isGift = Boolean(dm.giftName);
-    const railReplyState = replyStateOf(dm);
+    const paintDm = (dm.id && liveDanmakuById.get(dm.id)) || dm;
+    const paintReplyState = replyStateOf(paintDm);
     const comment = getLiveDanmakuComment(dm);
     const railTrans = dm.translation ? dm.translation.replace(/^译[：:]\s*/, '').trim() : '';
     const railBody = isGift ? `送出 ${dm.giftName}` : comment;
@@ -765,14 +778,14 @@ export function LiveYouTubeRoom(props: LiveWatchScreenProps) {
         key={key}
         data-rail-flow={isFlow ? '1' : undefined}
         className={`dyt-chip${isSc ? ' dyt-chip--sc' : ''}${isGift ? ' dyt-chip--gift' : ''}${
-          railReplyState === 'pending'
+          paintReplyState === 'pending'
             ? ' dyt-chip--reply'
-            : railReplyState === 'done'
+            : paintReplyState === 'done'
             ? ' dyt-chip--reply-done'
             : ''
         }`}
         title="长按编辑或删除；左滑让主播下一轮回应"
-        {...list.handlers(dm)}
+        {...list.handlers(paintDm)}
       >
         <span className={`dyt-chip__user${railUserClass}`}>
           {dm.senderName}

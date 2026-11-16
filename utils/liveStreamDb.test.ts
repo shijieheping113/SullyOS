@@ -335,7 +335,7 @@ describe('从旧消息重建可续播的场次', () => {
       followerCount: 12800,
       fanBadgeName: 'Member',
       defaultCategory: 'just_chatting',
-      voiceConfig: { language: '', enableTranslation: false, autoPlayTts: false, overrideVoiceId: '' },
+      voiceConfig: { language: '', enableTranslation: false, autoPlayTts: false },
       customGifts: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),

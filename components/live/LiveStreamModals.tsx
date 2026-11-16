@@ -63,7 +63,6 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
   const [language, setLanguage] = useState('');
   const [enableTranslation, setEnableTranslation] = useState(false);
   const [autoPlayTts, setAutoPlayTts] = useState(false);
-  const [overrideVoiceId, setOverrideVoiceId] = useState('');
   const [customGifts, setCustomGifts] = useState<StreamGiftOption[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
   const [giftAiBusy, setGiftAiBusy] = useState(false);
@@ -90,7 +89,6 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
       setLanguage(initialChannel.voiceConfig?.language || '');
       setEnableTranslation(Boolean(initialChannel.voiceConfig?.enableTranslation));
       setAutoPlayTts(Boolean(initialChannel.voiceConfig?.autoPlayTts));
-      setOverrideVoiceId(initialChannel.voiceConfig?.overrideVoiceId || '');
       setCustomGifts(
         initialChannel.customGifts || [
           { id: 'g1', name: 'Iced Coffee', emoji: '☕', price: 20, currencySymbol: '¥' },
@@ -113,7 +111,6 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
       setLanguage('');
       setEnableTranslation(false);
       setAutoPlayTts(false);
-      setOverrideVoiceId('');
       setCustomGifts([
         { id: 'g1', name: 'Iced Coffee', emoji: '☕', price: 20, currencySymbol: '¥' },
         { id: 'g2', name: 'Glow Stick', emoji: '🪄', price: 50, currencySymbol: '¥' },
@@ -170,7 +167,6 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
       language,
       enableTranslation: language && language !== 'zh' ? enableTranslation : false,
       autoPlayTts,
-      overrideVoiceId: overrideVoiceId.trim(),
     },
     customGifts,
     createdAt: initialChannel?.createdAt || Date.now(),
@@ -507,59 +503,50 @@ export const ChannelEditorModal: React.FC<ChannelEditorModalProps> = ({
         </div>
 
         {/* 5. 语音语种与同传设置 */}
-        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
-          <div className="text-xs font-bold text-slate-700">🔊 配信语种、同传翻译与 TTS 音色</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[11px] text-slate-500">配信原声语种</label>
-              <select
-                value={language}
-                onChange={e => {
-                  const val = e.target.value;
-                  setLanguage(val);
-                  if (val && val !== 'zh') setEnableTranslation(true);
-                }}
-                className="w-full mt-1 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
-              >
-                {VOICE_LANGUAGE_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-slate-500">覆盖音色 ID（留空用角色默认）</label>
-              <input
-                value={overrideVoiceId}
-                onChange={e => setOverrideVoiceId(e.target.value)}
-                placeholder="可选专属音色 ID"
-                className="w-full mt-1 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800"
-              />
-            </div>
-          </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="text-xs font-bold text-slate-700">配信语种与语音</div>
+          <label className="mt-3 block">
+            <span className="text-[11px] font-medium text-slate-500">配信原声语种</span>
+            <select
+              value={language}
+              onChange={e => {
+                const val = e.target.value;
+                setLanguage(val);
+                if (val && val !== 'zh') setEnableTranslation(true);
+              }}
+              className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800"
+            >
+              {VOICE_LANGUAGE_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-          {language && language !== 'zh' && (
-            <label className="flex items-center justify-between text-xs text-slate-700 pt-1">
-              <span>开启双语同传字幕与弹幕翻译（无“译：”前缀）</span>
+          <div className="mt-3 space-y-2.5 border-t border-slate-200 pt-3">
+            {language && language !== 'zh' && (
+              <label className="flex items-start justify-between gap-3 text-xs leading-5 text-slate-700">
+                <span>开启双语同传字幕与弹幕翻译（无“译：”前缀）</span>
+                <input
+                  type="checkbox"
+                  checked={enableTranslation}
+                  onChange={e => setEnableTranslation(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600"
+                />
+              </label>
+            )}
+
+            <label className="flex items-start justify-between gap-3 text-xs leading-5 text-slate-700">
+              <span>切到新一拍时自动合成并播放主播语音</span>
               <input
                 type="checkbox"
-                checked={enableTranslation}
-                onChange={e => setEnableTranslation(e.target.checked)}
-                className="accent-rose-600"
+                checked={autoPlayTts}
+                onChange={e => setAutoPlayTts(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600"
               />
             </label>
-          )}
-
-          <label className="flex items-center justify-between text-xs text-slate-700 pt-1">
-            <span>切到新一拍时自动合成并播放主播语音</span>
-            <input
-              type="checkbox"
-              checked={autoPlayTts}
-              onChange={e => setAutoPlayTts(e.target.checked)}
-              className="accent-rose-600"
-            />
-          </label>
+          </div>
         </div>
 
         {/* 底部操作栏 */}

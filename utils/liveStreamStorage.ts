@@ -159,7 +159,6 @@ function normalizeChannelRecord(raw: any, idx = 0): StreamerChannelProfile {
       language: vc.language || '',
       enableTranslation: Boolean(vc.enableTranslation ?? vc.translationEnabled),
       autoPlayTts: Boolean(vc.autoPlayTts),
-      overrideVoiceId: vc.overrideVoiceId || '',
     },
     danmakuWarmth:
       typeof raw.danmakuWarmth === 'number'
@@ -348,7 +347,6 @@ export async function ensureDefaultChannelForChar(char: CharacterProfile): Promi
       language: defaultLang,
       enableTranslation: Boolean(defaultLang && defaultLang !== 'zh'),
       autoPlayTts: false,
-      overrideVoiceId: '',
     },
     customGifts: [
       { id: 'gift_1', name: 'Iced Americano', emoji: '☕', price: 15, currencySymbol: '¥' },

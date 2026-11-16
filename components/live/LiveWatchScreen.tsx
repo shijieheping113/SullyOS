@@ -1373,7 +1373,7 @@ function NicoWatchScreen(props: LiveWatchScreenProps) {
           {/* 实时公屏聊天 / 分镜回放 / 阶段摘要（整页最大核心区 flex-1） */}
           <div
             ref={props.chatScrollRef as React.RefObject<HTMLDivElement>}
-            className="flex-1 min-h-0 overflow-y-auto bg-white"
+            className="flex-1 min-h-0 overflow-y-auto touch-pan-y bg-white"
           >
             {activeTab === 'chat' ? (
               <>

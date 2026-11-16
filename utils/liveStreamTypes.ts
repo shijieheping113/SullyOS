@@ -21,8 +21,6 @@ export interface ChannelVoiceConfig {
   enableTranslation: boolean;
   /** 切到新的一拍(Beat)时是否自动播放 TTS 语音 */
   autoPlayTts: boolean;
-  /** 可选：该频道专属覆盖的音色 ID（用于皮套人/小号变声；留空则直接用角色主 voiceProfile） */
-  overrideVoiceId?: string;
 }
 
 /** 直播间专属礼物项（随频道/直播间由 AI 根据人设动态生成，也可自定义） */
