@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallba
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import AppWindowHost from './os/AppWindowHost';
+import AppLoadingFallback from './os/AppLoadingFallback';
 import AppRouteScope from './os/AppRouteScope';
 import { SARModuleMonitor } from './sar/SARModuleMonitor';
 import Launcher from '../apps/Launcher';
@@ -11,7 +12,6 @@ import { LAST_PRIVATE_CHAT_KEY, readLockScreenSettings } from './lockscreen/lock
 import CompanionLockChrome from './os/CompanionLockChrome';
 import { loadCompanionFrameStyle } from './os/companionFrameStyles';
 import { createPreloadableLazy, type PreloadableLazy } from './os/preloadableLazy';
-import { setVisibleTimeout } from '../utils/visibleTimeout';
 import { isUserSpaceArrival, finishUserSpaceTransition } from '../utils/userSpaceTransition';
 
 // 按需懒加载各 App —— 切到对应 App 时才下载/解析其代码块，首屏只加载 Launcher 与外壳，
@@ -340,74 +340,6 @@ const ImportRecoveryPopup: React.FC<{
             去重新导入
           </button>
         </div>
-      </div>
-    </div>
-  );
-};
-
-// App 懒加载占位：关键是「延迟出现」。chunk 命中缓存/快速加载只需几十毫秒，这种时长用户
-// 本就无感——但 Suspense fallback 会立刻渲染，占位一闪反而把无感瞬切变成能被看见的打断
-// （loading spinner 闪烁反模式）。所以前 ~220ms 一律渲染空（无感），只有真的慢才浮现。
-// 刻意「零动画开销」：之前那套呼吸/涟漪/上升微尘的持续动画在 iOS 上会引起卡顿，且预热命中后
-// 这屏几乎不出现 —— 收益小、代价大。现在只一次性淡入一个静态柔光点（无 infinite 动画），
-// 透明底让外壳虚化壁纸透出来。前台累计等待 >15s 才显示刷新/返回兜底；
-// 这只是慢加载提示，不代表 import 已经失败或死锁。
-const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: boolean }> = ({ onReturn, animationEnabled = true }) => {
-  const [show, setShow] = useState(false);
-  const [stalled, setStalled] = useState(false);
-  useEffect(() => {
-    const t = animationEnabled ? setTimeout(() => setShow(true), 220) : null;
-    return () => { if (t) clearTimeout(t); };
-  }, [animationEnabled]);
-  useEffect(() => setVisibleTimeout(() => {
-    setStalled(true);
-    // 保留历史事件名，但只计前台等待；切后台/锁屏时间不再算作加载卡死。
-    trackEvent('App 加载卡死超时');
-  }, 15_000), []);
-  if (stalled) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900/95 text-white p-6 text-center space-y-4" style={{ animation: 'appLoadIn 320ms ease-out both' }}>
-        <style>{`@keyframes appLoadIn{from{opacity:0}to{opacity:1}}`}</style>
-        <h2 className="text-base font-bold">加载有点慢…</h2>
-        <p className="text-xs text-slate-300 max-w-xs leading-relaxed">
-          首次打开会下载并解析功能代码；网络波动或设备性能较低都可能变慢。页面仍在继续加载，若长时间没有恢复再刷新。
-        </p>
-        <div className="flex flex-col gap-3 w-full max-w-xs">
-          <button
-            type="button"
-            onClick={() => { trackEvent('卡死页点刷新恢复'); window.location.reload(); }}
-            className="w-full px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
-          >
-            刷新恢复
-          </button>
-          {import.meta.env.MODE !== 'capacitor' && (
-            <a href={`${import.meta.env.BASE_URL}recover.html`} className="w-full px-4 py-2 bg-slate-700 rounded-full text-xs font-bold">
-              检查更新并修复
-            </a>
-          )}
-          {onReturn && (
-            <button
-              type="button"
-              onClick={() => { onReturn(); trackEvent('从卡死页返回桌面'); }}
-              className="w-full px-4 py-2 bg-slate-700 rounded-full text-xs font-bold active:scale-95 transition-transform"
-            >
-              返回桌面
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-  if (!show) return null;
-  // 静态柔光点：仅一次性淡入，之后无任何持续动画（零运行时开销），透明底透出壁纸。
-  return (
-    <div className="w-full h-full flex items-center justify-center bg-transparent" style={{ animation: 'appLoadIn 280ms ease-out both' }}>
-      <style>{`@keyframes appLoadIn{from{opacity:0}to{opacity:1}}`}</style>
-      <div className="relative" style={{ width: 72, height: 72 }}>
-        {/* 静态柔光 */}
-        <div className="absolute inset-0" style={{ borderRadius: '9999px', filter: 'blur(8px)', background: 'radial-gradient(circle, hsla(var(--primary-hue),75%,72%,0.42) 0%, hsla(var(--primary-hue),70%,60%,0.10) 50%, transparent 70%)' }} />
-        {/* 静态内核 */}
-        <div className="absolute" style={{ left: '50%', top: '50%', width: 10, height: 10, transform: 'translate(-50%,-50%)', borderRadius: '9999px', background: 'radial-gradient(circle, #fff, hsla(var(--primary-hue),80%,75%,0.6) 60%, transparent)', boxShadow: '0 0 10px hsla(var(--primary-hue),80%,75%,0.6)' }} />
       </div>
     </div>
   );
@@ -1013,7 +945,7 @@ const PhoneShell: React.FC = () => {
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppWindowHost activeApp={activeApp} locked={isLocked} disabled={isLocked || booting}
               renderBackdrop={renderShellBackdrop}
-              loading={<AppLoadingFallback key={activeApp} onReturn={closeApp} animationEnabled={theme.appLoadingAnimationEnabled !== false} />}
+              loading={<AppLoadingFallback key={activeApp} onReturn={closeApp} />}
               desktop={
                 <AppErrorBoundary onCloseApp={closeApp} resetKey="desktop">
                   <div ref={unlockDesktopRef}

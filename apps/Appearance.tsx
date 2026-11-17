@@ -877,7 +877,7 @@ const Appearance: React.FC = () => {
             <>
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">动画与过场</h2>
-                    <p className="text-[10px] text-slate-400 mb-2">三项都默认开启，可以分别关闭；关闭加载动画后，超过 15 秒的卡死恢复提示仍会保留。</p>
+                    <p className="text-[10px] text-slate-400 mb-2">两项都默认开启，可以分别关闭。应用加载超过 15 秒时仍会保留恢复提示。</p>
                     <div className="divide-y divide-slate-100">
                         {([
                             {
@@ -889,11 +889,6 @@ const Appearance: React.FC = () => {
                                 key: 'chatCharacterSwitchAnimationEnabled' as const,
                                 title: '聊天切换角色动画',
                                 description: '进入聊天或换角色时的头像登场过场。',
-                            },
-                            {
-                                key: 'appLoadingAnimationEnabled' as const,
-                                title: '进入 App 加载动画',
-                                description: 'App 首次加载较慢时显示的柔光等待画面。',
                             },
                         ]).map(option => {
                             const enabled = theme[option.key] !== false;
