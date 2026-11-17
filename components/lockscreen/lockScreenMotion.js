@@ -1,4 +1,4 @@
-import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, isRingGlassRegion } from "./lockScreenSettings";
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, isRingGlassRegion, normalizeLockScreenShade } from "./lockScreenSettings";
 import { bindLockScreenMedia } from "./lockScreenMedia";
 const WEATHER_ICONS = {
   "01d": "☀︎", "01n": "☾", "02d": "⛅︎", "02n": "☁︎",
@@ -606,6 +606,14 @@ export function mountLockScreen(root, options) {
   function setSettings(next) {
     var previous = settings;
     settings = next;
+    if (next.shade !== previous.shade || next === previous) {
+      var shade = normalizeLockScreenShade(next.shade);
+      for (var side of ["top", "bottom"]) {
+        var values = shade[side];
+        phone.style.setProperty("--shade-" + side + "-strength", values.enabled && values.range > 0 ? values.strength : 0);
+        phone.style.setProperty("--shade-" + side + "-range", values.range + "%");
+      }
+    }
     if (next.color !== previous.color || next === previous) clockLayer.style.setProperty("--lock-ink", next.color);
     if (next.glass !== previous.glass || next === previous) {
       var previousGlass = next === previous ? null : previous.glass;

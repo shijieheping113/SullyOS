@@ -83,7 +83,7 @@
   border-radius: 14px;
   background: #edf1f5;
 }
-.lock-editor-tabs { flex: none; }
+.lock-editor-tabs { flex: none; grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr) repeat(2, minmax(0, 1fr)); }
 .lock-editor-tabs button, .lock-editor-regions button {
   min-height: 34px;
   padding-inline: 3px;
@@ -177,6 +177,14 @@
 .lock-editor-regions { margin: 0; background: var(--lock-tint); }
 .lock-editor-regions button { font-size: 11px; }
 .lock-editor-reset { justify-self: start; }
+.lock-editor-shade-controls { gap: 4px; }
+.lock-editor-sheet[data-shade-sheet] { max-height: min(46cqh, 360px); }
+.lock-editor-shade-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; gap: 4px; }
+.lock-editor-shade-sides button { min-height: 36px; border-radius: 10px; color: #475569; font-size: 12px; }
+.lock-editor-shade-sides button[aria-pressed=true] { background: var(--lock-tint); color: #1e293b; font-weight: 650; }
+.lock-editor-shade-sides .lock-editor-shade-reset { display: flex; align-items: center; justify-content: center; gap: 3px; padding-inline: 6px; font-size: 11px; }
+.lock-editor-shade-controls:disabled { opacity: .5; }
+.lock-editor-shade-controls:disabled .lock-editor-range-track { cursor: default; }
 .lock-editor-status { flex: none; padding: 0 15px 7px; font-size: 12px; color: #475569; }
 .lock-editor-status[role=alert] { color: #be123c; }
 .lock-editor button:disabled { opacity: .5; }

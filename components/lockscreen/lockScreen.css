@@ -83,7 +83,7 @@
 .sully-v5 .clock .date{font-size:clamp(14px,4.4vw,18px);font-weight:600;letter-spacing:.012em}
 .sully-v5 .clock .time{margin-top:2px;font-size:112px;font-weight:500;letter-spacing:-.082em;line-height:.92;transform:scale(var(--clock-scale,1));transform-origin:50% 15%;padding-right:.082em}
 .sully-v5 .art img{top:17%}
-.sully-v5 .shade{background:linear-gradient(180deg,rgba(0,0,0,.18),transparent 30%,transparent 46%,rgba(0,0,0,.36))}
+.sully-v5 .shade{background:linear-gradient(180deg,rgba(0,0,0,var(--shade-top-strength,.09)),rgba(0,0,0,0) var(--shade-top-range,16%)),linear-gradient(0deg,rgba(0,0,0,var(--shade-bottom-strength,.15)),rgba(0,0,0,0) var(--shade-bottom-range,24%))}
 .sully-v5 #lockControls{z-index:3}
 /* A fading ancestor would cut the glass off from the wallpaper. */
 .sully-v5 #lockControls{will-change:auto}

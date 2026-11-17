@@ -63,10 +63,33 @@ export function glassSliderValue(glass: LockScreenSettings['glass'], region: str
   return region === 'clock' ? slider.initial : .5;
 }
 
+export interface LockScreenShadeSide {
+  enabled: boolean;
+  strength: number;
+  range: number;
+}
+export type LockScreenShade = Record<'top' | 'bottom', LockScreenShadeSide>;
+
+// Missing settings use the current defaults; saved values remain independent for each end.
+export function normalizeLockScreenShade(value?: unknown): LockScreenShade {
+  const stored = value && typeof value === 'object' ? value as Partial<LockScreenShade> : {};
+  function side(value: unknown, strength: number, range: number): LockScreenShadeSide {
+    const saved = value && typeof value === 'object' ? value as Partial<LockScreenShadeSide> : {};
+    const valid = (number: unknown, max: number) => typeof number === 'number' && Number.isFinite(number) && number >= 0 && number <= max;
+    return {
+      enabled: saved.enabled !== false,
+      strength: valid(saved.strength, 1) ? saved.strength! : strength,
+      range: valid(saved.range, 100) ? saved.range! : range,
+    };
+  }
+  return { top: side(stored.top, .09, 16), bottom: side(stored.bottom, .15, 24) };
+}
+
 export interface LockScreenSettings {
   enabled: boolean;
   color: string;
   glass: Record<string, Record<string, number | boolean>>;
+  shade?: LockScreenShade;
   pair: boolean;
   depth: boolean;
   position: number;
@@ -95,6 +118,7 @@ export function readLockScreenSettings(): LockScreenSettings {
     enabled: stored.enabled !== false,
     color: typeof stored.color === 'string' && /^#[\da-f]{6}$/i.test(stored.color) ? stored.color : '#ffffff',
     glass,
+    shade: normalizeLockScreenShade(stored.shade),
     pair: stored.pair === true,
     depth: stored.depth === true,
     position: number(stored.position, 50, 0, 100),

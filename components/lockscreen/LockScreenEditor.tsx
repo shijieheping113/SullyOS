@@ -6,14 +6,15 @@ import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
 import { putImageBlob, deleteBlobRefIfUnreferenced } from '../../utils/blobRef';
 import LockScreen from './LockScreen';
 import { useLockForeground } from './LockScreenData';
-import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, isRingGlassRegion, readLockScreenSettings } from './lockScreenSettings';
-import type { LockImageChanges, LockImageKind, LockScreenSettings } from './lockScreenSettings';
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_REGIONS, glassSliderValue, isCardGlassRegion, isRingGlassRegion, normalizeLockScreenShade, readLockScreenSettings } from './lockScreenSettings';
+import type { LockImageChanges, LockImageKind, LockScreenSettings, LockScreenShadeSide } from './lockScreenSettings';
 import './lockScreenEditor.css';
 
 const sections = [
   { id: 'wallpaper', label: '壁纸' },
   { id: 'clock', label: '钟面与文字' },
   { id: 'glass', label: '玻璃细调' },
+  { id: 'shade', label: '上下阴影' },
 ] as const;
 
 const colors = [
@@ -111,6 +112,7 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
   const [images, setImages] = useState<Partial<Record<LockImageKind, DraftImage>>>({});
   const [section, setSection] = useState<typeof sections[number]['id']>('wallpaper');
   const [region, setRegion] = useState<typeof LOCK_GLASS_REGIONS[number]['id']>('clock');
+  const [shadeSide, setShadeSide] = useState<'top' | 'bottom'>('top');
   const [expanded, setExpanded] = useState(true);
   const [confirm, setConfirm] = useState(false);
   const [linkKind, setLinkKind] = useState<'lock' | 'home' | null>(null);
@@ -127,6 +129,8 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
   const home = images.home === undefined ? theme.wallpaper : images.home?.url || '';
   const lock = images.lock === undefined ? theme.lockWallpaper : images.lock?.url;
   const front = images.front === undefined ? existingFront : images.front?.url || '';
+  const shade = normalizeLockScreenShade(draft.shade);
+  const shadeLabel = shadeSide === 'top' ? '顶部阴影' : '底部阴影';
 
   useLayoutEffect(() => {
     document.documentElement.classList.add('sully-lock-editor-open');
@@ -143,7 +147,7 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
     };
   }, []);
   useEffect(() => { if (confirm) continueButton.current?.focus(); }, [confirm]);
-  useEffect(() => { if (form.current) form.current.scrollTop = 0; }, [section, region]);
+  useEffect(() => { if (form.current) form.current.scrollTop = 0; }, [section, region, shadeSide]);
 
   function change<K extends keyof LockScreenSettings>(key: K, value: LockScreenSettings[K]) {
     setDraft(previous => ({ ...previous, [key]: value }));
@@ -157,6 +161,13 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
         ...previous,
         glass: { ...previous.glass, [region]: { ...values, [field]: value } },
       };
+    });
+  }
+
+  function changeShade(side: 'top' | 'bottom', changes: Partial<LockScreenShadeSide>) {
+    setDraft(previous => {
+      const shade = normalizeLockScreenShade(previous.shade);
+      return { ...previous, shade: { ...shade, [side]: { ...shade[side], ...changes } } };
     });
   }
 
@@ -296,7 +307,9 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
         <button ref={backButton} type="button" onClick={back} disabled={!!busy} aria-label="返回外观"><CaretLeft size={20} /></button>
         <button type="button" onClick={() => void save()} disabled={!!busy}>完成</button>
       </header>
-      <section className="lock-editor-sheet" data-top-sheet={section === 'glass' && isCardGlassRegion(region) && expanded ? '' : undefined}
+      <section className="lock-editor-sheet"
+        data-shade-sheet={section === 'shade' ? '' : undefined}
+        data-top-sheet={(section === 'glass' && isCardGlassRegion(region) && expanded) || (section === 'shade' && shadeSide === 'bottom') ? '' : undefined}
         {...(confirm ? { inert: '' } : {})} aria-label="锁屏设置">
         <button className="lock-editor-grip" type="button" onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded} aria-controls="lock-editor-content">
@@ -370,6 +383,29 @@ export default function LockScreenEditor({ onClose }: { onClose(): void }) {
                   <label className="lock-editor-field">中间圆环<select value={draft.ring} onChange={e => change('ring', e.target.value as LockScreenSettings['ring'])}>
                     <option value="day">今天剩余时间</option><option value="music">当前歌曲进度</option><option value="moon">晚安小月亮</option>
                   </select></label>
+                </div>
+              </>}
+              {section === 'shade' && <>
+                <div className="lock-editor-shade-sides" role="group" aria-label="阴影作用区域">
+                  {(['top', 'bottom'] as const).map(side => <button type="button" key={side}
+                    aria-pressed={shadeSide === side} onClick={() => setShadeSide(side)}>
+                    {side === 'top' ? '调顶部' : '调底部'}
+                  </button>)}
+                  <button type="button" className="lock-editor-shade-reset" aria-label="恢复上下阴影默认" title="恢复上下阴影默认"
+                    onClick={() => change('shade', normalizeLockScreenShade())}>
+                    <ArrowCounterClockwise size={14} /> 恢复默认
+                  </button>
+                </div>
+                <div className="lock-editor-group">
+                  <Toggle label={shadeLabel} value={shade[shadeSide].enabled}
+                    onChange={enabled => changeShade(shadeSide, { enabled })} />
+                  <fieldset key={shadeSide} className="lock-editor-fields lock-editor-shade-controls" disabled={!shade[shadeSide].enabled}
+                    aria-label={shadeLabel + '参数'}>
+                    <Slider label="深浅" min={0} max={1} step={.01} value={shade[shadeSide].strength} fraction unit="%"
+                      onChange={strength => changeShade(shadeSide, { strength })} />
+                    <Slider label="覆盖范围" min={0} max={100} value={shade[shadeSide].range} unit="%"
+                      onChange={range => changeShade(shadeSide, { range })} />
+                  </fieldset>
                 </div>
               </>}
               {section === 'glass' && <>

@@ -3,11 +3,70 @@
 import { describe, expect, it, vi } from 'vitest';
 import { launcherUnlockMotion, usesV5DesktopEntry } from '../components/lockscreen/launcherUnlockMotion';
 import { mountLockScreen, unlockFrameSeconds, unlockIconProgress, unlockReleaseDuration, unlockReleaseFrame } from '../components/lockscreen/lockScreenMotion';
-import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_BLUR, LOCK_SCREEN_SETTINGS_KEY, glassSliderValue, readLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
+import { CLOCK_GLASS_SLIDERS, LOCK_GLASS_BLUR, LOCK_SCREEN_SETTINGS_KEY, glassSliderValue, normalizeLockScreenShade, readLockScreenSettings, saveLockScreenSettings } from '../components/lockscreen/lockScreenSettings';
 import { bindLockScreenMedia } from '../components/lockscreen/lockScreenMedia';
 import markup from '../components/lockscreen/lockScreen.html?raw';
 
 describe('lock screen handoff', () => {
+  it('uses current shade defaults for missing settings and saves the two ends independently', () => {
+    localStorage.setItem(LOCK_SCREEN_SETTINGS_KEY, JSON.stringify({ glass: { clock: { shadow: .62 } }, caption: '保留文字' }));
+    try {
+      const defaults = { top: { enabled: true, strength: .09, range: 16 }, bottom: { enabled: true, strength: .15, range: 24 } };
+      expect(readLockScreenSettings().shade).toEqual(defaults);
+      saveLockScreenSettings({ shade: { ...defaults, top: { enabled: false, strength: .57, range: 70 } } });
+      const saved = readLockScreenSettings();
+      expect(saved.shade).toEqual({ ...defaults, top: { enabled: false, strength: .57, range: 70 } });
+      expect(saved.glass).toEqual({ clock: { shadow: .62 } });
+      expect(saved.caption).toBe('保留文字');
+      expect(normalizeLockScreenShade({ top: { strength: NaN, range: -1 }, bottom: { strength: 2, range: 101 } })).toEqual(defaults);
+      expect(normalizeLockScreenShade({ top: null }).top).toEqual(defaults.top);
+      expect(normalizeLockScreenShade({ top: { strength: 0, range: 0 }, bottom: { strength: 1, range: 100 } })).toEqual({
+        top: { enabled: true, strength: 0, range: 0 }, bottom: { enabled: true, strength: 1, range: 100 },
+      });
+    } finally {
+      localStorage.removeItem(LOCK_SCREEN_SETTINGS_KEY);
+    }
+  });
+
+  it('previews independent wallpaper shades without changing glass or interrupting the unlock fade', () => {
+    const root = document.createElement('div');
+    root.innerHTML = markup;
+    const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    const initial = readLockScreenSettings();
+    const motion = mountLockScreen(root, {
+      editor: false, reveal: false, settings: initial,
+      wallpapers: { lock: '', front: '' }, unlock() {}, requestPermission() {},
+    });
+    try {
+      const phone = root.querySelector<HTMLElement>('#phone')!;
+      const shade = root.querySelector<HTMLElement>('.shade')!;
+      const glass = root.querySelector<HTMLElement>('.clock-glass-face')!;
+      const glassBefore = glass.style.cssText;
+      const next = { ...initial, shade: { top: { enabled: false, strength: .7, range: 60 }, bottom: { enabled: true, strength: .5, range: 80 } } };
+      motion.setSettings(next);
+      expect(phone.style.getPropertyValue('--shade-top-strength')).toBe('0');
+      expect(phone.style.getPropertyValue('--shade-bottom-strength')).toBe('0.5');
+      expect(phone.style.getPropertyValue('--shade-bottom-range')).toBe('80%');
+      motion.setSettings({ ...next, shade: { ...next.shade, top: { ...next.shade.top, enabled: true } } });
+      expect(phone.style.getPropertyValue('--shade-top-strength')).toBe('0.7');
+      motion.setSettings({ ...next, shade: { ...next.shade, bottom: { ...next.shade.bottom, range: 0 } } });
+      expect(phone.style.getPropertyValue('--shade-bottom-strength')).toBe('0');
+      expect(glass.style.cssText).toBe(glassBefore);
+      root.querySelector('#unlockZone')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      expect(shade.style.opacity).toBe('0');
+      motion.setSettings(initial);
+      expect(shade.style.opacity).toBe('0');
+      expect(phone.style.getPropertyValue('--shade-top-strength')).toBe('0.09');
+      expect(phone.style.getPropertyValue('--shade-bottom-strength')).toBe('0.15');
+      expect(glass.style.cssText).toBe(glassBefore);
+    } finally {
+      motion.dispose();
+      canvas.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('adds the current weather glyph and leaves custom fallback text as written', () => {
     const root = document.createElement('div');
     root.innerHTML = markup;
