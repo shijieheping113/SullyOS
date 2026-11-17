@@ -126,7 +126,7 @@ export const resolveReducedGlassCardStyle = (contentColor = '#ffffff') => {
 /**
  * 根节点始终 100% 不透明铺满全屏的 App 名单。
  * 入场淡入动画完成后，外壳底层壁纸虚化层可安全隐藏，避免在不可见的底层保留全屏模糊纹理。
- * MemoryPalace / QQBridge / ThemeMaker / Music 仍可透出外壳壁纸；神经链接在入场前就由外壳关闭该层。
+ * MemoryPalace / QQBridge / ThemeMaker / Music / Character 依赖作者的外壳背景叠层，保留该层。
  */
 const OPAQUE_FULLSCREEN_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.Settings,

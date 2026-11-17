@@ -2,6 +2,8 @@
 
 ## 2026-11-17 二改：黑球猫猫默认图标
 
+兼容补齐：根目录提供 `favicon.ico`（16/32/48 的传统位图 ICO）、`favicon.png`（32px）、`apple-touch-icon.png` 和 `apple-touch-icon-precomposed.png`（180px），首页明确引用 ICO；四个固定入口使用 `Cache-Control: no-cache` 允许浏览器重新验证资源。小尺寸 PNG 保存在 `public/icons/black-cat-{16,32,48}.png`，均从同一居中母版生成。不清理浏览器存储或注销 SW；不能保证第三方浏览器会刷新已保存网址的旧图标。
+
 默认网页与 PWA 图标改为 Ann 确认的居中猫头，母版为 `public/icons/black-cat.svg`，直接保留黑球猫猫开屏 SVG 的路径与配色。标准版使用 180 / 192 / 512 PNG；独立 maskable 版增加安全留白，背景均为 `#e5e5e2`。开屏本身不因应用图标居中而改变。
 
 默认仍不存额外值；「恢复默认」恢复猫猫入口。经典选项与用户上传/链接图标机制保持原样，应用名、主 manifest 地址、start_url / scope 不变。旧水母资源保留供原生安装包图标预览使用，原生图标切换不随本次网页默认图标修改。

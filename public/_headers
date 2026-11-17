@@ -9,6 +9,14 @@
   Cache-Control: no-cache
 /index.html
   Cache-Control: no-cache
+/favicon.ico
+  Cache-Control: no-cache
+/favicon.png
+  Cache-Control: no-cache
+/apple-touch-icon.png
+  Cache-Control: no-cache
+/apple-touch-icon-precomposed.png
+  Cache-Control: no-cache
 /recover.html
   Cache-Control: no-cache
 /startup-recovery.js

@@ -1240,7 +1240,7 @@ ${isInitialGeneration ? `
   };
 
   return (
-    <div className="h-full w-full bg-slate-50 font-light relative">
+    <div className="h-full w-full bg-slate-50/30 font-light relative">
        {view === 'list' ? (
            <div className="flex flex-col h-full animate-fade-in relative"
                 style={{ background: 'linear-gradient(180deg, #f5f2fb 0%, #ece6f6 100%)' }}>
@@ -1368,7 +1368,7 @@ ${isInitialGeneration ? `
                </div>
            </div>
        ) : formData && (
-           <div className="flex flex-col h-full animate-fade-in relative">
+           <div className="flex flex-col h-full animate-fade-in bg-slate-50/50 relative">
                {/* safe-area: OUTER 保留渐变背景 + 模糊 + sticky，刘海高度由 paddingTop 让位；
                    INNER 不再用 h-32 沉底——那是老的「做高栏 + 内容沉底」状态栏预留写法，会和 safe-top 叠加出一大块空白。
                    改为内容自然高度、直接贴在 safe-top 下方。 */}

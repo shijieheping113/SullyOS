@@ -36,7 +36,7 @@ export function StartupOpening({ children, failed }: { children: React.ReactNode
     </Opening.Provider>
   );
 }
-export default function BootSequence({style, ...props}: Props) {
+export default function BootSequence({style = 'black-cat', ...props}: Props) {
   // 一次开屏固定同一张图；下次进入重新判断，到期恢复用户选择的样式。
   const [midAutumn] = React.useState(() => isMidAutumnBoot());
   if (midAutumn) return <JellyfishBootSequence {...props} poster={`${import.meta.env.BASE_URL}boot/mid-autumn-2026.png`} />;

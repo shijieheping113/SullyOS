@@ -579,7 +579,7 @@ export const DEFAULT_PAPER_APPEARANCE = {
   desktopVariant: 'paper',
 } as const;
 
-/** 用户主动选择的最初默认界面：粉绿渐变、白色文字与白色玻璃桌面组件。 */
+/** 怀旧版界面，也是二改的初始默认：粉绿渐变、白色文字与白色玻璃桌面组件。 */
 export const NOSTALGIA_APPEARANCE = {
   skin: 'default',
   desktopVariant: 'nostalgia',
@@ -692,11 +692,9 @@ const resolveWallpaperStoredValue = async (w: string, preserveLegacyDefault = fa
 };
 
 const defaultTheme: OSTheme = {
-  ...DEFAULT_PAPER_APPEARANCE,
-  wallpaper: DEFAULT_WALLPAPER,
-  darkMode: false,
+  ...NOSTALGIA_APPEARANCE,
+  bootAnimationStyle: 'black-cat',
   preserveCustomIconOutlines: false,
-  nowPlayingWidgetLight: true,
 };
 
 /** 开屏开关/风格必须在第一帧就对上，否则 PhoneShell 会先按默认「开」播一遍，设置里关掉也不认。 */

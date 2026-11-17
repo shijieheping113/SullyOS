@@ -3,7 +3,7 @@ import React, { act, useLayoutEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import SplashScreen, { type SplashScreenProps } from '../components/os/SplashScreen';
-import { StartupOpening, useStartupOpening } from '../components/os/BootSequence';
+import BootSequence, { StartupOpening, useStartupOpening } from '../components/os/BootSequence';
 import BootAnimationSettings from '../components/appearance/BootAnimationSettings';
 import type { OSTheme } from '../types';
 
@@ -174,6 +174,25 @@ async function renderStartup(ready: boolean, failed = false) {
     failed, children: React.createElement(ReadyChild, { ready }),
   })));
 }
+
+it('uses black-cat for a fresh startup without saved settings', async () => {
+  localStorage.removeItem('os_theme');
+  await renderStartup(false);
+  expect(host.querySelector('.spl-waiting')).not.toBeNull();
+  expect(host.textContent).toContain('桌面在准备');
+});
+
+it.each(['classic', 'jellyfish'] as const)('keeps an explicit %s opening instead of using the new default', async style => {
+  await act(async () => root.render(React.createElement(BootSequence, { dataReady: false, style, onDone: vi.fn() })));
+  expect(host.querySelector('.sully-splash')).toBeNull();
+  expect(host.childElementCount).toBeGreaterThan(0);
+});
+
+it('selects black-cat in settings when no opening style has been saved', async () => {
+  await act(async () => root.render(React.createElement(BootAnimationSettings, { theme: {} as OSTheme, updateTheme: vi.fn() })));
+  const selected = host.querySelector('button[aria-pressed="true"]');
+  expect(selected?.textContent).toContain('黑球猫猫');
+});
 
 it('routes the saved black-cat style through the real startup gate and hands back after exit', async () => {
   localStorage.setItem('os_theme', JSON.stringify({ bootAnimationStyle: 'black-cat' }));

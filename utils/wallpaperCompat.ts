@@ -1,4 +1,4 @@
-/** 旧版系统默认的粉绿渐变；不再是系统默认，仅供存量迁移和用户主动选择「怀旧版」。 */
+/** 最初的粉绿渐变；用于怀旧版（也是二改初始默认）及存量壁纸识别。 */
 export const LEGACY_DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
 
 /**

@@ -59,12 +59,12 @@ import { injectPwaIcon, clearPwaIcon, initPwaIcon, PWA_ICON_APP_ID, PWA_CLASSIC_
 const BASE = 'http://localhost:3000';
 const ORIGINAL_MANIFEST_HREF = `${BASE}/manifest.webmanifest`;
 const ORIGINAL_TOUCH_ICON_HREF = './icons/black-cat-180.png';
-const ORIGINAL_FAVICON_HREF = './icons/black-cat-192.png';
+const ORIGINAL_FAVICON_HREF = './favicon.ico';
 
 /** 复刻 index.html 里真实的三行 link（含那个写死的 apple-touch-icon）。 */
 function setupDOM() {
   document.head.innerHTML = `
-    <link rel="icon" type="image/png" href="${ORIGINAL_FAVICON_HREF}">
+    <link rel="icon" href="${ORIGINAL_FAVICON_HREF}">
     <link rel="apple-touch-icon" sizes="180x180" href="${ORIGINAL_TOUCH_ICON_HREF}">
     <link rel="manifest" href="${ORIGINAL_MANIFEST_HREF}">
   `;

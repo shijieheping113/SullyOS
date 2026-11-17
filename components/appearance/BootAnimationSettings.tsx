@@ -14,9 +14,9 @@ export default function BootAnimationSettings({theme,updateTheme}: {
         {id:'jellyfish',name:'水母',description:'紫色星光 · 小水母'},
         {id:'black-cat',name:'黑球猫猫',description:'四角探头 · 礼花欢迎'},
       ] as const).map(option => <button key={option.id} type="button"
-        aria-pressed={(theme.bootAnimationStyle || 'jellyfish') === option.id}
+        aria-pressed={(theme.bootAnimationStyle || 'black-cat') === option.id}
         onClick={()=>updateTheme({bootAnimationStyle:option.id})}
-        className={`rounded-2xl border px-3 py-3 text-left transition-colors ${(theme.bootAnimationStyle || 'jellyfish') === option.id ? 'border-primary bg-primary/5' : 'border-slate-200 bg-white'}`}>
+        className={`rounded-2xl border px-3 py-3 text-left transition-colors ${(theme.bootAnimationStyle || 'black-cat') === option.id ? 'border-primary bg-primary/5' : 'border-slate-200 bg-white'}`}>
         <span className="block text-xs font-semibold text-slate-700">{option.name}</span>
         <span className="mt-1 block text-[10px] text-slate-400">{option.description}</span>
       </button>)}
