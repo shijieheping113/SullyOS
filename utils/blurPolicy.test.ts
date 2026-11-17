@@ -140,7 +140,7 @@ describe('外壳底层壁纸虚化层与时钟状态更新守卫', () => {
         expect(shouldSkipShellWallpaperBlur(AppID.Launcher)).toBe(false);
         expect(shouldSkipShellWallpaperBlur(AppID.Settings)).toBe(false);
         const shell = readSource('../components/PhoneShell.tsx');
-        expect(shell).toContain('shouldSkipShellWallpaperBlur(activeApp)');
+        expect(shell).toContain('shouldSkipShellWallpaperBlur(appId)');
     });
 
     it('updateVirtualTimeIfChanged 在分/时/星期未变时复用原对象引用，跨分钟时返回新值', () => {

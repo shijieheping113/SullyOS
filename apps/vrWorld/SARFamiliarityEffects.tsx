@@ -1,5 +1,5 @@
 import { familiarityText } from '../../utils/vrWorld/sarFamiliarity/catalog';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../../components/os/appPortal';
 import { SARObjectInspector } from './SARObjectInspector';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowCounterClockwise, Camera, Check, Cpu, FloppyDisk, IdentificationCard, MagnifyingGlassPlus, Plus, Question, Sparkle, Ticket, Trash, User } from '@phosphor-icons/react';

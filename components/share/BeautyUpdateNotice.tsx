@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import './BeautyConfirmDialog.css';
 
 export const BEAUTY_CATALOG_NOTICE = 'sully-beauty-catalog-notice-v1';

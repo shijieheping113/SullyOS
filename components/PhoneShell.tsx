@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
+import AppWindowHost from './os/AppWindowHost';
+import AppRouteScope from './os/AppRouteScope';
 import { SARModuleMonitor } from './sar/SARModuleMonitor';
 import Launcher from '../apps/Launcher';
 import LockScreen from './lockscreen/LockScreen';
@@ -411,48 +413,10 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
   );
 };
 
-const AppEnterStage: React.FC<{
-  appId: AppID;
-  onSettled: (appId: AppID) => void;
-  children: React.ReactNode;
-}> = ({ appId, onSettled, children }) => {
-  useEffect(() => {
-    if (appId === AppID.Launcher) {
-      onSettled(AppID.Launcher);
-      return;
-    }
-    const timer = window.setTimeout(() => onSettled(appId), 260);
-    return () => window.clearTimeout(timer);
-  }, [appId, onSettled]);
-
-  // 回桌面不再淡入：Launcher 会整页重挂 33 个自定义图标，再叠 opacity 0→1 会感觉「空一下」。
-  const skipFade = appId === AppID.Launcher;
-  return (
-    <div
-      className="w-full h-full"
-      style={skipFade ? undefined : { animation: 'appEnterFade 200ms ease-out both' }}
-      onAnimationEnd={(e) => {
-        if (e.target === e.currentTarget) onSettled(appId);
-      }}
-    >
-      {!skipFade && <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>}
-      {children}
-    </div>
-  );
-};
-
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, groups, handleBack, suspendedCall, resumeCall, activeCharacterId, setActiveCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler, customIcons } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
   const reducedBlur = useReducedBlur();
-  const [settledApp, setSettledApp] = useState<AppID>(activeApp);
-
-  useEffect(() => {
-    if (activeApp === AppID.Launcher) {
-      setSettledApp(AppID.Launcher);
-    }
-  }, [activeApp]);
-
   const [lockSettings, setLockSettings] = useState(readLockScreenSettings);
   useEffect(() => {
     if (isLocked || activeApp !== AppID.Chat || !characters.some(char => char.id === activeCharacterId)) return;
@@ -866,7 +830,6 @@ const PhoneShell: React.FC = () => {
       return isUrl ? `url(${JSON.stringify(wp)})` : wp;
   };
 
-  const bgImageValue = getBgStyle(pairedDesktop ? (theme.lockWallpaper || theme.wallpaper) : theme.wallpaper);
   const lockBgImageValue = getBgStyle(theme.lockWallpaper || theme.wallpaper);
   const contentColor = theme.contentColor || '#ffffff';
   const acnhSkin = theme.skin === 'animalcrossing'; // 动森彩蛋：锁屏换暖色草地点缀
@@ -963,11 +926,9 @@ const PhoneShell: React.FC = () => {
     );
   }
 
-  const isLauncher = activeApp === AppID.Launcher;
-
   /** 前台非桌面 App；桌面单独常驻，切走只藏不拆，避免 33 个自定义图标反复空闪。 */
-  const renderForegroundApp = () => {
-    switch (activeApp) {
+  const renderForegroundApp = (appId: AppID) => {
+    switch (appId) {
       case AppID.Settings: return <Settings />;
       case AppID.Character: return <Character />;
       case AppID.Chat: return <Chat />;
@@ -1016,106 +977,64 @@ const PhoneShell: React.FC = () => {
   // 其余尚未迁移、靠外壳兜底的 App，仍由外壳用单一来源变量 --safe-* 统一让出安全区，避免顶栏怼进状态栏。
   // 自理名单见 utils/safeAreaApps.ts（迁移一个 App = 把它加进名单 + 顶栏用 --chrome-top 自己让位）。
   // TODO(safe-area-A): 把剩余「未迁移」App 逐个改为自理安全区后，移除外壳这层兜底，实现全屏无色条。
-  const shellPadsSafeArea = shellHandlesSafeArea(activeApp);
   const activeCharacter = characters.find(c => c.id === activeCharacterId);
-  const hasCustomChatChromeCss = Boolean(
-    theme.chatChromeCustomCss ||
-      (activeApp === AppID.Chat && activeCharacter?.chromeCustomCss) ||
-      (activeApp === AppID.GroupChat && groups.some(g => Boolean(g.chromeCustomCss))),
-  );
-  const shellBackdropHidden =
-    activeApp !== AppID.Launcher &&
-    settledApp === activeApp &&
-    canHideShellBackdropWhenSettled(activeApp, {
-      hasCustomChatChromeCss,
-      iosStandalone: useIOSStandaloneLayout,
+  const renderShellBackdrop = (appId: AppID, settled: boolean) => {
+    const hasCustomChatChromeCss = Boolean(theme.chatChromeCustomCss ||
+      (appId === AppID.Chat && activeCharacter?.chromeCustomCss) ||
+      (appId === AppID.GroupChat && groups.some(g => Boolean(g.chromeCustomCss))));
+    const hidden = settled && canHideShellBackdropWhenSettled(appId, {
+      hasCustomChatChromeCss, iosStandalone: useIOSStandaloneLayout,
     });
-  const shellUsesDesktopWallpaper = isLauncher || showNewLock;
+    const skipBlur = reducedBlur || shouldSkipShellWallpaperBlur(appId);
+    return <>
+      <div className="sully-shell-wallpaper absolute inset-0 bg-cover bg-center" style={{
+        backgroundImage: getBgStyle(theme.wallpaper),
+        filter: skipBlur || hidden ? 'none' : 'blur(24px)',
+        opacity: skipBlur ? 0.25 : 0.6,
+        visibility: hidden ? 'hidden' : undefined,
+        backfaceVisibility: 'hidden', contain: useIOSStandaloneLayout ? undefined : 'strict',
+      }} />
+      <div className={`sully-shell-wash absolute inset-0 ${skipBlur ? 'bg-slate-50/95' : 'bg-white/55'}`}
+        style={{ visibility: hidden ? 'hidden' : undefined }} />
+    </>;
+  };
+  // 桌面在应用收回过程中也需要保持配对壁纸；应用的柔化层单独读取主屏壁纸。
+  const desktopPairedWallpaper = lockSettings.enabled && lockSettings.pair && usesV5DesktopEntry(theme.skin);
+  const desktopBackground = getBgStyle(desktopPairedWallpaper ? (theme.lockWallpaper || theme.wallpaper) : theme.wallpaper);
 
-  // 桌面/新锁屏交接直接铺壁纸，避免首帧闪出渐变；应用沿用作者的实色渐变托底。
-  // 模糊壁纸层含透明度，下面不能再放清晰壁纸，否则透明应用会漏出未虚化的图案。
+  // 清晰壁纸留在桌面层；实色渐变、虚化壁纸和柔光随同一扇应用窗口移动。
   return (
     <div className="relative h-full w-full">
-    <div
-      key="shell"
-      className={`sully-phone-shell relative w-full h-full overflow-hidden bg-cover bg-center text-slate-900 font-sans select-none overscroll-none ${
-        shellUsesDesktopWallpaper ? '' : 'bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-200'
-      }`}
-      style={shellUsesDesktopWallpaper ? { backgroundImage: bgImageValue, backgroundPosition: desktopPosition || 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' } : undefined}
-    >
-       {/* Optimized Background Layer */}
-       {/* 壁纸底层：进 App 时只柔和虚化/压暗作背景，不再做缩放「过场」——
-          进 App 的过渡感统一交给 App 容器的淡入（见下方 animate-fade-in 包裹层）。
-          虚化直接落在静态壁纸层上，上层叠纯色柔光遮罩；不透明全屏 App 淡入稳定后隐藏底层纹理。 */}
-       <div
-         className="sully-shell-wallpaper absolute inset-0 bg-cover bg-center transition-opacity duration-500 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
-         style={{
-             backgroundImage: bgImageValue,
-             backgroundPosition: desktopPosition,
-             filter: activeApp === AppID.Launcher || reducedBlur || shellBackdropHidden || shouldSkipShellWallpaperBlur(activeApp) ? 'none' : 'blur(24px)',
-             opacity: activeApp === AppID.Launcher ? 1 : (reducedBlur || shouldSkipShellWallpaperBlur(activeApp)) ? 0.25 : 0.6,
-             visibility: shellBackdropHidden || showNewLock || isLauncher ? 'hidden' : undefined,
-             backfaceVisibility: 'hidden',
-             contain: useIOSStandaloneLayout ? undefined : 'strict'
-         }}
-       />
-       
-       <div
-         className={`sully-shell-wash absolute inset-0 transition-colors duration-500 ${
-           activeApp === AppID.Launcher
-             ? 'bg-transparent'
-             : reducedBlur || shouldSkipShellWallpaperBlur(activeApp)
-               ? 'bg-slate-50/95'
-               : 'bg-white/55'
-         }`}
-         style={shellBackdropHidden ? { visibility: 'hidden' } : undefined}
-       />
-       
-       {/* 外壳安全区两种策略：
-          - 未迁移 App：外壳铺满 body（含 --app-height 多出的 +safe-bottom 溢出区），用 padding 让位安全区，
-            内容只画到可见 viewport 内，home 条上方留出 safe-bottom 视觉间隙。
-          - 已迁移 App（彼方/聊天/群聊/桌面）：自理安全区。外壳直接把底边收回到可见 viewport
-            （bottom = --standalone-safe-area-bottom），不让那多出来的 34px 把 App 底部控件压到 home 条上。 */}
-      <div
-        className="sully-shell-content absolute top-0 left-0 right-0 z-10 overflow-hidden bg-transparent overscroll-none flex flex-col"
-        style={
-          shellPadsSafeArea
-            ? { bottom: 0, paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }
-            : { bottom: 'var(--standalone-safe-area-bottom, 0px)' }
-        }
-      >
+    <div key="shell"
+      className="sully-phone-shell relative w-full h-full overflow-hidden bg-cover bg-center text-slate-900 font-sans select-none overscroll-none"
+      style={{ backgroundImage: desktopBackground, backgroundPosition: desktopPairedWallpaper ? `50% ${lockSettings.position}%` : 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' }}>
+      <div className="sully-shell-content absolute inset-0 z-10 overflow-hidden bg-transparent overscroll-none flex flex-col">
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
-            <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
-              {/* 桌面常驻：切走只藏不拆（日志回桌面 iconHits 已满仍空闪，是因为整页重挂 33 个 img）。
-                  懒加载 Suspense 只包前台 App，避免挂起时把桌面一起卸掉。 */}
-              <div
-                ref={unlockDesktopRef}
-                {...((showNewLock || !isLauncher) ? { inert: "" } : {})}
-                onFocusCapture={showNewLock ? () => document.querySelector<HTMLButtonElement>('.sully-v5-live #unlockZone')?.focus() : undefined}
-                className="absolute inset-0 w-full h-full"
-                style={{
-                  visibility: isLauncher || showNewLock ? 'visible' : 'hidden',
-                  pointerEvents: isLauncher && !showNewLock ? 'auto' : 'none',
-                  zIndex: isLauncher || showNewLock ? 1 : 0,
-                }}
-                aria-hidden={!isLauncher || showNewLock}
-              >
-                {(!showNewLock || animateDesktop) && <Launcher preparingUnlock={animateDesktop} onPreviewReady={usesV5DesktopEntry(theme.skin) ? prepareDesktopPreview : undefined} />}
-              </div>
-              {!isLauncher && !showNewLock && (
-                <div className="absolute inset-0 w-full h-full z-[1]">
-                  <Suspense fallback={<AppLoadingFallback key={activeApp} onReturn={closeApp} animationEnabled={theme.appLoadingAnimationEnabled !== false} />}>
-                    {/* 统一「淡入」过渡：每次切换 App 时 key 变化 → 重新挂载并淡入。
-                        关键：只动 opacity、不做 scale/translate。 */}
-                    <AppEnterStage key={activeApp} appId={activeApp} onSettled={setSettledApp}>
-                      {renderForegroundApp()}
-                    </AppEnterStage>
-                  </Suspense>
-                </div>
-              )}
-            </AppErrorBoundary>
-            {showNewLock && <LockScreen desktopRef={animateDesktop ? unlockDesktopRef : undefined} desktopPaired={pairedDesktop}
+            <AppWindowHost activeApp={activeApp} locked={isLocked} disabled={isLocked || booting}
+              renderBackdrop={renderShellBackdrop}
+              loading={<AppLoadingFallback key={activeApp} onReturn={closeApp} animationEnabled={theme.appLoadingAnimationEnabled !== false} />}
+              desktop={
+                <AppErrorBoundary onCloseApp={closeApp} resetKey="desktop">
+                  <div ref={unlockDesktopRef}
+                    onFocusCapture={showNewLock ? () => document.querySelector<HTMLButtonElement>('.sully-v5-live #unlockZone')?.focus() : undefined}
+                    className="absolute top-0 left-0 right-0"
+                    style={{ bottom: 'var(--standalone-safe-area-bottom, 0px)' }}>
+                    {(!showNewLock || animateDesktop) && <Launcher preparingUnlock={animateDesktop} onPreviewReady={usesV5DesktopEntry(theme.skin) ? prepareDesktopPreview : undefined} />}
+                  </div>
+                </AppErrorBoundary>
+              }
+              renderApp={(appId, active) => <AppRouteScope active={active}>
+                <AppErrorBoundary onCloseApp={closeApp} resetKey={`${appId}:${activeCharacterId || 'none'}`}>
+                  <div className="sully-app-page absolute top-0 left-0 right-0 overflow-hidden" style={shellHandlesSafeArea(appId)
+                    ? { bottom: 0, paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }
+                    : { bottom: 'var(--standalone-safe-area-bottom, 0px)' }}>
+                    {renderForegroundApp(appId)}
+                  </div>
+                </AppErrorBoundary>
+              </AppRouteScope>}
+            />
+            {showNewLock && <div className="absolute top-0 left-0 right-0" style={{ bottom: 'var(--standalone-safe-area-bottom, 0px)' }}><LockScreen desktopRef={animateDesktop ? unlockDesktopRef : undefined} desktopPaired={pairedDesktop}
               onOpenRecentChat={() => {
                 let last = '';
                 try { last = localStorage.getItem(LAST_PRIVATE_CHAT_KEY) || ''; } catch {}
@@ -1132,7 +1051,7 @@ const PhoneShell: React.FC = () => {
                   openApp(AppID.Chat);
                 }
               }}
-              holdReveal={booting || waitingForDesktopPreview} onPrepared={prepareLock} />}
+              holdReveal={booting || waitingForDesktopPreview} onPrepared={prepareLock} /></div>}
           </div>
 
           {/* Overlays: Status Bar (Top) —— 常驻渲染：时钟/电量条由开关+平台默认决定显隐（StatusBar 内部 isStatusBarHidden），

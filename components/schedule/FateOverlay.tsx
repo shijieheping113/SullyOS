@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import './FateOverlay.css';
 
 export default function FateOverlay({ title, children, onClose, className = '' }: { title: string; children: React.ReactNode; onClose: () => void; className?: string }) {

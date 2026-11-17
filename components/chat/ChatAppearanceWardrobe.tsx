@@ -1,5 +1,5 @@
 import React, {useEffect, useState, type ComponentProps} from 'react';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import {useOS} from '../../context/OSContext';
 import BeautyShareChannel from '../appearance/BeautyShareChannel';
 import ChatDecorationPanel from './ChatDecorationPanel';

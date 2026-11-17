@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../../components/os/appPortal';
 import { Question, X } from '@phosphor-icons/react';
 import { SAR_FACILITY_GUIDES, sarFacilityGuideKey, registerSARGuideCloser, type SARFacilityId } from '../../utils/vrWorld/sarFacilityGuides';
 import { readSARClubState } from '../../utils/vrWorld/sarClub';

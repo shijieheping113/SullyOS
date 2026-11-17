@@ -6,7 +6,7 @@
  * 4. SuperChatTickerBar & SuperChatHighlightCard：YouTube Live 标准付费醒目留言组件
  */
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { useOS } from '../../context/OSContext';
 import type { HomePhoneChatProps } from '../../apps/Chat';
 import { CHAT_GEN_EVENTS, registerEmbeddedChatView } from '../../utils/chatGenEvents';

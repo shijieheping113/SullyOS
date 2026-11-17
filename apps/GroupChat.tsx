@@ -7,7 +7,7 @@ import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import BlobRefStyle from '../components/chat/BlobRefStyle';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../components/os/appPortal';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, BubbleStyle, EmojiCategory } from '../types';

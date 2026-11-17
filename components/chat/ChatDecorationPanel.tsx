@@ -4,7 +4,7 @@ import PsycheAppearanceEditor from './PsycheAppearanceEditor';
 import {resolvePsycheAppearance} from '../../utils/psycheAppearance';
 import React, {useState} from 'react';
 import { startBeautyUsage, decorationSourceKey } from '../../utils/beautyUsage';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import type {CharacterProfile, ChatTheme, OSTheme} from '../../types';
 import ChatLayoutSettings from './ChatLayoutSettings';
 import ChromeCssEditor from './ChromeCssEditor';

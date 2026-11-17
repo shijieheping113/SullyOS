@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { useOS } from '../../context/OSContext';
 import { beautyRequest } from '../../utils/beautyShareClient';
 import { BEAUTY_USAGE_EVENT, beautyRepoDeviceId, dueBeautyRepo, markBeautyRepoPrompt, readBeautyUsage, setBeautyRepoDisabled } from '../../utils/beautyUsage';

@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { listChatGamePlugins } from '../../utils/chatGames/registry';
 import type { ChatGamePlugin } from '../../utils/chatGames/types';
 import {

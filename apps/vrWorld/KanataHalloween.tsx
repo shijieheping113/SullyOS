@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../../components/os/appPortal';
 import TokenImg from '../../components/os/TokenImg';
 import { useLocalDateKey } from '../../hooks/useLocalDateKey';
 import { FISHING_MARKET_STORAGE_KEY, mutateFishingMarket, readFishingMarketState } from '../../utils/vrWorld/fishingMarket';

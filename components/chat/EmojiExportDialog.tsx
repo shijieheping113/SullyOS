@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import type { Emoji } from '../../types';
 import Modal from '../os/Modal';
 import { prepareEmojiExport } from '../../utils/emojiExport';

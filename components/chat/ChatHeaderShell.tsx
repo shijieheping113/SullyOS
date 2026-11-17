@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { CaretLeft, Lightning, Stop } from '@phosphor-icons/react';
 import { CharacterBuff, CharacterProfile } from '../../types';
 import TokenImg from '../os/TokenImg';

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../../components/os/appPortal';
 import { SAR_UPDATE_NOTICES, type SARUpdateNotice } from '../../utils/vrWorld/sarUpdateNotices';
 import { SARDialogueCast } from './SARNpcArt';
 import { SARDialogueBackdrop } from './SARDialogueBackdrop';

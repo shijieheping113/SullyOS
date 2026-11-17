@@ -1,5 +1,5 @@
 import React,{useMemo,useState} from 'react';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../../os/appPortal';
 import BeautyPresetPreview from '../../share/BeautyPresetPreview';
 import BeautyConfirmDialog from '../../share/BeautyConfirmDialog';
 import CssCodeEditor from '../CssCodeEditor';

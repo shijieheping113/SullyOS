@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import type { UserSpace } from '../../utils/userSpaces';
 import { deleteUserSpace } from '../../utils/userSpaceDeletion';
 import { setVisibleTimeout } from '../../utils/visibleTimeout';

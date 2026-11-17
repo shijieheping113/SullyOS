@@ -1,7 +1,7 @@
 import MeetingAppearanceControl from '../MeetingAppearanceControl';
 import {meetingAppearance, MEETING_READING_CSS, meetingCustomCss} from '../../../utils/meetingAppearance';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../../os/appPortal';
 import { Moon, Palette, Sparkle, SquaresFour, Sun, X } from '@phosphor-icons/react';
 import { STORY_THEATER_APPEARANCE_STORAGE_KEY } from '../../../utils/storyTheaterBackup';
 import { useOS } from '../../../context/OSContext';

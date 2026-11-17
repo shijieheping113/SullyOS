@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import {BEAUTY_CATEGORIES,belongsInBeautyLibrary,type BeautyCategory} from '../../utils/beautyCategories';
 import {shuffleCatalog,type BeautyCatalogEntry} from '../../utils/beautyCatalogContract';
 import {BEAUTY_CATALOG_URL,loadBeautyCatalog,loadCatalogPreview,sameCatalogTerms} from '../../utils/beautyCatalogClient';

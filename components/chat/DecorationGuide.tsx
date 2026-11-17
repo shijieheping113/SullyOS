@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import './DecorationGuide.css';
 const steps=[
  ['collection','你的聊天装扮，都在这里','这里展示你制作和导入的白框、气泡、头像框、聊天背景、心象与提示音。按分类挑选，点开就能预览。','下一步'],

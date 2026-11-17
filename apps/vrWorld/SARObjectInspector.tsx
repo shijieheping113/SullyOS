@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../../components/os/appPortal';
 import { X } from '@phosphor-icons/react';
 import './sar-object-inspector.css';
 

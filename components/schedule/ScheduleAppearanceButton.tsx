@@ -1,7 +1,7 @@
 import {requestBeautyLibrary} from '../../utils/beautyNavigation';
 import {AppID} from '../../types';
 import React, { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import {
     ArrowCounterClockwise,
     Check,

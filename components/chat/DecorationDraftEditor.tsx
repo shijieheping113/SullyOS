@@ -13,7 +13,7 @@ import {usePreviewDraft} from '../../hooks/usePreviewDraft';
 import {JOURNAL_APPEARANCE_PRESETS} from '../../utils/journalAppearance';
 import {SCHEDULE_CARD_PRESETS} from '../../utils/scheduleAppearance';
 import React,{useMemo,useState} from 'react';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import {type DecorationPreset,LAYOUT_DEFAULTS,validateDecoration} from '../../utils/chatDecoration';
 import {remixOrigin,readDecorationOrigin,saveLibraryDecoration,deleteLibraryDecoration,combineDecorationOrigins,type DecorationOrigin} from '../../utils/decorationLibrary';
 import BeautyConfirmDialog from '../share/BeautyConfirmDialog';

@@ -29,7 +29,7 @@ import BeautyImportHub from '../share/BeautyImportHub';
 import {stampBeautyCss,isCssImportCandidate,readLegacyWhiteboxShare} from '../../utils/beautyCssAttribution';
 import {PSYCHE_STYLE_LIST} from '../../utils/psycheStyleCatalog';
 import React, { useEffect, useState, useRef, useMemo, lazy, Suspense } from 'react';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { AppID, type AppearancePreset } from '../../types';
 import { useOS, DEFAULT_PAPER_APPEARANCE, DEFAULT_WALLPAPER } from '../../context/OSContext';
 import { resetChatDecoration } from '../../utils/decorationReset';

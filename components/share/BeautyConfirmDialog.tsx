@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import './BeautyConfirmDialog.css';
 import {useAtelierSurface} from '../chat/appearance/ChatAppearanceMode';
 export default function BeautyConfirmDialog({title,children,confirm='确认',danger=false,onConfirm,onClose}:{title:string;children:React.ReactNode;confirm?:string;danger?:boolean;onConfirm:()=>Promise<void>;onClose:()=>void}){

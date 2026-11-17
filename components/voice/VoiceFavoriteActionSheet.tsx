@@ -1,5 +1,5 @@
 import React from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { Star, X } from '@phosphor-icons/react';
 
 interface VoiceFavoriteActionSheetProps {

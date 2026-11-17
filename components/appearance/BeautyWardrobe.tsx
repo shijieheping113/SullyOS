@@ -1,7 +1,7 @@
 import type {WardrobeUsage, WardrobeUsageReader} from '../../utils/wardrobeUsage';
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { DB } from '../../utils/db';
 import type { BeautyShare } from '../../utils/beautyShareContract';
 import BeautyPresetPreview from '../share/BeautyPresetPreview';

@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { Camera, ImageSquare, X, ArrowsClockwise, ArrowCounterClockwise, PaperPlaneTilt, Trash, Sticker as StickerIcon, FrameCorners, SlidersHorizontal, Eye } from '@phosphor-icons/react';
 import './ChatCamera.css';
 import { createCameraAnalytics } from '../../utils/cameraAnalytics';

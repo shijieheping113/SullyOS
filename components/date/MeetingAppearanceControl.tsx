@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import { useOS } from '../../context/OSContext';
 import { MEETING_APPEARANCES, meetingAppearance, type MeetingAppearance } from '../../utils/meetingAppearance';
 import BeautyShareChannel from '../appearance/BeautyShareChannel';

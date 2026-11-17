@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useOS } from '../../context/OSContext';
 import { INSTALLED_APPS, Icons } from '../../constants';
-import { createPortal } from 'react-dom';
+import { createAppPortal as createPortal } from './appPortal';
 import { AppID, CharacterProfile, RoomItem, DailySchedule, ScheduleSlot } from '../../types';
 import { DB, DESKTOP_PREVIEW_SCAN_CAP } from '../../utils/db';
 import { isChatPreviewMessage } from '../../utils/chatMessageVisibility';

@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {createPortal} from 'react-dom';
+import { createAppPortal as createPortal } from '../os/appPortal';
 import type {BeautySubmission,BeautyMetadata} from '../../utils/beautyShareContract';
 import {beautyRequest,type BeautySession} from '../../utils/beautyShareClient';
 import {readBeautyBinding,bindBeautySource} from '../../utils/beautySourceBinding';
