@@ -106,7 +106,11 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
             customIconUrl ? (
             <img
               src={customIconUrl}
-              className={`w-full h-full ${preserveCustomOutline ? 'object-contain' : 'object-cover rounded-[1.2rem]'}`}
+              draggable={false}
+              className={`w-full h-full pointer-events-none select-none ${preserveCustomOutline ? 'object-contain' : 'object-cover rounded-[1.2rem]'}`}
+              style={preserveCustomOutline && theme.customIconShadowEnabled === true
+                ? { filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.16))' }
+                : undefined}
               alt={app.name}
               loading="eager"
               decoding="sync"
@@ -139,12 +143,12 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
     </button>
   );
 }, (prev, next) => {
-    // Custom comparison to prevent re-render unless specific props change
-    // We don't check 'onClick' deeply assuming it's stable or we want to ignore function ref changes
+    // 整理模式会改变点击回调。跨页新挂载的图标不能在退出整理后继续沿用禁用回调。
     return prev.app.id === next.app.id && 
            prev.size === next.size && 
            prev.hideLabel === next.hideLabel &&
-           prev.variant === next.variant;
+           prev.variant === next.variant &&
+           prev.onClick === next.onClick;
 });
 
 export default AppIcon;

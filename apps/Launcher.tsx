@@ -21,6 +21,9 @@ import { resolveReducedGlassCardStyle, useReducedBlur } from '../utils/blurPolic
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 const HomelyHome = React.lazy(() => import('../components/os/HomelyHome'));
 
+// 图标只负责呈现和按下预热，点击导航由桌面根节点按当前整理状态统一处理。
+const launcherIconClick = () => {};
+
 // --- Isolated Components to prevent full re-renders ---
 
 // 1. Clock Component (Consumes virtualTime)
@@ -257,12 +260,10 @@ const CharacterWidget = React.memo(({
 // 3. Grid Page Component
 const AppGridPage = React.memo(({
     apps,
-    openApp,
     acnh = false,
     editing = false,
 }: {
     apps: typeof INSTALLED_APPS,
-    openApp: (id: AppID) => void,
     acnh?: boolean,
     editing?: boolean,
 }) => {
@@ -277,7 +278,7 @@ const AppGridPage = React.memo(({
                  >
                      <AppIcon
                         app={app}
-                        onClick={() => { if (!editing) openApp(app.id); }}
+                        onClick={launcherIconClick}
                         size="md"
                      />
                  </div>
@@ -288,13 +289,13 @@ const AppGridPage = React.memo(({
 });
 
 // 3b. Small 2x2 app grid for pinwheel cells
-const AppQuadGrid = React.memo(({ apps, openApp, editing = false }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void, editing?: boolean }) => {
+const AppQuadGrid = React.memo(({ apps, editing = false }: { apps: typeof INSTALLED_APPS, editing?: boolean }) => {
     return (
         <div data-unlock-columns="2" className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
             {apps.map((app, index) => (
               <div key={app.id} data-unlock-cell={index} className="min-w-0">
                 <div data-launcher-item={app.id} data-launcher-kind="app" className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}>
-                    <AppIcon app={app} onClick={() => { if (!editing) openApp(app.id); }} />
+                    <AppIcon app={app} onClick={launcherIconClick} />
                 </div>
               </div>
             ))}
@@ -520,6 +521,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
   const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
   const [scheduleViewerOpen, setScheduleViewerOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
+  const launcherRootRef = useRef<HTMLDivElement>(null);
   const layoutPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutPointer = useRef<{
       pointerId: number;
@@ -783,6 +785,25 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
       }
   };
 
+  const handleLayoutClickCapture = (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-launcher-control]')) return;
+      const item = target.closest<HTMLElement>('[data-launcher-item]');
+      if (!item) return;
+      const pageDragClick = e.detail > 0 && dragMoved.current > 5 && !!item.closest('.launcher-pages');
+      if (layoutEditing || pageDragClick || Date.now() < suppressLayoutClickUntil.current) {
+          e.stopPropagation();
+          e.preventDefault();
+          return;
+      }
+      if (item.dataset.launcherKind === 'app' || item.dataset.launcherKind === 'dock') {
+          // 跨页交换会重建图标节点；不要再依赖节点回调里保存的旧 editing 值。
+          e.stopPropagation();
+          e.preventDefault();
+          openApp(item.dataset.launcherItem as AppID);
+      }
+  };
+
   const reorderByTarget = useCallback((kind: string, source: string, target: string) => {
       if (source === target) return;
       const reorder = <T extends string>(items: T[]) => {
@@ -790,8 +811,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
           const to = items.indexOf(target as T);
           if (from < 0 || to < 0) return items;
           const next = [...items];
-          const [moved] = next.splice(from, 1);
-          next.splice(to, 0, moved);
+          [next[from], next[to]] = [next[to], next[from]];
           return next;
       };
       if (kind === 'app') {
@@ -884,7 +904,20 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
       layoutPointer.current?.ghost?.remove();
   }, [clearLayoutPageTurn, clearLayoutPressTimer]);
 
+  useEffect(() => {
+      const root = launcherRootRef.current;
+      if (!root) return;
+      // touch-action 在手指按下时就已确定，长按后才改 CSS 来不及阻止本次滑页。
+      // 只在已接管拖动时取消原生滚动；普通滑页和未达到长按门槛的手势照常。
+      const preventDragScroll = (event: TouchEvent) => {
+          if (layoutPointer.current?.active && event.cancelable) event.preventDefault();
+      };
+      root.addEventListener('touchmove', preventDragScroll, { passive: false });
+      return () => root.removeEventListener('touchmove', preventDragScroll);
+  }, [theme.skin]);
+
   const handleLayoutPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.isPrimary === false || layoutPointer.current?.active) return;
       if ((e.target as HTMLElement).closest('[data-launcher-control]')) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const launcherRoot = e.currentTarget;
@@ -893,6 +926,8 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
       const key = item.dataset.launcherItem;
       const kind = item.dataset.launcherKind;
       if (!key || !kind) return;
+      // 新一轮按下与上一轮滑页独立，触摸点击也不能继承上次鼠标拖页的距离。
+      if (!layoutEditing) dragMoved.current = 0;
       clearLayoutPressTimer();
       layoutPointer.current = { pointerId: e.pointerId, key, kind, x: e.clientX, y: e.clientY, active: layoutEditing, element: item };
       if (layoutEditing) {
@@ -906,7 +941,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
           layoutPointer.current.active = true;
           activateLayoutDrag(layoutPointer.current);
           launcherRoot.setPointerCapture(e.pointerId);
-          isDragging.current = false;
+          handleMouseUp();
           suppressLayoutClickUntil.current = Date.now() + 700;
           setLayoutEditing(true);
           trackEvent('进入桌面整理模式');
@@ -949,9 +984,10 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
       pointer.lastTarget = targetKey;
   };
 
-  const finishLayoutPointer = (e?: React.PointerEvent<HTMLDivElement>) => {
+  const finishLayoutPointer = (e?: React.PointerEvent<HTMLDivElement>, cancelled = false) => {
       const pointer = layoutPointer.current;
       if (e && pointer && pointer.pointerId !== e.pointerId) return;
+      layoutPointer.current = null;
       clearLayoutPressTimer();
       clearLayoutPageTurn();
       if (pointer?.active) {
@@ -960,14 +996,18 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
           pointer.element.classList.remove('launcher-dragging');
           pointer.ghost?.remove();
           pointer.targetElement?.classList.remove('launcher-drop-target');
-          if (pointer.lastTarget) reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
-          void updateTheme({
-              launcherAppOrder: launcherAppOrderRef.current,
-              launcherDockOrder: launcherDockOrderRef.current,
-              launcherPinwheelOrder: pinwheelOrderRef.current,
-          });
+          if (!cancelled && pointer.lastTarget) {
+              reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
+              void updateTheme({
+                  launcherAppOrder: launcherAppOrderRef.current,
+                  launcherDockOrder: launcherDockOrderRef.current,
+                  launcherPinwheelOrder: pinwheelOrderRef.current,
+              });
+          }
       }
-      layoutPointer.current = null;
+      if (pointer && launcherRootRef.current?.hasPointerCapture(pointer.pointerId)) {
+          launcherRootRef.current.releasePointerCapture(pointer.pointerId);
+      }
   };
 
   const finishLayoutEditing = () => {
@@ -1009,11 +1049,19 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
 
   return (
     <div
+      ref={launcherRootRef}
       className={`launcher-desktop h-full w-full flex flex-col relative z-10 overflow-hidden font-sans select-none ${layoutEditing ? 'launcher-editing' : ''}`}
       onPointerDown={handleLayoutPointerDown}
       onPointerMove={handleLayoutPointerMove}
       onPointerUp={finishLayoutPointer}
-      onPointerCancel={finishLayoutPointer}
+      onPointerCancel={(e) => finishLayoutPointer(e, true)}
+      onLostPointerCapture={(e) => {
+          if (e.target === e.currentTarget) finishLayoutPointer(e, true);
+      }}
+      onClickCapture={handleLayoutClickCapture}
+      onDragStart={(e) => {
+          if ((e.target as HTMLElement).closest('[data-launcher-item]')) e.preventDefault();
+      }}
       onContextMenu={(e) => {
           if ((e.target as HTMLElement).closest('[data-launcher-item]')) e.preventDefault();
       }}
@@ -1060,6 +1108,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
           transition: transform 180ms cubic-bezier(.2,.75,.25,1), opacity 150ms ease, filter 150ms ease;
           will-change: transform;
         }
+        [data-launcher-item] { -webkit-touch-callout: none; }
         .launcher-dragging {
           cursor: grabbing;
           opacity: .18;
@@ -1138,7 +1187,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
                             paper={paper}
                         /></div>
                         <div className="flex-1">
-                            <AppGridPage apps={pageApps} openApp={openApp} acnh={acnh} editing={layoutEditing} />
+                            <AppGridPage apps={pageApps} acnh={acnh} editing={layoutEditing} />
                         </div>
                       </>
                   ) : idx === 1 ? (
@@ -1174,9 +1223,9 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
                                       {cell === 'music' ? (
                                           <NowPlayingSquareWidget contentColor={contentColor} />
                                       ) : cell === 'appsA' ? (
-                                          <AppQuadGrid apps={page2QuadA} openApp={openApp} editing={layoutEditing} />
+                                          <AppQuadGrid apps={page2QuadA} editing={layoutEditing} />
                                       ) : cell === 'appsB' ? (
-                                          <AppQuadGrid apps={page2QuadB} openApp={openApp} editing={layoutEditing} />
+                                          <AppQuadGrid apps={page2QuadB} editing={layoutEditing} />
                                       ) : (
                                           <DesktopSquareImage
                                               image={theme.launcherWidgets?.['dsq']}
@@ -1245,7 +1294,6 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
 
                           <AppGridPage
                                 apps={pageApps}
-                                openApp={openApp}
                                 acnh={acnh}
                                 editing={layoutEditing}
                           />
@@ -1305,7 +1353,7 @@ const Launcher: React.FC<{ staticPreview?: boolean; preparingUnlock?: boolean; o
            >
                {dockAppsConfig.map(app => (
                    <div key={app.id} data-launcher-item={app.id} data-launcher-kind="dock" className={`relative ${layoutEditing ? 'launcher-edit-item' : ''}`}>
-                        <AppIcon app={app} onClick={() => { if (!layoutEditing) openApp(app.id); }} variant="dock" size="md" />
+                        <AppIcon app={app} onClick={launcherIconClick} variant="dock" size="md" />
                         {app.id === 'chat' && totalUnread > 0 && (
                             <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-pop-in">
                                 {totalUnread > 9 ? '9+' : totalUnread}

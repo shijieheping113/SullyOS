@@ -149,6 +149,8 @@ export interface OSTheme {
   launcherImageVisible?: boolean;
   /** 自定义透明图标是否保留原始轮廓并移除系统圆角底框。默认 false。 */
   preserveCustomIconOutlines?: boolean;
+  /** 去掉自定义图标底框后，是否保留沿图案轮廓的淡阴影。默认 false。 */
+  customIconShadowEnabled?: boolean;
   /** 默认皮肤桌面「正在播放」音乐卡片改用浅色系样式（新安装默认 true）。 */
   nowPlayingWidgetLight?: boolean;
   /** 日程卡片统一皮肤：桌面、全屏、房间与聊天内同步。 */

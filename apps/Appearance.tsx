@@ -28,9 +28,10 @@ import { readShareFile } from '../utils/pngShare';
 import BeautyShareChannel from '../components/appearance/BeautyShareChannel';
 import { hasBeautyReceiveRequest,hasBeautyLibraryRequest } from '../utils/beautyNavigation';
 
-const CustomIconImage: React.FC<{ value: string; alt: string; preserveOutline?: boolean }> = ({ value, alt, preserveOutline = false }) => {
+const CustomIconImage: React.FC<{ value: string; alt: string; preserveOutline?: boolean; shadow?: boolean }> = ({ value, alt, preserveOutline = false, shadow = false }) => {
     const url = useBlobRefUrl(value);
-    return url ? <img src={url} className={`w-full h-full ${preserveOutline ? 'object-contain' : 'object-cover rounded-2xl'}`} alt={alt} /> : null;
+    return url ? <img src={url} className={`w-full h-full ${preserveOutline ? 'object-contain' : 'object-cover rounded-2xl'}`} alt={alt}
+        style={preserveOutline && shadow ? { filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.16))' } : undefined} /> : null;
 };
 
 const CompanionPortraitPreview: React.FC<{ value?: string; alt: string }> = ({ value, alt }) => {
@@ -1687,6 +1688,26 @@ const Appearance: React.FC = () => {
                   </button>
                 </div>
               </section>
+              {theme.preserveCustomIconOutlines && (
+                <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-700">保留图标阴影</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">给自定义图案加一层淡阴影，底板保持透明；默认关闭。</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={theme.customIconShadowEnabled === true}
+                      aria-label="保留图标阴影"
+                      onClick={() => updateTheme({ customIconShadowEnabled: theme.customIconShadowEnabled !== true })}
+                      className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${theme.customIconShadowEnabled ? 'bg-primary' : 'bg-slate-200'}`}
+                    >
+                      <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${theme.customIconShadowEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                </section>
+              )}
               <div className="grid grid-cols-3 gap-4">
                 {INSTALLED_APPS.map(app => {
                     const Icon = Icons[app.icon];
@@ -1699,7 +1720,7 @@ const Appearance: React.FC = () => {
                                 onClick={() => { setSelectedAppId(app.id); iconInputRef.current?.click(); }}
                               >
                                   {customUrl ? (
-                                     <CustomIconImage value={customUrl} alt={`${app.name} 自定义图标`} preserveOutline={preserveOutline} />
+                                     <CustomIconImage value={customUrl} alt={`${app.name} 自定义图标`} preserveOutline={preserveOutline} shadow={theme.customIconShadowEnabled === true} />
                                   ) : (
                                      <div className={`w-full h-full ${app.color} flex items-center justify-center text-white`}>
                                          <Icon className="w-8 h-8" />
