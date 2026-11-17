@@ -1,0 +1,174 @@
+/* 模拟框贴满实际屏幕；安全区只挪内容，不再把整屏缩成展示用的小手机。 */
+.sully-splash{--splash-ink:#4a4a4a;--splash-paper:#f4f4f4;--splash-track:#dcdcdc;--splash-safe-top:max(var(--safe-top,0px),env(safe-area-inset-top,0px));--splash-safe-bottom:max(var(--safe-bottom,0px),env(safe-area-inset-bottom,0px));position:fixed;inset:0;z-index:9999;box-sizing:border-box;background:var(--splash-paper);color:var(--splash-ink);font-family:'Hiragino Sans','Yu Gothic','Noto Sans JP','Meiryo',system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overflow:hidden;}
+.sully-splash *{box-sizing:border-box}
+:where(.sully-splash) :where(h1,p){margin:0}
+.sully-splash:focus-visible{outline:3px solid #858583;outline-offset:-3px}
+.spl-sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.spl-phone{position:relative;width:100%;height:100%;padding:7px;border:2px solid #858583;border-radius:44px;background:#dfdfdc;}
+.spl-stage{position:relative;width:100%;height:100%;border-radius:34px;background:var(--splash-paper);overflow:hidden;isolation:isolate}
+.spl-stage::before,.spl-stage::after{content:"";position:absolute;left:50%;transform:translateX(-50%);border-radius:99px;z-index:3;pointer-events:none;background:#858583}
+.spl-stage::before{top:calc(12px + var(--splash-safe-top));width:64px;height:17px;background:var(--splash-ink)}
+.spl-stage::after{bottom:calc(12px + var(--splash-safe-bottom));width:66px;height:4px}
+/* 保留原型中间组合的宽度比例，整组只放大 6%，避免进度条随满屏画布被单独拉长。 */
+.spl-center{position:absolute;left:50%;top:calc(50% + (var(--splash-safe-top) - var(--splash-safe-bottom)) / 2);transform:translate(-50%,-50%) scale(1.06);display:flex;flex-direction:column;align-items:center;width:calc(min(calc(100vw - 42px),382px) * .78);z-index:2;color:var(--splash-ink)}
+.spl-app-icon{width:64px;height:64px;border-radius:19px;background:#e5e5e2;display:grid;place-items:center;margin-bottom:17px;overflow:hidden}
+.spl-app-icon svg{width:54px;height:51px;transform:translateY(7px)}
+.spl-app-name{display:flex;align-items:baseline;justify-content:center;gap:7px;white-space:nowrap;font-size:clamp(20px,5.5vw,24px);font-weight:800;letter-spacing:-.035em;line-height:1.25}
+.spl-app-name span{font-size:.73em;font-weight:600;letter-spacing:.04em}
+.spl-edition{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:7px;font-size:13px;line-height:1.5;color:#767672;letter-spacing:.035em}
+.spl-pigcat-mark{display:inline-flex;align-items:center;gap:2px}
+.spl-edition-mark{width:15px;height:15px;flex:none;color:#a59c9c}
+.spl-edition-mark.spl-paw{width:14px;height:14px;transform:rotate(12deg)}
+.spl-loading{display:flex;flex-direction:column;align-items:center;gap:11px;width:62%;margin-top:32px}
+.spl-labels{position:relative;height:1.5em;width:100%;display:grid;place-items:center;font-size:clamp(14px,4vw,16px);font-weight:700;letter-spacing:.04em;color:var(--splash-ink);white-space:nowrap}
+.spl-label{grid-area:1/1;opacity:0}
+/* 位移、朝向、脸部挤压、耳朵回弹各自独立，眼睛始终跟着脸。 */
+.spl-cat{position:absolute;width:min(44%,32vh);aspect-ratio:120/112;--dx:1;--dy:1;--angle:-20deg;pointer-events:none;z-index:1}
+.spl-cat .spl-flip{width:100%;height:100%;transform:translate(110%,110%);will-change:transform}
+.spl-cat svg{width:100%;height:100%;display:block;overflow:visible;transform:rotate(var(--angle));transform-origin:50% 62.5%}
+.spl-cat.spl-tl svg,.spl-cat.spl-tr svg{transform-origin:50% 50%}
+.spl-cat .spl-jelly{transform-box:view-box;transform-origin:60px 86px}
+.spl-cat .spl-ear{transform-box:view-box}
+.spl-cat .spl-ear-left{transform-origin:28px 53px;--fold:-1}
+.spl-cat .spl-ear-right{transform-origin:92px 53px;--fold:1}
+.spl-cat .spl-eyes{transform-box:fill-box;transform-origin:center}
+.spl-cat.spl-br{right:-6%;bottom:-1%;--dx:1;--dy:1;--angle:-20deg;}
+.spl-cat.spl-bl{left:-6%;bottom:-1%;--dx:-1;--dy:1;--angle:20deg;}
+.spl-cat.spl-tl{left:-6%;top:-1%;--dx:-1;--dy:-1;--angle:160deg;}
+.spl-cat.spl-tr{right:-6%;top:-1%;--dx:1;--dy:-1;--angle:200deg;}
+.spl-cat .spl-flip{transform:translate(calc(var(--dx)*110%),calc(var(--dy)*110%))}
+/* 2.08 秒一次探头：约半秒探入，轻轻回弹，留出安静对视，再缩回。 */
+@keyframes spl-peek{
+0%{transform:translate(calc(var(--dx)*110%),calc(var(--dy)*110%))}
+28%{transform:translate(calc(var(--dx)*-2%),calc(var(--dy)*-2%))}
+40%{transform:translate(calc(var(--dx)*.6%),calc(var(--dy)*.6%))}
+50%,82%{transform:translate(0,0)}
+87%{transform:translate(calc(var(--dx)*-1%),calc(var(--dy)*-1%))}
+100%{transform:translate(calc(var(--dx)*110%),calc(var(--dy)*110%))}}
+@keyframes spl-jelly{
+0%,14%{transform:scale(.92,1.085)}
+29%{transform:scale(1.13,.89)}
+44%{transform:scale(.955,1.055)}
+58%{transform:scale(1.015,.987)}
+69%,82%{transform:scale(1,1)}
+88%{transform:scale(1.025,.98)}
+100%{transform:scale(.94,1.06)}}
+/* 耳朵只做一次主回弹和一点余晃，停留时不反复抖。 */
+@keyframes spl-ear-left{
+0%,15%{transform:rotate(calc(var(--fold)*-5deg)) scaleY(.97)}
+30%{transform:rotate(calc(var(--fold)*-12deg)) skewX(5deg) scaleY(.91)}
+44%{transform:rotate(calc(var(--fold)*8deg)) skewX(-3deg) scaleY(1.04)}
+57%{transform:rotate(calc(var(--fold)*-2deg)) scaleY(.99)}
+66%,85%{transform:none}
+100%{transform:rotate(calc(var(--fold)*-9deg)) scaleY(.95)}}
+@keyframes spl-ear-right{
+0%,18%{transform:rotate(calc(var(--fold)*-4deg)) scaleY(.98)}
+33%{transform:rotate(calc(var(--fold)*-10deg)) skewX(-4deg) scaleY(.93)}
+47%{transform:rotate(calc(var(--fold)*6deg)) skewX(2deg) scaleY(1.03)}
+60%{transform:rotate(calc(var(--fold)*-1.5deg)) scaleY(.99)}
+69%,86%{transform:none}
+100%{transform:rotate(calc(var(--fold)*-7deg)) scaleY(.96)}}
+@keyframes spl-gaze{
+0%,39%{transform:translate(0,0) scaleY(1)}
+48%,57%{transform:translate(var(--lx,0px),var(--ly,0px)) scaleY(1)}
+61%{transform:translate(var(--lx,0px),var(--ly,0px)) scaleY(.1)}
+66%{transform:translate(var(--lx,0px),var(--ly,0px)) scaleY(1)}
+75%,84%{transform:translate(var(--mx,0px),var(--my,0px)) scaleY(1)}
+94%,100%{transform:translate(0,0) scaleY(1)}}
+.spl-cat .spl-flip{--motion:spl-peek}
+.spl-cat .spl-jelly{--motion:spl-jelly}
+.spl-cat .spl-ear-left{--motion:spl-ear-left}
+.spl-cat .spl-ear-right{--motion:spl-ear-right}
+.spl-cat .spl-eyes{--motion:spl-gaze}
+/* 礼花在屏幕内、猫脸和名称后方；只在完成时散开一小阵。 */
+.spl-confetti{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.spl-confetti-piece{position:absolute;width:4px;height:11px;border-radius:1px;opacity:0;background:var(--paper-color);transform:translate(0,0)}
+.spl-confetti-piece:nth-child(5n){width:5px;height:5px;border-radius:50%}
+.spl-confetti-piece:nth-child(5n + 2){width:3px;height:18px}
+.spl-confetti-piece:nth-child(5n + 3){width:5px;height:8px}
+.spl-bar{width:100%;height:clamp(13px,3.8vw,16px);border-radius:999px;background:var(--splash-track);overflow:hidden}
+.spl-fill{width:100%;height:100%;border-radius:999px;background:var(--splash-ink);transform-origin:left center;transform:scaleX(0);will-change:transform}
+
+
+
+@media (max-height:600px){
+  .spl-app-icon{width:52px;height:52px;margin-bottom:12px;border-radius:16px}
+  .spl-app-icon svg{width:45px;height:43px}
+  .spl-loading{margin-top:23px}
+  .spl-cat{width:min(39%,27vh)}
+}
+@media (max-height:450px){
+  .spl-app-icon{width:39px;height:39px;margin-bottom:7px;border-radius:12px}
+  .spl-app-icon svg{width:34px;height:33px;transform:translateY(4px)}
+  .spl-app-name{font-size:19px}
+  .spl-edition{margin-top:3px;font-size:11px}
+  .spl-loading{margin-top:14px;gap:7px}
+  .spl-labels{font-size:13px}
+  .spl-stage::before{top:calc(10px + var(--splash-safe-top))}
+  .spl-stage::after{bottom:calc(8px + var(--splash-safe-bottom))}
+}
+
+.spl-label{opacity:1}
+.spl-waiting .spl-fill{animation:spl-wait-fill 3s linear forwards}
+@keyframes spl-wait-fill{0%{transform:scaleX(0)}35%{transform:scaleX(.35)}70%{transform:scaleX(.6)}100%{transform:scaleX(.75)}}
+.spl-welcoming .spl-fill{animation:spl-complete-fill .22s ease-out forwards}
+.spl-exiting .spl-fill{animation:none;transform:scaleX(1)}
+.spl-exiting .spl-cat :is(.spl-jelly,.spl-ear,.spl-eyes){animation:none;transform:var(--exit-transform,none)}
+.spl-exiting .spl-cat .spl-flip{animation:none;transform:var(--exit-transform,translate(calc(var(--dx)*110%),calc(var(--dy)*110%)))}
+@keyframes spl-complete-fill{from{transform:var(--from-progress,scaleX(.75))}to{transform:scaleX(1)}}
+.spl-cat.spl-is-peeking :is(.spl-flip,.spl-jelly,.spl-ear,.spl-eyes){animation:var(--motion) 2.08s ease-in-out}
+.spl-welcoming .spl-cat :is(.spl-flip,.spl-jelly,.spl-ear,.spl-eyes){animation:var(--motion) 2.08s ease-in-out var(--greet-delay)}
+.spl-welcoming .spl-cat.spl-is-carried :is(.spl-flip,.spl-jelly,.spl-ear,.spl-eyes){animation-name:var(--carry-motion);animation-delay:0s}
+.spl-br{--greet-delay:0s}.spl-tl{--greet-delay:.04s}.spl-bl{--greet-delay:.08s}.spl-tr{--greet-delay:.12s}
+.spl-flip{--carry-motion:spl-peek-carry}.spl-jelly{--carry-motion:spl-jelly-carry}.spl-ear-left{--carry-motion:spl-ear-left-carry}.spl-ear-right{--carry-motion:spl-ear-right-carry}.spl-eyes{--carry-motion:spl-gaze-carry}
+.spl-welcoming .spl-confetti-piece{animation:var(--flight) var(--flight-duration) linear var(--burst-delay) both}
+.spl-exiting .spl-confetti-piece{animation:none;transform:var(--exit-transform,none);opacity:var(--exit-opacity,0)}
+.spl-exiting{pointer-events:none;animation:spl-exit var(--exit-duration,650ms) ease-out forwards}
+@keyframes spl-exit{from{opacity:1}to{opacity:0}}
+@media(prefers-reduced-motion:reduce){
+ .sully-splash .spl-cat,.sully-splash .spl-confetti{display:none}
+ .sully-splash .spl-cat *,.sully-splash .spl-confetti-piece{animation:none!important}
+ .spl-waiting .spl-fill{animation:none;transform:scaleX(.75)}
+ .spl-welcoming .spl-fill,.spl-exiting .spl-fill{animation:none;transform:scaleX(1)}
+}
+
+@keyframes spl-peek-carry{
+0%{transform:var(--carry-transform)}
+28%{transform:translate(calc(var(--dx)*-2%),calc(var(--dy)*-2%))}
+40%{transform:translate(calc(var(--dx)*.6%),calc(var(--dy)*.6%))}
+50%,82%{transform:translate(0,0)}
+87%{transform:translate(calc(var(--dx)*-1%),calc(var(--dy)*-1%))}
+100%{transform:translate(calc(var(--dx)*110%),calc(var(--dy)*110%))}}
+
+@keyframes spl-jelly-carry{
+0%{transform:var(--carry-transform)}14%{transform:scale(.92,1.085)}
+29%{transform:scale(1.13,.89)}
+44%{transform:scale(.955,1.055)}
+58%{transform:scale(1.015,.987)}
+69%,82%{transform:scale(1,1)}
+88%{transform:scale(1.025,.98)}
+100%{transform:scale(.94,1.06)}}
+
+@keyframes spl-ear-left-carry{
+0%{transform:var(--carry-transform)}15%{transform:rotate(calc(var(--fold)*-5deg)) scaleY(.97)}
+30%{transform:rotate(calc(var(--fold)*-12deg)) skewX(5deg) scaleY(.91)}
+44%{transform:rotate(calc(var(--fold)*8deg)) skewX(-3deg) scaleY(1.04)}
+57%{transform:rotate(calc(var(--fold)*-2deg)) scaleY(.99)}
+66%,85%{transform:none}
+100%{transform:rotate(calc(var(--fold)*-9deg)) scaleY(.95)}}
+
+@keyframes spl-ear-right-carry{
+0%{transform:var(--carry-transform)}18%{transform:rotate(calc(var(--fold)*-4deg)) scaleY(.98)}
+33%{transform:rotate(calc(var(--fold)*-10deg)) skewX(-4deg) scaleY(.93)}
+47%{transform:rotate(calc(var(--fold)*6deg)) skewX(2deg) scaleY(1.03)}
+60%{transform:rotate(calc(var(--fold)*-1.5deg)) scaleY(.99)}
+69%,86%{transform:none}
+100%{transform:rotate(calc(var(--fold)*-7deg)) scaleY(.96)}}
+
+@keyframes spl-gaze-carry{
+0%{transform:var(--carry-transform)}39%{transform:translate(0,0) scaleY(1)}
+48%,57%{transform:translate(var(--lx,0px),var(--ly,0px)) scaleY(1)}
+61%{transform:translate(var(--lx,0px),var(--ly,0px)) scaleY(.1)}
+66%{transform:translate(var(--lx,0px),var(--ly,0px)) scaleY(1)}
+75%,84%{transform:translate(var(--mx,0px),var(--my,0px)) scaleY(1)}
+94%,100%{transform:translate(0,0) scaleY(1)}}

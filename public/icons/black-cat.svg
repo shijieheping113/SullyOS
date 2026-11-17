@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" fill="#e5e5e2"/><g transform="translate(256 256) scale(3.4) translate(-60 -59.95833492279053)">
+  <g className="spl-jelly">
+
+    <g className="spl-ear spl-ear-left">
+      <path d='M10 67 Q10 34 16 12 Q18 5 24 10 L57 38 L56 69 Z' fill='#4a4a4a'/>
+      <path d='M22 18 Q20 28 19 37 L39 33 Z' fill='#fff'/>
+    </g>
+    <g className="spl-ear spl-ear-right">
+      <path d='M110 67 Q110 34 104 12 Q102 5 96 10 L63 38 L64 69 Z' fill='#4a4a4a'/>
+      <path d='M98 18 Q100 28 101 37 L81 33 Z' fill='#fff'/>
+    </g>
+    <path d='M3 76 C3 46 30 28 60 28 C90 28 117 46 117 76 C117 100 92 112 60 112 C28 112 3 100 3 76 Z' fill='#4a4a4a'/>
+    <g className="spl-eyes">
+      <rect x='35' y='58' width='11' height='24' rx='5.5' fill='#fff'/>
+      <rect x='74' y='58' width='11' height='24' rx='5.5' fill='#fff'/>
+    </g>
+  </g>
+</g></svg>

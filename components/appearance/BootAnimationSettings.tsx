@@ -12,6 +12,7 @@ export default function BootAnimationSettings({theme,updateTheme}: {
       {([
         {id:'classic',name:'原版',description:'壁纸柔光 · 文字浮现'},
         {id:'jellyfish',name:'水母',description:'紫色星光 · 小水母'},
+        {id:'black-cat',name:'黑球猫猫',description:'四角探头 · 礼花欢迎'},
       ] as const).map(option => <button key={option.id} type="button"
         aria-pressed={(theme.bootAnimationStyle || 'jellyfish') === option.id}
         onClick={()=>updateTheme({bootAnimationStyle:option.id})}

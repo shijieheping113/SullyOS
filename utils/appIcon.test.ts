@@ -58,8 +58,8 @@ import { injectPwaIcon, clearPwaIcon, initPwaIcon, PWA_ICON_APP_ID, PWA_CLASSIC_
 
 const BASE = 'http://localhost:3000';
 const ORIGINAL_MANIFEST_HREF = `${BASE}/manifest.webmanifest`;
-const ORIGINAL_TOUCH_ICON_HREF = './icons/apple-touch-icon.png';
-const ORIGINAL_FAVICON_HREF = './icons/icon-192.png';
+const ORIGINAL_TOUCH_ICON_HREF = './icons/black-cat-180.png';
+const ORIGINAL_FAVICON_HREF = './icons/black-cat-192.png';
 
 /** 复刻 index.html 里真实的三行 link（含那个写死的 apple-touch-icon）。 */
 function setupDOM() {
@@ -153,7 +153,7 @@ describe('只能有一个 apple-touch-icon（iOS 会挑排在前面那个）', (
   it('改的是原有 link 的 href，不是 append 新的', async () => {
     await injectPwaIcon('blobref:test');
 
-    // 唯一那个 link 的 href 已经是新图标——旧的 ./icons/apple-touch-icon.png 不存在了
+    // 唯一那个 link 的 href 已经是自定义图标，原默认猫猫地址不再生效。
     expect(appleIconHrefs()).toEqual([PNG_DATA_URL]);
     expect(appleIconHrefs()).not.toContain(ORIGINAL_TOUCH_ICON_HREF);
   });

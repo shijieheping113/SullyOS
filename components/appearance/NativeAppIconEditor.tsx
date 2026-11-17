@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { PWA_DEFAULT_ICON_URL, PWA_CLASSIC_ICON_URL } from '../../utils/appIcon';
+import { PWA_CLASSIC_ICON_URL } from '../../utils/appIcon';
 import { getNativeAppIcon, setNativeAppIcon, type NativeAppIcon } from '../../utils/nativeAppIcon';
 
 /** APK choices reflect PackageManager, not the PWA field imported from backups. */
@@ -47,7 +47,7 @@ export default function NativeAppIconEditor() {
     return <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 space-y-4">
         <h3 className="text-sm font-medium text-slate-700">Android 桌面图标</h3>
         <div className="grid grid-cols-2 gap-3" role="group" aria-label="Android 桌面图标">
-            {([{id:'jellyfish', name:'水母', image:PWA_DEFAULT_ICON_URL}, {id:'classic', name:'经典', image:PWA_CLASSIC_ICON_URL}] as const).map(option =>
+            {([{id:'jellyfish', name:'水母', image:import.meta.env.BASE_URL + 'icons/jellyfish-512.png?v=38b1adde1d'}, {id:'classic', name:'经典', image:PWA_CLASSIC_ICON_URL}] as const).map(option =>
                 <button key={option.id} type="button" disabled={busy || !ready} aria-pressed={icon === option.id}
                     onClick={() => void choose(option.id)}
                     className={`flex flex-col items-center gap-2 p-3 rounded-2xl border transition-colors disabled:opacity-50 ${icon === option.id ? 'border-primary bg-primary/5' : 'border-slate-200'}`}>

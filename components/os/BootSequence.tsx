@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useState } from 'react';
 import type { OSTheme } from '../../types';
 import ClassicBootSequence from './ClassicBootSequence';
 import JellyfishBootSequence from './JellyfishBootSequence';
+import SplashScreen from './SplashScreen';
 import { isMidAutumnBoot } from '../../utils/seasonalBoot';
 import { isUserSpaceArrival } from '../../utils/userSpaceTransition';
 
@@ -39,5 +40,6 @@ export default function BootSequence({style, ...props}: Props) {
   // 一次开屏固定同一张图；下次进入重新判断，到期恢复用户选择的样式。
   const [midAutumn] = React.useState(() => isMidAutumnBoot());
   if (midAutumn) return <JellyfishBootSequence {...props} poster={`${import.meta.env.BASE_URL}boot/mid-autumn-2026.png`} />;
+  if (style === 'black-cat') return <SplashScreen {...props} />;
   return style === 'classic' ? <ClassicBootSequence {...props} /> : <JellyfishBootSequence {...props} />;
 }
