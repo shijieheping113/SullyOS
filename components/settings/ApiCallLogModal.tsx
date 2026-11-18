@@ -347,6 +347,9 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                         <p>
                             <span className="font-semibold">「已顶替」</span>：这条还没等到回复你就又发了一句，云端把两句合成一次回。这一轮不再单独等回复了。
                         </p>
+                        <p>
+                            <span className="font-semibold">「中止」</span>：本地主动停掉了还没跑完的请求（例如停止生成、取消重新生成）。有记录，但不是成功也不是失败。
+                        </p>
                     </div>
                 </div>
             )}
@@ -403,7 +406,9 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                 key={e.id}
                                 onClick={hasBreakdown ? () => { if (!expanded) trackEvent('展开单条输入构成'); setExpandedId(expanded ? null : e.id); } : undefined}
                                 className={`rounded-2xl border p-3 ${
-                                    e.ok ? 'bg-white/70 border-slate-200/60' : 'bg-rose-50/60 border-rose-200/60'
+                                    e.aborted || e.superseded || e.pending || e.ok
+                                        ? 'bg-white/70 border-slate-200/60'
+                                        : 'bg-rose-50/60 border-rose-200/60'
                                 } ${hasBreakdown ? 'cursor-pointer active:scale-[0.99] transition-transform' : ''}`}
                             >
                                 <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -421,14 +426,16 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                         )}
                                         <span
                                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                                e.superseded ? 'bg-slate-100 text-slate-500'
-                                                    : e.pending ? 'bg-amber-100 text-amber-600'
-                                                        : e.ok ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                                                e.aborted ? 'bg-slate-100 text-slate-500'
+                                                    : e.superseded ? 'bg-slate-100 text-slate-500'
+                                                        : e.pending ? 'bg-amber-100 text-amber-600'
+                                                            : e.ok ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
                                             }`}
                                         >
-                                            {e.superseded ? '已顶替'
-                                                : e.pending ? '生成中'
-                                                    : e.ok ? '成功' : `失败${e.status ? ` ${e.status}` : ''}`}
+                                            {e.aborted ? '中止'
+                                                : e.superseded ? '已顶替'
+                                                    : e.pending ? '生成中'
+                                                        : e.ok ? '成功' : `失败${e.status ? ` ${e.status}` : ''}`}
                                         </span>
                                     </div>
                                 </div>
@@ -613,11 +620,13 @@ const OneShotCapturePanel: React.FC<{
             ? fmt(capture.promptTokens)
             : capture.usageStatus === 'pending'
                 ? '等待响应…'
-                : capture.usageStatus === 'failed'
-                    ? '请求失败'
-                    : capture.usageStatus == null
-                        ? '旧记录未采集'
-                        : '接口未返回';
+                : capture.usageStatus === 'aborted'
+                    ? '请求已中止'
+                    : capture.usageStatus === 'failed'
+                        ? '请求失败'
+                        : capture.usageStatus == null
+                            ? '旧记录未采集'
+                            : '接口未返回';
     const fixedSections = useMemo(
         () => capture?.sections.filter(section => section.kind === 'system') || [],
         [capture],

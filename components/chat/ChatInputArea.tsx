@@ -78,6 +78,8 @@ interface ChatInputAreaProps {
     // Reroll Support
     onReroll: () => void;
     canReroll: boolean;
+    /** 私聊重 roll 进行中：同一颗按钮变成「取消重新生成」。 */
+    rerollCancelActive?: boolean;
     /** 拉黑玩法：当前是否拉黑中（决定加号面板「拉黑 / 重新接收」） */
     blockActive?: boolean;
     // 麦当劳 MCP
@@ -118,7 +120,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     previewActionsPage=0,
     onPanelAction, showChatGames = false, onImageSelect, onVideoFilePick, isSummarizing,
     categories = [], activeCategory = 'default',
-    onReroll, canReroll,
+    onReroll, canReroll, rerollCancelActive = false,
     blockActive = false,
     mcdConfigured = false,
     mcdActivated = false,
@@ -586,7 +588,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? (isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-400 border-emerald-100') : (isDiscordStyle ? 'bg-slate-800 text-slate-600 border-white/10' : 'bg-slate-50 text-slate-300 border-slate-100')}`}>
                 <ArrowsClockwise className="w-6 h-6" weight="bold" />
             </div>)}
-            <span className="text-xs font-bold">重新生成</span>
+            <span className="text-xs font-bold">{rerollCancelActive ? '取消重新生成' : '重新生成'}</span>
         </button>,
         <button key="schedule" onClick={() => onPanelAction('schedule')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
             {acnh ? <AcnhActionTile kind="schedule" /> : (

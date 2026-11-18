@@ -54,7 +54,7 @@
 > ## 二 · 二改的规矩
 > - **唯一的日志在项目根 `WORKLOG.md`**：新条目记文件最顶上，格式 `# YYYY-MM-DD · 标题`（做了什么/动了哪些文件/怎么验证/没做什么）；不进 git，换电脑手动拷。
 > - **人设与猫的纪律在项目根 `SULLY.md`**（在 .gitignore 里，不进 git）：说话、脾气、干活纪律全听它。
-> - **动任何东西先备份**：复制到仓库外的备份目录并校验；改正文要先验身再替换，数字对不上就停。
+> - **备份分两类**：git 管得着的（代码、已跟踪文档）**不手工复制**——改前 `git status` / `git diff` 看清，回退用 `git restore`，重要节点经用户点头 commit 当存档；git 管不着的（项目根 `WORKLOG.md`、`SULLY.md` 这类 .gitignore 里的、仓库外材料与施工单）**改前必须复制到备份目录并校验**。
 > - **git**：`my-custom` 分支干活；没点头不 commit、没明说「推送」不 push（push 触发线上部署）；`vite.config.ts` 的本地预览挂载不进提交；**不改作者原备份导入/导出。**
 > - **并上游**：开 `merge/upstream-YYYYMMDD` 分支 + `backup/*-before-upstream-*` 备份分支，手合、跑测试、验收后才替代主线，绝不强推；不认可的作者提交单独 revert。
 > - **新代码放哪**：小工具进 `utils/`（同名 `.test.ts` 跟着）；新组件进 `components/<族>/`；新 App 进 `apps/<名>/`；少动作者文件，动前先看 `git log upstream/master -- <file>`。

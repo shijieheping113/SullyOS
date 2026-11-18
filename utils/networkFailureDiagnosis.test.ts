@@ -42,6 +42,9 @@ describe('classifyFetchFailure', () => {
         const err = new Error('The operation was aborted.');
         err.name = 'AbortError';
         expect(classifyFetchFailure({ url: 'https://a.example.com/x', error: err })).toBe('aborted');
+        // 私聊停止生成 / 取消重新生成抛的是 Reply stopped
+        const replyStopped = new DOMException('Reply stopped', 'AbortError');
+        expect(classifyFetchFailure({ url: 'https://a.example.com/v1/chat/completions', error: replyStopped })).toBe('aborted');
     });
 
     // 线上实测踩到过：AbortSignal.timeout() 抛的是 TimeoutError("signal timed out")，

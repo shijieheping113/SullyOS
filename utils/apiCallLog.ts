@@ -61,6 +61,12 @@ export interface ApiCallLogEntry extends ApiCallMeta {
      */
     superseded?: boolean;
     /**
+     * 本地请求被主动撤掉（停止生成 / 取消重新生成等，AbortError）。
+     * 有记录；不算成功，也不算失败——跟「已顶替」同一类中间态。
+     * 旧记录没有这个字段。
+     */
+    aborted?: boolean;
+    /**
      * Token 数只覆盖这一轮里的**最后一次**模型调用，不是全部。
      *
      * 云端带工具时一轮对话会连着调好几次模型（查完东西再接着说），而回传的用量只有
@@ -173,7 +179,7 @@ export interface ApiRequestCapture {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
-    usageStatus?: 'pending' | 'reported' | 'not-reported' | 'failed';
+    usageStatus?: 'pending' | 'reported' | 'not-reported' | 'failed' | 'aborted';
     messageCount: number;
     binaryPlaceholders: number;
     sections: ApiRequestCaptureSection[];
@@ -1086,7 +1092,7 @@ export function formatApiRequestCaptureTxt(capture: ApiRequestCapture): string {
         `角色：${capture.meta.charName || '—'}`,
         `API：${capture.presetName || capture.baseUrl || '—'}`,
         `模型：${capture.model || '—'}`,
-        `输入 Token（模型响应自报）：${capture.promptTokens != null ? fmt(capture.promptTokens) : capture.usageStatus === 'pending' ? '等待响应' : capture.usageStatus === 'failed' ? '请求失败，无法取得' : '接口未返回 usage'}`,
+        `输入 Token（模型响应自报）：${capture.promptTokens != null ? fmt(capture.promptTokens) : capture.usageStatus === 'pending' ? '等待响应' : capture.usageStatus === 'aborted' ? '请求已中止，无法取得' : capture.usageStatus === 'failed' ? '请求失败，无法取得' : '接口未返回 usage'}`,
         `输出 Token：${capture.completionTokens != null ? fmt(capture.completionTokens) : '—'}`,
         `总 Token：${capture.totalTokens != null ? fmt(capture.totalTokens) : '—'}`,
         `请求体总字符（不是 Token）：${fmt(capture.totalChars)}`,
@@ -1138,6 +1144,8 @@ export function captureApiRequestOnce(input: { url: string; body?: unknown; meta
 export function updateApiRequestCaptureUsage(input: {
     captureId: string | null;
     ok: boolean;
+    /** 主动中止：不当成「请求失败」。 */
+    aborted?: boolean;
     response?: unknown;
     responseText?: string;
 }): void {
@@ -1155,7 +1163,13 @@ export function updateApiRequestCaptureUsage(input: {
             totalTokens: usage.total,
             ...(usage.cached !== undefined ? {cacheReadTokens:usage.cached} : {}),
             ...(usage.cacheWrite !== undefined ? {cacheWriteTokens:usage.cacheWrite} : {}),
-            usageStatus: !input.ok ? 'failed' : usage.prompt != null ? 'reported' : 'not-reported',
+            usageStatus: input.aborted
+                ? 'aborted'
+                : !input.ok
+                    ? 'failed'
+                    : usage.prompt != null
+                        ? 'reported'
+                        : 'not-reported',
         };
         const pending = captureSaveInFlight?.id === input.captureId
             ? captureSaveInFlight.promise.catch(() => {})
@@ -1177,6 +1191,8 @@ export function recordApiCall(input: {
     body?: unknown;
     status?: number;
     ok: boolean;
+    /** 主动中止：有记录，界面显示「中止」，不当失败。 */
+    aborted?: boolean;
     response?: unknown;
     /** 响应原始文本（JSON.parse 失败时传入，供 SSE 兜底解析 model / usage） */
     responseText?: string;
@@ -1210,6 +1226,7 @@ export function recordApiCall(input: {
             backendModel,
             status: input.status,
             ok: input.ok,
+            ...(input.aborted ? { aborted: true } : {}),
             promptTokens: usage.prompt,
             completionTokens: usage.completion,
             totalTokens: usage.total,

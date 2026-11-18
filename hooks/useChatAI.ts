@@ -64,6 +64,7 @@ import { buildClaudeProxyCompatibilityBody, shouldRetryClaudeProxyCompatibility 
 import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
 import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply';
 import { announceChatGen, CHAT_GEN_EVENTS } from '../utils/chatGenEvents';
+import { filterHeldMessages } from '../utils/chatRerollHold';
 import {
     advanceSARModuleAfterReply,
     buildAmsgSarModuleSnapshot,
@@ -662,11 +663,19 @@ export const useChatAI = ({
     const triggerAI = async (
         currentMsgs: Message[],
         overrideApiConfig?: { baseUrl: string; apiKey: string; model: string },
-        opts?: { skipEmotionInjection?: boolean; frozenGameNote?: string; suppressGameTags?: boolean },
+        opts?: {
+            skipEmotionInjection?: boolean;
+            frozenGameNote?: string;
+            suppressGameTags?: boolean;
+            /** 私聊重 roll 暂藏：库里还在的旧回复，绝不能进模型上下文。 */
+            excludeMessageIds?: number[];
+            /** 新回复成功落库后回调（失败 / 中断不调）；用来再真删暂藏。 */
+            onRerollSuccess?: () => void | Promise<void>;
+        },
     ) => {
-        if (isTyping || !char) return;
+        if (isTyping || !char) return false;
         const effectiveApi = resolveDialogueApi(apiConfig, char, overrideApiConfig);
-        if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return; }
+        if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return false; }
 
         // 重 roll（回溯重生）时不带入上一轮的情绪余波：清掉 buff 注入（buffInjection/activeBuffs）和
         // 意识流（innerState/evolvedNarrative），让主回复与情绪评估两边都从干净状态独立重新生成——
@@ -676,6 +685,8 @@ export const useChatAI = ({
         const skipEmotionInjection = !!opts?.skipEmotionInjection;
         const frozenGameNote = String(opts?.frozenGameNote || '').trim();
         const suppressGameTags = !!opts?.suppressGameTags;
+        const excludeMessageIds = opts?.excludeMessageIds?.length ? opts.excludeMessageIds : undefined;
+        const onRerollSuccess = opts?.onRerollSuccess;
         const charForGen: CharacterProfile = skipEmotionInjection
             ? { ...char, buffInjection: '', activeBuffs: [] }
             : char;
@@ -688,7 +699,7 @@ export const useChatAI = ({
             char, userProfile, groups, realtimeConfig, apiConfig, updateCharacter,
         });
         const releaseReply = acquireChatReply(char.id);
-        if (!releaseReply) return;
+        if (!releaseReply) return false;
         const replyRun = createReplyRun(char.id);
         amsg2Session.signal = replyRun.signal;
         const replyStep = <T>(operation: () => Promise<T>) => withReplyCancellation(replyRun, operation);
@@ -797,7 +808,8 @@ export const useChatAI = ({
                 updateCharacter(char.id, { contextUserStartMessageId: undefined });
             }
             const fullHistory = contextRange?.messages || null;
-            const contextMsgs = fullHistory || currentMsgs;
+            // 私聊重 roll 先藏后删：库里旧回复还在，这里必须剔除，否则会原样进模型。
+            const contextMsgs = filterHeldMessages(fullHistory || currentMsgs, null, excludeMessageIds);
             // 离开后消息（云端）：对方刚开过口，把那条任务往后推。不等它，失败只影响这一条。
             const awayLastUserAt = getLastRealUserMessageAt(contextMsgs);
             if (char.awayMessage?.enabled && awayLastUserAt != null) {
@@ -2247,6 +2259,15 @@ export const useChatAI = ({
             setStreamingBubbles([]);
             setStreamingThinking('');
 
+            // 私聊重 roll：新回复已落库，再真删暂藏的旧回复（失败 / abort 不会走到这里）。
+            if (onRerollSuccess) {
+                try {
+                    await onRerollSuccess();
+                } catch (error) {
+                    console.error('[chat-reroll] 成功后清理暂藏失败', error);
+                }
+            }
+
             // 到这里说明正文已成功落库。失败 / 中断不会经过；重掷是替换旧回合，不重复扣寿命。
             if (!skipEmotionInjection) {
                 if (sarModulePlan.character) {
@@ -2406,6 +2427,7 @@ export const useChatAI = ({
             // 意识流进化现在由副 API 的情绪评估同轮产出（innerState 字段），
             // 不再需要独立的后台 API 调用，也不再分散主 API 注意力。
         }
+        return true;
     };
 
 

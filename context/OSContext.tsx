@@ -1462,12 +1462,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           } catch (err: any) {
               const requestSignal = (sendArgs[1] as RequestInit | undefined)?.signal || (sendArgs[0] instanceof Request ? sendArgs[0].signal : undefined);
               if (isHomeAssetDisposal(err, requestSignal, urlStr)) throw err;
-              // Network Failure
+              // TimeoutError 会先被判成 timeout，不会误进「主动中止」。
+              const failureKind = classifyFetchFailure({ url: urlStr, error: err });
+              const aborted = failureKind === 'aborted';
+              // Network Failure / 主动中止：chat/completions 仍记 API 调用；中止标 aborted，不当失败。
               if (urlStr.includes('/chat/completions')) {
-                  updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok: false });
-                  recordApiCall({ requestId: (config as any)?.__sullyApiCallId, url: urlStr, body: (sendArgs[1] as any)?.body, ok: false, meta: (config as any)?.__sullyMeta || ambientMetaAtStart, durationMs: Date.now() - fetchStartedAt });
+                  updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok: false, aborted });
+                  recordApiCall({
+                      requestId: (config as any)?.__sullyApiCallId,
+                      url: urlStr,
+                      body: (sendArgs[1] as any)?.body,
+                      ok: false,
+                      aborted,
+                      meta: (config as any)?.__sullyMeta || ambientMetaAtStart,
+                      durationMs: Date.now() - fetchStartedAt,
+                  });
               }
-              if (!isAnalyticsRequestUrl(urlStr)) {
+              // 主动取消（停止生成 / 取消重新生成）不写网络失败账，避免误报红点。
+              if (!aborted && !isAnalyticsRequestUrl(urlStr)) {
                   // 光秃秃一句 "Failed to fetch" + 一个 URL 排查不了任何东西（社区里这条卡过好几个人）。
                   // 这里把浏览器肯在 JS 侧交出来的旁证一次性补齐：方法、耗时、在线状态、是否跨域、
                   // Resource Timing 里那条记录，再给一句初判；随后异步做一次 no-cors 连通性复检，
@@ -1495,7 +1507,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }, ...prev.slice(0, 49)]);
 
                   // 复检走 originalFetch，否则它自己失败会再写一条日志滚雪球。
-                  if (shouldProbeReachability(classifyFetchFailure({ url: urlStr, error: err }))) {
+                  if (shouldProbeReachability(failureKind)) {
                       void (async () => {
                           const verdict = await probeOriginReachability(urlStr, originalFetch);
                           const line = describeReachabilityProbe(verdict, parseTargetUrl(urlStr).host, method);

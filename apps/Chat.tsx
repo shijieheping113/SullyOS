@@ -17,6 +17,7 @@ import { saveBlockRecord, saveBlockNotice, getBlockStateForChar, restoreBlockDel
 import { isVisibleChatMessage } from '../utils/chatMessageVisibility';
 import { expandBatteryDeleteIds } from '../utils/batteryReminder';
 import { canRerollGameTurn, rerollTrailingAiGames } from '../utils/chatGames/reroll';
+import { buildHoldFromDeleteIds, filterHeldMessages, type ChatRerollHold } from '../utils/chatRerollHold';
 import { clearChatGameOpened, expandChatGameDeleteIds, findAiGamesToResealAfterDelete, pairedDuelCards, readChatGame } from '../utils/chatGames/text';
 import { purgeOrphanBatteryHints } from '../utils/batteryReminderRun';
 import { needsVoiceBackfill, computeBackfillContent, computeBackfillTaggedContent, hasVoiceShell, voiceShellInnerText, wrapVoiceShell } from '../utils/voiceContentBackfill';
@@ -289,6 +290,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         } catch { return 0; }
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
+    // 私聊「重新生成」先藏后删：生成中 / 失败未取消时，旧回复仍在本机库，屏幕先藏起。
+    const [pendingReroll, setPendingReroll] = useState<ChatRerollHold | null>(null);
+    const pendingRerollRef = useRef<ChatRerollHold | null>(null);
+    const setPendingRerollBoth = useCallback((hold: ChatRerollHold | null) => {
+        pendingRerollRef.current = hold;
+        setPendingReroll(hold);
+    }, []);
     // 即时对话：这一轮已经交给云端、还没等到回复。它跟 isTyping 不一样——生成不在这台
     // 设备上跑，所以要扛得住关页面重开（记录落在 localStorage，见 amsgInstantChat）。
     const [instantChatPending, setInstantChatPending] = useState(false);
@@ -680,9 +688,14 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     // 切角色不卸载组件），迟到的 setMessages 会把旧角色的消息灌进当前会话视图。
     // 按消息 charId 丢弃不属于当前会话的回落——DB 已落库，且 OSContext 会因
     // chat-gen-reply-arrived bump lastMsgTimestamp，切回该角色时自然取回。
+    // 重 roll 暂藏期间：库里旧回复还在，写入前必须再藏一次，避免失败收尾/reload 刷回来。
     const setMessagesFromGen = useCallback((msgs: Message[]) => {
         if (msgs.some(m => m.charId && m.charId !== activeCharIdRef.current)) return;
-        setMessages(msgs);
+        const hold = pendingRerollRef.current;
+        const next = hold && hold.charId === activeCharIdRef.current
+            ? filterHeldMessages(msgs, hold)
+            : msgs;
+        setMessages(next);
     }, []);
 
     // 即时对话的「正在输入…」：受理 / 收到回复 / 超时判失败都会广播一次，界面跟着它亮灭。
@@ -1220,7 +1233,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         }
     }, [isTyping, instantChatPending, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const canReroll = !isTyping && canRerollGameTurn(messages);
+    const rerollCancelActive = !!(pendingReroll && char && pendingReroll.charId === char.id);
+    const canReroll = rerollCancelActive || (!isTyping && canRerollGameTurn(messages));
 
     // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---
     const handleTranslateToggle = useCallback((msgId: number) => {
@@ -1465,7 +1479,11 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             // 即说明该角色的单聊消息已全部在手，此时把总数钳到实际可展示的条数。
             const exhausted = recent.length < fetchLimit;
             const nextTotal = exhausted ? chatScopeMsgs.length : totalCount;
-            const nextMessages = sortChatMessages(chatScopeMsgs).slice(-requestedVisibleCount);
+            const sorted = sortChatMessages(chatScopeMsgs).slice(-requestedVisibleCount);
+            const hold = pendingRerollRef.current;
+            const nextMessages = hold && hold.charId === charIdAtStart
+                ? filterHeldMessages(sorted, hold)
+                : sorted;
             setTotalMsgCount(nextTotal);
             setMessages(nextMessages);
             chatRecentMessagesCache.set(charIdAtStart, { messages: nextMessages, totalMsgCount: nextTotal });
@@ -2702,21 +2720,44 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         triggerAI(messages);
     };
 
+    const cancelPendingReroll = async () => {
+        if (!char) return;
+        const hold = pendingRerollRef.current;
+        if (!hold || hold.charId !== char.id) return;
+        autoReply.cancel();
+        // 先停写：ReplyRun.settle 会清未展示的新落库泡；暂藏仍在，避免 settle 回写时旧泡闪一下再藏。
+        stopReplyRuns(char.id);
+        try {
+            await stopInstantChat(char.id);
+        } catch (error) {
+            console.warn('[Chat] reroll cancel: remote stop failed', error);
+        }
+        setPendingRerollBoth(null);
+        await reloadMessages(visibleCountRef.current);
+        addToast('已取消重新生成，原回复已复原', 'info');
+    };
+
     const handleReroll = async () => {
+        if (!char) return;
+        // 同一颗按钮：已有暂藏 = 取消并复原。
+        if (pendingRerollRef.current?.charId === char.id) {
+            await cancelPendingReroll();
+            return;
+        }
         if (isTyping || messages.length === 0) return;
         autoReply.cancel();
 
         if (!canRerollGameTurn(messages)) return;
 
         const outcome = await rerollTrailingAiGames(messages);
-        if (outcome.deleteIds.length) {
-            await DB.deleteMessages(outcome.deleteIds);
-            discardVoiceForMessages(outcome.deleteIds);
-        }
-        // 重 roll 拿掉的是末尾这串角色消息，游戏卡也在里面。正常路径下这轮生成结束会再打脏一次，
-        // 这里先打是兜住「触发失败没走到生成收尾」的路径。用户的消息不动。
-        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        const removed = new Set(outcome.deleteIds);
+        if (!outcome.deleteIds.length) return;
+
+        // 先藏后删：完整快照进暂藏，本机库先不动；屏幕与发给模型的上下文都剔除这些 id。
+        const hold = buildHoldFromDeleteIds(messages, outcome.deleteIds, char.id);
+        if (!hold.heldIds.length) return;
+        setPendingRerollBoth(hold);
+
+        const removed = new Set(hold.heldIds);
         const updated = new Map(outcome.updates.map(item => [item.id, item]));
         const newHistory = messages.filter(message => !removed.has(message.id)).map(message => {
             const next = updated.get(message.id);
@@ -2727,11 +2768,32 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         addToast('回溯对话中...', 'info');
         trackEvent('重新生成回复');
 
+        const heldIds = hold.heldIds.slice();
+        const heldCharId = char.id;
         // 重 roll：不注入上一轮残留的情绪 buff 与意识流（innerState），两边独立重新生成。
-        // 游戏卡和普通角色消息一样拿掉，新回复里如果再写记号，就按原来的落卡再摇一次。
-        triggerAI(newHistory, undefined, {
+        // 游戏卡和普通角色消息一样先藏起，新回复里如果再写记号，就按原来的落卡再摇一次。
+        // 真删挪到 onRerollSuccess：失败 / 取消时旧回复还能复原。
+        const started = await triggerAI(newHistory, undefined, {
             skipEmotionInjection: true,
+            excludeMessageIds: heldIds,
+            onRerollSuccess: async () => {
+                const current = pendingRerollRef.current;
+                if (!current || current.charId !== heldCharId) return;
+                if (current.heldIds.length !== heldIds.length || current.heldIds.some((id, i) => id !== heldIds[i])) return;
+                try {
+                    await DB.deleteMessages(heldIds);
+                    discardVoiceForMessages(heldIds);
+                    markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                } finally {
+                    setPendingRerollBoth(null);
+                }
+            },
         });
+        // 没真正开跑（没填 API / 占位被占用等）：撤回暂藏，旧回复回屏。
+        if (!started) {
+            setPendingRerollBoth(null);
+            setMessages(messages);
+        }
     };
 
     const handleVideoFilePick = (file: File) => {
@@ -6316,6 +6378,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     activeCategory={activeCategory}
                     onReroll={handleReroll}
                     canReroll={canReroll}
+                    rerollCancelActive={rerollCancelActive}
                     blockActive={blockState.blocked}
                     mcdConfigured={mcdConfiguredFlag}
                     mcdActivated={mcdActivated}
