@@ -2,7 +2,7 @@
 
 用户超过设定的时间没说话，角色就来找用户。一次离开只找一次，用户开口后重新计时。
 
-入口：聊天「＋」→「离开后消息」（`components/chat/AwayMessageSettingsModal.tsx`）。按角色设开关和等待时长（30 分钟到 6 小时，默认 90 分钟），存在 `CharacterProfile.awayMessage` 上，导出角色卡时剥掉。
+入口：聊天「＋」→「离开后消息」（`components/chat/AwayMessageSettingsModal.tsx`）。按角色设开关和等待时长，保留 30 分钟到 6 小时的固定选项（默认 90 分钟），也可切换「自定义」，用小时/分钟两列滚轮选择 1 分钟到 24 小时；24 小时时分钟只能为 0。存在 `CharacterProfile.awayMessage` 上（`delayMinutes` 仍存总分钟，`delayMode` 记住固定/自定义选择），导出角色卡时剥掉。读取旧配置时，非预设时长自动显示自定义；非有限或非正数退回默认，正数取整并限制在 1–1440 分钟。纯等待时长与角色时区无关，不改变一次离开只找一次、真实开口后重新计时的规则。
 
 ## 两条路，按角色二选一
 

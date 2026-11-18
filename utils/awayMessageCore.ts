@@ -6,6 +6,7 @@ import type { CharacterProfile } from '../types';
 
 export const AWAY_DELAY_OPTIONS = [30, 60, 90, 120, 180, 240, 360] as const;
 export const DEFAULT_AWAY_DELAY_MINUTES = 90;
+export const MAX_AWAY_DELAY_MINUTES = 24 * 60;
 
 /** 本地版一次最多补几次（每次可以是好几个气泡）。 */
 export const MAX_AWAY_SEGMENTS = 3;
@@ -18,7 +19,9 @@ export const AWAY_RENEW_SLACK_MS = 10 * 60_000;
 
 export const resolveAwayDelayMinutes = (char: Pick<CharacterProfile, 'awayMessage'>): number => {
   const minutes = char.awayMessage?.delayMinutes;
-  return typeof minutes === 'number' && minutes > 0 ? minutes : DEFAULT_AWAY_DELAY_MINUTES;
+  return typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0
+    ? Math.min(MAX_AWAY_DELAY_MINUTES, Math.max(1, Math.round(minutes)))
+    : DEFAULT_AWAY_DELAY_MINUTES;
 };
 
 interface MessageLike {

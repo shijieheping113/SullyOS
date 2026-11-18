@@ -6,7 +6,14 @@ import {
   findPendingAwayUserAt,
   planAwaySlots,
   splitAwaySegments,
+  resolveAwayDelayMinutes,
 } from './awayMessageCore';
+
+it('自定义时长按整分钟限制在 1 分钟至 24 小时；坏配置回默认', () => {
+  for (const [input, expected] of [[1, 1], [125, 125], [1440, 1440], [1441, 1440], [0.1, 1], [12.6, 13], [0, 90], [-5, 90], [NaN, 90], [Infinity, 90]]) {
+    expect(resolveAwayDelayMinutes({ awayMessage: { enabled: true, delayMinutes: input } })).toBe(expected);
+  }
+});
 
 const MIN = 60_000;
 const NOW = 1_800_000_000_000;

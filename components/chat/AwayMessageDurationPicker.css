@@ -1,0 +1,47 @@
+.away-duration-picker {
+    position: relative;
+    display: flex;
+    padding: 10px 12px;
+    border-radius: 20px;
+    background: #f8fafc;
+    isolation: isolate;
+}
+.away-duration-selection {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    top: 82px;
+    height: 44px;
+    border-radius: 12px;
+    background: #ede9fe;
+    pointer-events: none;
+    z-index: -1;
+}
+.away-duration-column { width: 50%; min-width: 0; text-align: center; }
+.away-duration-unit { display: block; height: 28px; color: #64748b; font-size: 12px; line-height: 28px; }
+.away-duration-wheel {
+    height: 132px;
+    overflow-y: auto;
+    padding: 44px 0;
+    box-sizing: border-box;
+    scroll-snap-type: y mandatory;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(transparent, black 32%, black 68%, transparent);
+    mask-image: linear-gradient(transparent, black 32%, black 68%, transparent);
+}
+.away-duration-wheel::-webkit-scrollbar { display: none; }
+.away-duration-wheel:focus-visible { outline: 2px solid #8b5cf6; outline-offset: -2px; border-radius: 12px; }
+.away-duration-row {
+    height: 44px;
+    line-height: 44px;
+    scroll-snap-align: center;
+    color: #94a3b8;
+    font-size: 22px;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+    cursor: pointer;
+}
+.away-duration-row.is-selected { color: #6d28d9; font-size: 26px; font-weight: 700; }

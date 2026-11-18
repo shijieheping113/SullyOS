@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
 import { CharacterProfile } from '../../types';
 import { AWAY_DELAY_OPTIONS, resolveAwayDelayMinutes } from '../../utils/awayMessageCore';
 import { isAwayCloudRoute } from '../../utils/awayMessage';
+import AwayMessageDurationPicker from './AwayMessageDurationPicker';
 
 interface AwayMessageSettingsModalProps {
     isOpen: boolean;
@@ -12,23 +13,39 @@ interface AwayMessageSettingsModalProps {
 }
 
 const formatDelay = (minutes: number) => minutes < 60 ? `${minutes} 分钟` : `${minutes / 60} 小时`;
+const isCustomDelay = (char: CharacterProfile) => char.awayMessage?.delayMode === 'custom'
+    || !AWAY_DELAY_OPTIONS.some(minutes => minutes === resolveAwayDelayMinutes(char));
+const formatCustomDelay = (minutes: number) => {
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return `${hours ? `${hours} 小时` : ''}${hours && rest ? ' ' : ''}${rest ? `${rest} 分钟` : ''}`;
+};
 
 const AwayMessageSettingsModal: React.FC<AwayMessageSettingsModalProps> = ({ isOpen, onClose, char, onSave }) => {
     const [enabled, setEnabled] = useState(!!char.awayMessage?.enabled);
     const [delay, setDelay] = useState(resolveAwayDelayMinutes(char));
+    const [custom, setCustom] = useState(isCustomDelay(char));
+    const [customDelay, setCustomDelay] = useState(resolveAwayDelayMinutes(char));
     const [cloud, setCloud] = useState<boolean | null>(null);
+    const pickerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (isOpen && enabled && custom) pickerRef.current?.scrollIntoView?.({ block: 'nearest' });
+    }, [isOpen, enabled, custom, char]);
 
     useEffect(() => {
         if (!isOpen) return;
         setEnabled(!!char.awayMessage?.enabled);
         setDelay(resolveAwayDelayMinutes(char));
+        setCustom(isCustomDelay(char));
+        setCustomDelay(resolveAwayDelayMinutes(char));
         let cancelled = false;
         void isAwayCloudRoute(char).then(v => { if (!cancelled) setCloud(v); });
         return () => { cancelled = true; };
     }, [isOpen, char]);
 
     const handleSave = () => {
-        onSave({ enabled, delayMinutes: delay });
+        onSave({ enabled, delayMinutes: delay, delayMode: custom ? 'custom' : 'preset' });
         onClose();
     };
 
@@ -51,6 +68,9 @@ const AwayMessageSettingsModal: React.FC<AwayMessageSettingsModalProps> = ({ isO
                 <div className="flex items-center justify-between">
                     <span className="text-sm font-bold text-slate-700">启用离开后消息</span>
                     <button
+                        role="switch"
+                        aria-label="启用离开后消息"
+                        aria-checked={enabled}
                         onClick={() => setEnabled(!enabled)}
                         className={`w-12 h-7 rounded-full transition-colors relative ${enabled ? 'bg-violet-500' : 'bg-slate-200'}`}
                     >
@@ -66,8 +86,9 @@ const AwayMessageSettingsModal: React.FC<AwayMessageSettingsModalProps> = ({ isO
                                 {AWAY_DELAY_OPTIONS.map(minutes => (
                                     <button
                                         key={minutes}
-                                        onClick={() => setDelay(minutes)}
-                                        className={`py-2 px-1 rounded-xl text-xs font-bold transition-all ${delay === minutes
+                                        onClick={() => { setCustom(false); setDelay(minutes); }}
+                                        aria-pressed={!custom && delay === minutes}
+                                        className={`py-2 px-0.5 whitespace-nowrap rounded-xl text-[11px] font-bold transition-all ${!custom && delay === minutes
                                             ? 'bg-violet-500 text-white shadow-md'
                                             : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                                         }`}
@@ -75,7 +96,19 @@ const AwayMessageSettingsModal: React.FC<AwayMessageSettingsModalProps> = ({ isO
                                         {formatDelay(minutes)}
                                     </button>
                                 ))}
+                                <button
+                                    onClick={() => { setCustom(true); setDelay(customDelay); }}
+                                    aria-pressed={custom}
+                                    className={`py-2 px-0.5 whitespace-nowrap rounded-xl text-[11px] font-bold transition-all ${custom ? 'bg-violet-500 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                >自定义</button>
                             </div>
+                            {custom && (
+                                <div ref={pickerRef} className="mt-3 space-y-2">
+                                    <AwayMessageDurationPicker minutes={delay} onChange={minutes => { setDelay(minutes); setCustomDelay(minutes); }} />
+                                    <p className="text-center text-xs font-bold text-violet-600" aria-live="polite">{formatCustomDelay(delay)}后</p>
+                                    <p className="text-center text-[11px] text-slate-400">上下滑动选择 · 最短 1 分钟，最长 24 小时</p>
+                                </div>
+                            )}
                         </div>
 
                         <p className="pt-2 border-t border-slate-100 text-[11px] text-slate-400 leading-relaxed">
