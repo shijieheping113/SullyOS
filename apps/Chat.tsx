@@ -89,6 +89,7 @@ import {
     withEmojiBlock,
     withUserOnly,
 } from '../utils/emojiPermissions';
+import { loadEmojiCatalog } from '../utils/emojiCatalogSessionCache';
 import ChatGameMenu from '../components/chat/ChatGameMenu';
 import SullyAssistantSheet from '../components/chat/SullyAssistantSheet';
 import SullyAiRepairModal from '../components/chat/SullyAiRepairModal';
@@ -1246,9 +1247,9 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         });
     }, []);
 
-    const loadEmojiData = async () => {
-        await DB.initializeEmojiData();
-        const [es, cats] = await Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
+    /** 读表情目录。默认用同会话缓存；改过表情/分组时传 force 再进库。 */
+    const loadEmojiData = async (options?: { force?: boolean }) => {
+        const { emojis: es, categories: cats } = await loadEmojiCatalog(options);
         setEmojis(es);
         setCategories(cats);
         if (activeCategory !== 'default' && !cats.some(c => c.id === activeCategory)) {
@@ -3472,7 +3473,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         }
         const newCat = { id: `cat-${Date.now()}`, name: newCategoryName.trim() };
         await DB.saveEmojiCategory(newCat);
-        await loadEmojiData();
+        await loadEmojiData({ force: true });
         setActiveCategory(newCat.id);
         setModalType('none');
         setNewCategoryName('');
@@ -3505,7 +3506,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 }
             }
         }
-        await loadEmojiData();
+        await loadEmojiData({ force: true });
         markEmojiLibraryChanged();
         setModalType('none');
         setEmojiImportText('');
@@ -3517,7 +3518,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     /** 保存分组并刷新；repack 管权限改动后要重新打包云端表情清单，折叠不需要。 */
     const persistCategory = async (next: EmojiCategory, repack: boolean) => {
         await DB.saveEmojiCategory(next);
-        await loadEmojiData();
+        await loadEmojiData({ force: true });
         if (repack) markEmojiLibraryChanged();
     };
 
@@ -3546,7 +3547,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         const blocked = (target.blockedCharacterIds || []).includes(char.id);
         void (async () => {
             await DB.saveEmojiRecord(withEmojiBlock(target, char.id, !blocked));
-            await loadEmojiData();
+            await loadEmojiData({ force: true });
             markEmojiLibraryChanged();
             setModalType('none');
             setSelectedEmoji(null);
@@ -3563,7 +3564,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const handleDeleteCategoryFromManager = (categoryId: string) => {
         void (async () => {
             await DB.deleteEmojiCategory(categoryId);
-            await loadEmojiData();
+            await loadEmojiData({ force: true });
             markEmojiLibraryChanged();
             setActiveCategory('default');
             addToast('分类及包含表情已删除', 'success');
@@ -4326,7 +4327,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             console.error('Failed to delete emojis:', err);
             addToast('删除表情包失败', 'error');
         } finally {
-            await loadEmojiData();
+            await loadEmojiData({ force: true });
             // 放 finally：Promise.all 部分失败时也已经删掉了几个，云端那份照样过期了。
             markEmojiLibraryChanged();
             setModalType('none');
@@ -4342,7 +4343,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         try {
             await DB.renameEmoji(selectedEmoji.name, newName);
             addToast('表情包名称已修改', 'success');
-            await loadEmojiData();
+            await loadEmojiData({ force: true });
             markEmojiLibraryChanged();
             setModalType('none');
             setSelectedEmoji(null);
