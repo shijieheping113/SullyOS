@@ -21,7 +21,7 @@ function render(id: AppID, options: { locked?: boolean; disabled?: boolean; app?
     desktop: React.createElement('button', { 'data-home': '' }, 'home'),
     renderApp: options.app || page,
     renderBackdrop: (app, settled) => React.createElement('div', { 'data-backing': app, 'data-settled': String(settled) }),
-    loading: React.createElement('div', { 'data-loading': '' }, 'loading'),
+    renderLoading: ({ pending }: { pending: boolean }) => pending ? React.createElement('div', { 'data-loading': '' }, 'loading') : null,
   })));
 }
 const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
@@ -155,7 +155,7 @@ describe('App window navigation lifetime', () => {
     expect(container.querySelector('[data-home]')).toBe(home);
   });
 
-  it('waits for the lazy page, and a canceled download cannot reopen its route', async () => {
+  it('opens the loading window immediately, and a canceled download cannot reopen its route', async () => {
     let resolve!: (value: { default: React.FC }) => void;
     const Slow = lazy(() => new Promise<{ default: React.FC }>(done => { resolve = done; }));
     const slowPage = (id: AppID) => id === AppID.Character ? React.createElement(Slow) : page(id);
@@ -163,7 +163,8 @@ describe('App window navigation lifetime', () => {
     render(AppID.Character, { app: slowPage });
     advance(1000);
     expect(container.querySelector('[data-loading]')).not.toBeNull();
-    expect(surface().style.visibility).toBe('hidden');
+    expect(surface().style.visibility).toBe('visible');
+    expect(surface().dataset.appMotion).toBe('settled');
     render(AppID.Settings, { app: slowPage });
     advance(700);
     await act(async () => { resolve({ default: () => page(AppID.Character) }); await Promise.resolve(); });
@@ -172,18 +173,61 @@ describe('App window navigation lifetime', () => {
     expect(container.querySelector('[data-loading]')).toBeNull();
   });
 
-  it('starts its entrance after the lazy page becomes ready', async () => {
+  it('finishes its entrance while loading and does not replay it when the lazy page becomes ready', async () => {
     let resolve!: (value: { default: React.FC }) => void;
     const Slow = lazy(() => new Promise<{ default: React.FC }>(done => { resolve = done; }));
     render(AppID.Launcher);
     render(AppID.Character, { app: () => React.createElement(Slow) });
-    advance(1200);
-    await act(async () => { resolve({ default: () => page(AppID.Character) }); await Promise.resolve(); });
-    expect(surface().style.opacity).toBe('0');
     advance(16);
     expect(surface().style.transition).toContain('560ms');
-    advance(600);
+    expect(surface().style.opacity).toBe('1');
+    advance(1200);
+    expect(surface().dataset.appMotion).toBe('settled');
+    expect(backing().dataset.settled).toBe('false');
+    await act(async () => { resolve({ default: () => page(AppID.Character) }); await Promise.resolve(); });
+    expect(surface().style.transition).toBe('none');
     expect(backing().dataset.settled).toBe('true');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('closes a still-pending window along the normal return path', async () => {
+    let resolve!: (value: { default: React.FC }) => void;
+    const Slow = lazy(() => new Promise<{ default: React.FC }>(done => { resolve = done; }));
+    render(AppID.Launcher);
+    render(AppID.Character, { app: () => React.createElement(Slow) });
+    advance(700);
+    render(AppID.Launcher);
+    expect(windows()).toHaveLength(1);
+    expect(windows()[0].getAttribute('aria-hidden')).toBe('true');
+    advance(16);
+    expect(surface().style.transition).toContain('440ms');
+    expect(surface().style.opacity).toBe('0');
+    advance(480);
+    await act(async () => { resolve({ default: () => page(AppID.Character) }); await Promise.resolve(); });
+    expect(windows()).toHaveLength(0);
+    expect(surface().style.visibility).toBe('hidden');
+  });
+
+  it('switches horizontally from a pending window and keeps only the newest request', async () => {
+    const resolves: Array<(value: { default: React.FC }) => void> = [];
+    const First = lazy(() => new Promise<{ default: React.FC }>(done => resolves.push(done)));
+    const Second = lazy(() => new Promise<{ default: React.FC }>(done => resolves.push(done)));
+    const app = (id: AppID) => id === AppID.Character ? React.createElement(First)
+      : id === AppID.Chat ? React.createElement(Second) : page(id);
+    render(AppID.Launcher);
+    render(AppID.Character, { app }); advance(50);
+    render(AppID.Chat, { app });
+    expect(windows()).toHaveLength(2);
+    expect(windows()[1].style.transform).toContain('18px');
+    advance(16);
+    expect(windows()[0].style.transform).toContain('-18px');
+    expect(container.querySelectorAll('[data-loading]')).toHaveLength(2);
+    render(AppID.Settings, { app });
+    expect(windows()).toHaveLength(2);
+    advance(700);
+    await act(async () => { resolves.forEach(resolve => resolve({ default: () => page(AppID.Character) })); await Promise.resolve(); });
+    expect(windows().map(node => node.dataset.appWindow)).toEqual([AppID.Settings]);
+    expect(container.querySelector('[data-loading]')).toBeNull();
   });
 
   it('uses 130ms opacity only in reduced motion, including dynamic preference changes', () => {

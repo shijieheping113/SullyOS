@@ -82,11 +82,11 @@ type Props = {
   desktop: React.ReactNode;
   renderApp: (id: AppID, active: boolean) => React.ReactNode;
   renderBackdrop: (id: AppID, settled: boolean) => React.ReactNode;
-  loading: React.ReactNode;
+  renderLoading: (state: { pending: boolean; active: boolean }) => React.ReactNode;
 };
 
 /** 只管理窗口寿命与合成层；导航、App 内返回和锁屏手势仍由原来的拥有者处理。 */
-export default function AppWindowHost({ activeApp, locked, disabled, desktop, renderApp, renderBackdrop, loading }: Props) {
+export default function AppWindowHost({ activeApp, locked, disabled, desktop, renderApp, renderBackdrop, renderLoading }: Props) {
   const reduced = useReducedMotion();
   const [pages, setPages] = useState<AppID[]>([]);
   const [busy, setBusy] = useState(false);
@@ -120,8 +120,9 @@ export default function AppWindowHost({ activeApp, locked, disabled, desktop, re
     const old = previous.current;
     previous.current = { id: activeApp, disabled, reduced };
     cancel();
-    const from = currentPages.current.find(id => id === old?.id && ready.current.has(id))
-      ?? currentPages.current.find(id => ready.current.has(id));
+    // 正在加载的窗口也已上屏，返回/切换必须从它继续，不能退回等待前的页面。
+    const from = currentPages.current.find(id => id === old?.id)
+      ?? currentPages.current[currentPages.current.length - 1];
     const kind = activeApp === AppID.Launcher ? 'close'
       : old?.id !== AppID.Launcher && from ? 'switch' : 'open';
     const instant = disabled || !old || old.disabled || old.reduced !== reduced;
@@ -146,7 +147,8 @@ export default function AppWindowHost({ activeApp, locked, disabled, desktop, re
     const windowNode = surface.current;
     const home = desktopMotion.current;
     if (!op || op.started || !windowNode || !home || locked) return;
-    if (op.to !== AppID.Launcher && (!pages.includes(op.to) || !ready.current.has(op.to))) return;
+    // 窗口先响应，Suspense 与内容准备在窗口内并行完成。
+    if (op.to !== AppID.Launcher && !pages.includes(op.to)) return;
     op.started = true;
     const duration = reduced ? APP_WINDOW_MOTION.reduced
       : op.kind === 'close' ? APP_WINDOW_MOTION.exit : APP_WINDOW_MOTION.enter;
@@ -269,10 +271,9 @@ export default function AppWindowHost({ activeApp, locked, disabled, desktop, re
         aria-hidden={id !== activeApp || locked}>
         <InactivePage active={id === activeApp && !locked}>
           <Suspense fallback={<Pending onPending={onPending(id)} />}><Ready onReady={onReady(id)}>{renderApp(id, id === activeApp && !locked)}</Ready></Suspense>
+          {renderLoading({ pending: !ready.current.has(id), active: id === activeApp && !locked })}
         </InactivePage>
       </div>)}
     </div>
-    {!locked && activeApp !== AppID.Launcher && !ready.current.has(activeApp) &&
-      <div className="absolute inset-0 z-[3]">{loading}</div>}
   </>;
 }

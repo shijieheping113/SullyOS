@@ -1,17 +1,63 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { setVisibleTimeout } from '../../utils/visibleTimeout';
 import { trackEvent } from '../../utils/analytics';
+import PigcatLoading from './PigcatLoading';
 
-// 代码模块久未就绪时提供恢复入口；短时等待不显示额外视觉过场。
-const AppLoadingFallback: React.FC<{ onReturn?: () => void }> = ({ onReturn }) => {
-  const [stalled, setStalled] = useState(false);
-  useEffect(() => setVisibleTimeout(() => {
-    setStalled(true);
-    // 保留历史事件名，但只计前台等待；切后台/锁屏时间不再算作加载卡死。
-    trackEvent('App 加载卡死超时');
-  }, 15_000), []);
-  if (stalled) {
-    return (
+export const APP_LOADING_TIMING = { reveal: 250, exit: 160, recovery: 15_000 } as const;
+
+type Props = { pending: boolean; active: boolean; onReturn?: () => void };
+
+// 背景立刻随窗口进入；只有确实需要等待时才显示猪咪，不给快速加载增加过场。
+const AppLoadingFallback: React.FC<Props> = ({ pending, active, onReturn }) => {
+  const [stage, setStage] = useState<'blank' | 'cat' | 'stalled'>('blank');
+  const [exiting, setExiting] = useState(false);
+  const shown = useRef(false);
+  const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
+
+  useEffect(() => {
+    const update = () => setHidden(document.visibilityState === 'hidden');
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (pending) {
+      shown.current = false;
+      setStage('blank');
+      setExiting(false);
+      return;
+    }
+    if (!shown.current) return;
+    setExiting(true);
+    const timer = window.setTimeout(() => {
+      setExiting(false);
+      setStage('blank');
+      shown.current = false;
+    }, APP_LOADING_TIMING.exit);
+    return () => window.clearTimeout(timer);
+  }, [pending]);
+
+  useEffect(() => {
+    if (!pending || !active) return;
+    const reveal = setVisibleTimeout(() => {
+      shown.current = true;
+      setStage('cat');
+    }, APP_LOADING_TIMING.reveal);
+    const recovery = setVisibleTimeout(() => {
+      shown.current = true;
+      setStage('stalled');
+      // 保留历史事件名，只统计前台等待，不新增埋点。
+      trackEvent('App 加载卡死超时');
+    }, APP_LOADING_TIMING.recovery);
+    return () => { reveal(); recovery(); };
+  }, [pending, active]);
+
+  if (!pending && !exiting && !shown.current) return null;
+  return <div className={`sully-app-loading${!pending ? ' sully-app-loading-exiting' : ''}${!pending || !active || hidden ? ' sully-app-loading-paused' : ''}`}
+    role={pending && active ? 'status' : undefined} aria-label={pending && active ? '正在加载' : undefined}
+    {...(!pending || !active ? { inert: '' } : {})}
+    aria-hidden={!pending || !active} style={{ pointerEvents: pending && active ? 'auto' : 'none' }}>
+    {stage === 'stalled' ? (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900/95 text-white p-6 text-center space-y-4" style={{ animation: 'appLoadIn 320ms ease-out both' }}>
         <style>{`@keyframes appLoadIn{from{opacity:0}to{opacity:1}}`}</style>
         <h2 className="text-base font-bold">加载有点慢…</h2>
@@ -42,9 +88,8 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void }> = ({ onReturn }) =
           )}
         </div>
       </div>
-    );
-  }
-  return null;
+    ) : stage === 'cat' ? <PigcatLoading /> : null}
+  </div>;
 };
 
 export default AppLoadingFallback;

@@ -945,7 +945,7 @@ const PhoneShell: React.FC = () => {
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppWindowHost activeApp={activeApp} locked={isLocked} disabled={isLocked || booting}
               renderBackdrop={renderShellBackdrop}
-              loading={<AppLoadingFallback key={activeApp} onReturn={closeApp} />}
+              renderLoading={({ pending, active }) => <AppLoadingFallback pending={pending} active={active} onReturn={closeApp} />}
               desktop={
                 <AppErrorBoundary onCloseApp={closeApp} resetKey="desktop">
                   <div ref={unlockDesktopRef}
