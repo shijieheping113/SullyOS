@@ -75,27 +75,27 @@ describe('单例（提示词拼装 / 气泡剥标签拿不到 apiConfig 时读�
 
 describe('两版提示词（用户原文，一字不改）', () => {
   it('自由版原文关键句都在', () => {
-    expect(FISH_DRAMA3_FREE_GUIDE).toContain('### 让它听起来像角色真的在说话');
+    expect(FISH_DRAMA3_FREE_GUIDE).toContain('### 语音台词与语气标注规范（乙女 Drama 听感）');
     expect(FISH_DRAMA3_FREE_GUIDE).toContain('括号内最多 24 个英文字符');
-    expect(FISH_DRAMA3_FREE_GUIDE).toContain('Drama3 会把换行当成停顿');
-    expect(FISH_DRAMA3_FREE_GUIDE).toContain('[a little lonely]');
+    expect(FISH_DRAMA3_FREE_GUIDE).toContain('一句一行，行数自由');
+    expect(FISH_DRAMA3_FREE_GUIDE).toContain('[teasing, smiling tone]');
   });
 
   it('死标注版原文关键句都在', () => {
-    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('### Drama3 专用语音演绎规范');
-    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('只能从以下词表中选择，方括号内英文原样使用');
-    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('标签原样使用，不自行翻译、改写、添加程度词或拼接新标签');
-    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('尽量不要换行');
+    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('### Drama 3 专用语音演绎规范（乙女向固定词表版）');
+    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('只能从以下固定词表中原样选择英文标签');
+    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('强制一句一行');
+    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('[teasing with a smile]');
   });
 
-  it('两版都是「不要频繁换行」，都不许出现旧提示词的「一句一行」', () => {
-    expect(FISH_DRAMA3_FREE_GUIDE).toContain('不要频繁换行');
-    expect(FISH_DRAMA3_FREE_GUIDE).not.toContain('一句一行');
-    expect(FISH_DRAMA3_FIXED_GUIDE).not.toContain('一句一行');
+  it('两版都要求一句一行，且自由版强调行数自由', () => {
+    expect(FISH_DRAMA3_FREE_GUIDE).toContain('一句一行');
+    expect(FISH_DRAMA3_FIXED_GUIDE).toContain('一句一行');
+    expect(FISH_DRAMA3_FREE_GUIDE).toContain('1～8 行');
   });
 
-  it('死标注版词表与代码里的 56 个标签完全对得上', () => {
-    expect(FISH_DRAMA3_FIXED_CUES.size).toBe(56);
+  it('死标注版词表与代码里的固定标签完全对得上', () => {
+    expect(FISH_DRAMA3_FIXED_CUES.size).toBe(53);
     for (const cue of FISH_DRAMA3_FIXED_CUES) {
       expect(FISH_DRAMA3_FIXED_GUIDE).toContain(`[${cue}]`);
     }
@@ -110,7 +110,7 @@ describe('两版提示词（用户原文，一字不改）', () => {
   });
 });
 
-describe('死标注版：56 个标签的归一', () => {
+describe('死标注版：固定标签的归一', () => {
   it('逐字命中一律原样返回', () => {
     for (const cue of FISH_DRAMA3_FIXED_CUES) {
       expect(normalizeDrama3Cue(cue)).toBe(cue);
@@ -119,26 +119,26 @@ describe('死标注版：56 个标签的归一', () => {
   });
 
   it('同义词归到最近的那个（模仿旧清洗的映射思路）', () => {
-    expect(normalizeDrama3Cue('laughs')).toBe('brief laugh');
+    expect(normalizeDrama3Cue('laughs')).toBe('gentle laugh');
     expect(normalizeDrama3Cue('sighs')).toBe('soft sigh');
-    expect(normalizeDrama3Cue('whispering')).toBe('quiet whisper');
+    expect(normalizeDrama3Cue('whispering')).toBe('gentle whisper');
     expect(normalizeDrama3Cue('clears throat')).toBe('clears throat softly');
     expect(normalizeDrama3Cue('coughs')).toBe('light cough');
   });
 
   it('包含匹配能兜住「标签外还写了别的字」的情况', () => {
-    expect(normalizeDrama3Cue('some happy voice')).toBe('slightly happy');
+    expect(normalizeDrama3Cue('some happy voice')).toBe('bright and cheerful');
     expect(normalizeDrama3Cue('she is slightly annoyed here')).toBe('slightly annoyed');
   });
 
   it('强度档位护栏：轻的不会被匹到重的，反之亦然', () => {
-    expect(normalizeDrama3Cue('slightly sad')).toBe('slightly sad');
-    expect(normalizeDrama3Cue('deeply sad but composed')).toBe('deeply sad but composed');
+    expect(normalizeDrama3Cue('softly disappointed')).toBe('softly disappointed');
+    expect(normalizeDrama3Cue('deeply sad, composed')).toBe('deeply sad, composed');
     expect(normalizeDrama3Cue('slightly surprised')).toBe('slightly surprised');
     expect(normalizeDrama3Cue('very surprised')).toBe('very surprised');
-    // 旧逻辑会把 quietly 匹到 loudly（意思反了），这里必须匹到轻声那一档
-    expect(normalizeDrama3Cue('crying quietly')).toBe('softly crying');
-    expect(normalizeDrama3Cue('crying intensely')).toBe('crying intensely');
+    // 轻声哭腔不能被匹到强硬档
+    expect(normalizeDrama3Cue('crying quietly')).toBe('quietly tearful');
+    expect(normalizeDrama3Cue('very excited now')).toBe('very excited');
   });
 
   it('归不了的返回空串（调用方据此整段丢掉）', () => {
@@ -187,20 +187,20 @@ describe('清洗：自由版', () => {
 
 describe('清洗：死标注版', () => {
   it('词表内的标签原样留着', () => {
-    expect(cleanTextForTtsFishDrama3('[slightly happy]你回来啦。', 'fixed'))
-      .toBe('[slightly happy]你回来啦。');
+    expect(cleanTextForTtsFishDrama3('[quietly delighted]你回来啦。', 'fixed'))
+      .toBe('[quietly delighted]你回来啦。');
   });
 
   it('词表外的方括号先归一再送，归不了的整段丢掉', () => {
-    expect(cleanTextForTtsFishDrama3('[laughs]哈哈', 'fixed')).toBe('[brief laugh]哈哈');
+    expect(cleanTextForTtsFishDrama3('[laughs]哈哈', 'fixed')).toBe('[gentle laugh]哈哈');
     expect(cleanTextForTtsFishDrama3('[完全不知道是什么]你好', 'fixed')).toBe('你好');
   });
 
   it('用户原文里的几个连续标签例子都能过', () => {
     expect(cleanTextForTtsFishDrama3('[clears throat softly][calm and serious]有件事。', 'fixed'))
       .toBe('[clears throat softly][calm and serious]有件事。');
-    expect(cleanTextForTtsFishDrama3('[deep breath][very angry but controlled]我现在很生气。', 'fixed'))
-      .toBe('[deep breath][very angry but controlled]我现在很生气。');
+    expect(cleanTextForTtsFishDrama3('[deep breath][angry, holding back]我现在很生气。', 'fixed'))
+      .toBe('[deep breath][angry, holding back]我现在很生气。');
   });
 });
 
@@ -237,7 +237,7 @@ describe('电话对号字表：drama-3 时不把批注当字', () => {
 
   it('drama-3 时逐句时间仍能对上三行台词', () => {
     setDrama3Mode('fixed');
-    const lines = ['[slightly happy]我没事。', '你先走吧。', '[soft sigh]我会等你。'];
+    const lines = ['[quietly delighted]我没事。', '你先走吧。', '[soft sigh]我会等你。'];
     const chars = '我没事你先走吧我会等你';
     let t = 0;
     const timeline = Array.from(chars).map((ch) => {
@@ -268,12 +268,12 @@ describe('旧模型行为未被改动（回归护栏）', () => {
     expect(cleanTextForTtsFish(long)).toBe(long);
   });
 
-  it('旧提示词一个字没动', () => {
-    expect(FISH_VOICE_ACTING_GUIDE).toContain('一句一行');
-    expect(FISH_VOICE_ACTING_GUIDE).toContain('尽量别用 `[breathy]`');
+  it('默认鱼声指南与 drama-3 两版不同', () => {
+    expect(FISH_VOICE_ACTING_GUIDE).toContain('少用省略号');
+    expect(FISH_VOICE_ACTING_GUIDE).toContain('禁止用 [long pause]');
     expect(FISH_VOICE_ACTING_GUIDE).not.toBe(FISH_DRAMA3_FREE_GUIDE);
     expect(FISH_VOICE_ACTING_GUIDE).not.toBe(FISH_DRAMA3_FIXED_GUIDE);
-  });
+  })
 
   it('旧清洗里「沿用旧写法」那套行为本身就是这里的第 1 条', () => {
     // drama-3 不再有「沿用旧写法」这个选项，但旧模型仍是这套清洗，测试保留作护栏。

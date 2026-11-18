@@ -46,9 +46,10 @@ describe('cleanTextForTtsFish', () => {
 });
 
 describe('FISH_VOICE_ACTING_GUIDE', () => {
-  it('recommends one sentence per line and does not say the system inserts pauses', () => {
-    expect(FISH_VOICE_ACTING_GUIDE).toMatch(/一句一行/);
-    expect(FISH_VOICE_ACTING_GUIDE).not.toMatch(/系统会自动插/);
-    expect(FISH_VOICE_ACTING_GUIDE).toMatch(/尽量别用 `\[breathy\]`/);
+  it('钉住新默认：省略号铁律、禁止 long pause、允许 breathy', () => {
+    expect(FISH_VOICE_ACTING_GUIDE).toMatch(/少用省略号/);
+    expect(FISH_VOICE_ACTING_GUIDE).toMatch(/禁止用 \[long pause\]/);
+    expect(FISH_VOICE_ACTING_GUIDE).toMatch(/\[breathy\]/);
+    expect(FISH_VOICE_ACTING_GUIDE).toMatch(/系统会自动插/);
   });
 });
