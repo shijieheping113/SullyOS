@@ -3,6 +3,7 @@ import {
   AWAY_SEGMENT_MARK,
   decideAwayTaskAction,
   findAwayGapStart,
+  findPendingAwayUserAt,
   planAwaySlots,
   splitAwaySegments,
 } from './awayMessageCore';
@@ -10,6 +11,13 @@ import {
 const MIN = 60_000;
 const NOW = 1_800_000_000_000;
 const DELAY = 90 * MIN;
+
+it('排期读取尚未到期的真实开口；隐藏提示不改期，已经找过不再排期', () => {
+  const user = { role: 'user', timestamp: NOW - MIN };
+  expect(findPendingAwayUserAt([user, { role: 'user', timestamp: NOW, metadata: { proactiveHint: true } }])).toBe(user.timestamp);
+  expect(findAwayGapStart([user], DELAY, NOW)).toBeNull();
+  expect(findPendingAwayUserAt([user, { role: 'assistant', timestamp: NOW, metadata: { awayMessage: true } }])).toBeNull();
+});
 
 describe('findAwayGapStart（本地版这次上线补不补）', () => {
   it('对方超过等待时长没开口 → 返回最后那次开口的时刻', () => {

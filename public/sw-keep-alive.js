@@ -137,6 +137,51 @@ async function appendDiagnosticEvent(entry) {
   });
 }
 
+// utils/awayMessageScheduler.ts
+function createAwayAlarmTimers(fire, changed = () => {
+}) {
+  const entries = /* @__PURE__ */ new Map();
+  const remove = (id) => {
+    const entry = entries.get(id);
+    if (entry?.timer != null) clearTimeout(entry.timer);
+    entries.delete(id);
+  };
+  return {
+    get pending() {
+      return Array.from(entries.values()).some((entry) => entry.timer != null);
+    },
+    sync(alarms) {
+      const valid = alarms.filter((a) => a && typeof a.charId === "string" && Number.isFinite(a.lastUserAt) && Number.isFinite(a.dueAt));
+      const ids = new Set(valid.map((a) => a.charId));
+      for (const id of entries.keys()) if (!ids.has(id)) remove(id);
+      for (const alarm of valid) {
+        const previous = entries.get(alarm.charId);
+        if (previous?.alarm.dueAt === alarm.dueAt && previous.alarm.lastUserAt === alarm.lastUserAt) continue;
+        remove(alarm.charId);
+        const entry = { alarm, timer: null };
+        const arm = () => {
+          entry.timer = setTimeout(() => {
+            if (Date.now() < alarm.dueAt) {
+              arm();
+              return;
+            }
+            entry.timer = null;
+            changed();
+            fire(alarm);
+          }, Math.min(Math.max(alarm.dueAt - Date.now(), 0), 2147e6));
+        };
+        entries.set(alarm.charId, entry);
+        arm();
+      }
+      changed();
+    },
+    stop() {
+      for (const id of entries.keys()) remove(id);
+      changed();
+    }
+  };
+}
+
 // node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0/node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
@@ -2244,7 +2289,7 @@ function createStaticCache(deps) {
 
 // worker/sw-keep-alive.ts
 var staticManifest = typeof __STATIC_CACHE_MANIFEST__ === "undefined" ? void 0 : __STATIC_CACHE_MANIFEST__;
-var SW_VERSION = "1.23.0";
+var SW_VERSION = "1.24.0";
 var PING_INTERVAL = 15e3;
 var MAX_MANUAL_ALIVE_MS = 5 * 6e4;
 var ACTIVE_MSG_DB_NAME = "ActiveMsg";
@@ -2417,8 +2462,9 @@ installReiSW(diagnosticNotificationScope(sw, appendDiagnosticEvent), {
     }
   }
 });
+var awayOwners = /* @__PURE__ */ new Map();
 function shouldKeepAlive() {
-  return manualKeepAliveCount > 0;
+  return manualKeepAliveCount > 0 || Array.from(awayOwners.values()).some((owner) => owner.pending);
 }
 function stopPingLoop() {
   if (pingTimer) {
@@ -2782,6 +2828,32 @@ sw.addEventListener("message", (event) => {
     case "keepalive-stop":
       stopKeepAlive();
       break;
+    case "away-sync": {
+      const clientId = event.source && "id" in event.source ? event.source.id : "";
+      if (!clientId || !Array.isArray(event.data.alarms)) break;
+      let owner = awayOwners.get(clientId);
+      if (!event.data.alarms.length) {
+        owner?.stop();
+        awayOwners.delete(clientId);
+        refreshKeepAlive();
+        break;
+      }
+      if (!owner) {
+        owner = createAwayAlarmTimers((alarm) => {
+          void sw.clients.get(clientId).then((client) => {
+            if (client) client.postMessage({ type: "away-trigger", ...alarm });
+            else {
+              awayOwners.get(clientId)?.stop();
+              awayOwners.delete(clientId);
+            }
+          }).catch(() => {
+          }).finally(refreshKeepAlive);
+        }, refreshKeepAlive);
+        awayOwners.set(clientId, owner);
+      }
+      owner.sync(event.data.alarms);
+      break;
+    }
   }
 });
 sw.addEventListener("install", (event) => {

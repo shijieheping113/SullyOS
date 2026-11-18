@@ -2,8 +2,7 @@
  * 离开后消息：对方多久没说话，角色就来找对方。两条路按角色二选一（见 docs/away-message.md）：
  *   - 云端：开着主动消息 2.0 且连着 Worker 的角色。每个角色挂一条到点必发的任务，
  *     对方每轮开口后往后推；推得不够及时的那点由 worker 到点推迟兜住。
- *   - 本地：其余角色。每次打开页面时，给超过等待时长没说话的角色一次性补上
- *     「你不在时 TA 发的消息」，时间戳铺在离开那段时间里。
+ *   - 本地：其余角色。SW / 网页闹钟到点生成，切回前台补查。一次离开只生成一轮。
  */
 import type { APIConfig, ActiveMsg2TaskRecord, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
@@ -13,18 +12,24 @@ import { isAmsg2GlobalReady } from './amsg2ToolBridge';
 import {
   decideAwayTaskAction,
   findAwayGapStart,
+  findPendingAwayUserAt,
   planAwaySlots,
   resolveAwayDelayMinutes,
   splitAwaySegments,
 } from './awayMessageCore';
 import { loadCharacterContextRange } from './chatContextRange';
 import { ChatPrompts } from './chatPrompts';
+import { ChatParser } from './chatParser';
 import { buildChatRequestPayload } from './chatRequestPayload';
 import { applyAssistantPostProcessing } from './applyAssistantPostProcessing';
 import { resolveDialogueApi } from './characterApi';
 import { extractContent, safeFetchJson } from './safeApi';
 import { buildLocalAwayHint } from './awayMessagePrompt';
 import { loadMusicPlaybackSnapshot } from '../context/MusicContext';
+import { KeepAlive } from './keepAlive';
+import { getBlockStateFromMessages } from './block';
+import { decideReplyDelivery, notifyChatReply, previewTextOf, traceNotify } from './chatNotify';
+import type { AwayAlarm } from './awayMessageScheduler';
 
 /** 失败后这么久内不再试，免得每次切回前台都白调一次。 */
 const FAILURE_COOLDOWN_MS = 10 * 60_000;
@@ -163,6 +168,36 @@ export interface LocalAwayDeps {
 let localRunning = false;
 const localCooldownUntil = new Map<string, number>();
 
+/** 排期只读本地消息。不开 2.0 的角色不会建立或请求任何云端任务。 */
+export const readLocalAwayAlarms = async (deps: LocalAwayDeps): Promise<AwayAlarm[]> => {
+  const alarms: AwayAlarm[] = [];
+  for (const char of deps.getCharacters()) {
+    if (!char.awayMessage?.enabled || deps.isBusyWith(char.id) || await isAwayCloudRoute(char)) continue;
+    const recent = await DB.getRecentMessagesByCharId(char.id, 100, true);
+    const lastUserAt = findPendingAwayUserAt(recent);
+    if (lastUserAt == null) continue;
+    alarms.push({ charId: char.id, lastUserAt,
+      dueAt: Math.max(lastUserAt + resolveAwayDelayMinutes(char) * 60_000, localCooldownUntil.get(char.id) || 0) });
+  }
+  return alarms;
+};
+
+/** 本地 away 专用送达；云端 push 已发的通知仍走原通道，不能在此重复发送。 */
+export const deliverLocalAwayNotification = async (input: {
+  charId: string; charName: string; avatarRef?: string; bodies: string[];
+  pageVisible: boolean; isChattingWithThisChar: boolean;
+  unread: () => void; toast: () => void;
+}): Promise<void> => {
+  traceNotify('reply', { lastReplyVisible: input.pageVisible });
+  const delivery = decideReplyDelivery(input);
+  if (delivery === 'silent') return;
+  input.unread();
+  if (delivery === 'toast') { input.toast(); return; }
+  for (const body of input.bodies) {
+    await notifyChatReply({ charId: input.charId, charName: input.charName, avatarRef: input.avatarRef, body });
+  }
+};
+
 /** 打开页面 / 切回前台时调用：逐个给该补的角色补上离开期间的消息。 */
 export const runLocalAwayMessages = async (deps: LocalAwayDeps): Promise<void> => {
   if (localRunning) return;
@@ -172,7 +207,17 @@ export const runLocalAwayMessages = async (deps: LocalAwayDeps): Promise<void> =
       if ((localCooldownUntil.get(char.id) ?? 0) > Date.now() || deps.isBusyWith(char.id)) continue;
       try {
         if (await isAwayCloudRoute(char)) continue;
-        await generateLocalAwayMessages(char, deps);
+        const generate = async () => {
+          await KeepAlive.start();
+          try { await generateLocalAwayMessages(char, deps); }
+          finally { KeepAlive.stop(); }
+        };
+        // 支持 Web Locks 时跨标签页也只生成一轮；老浏览器仍有本页互斥和保存前复查。
+        if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+          await navigator.locks.request(`sully-away-${char.id}`, { ifAvailable: true }, async lock => {
+            if (lock) await generate();
+          });
+        } else await generate();
       } catch (error) {
         console.warn(`[AwayMessage] ${char.name} 的离开后消息生成失败`, error);
         localCooldownUntil.set(char.id, Date.now() + FAILURE_COOLDOWN_MS);
@@ -186,7 +231,7 @@ export const runLocalAwayMessages = async (deps: LocalAwayDeps): Promise<void> =
 const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAwayDeps): Promise<void> => {
   const delayMs = resolveAwayDelayMinutes(char) * 60_000;
   const now = Date.now();
-  const recent = await DB.getRecentMessagesByCharId(char.id, 50, true);
+  const recent = await DB.getRecentMessagesByCharId(char.id, 100, true);
   const lastUserAt = findAwayGapStart(recent, delayMs, now);
   if (lastUserAt == null) return;
   const userProfile = deps.getUserProfile();
@@ -194,7 +239,7 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
   if (!userProfile || !api.baseUrl) return;
 
   // 时刻不早于最后一条消息：显示顺序看 id，时间戳倒挂会让气泡上的钟跳回去。
-  const lastMsgAt = recent.at(-1)?.timestamp ?? lastUserAt;
+  const lastMsgAt = recent[recent.length - 1]?.timestamp ?? lastUserAt;
   const slots = planAwaySlots(lastUserAt, delayMs, now).map(t => Math.max(t, lastMsgAt + 1));
   const userName = userProfile.name || '对方';
 
@@ -227,39 +272,71 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey || 'sk-none'}` };
   const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
     method: 'POST', headers,
-    body: JSON.stringify({ model: api.model, messages: payload.fullMessages, temperature: api.temperature ?? 0.85, stream: false }),
+    body: JSON.stringify({ model: api.model, messages: payload.fullMessages, temperature: api.temperature ?? 0.85, max_tokens: 8000, stream: false }),
   }, 2, 0, { appName: '消息', charId: char.id, charName: char.name, purpose: '离开后消息' });
   const segments = splitAwaySegments(extractContent(data), slots.length);
-  if (!segments.length) return;
+  if (!segments.length) throw new Error('离开后消息返回空内容');
 
   // 生成期间对方回来说了话：这段离开已经结束，补的消息作废。
-  if (findAwayGapStart(await DB.getRecentMessagesByCharId(char.id, 50, true), delayMs, Date.now()) !== lastUserAt) return;
+  const currentRecent = await DB.getRecentMessagesByCharId(char.id, 500, true);
+  if (findAwayGapStart(currentRecent, delayMs, Date.now()) !== lastUserAt) return;
+  const settingsUnchanged = () => {
+    const current = deps.getCharacters().find(c => c.id === char.id);
+    return !!current?.awayMessage?.enabled && resolveAwayDelayMinutes(current) * 60_000 === delayMs
+      && !deps.isBusyWith(char.id);
+  };
+  if (!settingsUnchanged()) return;
 
   const notifyProgress = () => window.dispatchEvent(new CustomEvent('active-msg-progress'));
-  for (let i = 0; i < segments.length; i++) {
-    await applyAssistantPostProcessing(segments[i], {
-      char, userProfile, emojis, categories, realtimeConfig, groups,
-      spokenAt: slots[i],
-      contextMsgs: range.messages,
-      fullMessages: [],
-      initialData: null,
-      historyMsgCount: range.messages.length,
-      // 打标是「这段离开已经补过」的唯一依据，见 findAwayGapStart。
-      mcdInheritMeta: { awayMessage: true },
-      xhsCaches: {
-        xsecTokenCache: new Map(), noteTitleCache: new Map(), commentUserIdCache: new Map(),
-        commentAuthorNameCache: new Map(), commentParentIdCache: new Map(),
-      },
-      api: { baseUrl, headers, effectiveApi: { baseUrl, apiKey: api.apiKey, model: api.model } },
-      hooks: { setMessages: notifyProgress, addToast: () => {} },
-      instantRender: true,
-      skipSecondPassLLM: true,
-      messageTimestamp: slots[i],
-    });
+  try {
+    for (let i = 0; i < segments.length; i++) {
+      const latest = i === 0 ? currentRecent : await DB.getRecentMessagesByCharId(char.id, 500, true);
+      const lastRealUser = [...latest].reverse().find(m => m.role === 'user' && !m.metadata?.proactiveHint);
+      if (!settingsUnchanged() || lastRealUser?.timestamp !== lastUserAt) break;
+      const blocked = getBlockStateFromMessages(latest).blocked;
+      await applyAssistantPostProcessing(segments[i], {
+        char, userProfile, emojis, categories, realtimeConfig, groups,
+        spokenAt: slots[i],
+        // 仅后处理使用近史判当前拉黑与引用；发给 API 的历史仍严格按 range.messages。
+        contextMsgs: latest,
+        fullMessages: [],
+        initialData: null,
+        historyMsgCount: range.messages.length,
+        // 打标是「这段离开已经补过」的唯一依据，见 findAwayGapStart。
+        mcdInheritMeta: { awayMessage: true, awayMessageGapStart: lastUserAt,
+          ...(blocked ? { blockSendFailed: true } : {}) },
+        xhsCaches: {
+          xsecTokenCache: new Map(), noteTitleCache: new Map(), commentUserIdCache: new Map(),
+          commentAuthorNameCache: new Map(), commentParentIdCache: new Map(),
+        },
+        api: { baseUrl, headers, effectiveApi: { baseUrl, apiKey: api.apiKey, model: api.model } },
+        hooks: { setMessages: notifyProgress, addToast: () => {} },
+        instantRender: true,
+        skipSecondPassLLM: true,
+        messageTimestamp: slots[i],
+      });
+    }
+  } finally {
+    // 中途某段失败时，已经保存的句子也必须送达通知，不能只在全部成功时才提醒。
+    await announceLocalAwayDelivery(char, lastUserAt);
   }
-  const preview = segments.join(' ').replace(/\s+/g, ' ').trim().slice(0, 120);
-  // 未读、提示和系统通知沿用主动消息送达那一套。
+};
+
+const announceLocalAwayDelivery = async (char: CharacterProfile, lastUserAt: number): Promise<void> => {
+  // 从真正保存的气泡取正文，不把模型指令、求看看标签或空响应直接弹到锁屏。
+  const saved = (await DB.getRecentMessagesByCharId(char.id, 100, true))
+    .filter(m => m.metadata?.awayMessageGapStart === lastUserAt);
+  if (!saved.length) return;
+  const bodies = saved.map(m => {
+    if (m.metadata?.source === 'peek-request') return `求看看：${String(m.metadata.peekText || '')}`;
+    if (m.metadata?.source === 'friend-request') return `好友申请：${String(m.metadata.requestText || '')}`;
+    if (m.role !== 'assistant') return '';
+    if (m.type === 'text') return previewTextOf(ChatParser.sanitize(m.content));
+    if (m.type === 'html_card') return String(m.metadata?.htmlTextPreview || '');
+    return '';
+  }).map(text => text.trim()).filter(Boolean);
   window.dispatchEvent(new CustomEvent('active-msg-received', {
-    detail: { charId: char.id, charName: char.name, body: preview },
+    detail: { charId: char.id, charName: char.name, source: 'local-away',
+      bodies: bodies.length ? bodies : ['发来一条新消息'] },
   }));
 };

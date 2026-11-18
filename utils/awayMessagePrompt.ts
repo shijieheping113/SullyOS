@@ -1,6 +1,7 @@
 import type { CharacterProfile, Message } from '../types';
 import { AWAY_SEGMENT_MARK } from './awayMessageCore';
 import { resolveCharTimeZone } from './timezone';
+import { getBlockStateFromMessages } from './block';
 
 const DATE_AFTERGLOW_MS = 3 * 60 * 60_000;
 const formatCharClock = (ms: number, tz: string | undefined): string =>
@@ -16,6 +17,7 @@ export const buildLocalAwayHint = (
   const n = slots.length;
   const showClock = char.timeAwarenessEnabled !== false;
   const tz = resolveCharTimeZone(char);
+  const blocked = getBlockStateFromMessages(recent).blocked;
   const lastReal = [...recent].reverse().find(m => m.role !== 'system' && !m.metadata?.proactiveHint);
   const justMetOffline = lastReal?.metadata?.source === 'date'
     && now >= lastReal.timestamp && now - lastReal.timestamp < DATE_AFTERGLOW_MS;
@@ -25,7 +27,9 @@ export const buildLocalAwayHint = (
   return [
     `[系统提示（非${userName}发言）: ${when}`,
     `${userName}此刻并没有发来新消息，是你自己想起了${userName}，拿起手机主动找对方。`,
-    justMetOffline
+    blocked
+      ? `${userName}此刻仍拒收你的普通消息，看不见你发出的普通文字。沿着你们当前冷战的原因、关系和你自己的心情主动写一两句话；你知道普通消息没有送达，别装已经送到，也别把沉默当成对方读过后的反应。求看看、好友申请和电话仍按当前上下文里的规则与空气决定，不必每次都求和。`
+      : justMetOffline
       ? `你和${userName}刚刚在线下见过面，现在暂时分开了。请从这份见面后的心情出发：可以回味上下文里已有的见面细节、补一句当时没说出口的话、关心对方到家了没，或者刚分开就有点想念。不要表现得像很久没联系，也不要对刚才的见面毫不知情；如果具体细节已不在可见上下文里，不要编造，表达分别后的心情即可。`
       : `你自己的生活也在继续：可以分享随手拍的照片、刚看到的趣事、突然想到的冷知识，吐槽天气、食物或见闻，接上之前聊过的话，或者单纯想找${userName}聊两句。结合你的人设和当时的生活自然选，不用每一类都写。`,
     '像真人随手发来的私聊，不要刻意汇报近况，不要像完成任务，也不要解释自己为什么发消息。',

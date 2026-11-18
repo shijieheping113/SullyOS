@@ -28,18 +28,24 @@ interface MessageLike {
 }
 
 /**
- * 本地版：消息按时间升序传入。对方最后一次开口已经超过等待时长、且那之后还没补过
- * 离开后消息时，返回那次开口的时刻；否则 null。一次离开只补一次，对方开口才重新计时。
+ * 本地排期：消息按时间升序传入，返回尚未找过的最后一次真实开口（不要求已到期）。
+ * 一次离开只补一次，对方开口才重新计时；隐藏主动提示不算开口。
  */
-export const findAwayGapStart = (messages: MessageLike[], delayMs: number, nowMs: number): number | null => {
+export const findPendingAwayUserAt = (messages: MessageLike[]): number | null => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.metadata?.awayMessage) return null;
     if (m.role === 'user' && !m.metadata?.proactiveHint) {
-      return nowMs - m.timestamp >= delayMs ? m.timestamp : null;
+      return m.timestamp;
     }
   }
   return null;
+};
+
+/** 本地生成：已到等待时长、且本段离开还没找过，才返回开口时间。 */
+export const findAwayGapStart = (messages: MessageLike[], delayMs: number, nowMs: number): number | null => {
+  const at = findPendingAwayUserAt(messages);
+  return at != null && nowMs - at >= delayMs ? at : null;
 };
 
 /**

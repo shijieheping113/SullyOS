@@ -81,7 +81,7 @@ const AwayMessageSettingsModal: React.FC<AwayMessageSettingsModalProps> = ({ isO
                         <p className="pt-2 border-t border-slate-100 text-[11px] text-slate-400 leading-relaxed">
                             {cloud === null ? '' : cloud
                                 ? `${char.name} 开着主动消息 2.0：到时间会直接推送给你。这一次算作「没回时找你」，受主动频率里的上限管。`
-                                : `你下次打开 SullyOS 时，${char.name} 会补上你不在时发的消息。每次打开，每个开了这项的角色会调一次聊天 API。`}
+                                : `到时间会尽量自动找你，并按私聊通知设置提醒你。浏览器让页面彻底休眠时，可能要重新打开后才补上。一次离开只生成一轮，你再次发消息后重新计时。`}
                         </p>
                     </>
                 )}

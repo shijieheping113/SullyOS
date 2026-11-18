@@ -35,7 +35,7 @@ describe('recent offline meeting', () => {
     expect(text).not.toContain('之后一直没再找你');
   });
 
-  it.each([180, 181, -1])('does not call a meeting %s minutes ago just finished', minutes => {
+  it.each([180, 181, -1])('does not call a meeting %s minutes ago just finished', (minutes: number) => {
     expect(hint([{ role: 'assistant', timestamp: NOW - minutes * MIN, metadata: { source: 'date' } }]))
       .not.toContain('刚刚在线下见过面');
   });
@@ -59,4 +59,24 @@ it('formats target moments in the character timezone and omits clocks when time 
 
 it('does not request a separator for a single message occasion', () => {
   expect(buildLocalAwayHint(char, '小明', lastUserAt, [slots[0]], [], NOW)).not.toContain('[[NEXT]]');
+});
+
+it('拉黑支优先于分别后的普通口气，仍保留不汇报/不查岗，并允许现有求看看与好友申请', () => {
+  const text = hint([
+    { role: 'assistant', timestamp: NOW - 30 * MIN, metadata: { source: 'date' } },
+    { role: 'system', timestamp: NOW - MIN, metadata: { source: 'block-status', blockStatus: '已拉黑' } },
+  ]);
+  expect(text).toContain('看不见你发出的普通文字');
+  expect(text).toContain('别装已经送到');
+  expect(text).toContain('求看看、好友申请和电话');
+  expect(text).toContain('不要刻意汇报近况');
+  expect(text).toContain('关心不要变成查岗');
+  expect(text).not.toContain('请从这份见面后的心情出发');
+});
+
+it('解除优先于历史未送达；窗口无拉黑记录时可用最后一条未送达兜底', () => {
+  const failed: Partial<Message> = { role: 'assistant', timestamp: NOW - MIN, metadata: { blockSendFailed: true } };
+  expect(hint([failed])).toContain('仍拒收你的普通消息');
+  expect(hint([failed, { role: 'system', timestamp: NOW, metadata: { source: 'block-status', blockStatus: '已解除' } }]))
+    .not.toContain('仍拒收你的普通消息');
 });

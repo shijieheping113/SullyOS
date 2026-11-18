@@ -143,6 +143,7 @@ import MemoryContextSelfCheck from '../components/chat/MemoryContextSelfCheck';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import AwayMessageSettingsModal from '../components/chat/AwayMessageSettingsModal';
 import { cancelCloudAwayTasks } from '../utils/awayMessage';
+import { requestAwayMessageReschedule } from '../utils/awayMessageScheduler';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
 import { migrateThinkingChainPromptFields } from '../utils/thinkingChainPrompt';
 import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
@@ -1748,6 +1749,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         window.addEventListener('fate-schedule-updated', restore);
         return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener('focus', restore); document.removeEventListener('visibilitychange', restore); window.removeEventListener('fate-schedule-updated', restore); };
     }, [char?.id, char?.scheduleMode, char?.scheduleFeatureEnabled, char?.customTimezone, char?.customTimezoneEnabled, char?.scheduleApi, apiConfig]);
+
+    // 用户发出的消息一保存/刷新就重排本地 away，不依赖自动回复或 API 成功。
+    useEffect(() => {
+        if (char?.awayMessage?.enabled && messagesReadyCharRef.current === char.id) {
+            requestAwayMessageReschedule();
+        }
+    }, [messages, char?.id, char?.awayMessage?.enabled, char?.awayMessage?.delayMinutes]);
 
     // 每次真正打开聊天设置时从角色持久化值重新初始化；避免用户在记忆宫殿页
     // 切换全自动模式后，隐藏着的 Chat 组件仍带着旧拉杆状态。

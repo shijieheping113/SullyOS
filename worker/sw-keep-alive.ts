@@ -3,6 +3,7 @@
 import { diagnosticNotificationScope } from './diagnosticNotification';
 import { diagnosticRunId, safeDiagnosticError } from '../utils/amsgReproduction';
 import { appendDiagnosticEvent } from '../utils/amsgReproductionStore';
+import { createAwayAlarmTimers } from '../utils/awayMessageScheduler';
 
 import { installReiSW } from '@rei-standard/amsg-sw';
 import { createStaticCache, type StaticManifest } from './staticCache';
@@ -89,7 +90,8 @@ const staticManifest = typeof __STATIC_CACHE_MANIFEST__ === 'undefined' ? undefi
 // 1.20.0: 静态资源缓存、离线启动、用户确认更新；保留原推送注册。
 // 1.22.0: amsg-sw next.8，修复并发冲刷回执与分片收尾失败的诊断。
 // 1.23.0: 移除主动消息 1.0 的本地定时器（proactive-start / stop / sync 消息不再处理）。
-const SW_VERSION = '1.23.0';
+// 1.24.0: 本地离开后单次闹钟；只喊网页生成，不恢复 1.0 或 Push 加速器。
+const SW_VERSION = '1.24.0';
 
 const PING_INTERVAL = 15_000;
 const MAX_MANUAL_ALIVE_MS = 5 * 60_000;
@@ -282,8 +284,10 @@ installReiSW(diagnosticNotificationScope(sw, appendDiagnosticEvent), {
   },
 });
 
+// 按页面隔离排期，某个页面关闭功能不会取消另一页面的闹钟。
+const awayOwners = new Map<string, ReturnType<typeof createAwayAlarmTimers>>();
 function shouldKeepAlive() {
-  return manualKeepAliveCount > 0;
+  return manualKeepAliveCount > 0 || Array.from(awayOwners.values()).some(owner => owner.pending);
 }
 
 function stopPingLoop() {
@@ -794,6 +798,28 @@ sw.addEventListener('message', (event: ExtendableMessageEvent) => {
     case 'keepalive-stop':
       stopKeepAlive();
       break;
+    case 'away-sync': {
+      const clientId = event.source && 'id' in event.source ? event.source.id : '';
+      if (!clientId || !Array.isArray(event.data.alarms)) break;
+      let owner = awayOwners.get(clientId);
+      if (!event.data.alarms.length) {
+        owner?.stop();
+        awayOwners.delete(clientId);
+        refreshKeepAlive();
+        break;
+      }
+      if (!owner) {
+        owner = createAwayAlarmTimers(alarm => {
+          void sw.clients.get(clientId).then(client => {
+            if (client) client.postMessage({ type: 'away-trigger', ...alarm });
+            else { awayOwners.get(clientId)?.stop(); awayOwners.delete(clientId); }
+          }).catch(() => {}).finally(refreshKeepAlive);
+        }, refreshKeepAlive);
+        awayOwners.set(clientId, owner);
+      }
+      owner.sync(event.data.alarms);
+      break;
+    }
   }
 });
 

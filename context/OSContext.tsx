@@ -90,7 +90,8 @@ import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import {HOME_SECRETS_UPDATED} from '../utils/homeSecrets';
 import { CHAT_GEN_EVENTS, setChatViewSnapshot, isEmbeddedChatVisible } from '../utils/chatGenEvents';
 import { ChatParser } from '../utils/chatParser';
-import { runLocalAwayMessages } from '../utils/awayMessage';
+import { runLocalAwayMessages, readLocalAwayAlarms, deliverLocalAwayNotification } from '../utils/awayMessage';
+import { startAwayMessageScheduler, requestAwayMessageReschedule } from '../utils/awayMessageScheduler';
 import { mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import { applyLinkedArchiveDeletion, LINKED_ARCHIVE_DELETED, type LinkedArchiveDeletionDetail } from '../utils/memoryPalace/linkedArchiveDeletion';
 import {
@@ -2154,10 +2155,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let awayActiveMsgCount = 0;
 
       const handler = (e: Event) => {
-          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+          const { charId, charName, body, source, bodies } = (e as CustomEvent).detail as {
+              charId: string; charName: string; body?: string; source?: string; bodies?: string[];
+          };
           setLastMsgTimestamp(Date.now());
 
           const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
+          if (source === 'local-away') {
+              const character = charactersRef.current.find(c => c.id === charId);
+              const displayName = character ? chatCharacterDisplayName(character) : charName;
+              void deliverLocalAwayNotification({
+                  charId, charName: displayName,
+                  avatarRef: character?.avatar, bodies: bodies || [],
+                  isChattingWithThisChar, pageVisible: document.visibilityState === 'visible',
+                  unread: () => setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 })),
+                  toast: () => addToast(`${displayName} 给你发了消息`, 'success'),
+              }).catch(error => console.warn('[AwayMessage] 通知发送失败', error));
+              return;
+          }
           if (!isChattingWithThisChar) {
               const isVisible = document.visibilityState === 'visible';
               if (isVisible) {
@@ -2950,27 +2965,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);
 
-  // 离开后消息（本地那条路）：打开页面和切回前台时，给超过等待时长没说话的角色补上
-  // 离开期间的消息。云端那条路在 useChatAI 每轮开场维护，见 utils/awayMessage.ts。
+  // 本地离开后：SW + 网页闹钟到点生成，前台补查保留。云端路线不变。
   useEffect(() => {
       if (!isDataLoaded) return;
-      const run = () => {
-          if (document.visibilityState !== 'visible') return;
-          void runLocalAwayMessages({
+      const deps = {
               getCharacters: () => charactersRef.current,
               getApiConfig: () => apiConfigRef.current,
               getUserProfile: () => userProfileRef.current,
               getGroups: () => groupsRef.current,
               getRealtimeConfig: () => realtimeConfigRef.current,
-              isBusyWith: (charId) => suspendedCallRef.current?.charId === charId
+              isBusyWith: (charId: string) => suspendedCallRef.current?.charId === charId
                   || ((activeAppRef.current === AppID.Date || activeAppRef.current === AppID.Call)
                       && activeCharIdScheduleRef.current === charId),
-          });
       };
-      run();
-      document.addEventListener('visibilitychange', run);
-      return () => document.removeEventListener('visibilitychange', run);
+      const scheduler = startAwayMessageScheduler({
+          readAlarms: () => readLocalAwayAlarms(deps),
+          run: () => runLocalAwayMessages(deps),
+      });
+      return () => scheduler.dispose();
   }, [isDataLoaded]);
+
+  useEffect(() => {
+      if (isDataLoaded) requestAwayMessageReschedule();
+  }, [isDataLoaded, characters]);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     // 作者用 sessionStorage 记「这轮开屏看过了」；永恒关标签经常还不清。
