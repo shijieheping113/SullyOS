@@ -1,13 +1,72 @@
-> ⚠️ **这份是「原项目作者的开发导航」，不是二改工作的东西。**
+> # SullyOS 二改小抄（定制版，二改工作只认这一块）
 >
-> 它跟着作者仓库一起下来，只讲一件事：改某一类问题该去翻哪份 `docs/`。
-> 它**不记录**二改做了什么、现在做到哪一步、存档停在哪一笔。
+> 本文件是**两截拼起来的**：上半截到这里为止＝二改小抄（给干二改活的 AI 看）；从下面「# AGENTS.md」起是**原项目作者**的开发导航（文档地图），跟二改做了什么无关。
+> **拉上游更新时，这一整块小抄和下面作者部分都要原样保留**；二改的东西不许塞进下面那张表。
 >
-> - 二改的进度 → 只看 `D:\SullyOS\WORKLOG.md` **最上面几条**（新的记在顶部）。
-> - 人格与规矩 → `D:\SullyOS\SULLY.md`、`D:\SullyOS\AGENTS.md`。
-> - 二改新加的代码（例如 `utils/chatNotify.ts`、`utils/chatNotifySettings.ts`、
->   `components/settings/ChatNotifySettingsCard.tsx`）在这份导航里查不到，
->   **查不到不等于不存在**，别拿「文档里没有」当「没做过」。
+> ## 一 · 二改新增（一簇一行，以 `git diff --name-status upstream/master...HEAD` 核对，总共 398 个新增文件，下面只列大件）
+>
+> **新 App**
+> - `apps/miaomiaoBox/` + `context/MiaomiaoBoxContext.tsx` —— 「喵喵盒」：聊天加号里的小演出浮窗（独立 store，过程不写主聊天，合盖四选一才落 `box_record` 归档卡；章节名/总结走二级 API）
+> - `apps/LiveStreamApp.tsx` + `components/live/`（11 件） + `utils/liveStream*` —— 「电波直播」：多频道 NPC 主播 + YouTube 房 + 博主 VOD 投稿 + 双人接龙；弹幕/SC/礼物/跟读/壁纸
+> - `apps/watchAlong/` + `components/watchAlong/`（11 件） + `utils/watchAlong/` —— 「陪看」：大厅/房间/连麦席/导演/历史/总结
+>
+> **聊天族**
+> - `components/chat/Sully*`（9 件） + `utils/sully*`（16 件） + `utils/secondaryLlmApi.ts`、`secondaryLlmCall.ts` + `components/settings/SecondaryLlmSettings.tsx` —— 「猫儿小助手」：修格式/加泡/重排（走**二级 API**，AI 修命令体、不带对话消息）；二级 API 是二改所有副业 LLM 活的通道（喵盒总结、宫殿压缩等）
+> - `components/chat/ChatInnerStatePeek*.tsx` + `utils/innerStatePeek.ts`、`chatInnerPeekScroll.ts`、`chatEmotionView` —— 私聊里的「心里话/情绪卡」（翻面色卡）
+> - `components/chat/ChatGame*` + `utils/chatGames/` + `settings/ChatGamesSettings.tsx` —— 聊天小游戏（骰子、三种出拳、角色落子）
+> - `components/chat/ChatVideoSendSheet.tsx`、`VideoMessageBubble.tsx` + `utils/videoApi*`、`videoCoverFrame`、`videoShareNote`、`videoChatPrompt` + `settings/VideoUnderstandingSettings.tsx` —— 视频消息 + 本地视频理解（异步识别/费用统计）
+> - `components/chat/XSocialCard.tsx` + `utils/xJpPack.ts`、`xSocialFetch.ts`、`jpHotClient.ts` + `worker/xJpRealtime.js` —— X/Threads 贴链卡 + 日本热词（端点部署在自己的 Worker）
+> - `components/chat/EmojiPermissionManager.tsx` + `utils/emojiPermissions.ts` —— 表情包权限（按角色开关/只有我能用/分窗折叠；**唯一换算入口**）
+> - `utils/chatNotify.ts`、`chatNotifySettings.ts` + `settings/ChatNotifySettingsCard.tsx` —— 私聊后台系统通知（点通知跳回该角色）+ 分段播报自检
+> - `utils/bilingualMarker`、`parenTranslation`、`translateSession`、`webGoogleTranslate`、`voiceLangTranslate`、`globalTranslateSettings` + `GlobalTranslateSettingsCard.tsx` —— 翻译族（双语气泡 `%%BILINGUAL%%`、气泡下中文、心象、语音外语、全局开关）
+> - `utils/thinkingEffort.ts`、`inlineThinkTags.ts` —— 思考强度 + 行内思考标签
+> - `components/chat/BubbleInlineTime.tsx` —— 气泡内时间戳（「每条都显示/气泡内」）
+> - `utils/reprocessChatMessage.ts` —— 已发消息重处理（表情重认走全本，不再二次收口）
+> - `components/chat/appearance/Atelier*` + `utils/atelierComponentCss`、`atelierNavigation` —— 聊天「装修间」装扮工坊
+> - `utils/dateContinue.ts` —— 见面回访（接着见他/本场阅读/语音下载）
+>
+> **通话 / 语音**
+> - `components/call/IncomingCallOverlay*` + `utils/incomingCall*` + `components/call/VoicePhoneB.*` —— 角色来电全屏浮层 + 语音小手机 B
+> - `utils/unfinishedCall`、`callReroll`、`callSpeech*`（Guard/Lines/Timeline/Timing）、`callTtsProxy` —— 未挂断续播、挂断补记、通话字幕跟读歌词化
+> - `hooks/useVoiceInput.ts` + `utils/volcStt.ts` —— 火山 STT 语音输入
+> - `utils/fishTimestampTts`、`fishDrama3`、`ttsCallLog`、`voiceContentBackfill`、`voiceMessagePrompt`、`chatVoiceTagFormat` —— 鱼声时间轴/Drama3/账单/语音话术/语音标签格式
+>
+> **日程 / 系统 / 桌面**
+> - `components/schedule/Fate*`（20 件） + `utils/fate*` —— 「命运牌阵」：塔罗/毛线球 UI、六神、内置因子，叠加在原作者日程上（牌库/情绪/小剧场）
+> - `utils/worldbookDocument*.ts`、`docxText.ts` —— 世界书 Word/TXT/PDF/RTF/网页整篇导入
+> - `utils/memoryDayActivation.ts` —— 神经链接按日激活 + 按日 RECALL
+> - `utils/characterBundle.ts` + `settings/CharacterMoveCard.tsx` —— 角色搬家
+> - `utils/forkBackup*` —— 二改全量备份（**旁挂一层，作者原备份逻辑不动**）
+> - `components/lockscreen/`（11 件） + `utils/lockScreenSettings|lockScreenMotion|lockScreenEditor` —— **v5 锁屏整包**：亮屏动画、拖动/回弹/进桌面、四分区玻璃（大钟/电池圆环/聊天/相机）、实况天气、真实未读与音乐、大钟描边遮罩、私聊卡跟手渐显、长按气泡上滑解锁、桌面图标入场时间轴、独立上下阴影编辑 + 编辑器
+> - `components/os/SplashScreen*`、`AppWindowHost`、`AppRouteScope`、`appPortal`、`Modal.css` + `utils/appWindowMotion*`、`splashScreen` —— **黑球猫猫开屏**（Splash + 首帧预绘 + 桌面交接）、默认应用/PWA/传统图标一整套（`public/icons/black-cat-*`）、轻量窗口舒展与横向切换动效
+> - 桌面整理（在作者 Launcher / AppIconEditor 内做，文件是 M 但属二改大件）：长按拖动真正交换、同一次往返跨页交换、透明自定义图标保留阴影
+> - `components/BatteryReminder*` + `utils/batteryReminder*` + `settings/BatteryReminderSettingsCard.tsx` —— 电量提醒
+> - `tools/prompt-browser/` —— 本地提示词看板小工具（拉黑施工时引出）
+> - 小件：`utils/appToast`、`autoGrowTextarea`、`dockMicHold`、`random`、`proxyFallback`、`blobRefSessionCache`、`chatMessageOrder`、`chatSurface`、`chatPreviewViewport`、`launcherLayout`、`appLoadingFallback`、`tokenImgPlaceholder` 等
+>
+> **拉黑 / Spark（早期二改）**
+> - `utils/block.ts`、`blockCallHangupReply.ts`、`components/chat/blockCards.css`、`public/block-cards-preview.html` —— 「拉黑冷战」（细则见 docs/block-coldwar.md）
+> - `utils/sparkCircles`、`sparkCommentParse`、`sparkAvatar` + `apps/social/SparkPostImage.tsx`（实验说明见 docs/spark-experiment-follow.md）
+>
+> **二改自己写的 docs/（4 份）**：`block-coldwar.md`、`emoji-permission.md`、`miaomiao-box-初版方案.md`、`spark-experiment-follow.md`。
+> **二改也改过这 4 份作者 docs**（并上游时注意冲突）：`memory-system-overview.md`、`elevenlabs-tts.md`、`date-entry.md`、`superpowers/specs/2026-08-09-pwa-custom-icon-design.md`。
+>
+> ## 二 · 二改的规矩
+> - **唯一的日志在项目根 `WORKLOG.md`**：新条目记文件最顶上，格式 `# YYYY-MM-DD · 标题`（做了什么/动了哪些文件/怎么验证/没做什么）；不进 git，换电脑手动拷。
+> - **人设与猫的纪律在项目根 `SULLY.md`**（在 .gitignore 里，不进 git）：说话、脾气、干活纪律全听它。
+> - **动任何东西先备份**：复制到仓库外的备份目录并校验；改正文要先验身再替换，数字对不上就停。
+> - **git**：`my-custom` 分支干活；没点头不 commit、没明说「推送」不 push（push 触发线上部署）；`vite.config.ts` 的本地预览挂载不进提交；**不改作者原备份导入/导出。**
+> - **并上游**：开 `merge/upstream-YYYYMMDD` 分支 + `backup/*-before-upstream-*` 备份分支，手合、跑测试、验收后才替代主线，绝不强推；不认可的作者提交单独 revert。
+> - **新代码放哪**：小工具进 `utils/`（同名 `.test.ts` 跟着）；新组件进 `components/<族>/`；新 App 进 `apps/<名>/`；少动作者文件，动前先看 `git log upstream/master -- <file>`。
+> - **老内核**：用户的手机浏览器 = 老内核，禁用 ES2020 之后的新语法。
+> - **Key**：永远由用户自己填，AI 不经手。
+> - **临时产物**：截图、探针、临时脚本收尾删干净；独立设计预览放仓库外专用目录，不放 `test/fixtures/`。
+> - **版本号**：只有大功能更新才动 `utils/appVersion.ts`；小修不跳。
+>
+> ## 三 · 指路（都在这三份里，不用到处翻）
+> - **进度** → 项目根 `WORKLOG.md` 顶部（唯一正本，从 2026-09-13 记到今天；历史两条线已合并、对账完毕）
+> - **人设 + 全部纪律** → 项目根 `SULLY.md`
+> - **原作者文档地图** → 本文件下半部（跟二改无关，拉上游时原样保留）
 
 # AGENTS.md
 
