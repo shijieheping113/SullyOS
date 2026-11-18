@@ -15,7 +15,7 @@ import { FATE_SETTINGS_STORAGE_PREFIX } from './fateSettings';
 
 export const FORK_CUSTOM_ID = 'ann-lily';
 /** 写出包的版本；读端认 1..FORK_BACKUP_VERSION（旧包仍当二改包） */
-export const FORK_BACKUP_VERSION = 2;
+export const FORK_BACKUP_VERSION = 3;
 export const FORK_BACKUP_MIN_VERSION = 1;
 
 /** Spark：仅存 localStorage、作者全量备份未单独登记的二改配置 */
@@ -45,13 +45,23 @@ export const FORK_LIVE_LOCAL_KEYS = [
     'live_speech_perform_enabled',
 ] as const;
 
-/** 二改 UI 偏好：私聊通知 / 全局翻译 / 悬浮球（作者 metadata 未登记） */
+/** 二改 UI 偏好：私聊通知 / 全局翻译 / 悬浮球 / 锁屏 v5 / 猫儿小助手 / 通话边角（作者 metadata 未登记） */
 export const FORK_UI_PREFS_LOCAL_KEYS = [
     'sullyos.chatNotify.enabled.v1',
     'sullyos.globalTranslate.enabled.v1',
     'sully_navigation_ball_enabled_v1',
     'sully_navigation_ball_position_v1',
     'sully_navigation_ball_slots_v1',
+    // 锁屏 v5 旋钮（玻璃/阴影/分区）；前景图走 assets，不在这里
+    'sully-lock-screen-v5',
+    // 猫儿小助手本机偏好（修格式温度 / 用户规则）；撤销临时条不带
+    'sully_repair_prefs',
+    'sully_assistant_user_format_rules',
+    // 通话边角：时间戳代理 / 语音·视频模式 / 明暗主题 / 增量语音
+    'sully-call-tts-timestamp-proxy-v1',
+    'sully-call-mode-v1',
+    'sully-call-theme-v1',
+    'sully-call-incremental-voice',
 ] as const;
 
 /** 聊天括号翻译（按角色），作者 chatTranslate* 段未覆盖 */

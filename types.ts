@@ -4388,7 +4388,7 @@ export interface FullBackupData {
     forkMiaomiaoLocal?: Record<string, string>;
     /** 电波 OnAir 本机开关（舞台小人 / 静音预生成 / 上次替身 / 台词静默预生成），键见 utils/forkBackup.ts */
     forkLiveLocal?: Record<string, string>;
-    /** 二改 UI 偏好 localStorage（私聊通知 / 全局翻译 / 悬浮球），仅二改全量包 */
+    /** 二改 UI 偏好 localStorage（私聊通知 / 全局翻译 / 悬浮球 / 锁屏 v5 / 猫儿小助手 / 通话边角），仅二改全量包 */
     forkUiPrefsLocal?: Record<string, string>;
     /** 命运牌库 / 倾向 / 禁用（sully_fate_settings_v1_*），仅二改全量包 */
     forkFateSettingsLocal?: Record<string, string>;

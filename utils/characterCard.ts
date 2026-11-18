@@ -24,6 +24,7 @@ export const CARD_STRIPPED_FIELDS = [
   'embeddingConfig',
   'proactiveConfig',         // 已下线的主动消息 1.0，旧数据里可能还带着副 API 凭据
   'activeMsg2Config',
+  'scheduleApi',             // 命运牌阵日程专用模型（二改新增，漏登记会再泄漏端点/密钥）
   'awayMessage',             // 离开后消息：发卡人本机的提醒偏好
 
   // 2) 美化

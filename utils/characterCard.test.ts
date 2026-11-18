@@ -6,10 +6,14 @@ describe('stripSensitiveCardFields', () => {
     const card = {
       name: '小明',
       systemPrompt: '你是小明',
+      dialogueApi: { baseUrl: 'https://chat.x', apiKey: 'sk-SECRET0', model: 'chat' },
       emotionConfig: { enabled: true, api: { baseUrl: 'https://x', apiKey: 'sk-SECRET', model: 'gpt' } },
       embeddingConfig: { baseUrl: 'https://x', apiKey: 'sk-SECRET2', model: 'emb', dimensions: 1024 },
       proactiveConfig: { enabled: true, intervalMinutes: 60, secondaryApi: { baseUrl: 'https://x', apiKey: 'sk-SECRET3', model: 'gpt' } },
       activeMsg2Config: { enabled: true, secondaryApi: { apiKey: 'sk-SECRET4' } },
+      scheduleApi: { baseUrl: 'https://schedule.x', apiKey: 'sk-SECRET5', model: 'fate' },
+      scheduleMode: 'fate',
+      emotionFeatureEnabled: true,
     };
 
     const out = stripSensitiveCardFields(card);
@@ -17,11 +21,17 @@ describe('stripSensitiveCardFields', () => {
 
     expect(out.name).toBe('小明');
     expect(out.systemPrompt).toBe('你是小明');
+    expect(out.scheduleMode).toBe('fate');
+    expect(out.emotionFeatureEnabled).toBe(true);
     expect(json).not.toContain('sk-SECRET');
+    expect(json).not.toContain('https://chat.x');
+    expect(json).not.toContain('https://schedule.x');
+    expect(out).not.toHaveProperty('dialogueApi');
     expect(out).not.toHaveProperty('emotionConfig');
     expect(out).not.toHaveProperty('embeddingConfig');
     expect(out).not.toHaveProperty('proactiveConfig');
     expect(out).not.toHaveProperty('activeMsg2Config');
+    expect(out).not.toHaveProperty('scheduleApi');
   });
 
   it('剥离美化 / 语言 / 运行时状态，保留角色本身', () => {
@@ -77,7 +87,7 @@ describe('stripSensitiveCardFields', () => {
   });
 
   it('清单覆盖四类敏感字段', () => {
-    for (const k of ['emotionConfig', 'embeddingConfig', 'bubbleStyle', 'chatVoiceLang', 'memoryPalaceWaterline', 'activeBuffs', 'phoneState']) {
+    for (const k of ['dialogueApi', 'emotionConfig', 'embeddingConfig', 'scheduleApi', 'bubbleStyle', 'chatVoiceLang', 'memoryPalaceWaterline', 'activeBuffs', 'phoneState']) {
       expect(CARD_STRIPPED_FIELDS).toContain(k);
     }
   });

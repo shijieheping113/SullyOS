@@ -179,11 +179,14 @@ describe('forkBackup', () => {
         }
     });
 
-    it('collect 带走命运牌库 / UI 偏好 / 括号翻译 / 静默预生成 / 小红书主页帖', async () => {
+    it('collect 带走命运牌库 / UI 偏好 / 括号翻译 / 静默预生成 / 小红书主页帖 / 锁屏 / 小助手 / 通话边角', async () => {
         const db = await openDB();
         const fateKey = `${FORK_FATE_SETTINGS_KEY_PREFIX}char-fate`;
         const parenEnabledKey = 'chat_paren_translation_enabled_char-p';
         const parenFormatKey = 'chat_paren_translation_format_char-p';
+        const lockValue = JSON.stringify({ glass: { clock: { shadow: 0.5 } }, caption: '锁屏字' });
+        const repairPrefs = JSON.stringify({ temperature: 0.42 });
+        const userRules = '修格式时别动英文';
         const fateValue = JSON.stringify({
             factors: [{ id: 'f1', name: '自定义因子', meaning: '意思' }],
             tendencies: [],
@@ -209,17 +212,31 @@ describe('forkBackup', () => {
         localStorage.setItem('sully_navigation_ball_enabled_v1', '1');
         localStorage.setItem('sully_navigation_ball_position_v1', '{"x":8,"y":28}');
         localStorage.setItem('sully_navigation_ball_slots_v1', '[null,null,null,null]');
+        localStorage.setItem('sully-lock-screen-v5', lockValue);
+        localStorage.setItem('sully_repair_prefs', repairPrefs);
+        localStorage.setItem('sully_assistant_user_format_rules', userRules);
+        localStorage.setItem('sully-call-tts-timestamp-proxy-v1', 'https://proxy.example/tts');
+        localStorage.setItem('sully-call-mode-v1', 'video');
+        localStorage.setItem('sully-call-theme-v1', 'light');
+        localStorage.setItem('sully-call-incremental-voice', 'off');
         localStorage.setItem('live_speech_perform_enabled', '0');
         localStorage.setItem(parenEnabledKey, 'true');
         localStorage.setItem(parenFormatKey, 'quoted');
 
         try {
             const layer = await collectForkBackupLayer();
-            expect(layer.forkBackupVersion).toBe(2);
+            expect(layer.forkBackupVersion).toBe(FORK_BACKUP_VERSION);
             expect(layer.forkFateSettingsLocal?.[fateKey]).toBe(fateValue);
             expect(layer.forkUiPrefsLocal?.['sullyos.chatNotify.enabled.v1']).toBe('0');
             expect(layer.forkUiPrefsLocal?.['sullyos.globalTranslate.enabled.v1']).toBe('0');
             expect(layer.forkUiPrefsLocal?.['sully_navigation_ball_enabled_v1']).toBe('1');
+            expect(layer.forkUiPrefsLocal?.['sully-lock-screen-v5']).toBe(lockValue);
+            expect(layer.forkUiPrefsLocal?.['sully_repair_prefs']).toBe(repairPrefs);
+            expect(layer.forkUiPrefsLocal?.['sully_assistant_user_format_rules']).toBe(userRules);
+            expect(layer.forkUiPrefsLocal?.['sully-call-tts-timestamp-proxy-v1']).toBe('https://proxy.example/tts');
+            expect(layer.forkUiPrefsLocal?.['sully-call-mode-v1']).toBe('video');
+            expect(layer.forkUiPrefsLocal?.['sully-call-theme-v1']).toBe('light');
+            expect(layer.forkUiPrefsLocal?.['sully-call-incremental-voice']).toBe('off');
             expect(layer.forkLiveLocal?.live_speech_perform_enabled).toBe('0');
             expect(layer.forkParenTranslationLocal?.[parenEnabledKey]).toBe('true');
             expect(layer.forkParenTranslationLocal?.[parenFormatKey]).toBe('quoted');
@@ -231,17 +248,32 @@ describe('forkBackup', () => {
             localStorage.removeItem('sully_navigation_ball_enabled_v1');
             localStorage.removeItem('sully_navigation_ball_position_v1');
             localStorage.removeItem('sully_navigation_ball_slots_v1');
+            localStorage.removeItem('sully-lock-screen-v5');
+            localStorage.removeItem('sully_repair_prefs');
+            localStorage.removeItem('sully_assistant_user_format_rules');
+            localStorage.removeItem('sully-call-tts-timestamp-proxy-v1');
+            localStorage.removeItem('sully-call-mode-v1');
+            localStorage.removeItem('sully-call-theme-v1');
+            localStorage.removeItem('sully-call-incremental-voice');
             localStorage.removeItem('live_speech_perform_enabled');
             localStorage.removeItem(parenEnabledKey);
             localStorage.removeItem(parenFormatKey);
         }
     });
 
-    it('restoreForkBackupLayer 写回命运 / UI / 括号翻译 / 静默预生成', async () => {
+    it('restoreForkBackupLayer 写回命运 / UI / 括号翻译 / 静默预生成 / 锁屏 / 小助手 / 通话边角', async () => {
         const fateKey = `${FORK_FATE_SETTINGS_KEY_PREFIX}char-restore`;
         const parenEnabledKey = 'chat_paren_translation_enabled_char-r';
+        const lockValue = '{"caption":"导入后的锁屏字"}';
         localStorage.removeItem(fateKey);
         localStorage.removeItem('sullyos.chatNotify.enabled.v1');
+        localStorage.removeItem('sully-lock-screen-v5');
+        localStorage.removeItem('sully_repair_prefs');
+        localStorage.removeItem('sully_assistant_user_format_rules');
+        localStorage.removeItem('sully-call-tts-timestamp-proxy-v1');
+        localStorage.removeItem('sully-call-mode-v1');
+        localStorage.removeItem('sully-call-theme-v1');
+        localStorage.removeItem('sully-call-incremental-voice');
         localStorage.removeItem('live_speech_perform_enabled');
         localStorage.removeItem(parenEnabledKey);
 
@@ -250,7 +282,16 @@ describe('forkBackup', () => {
                 customFork: FORK_CUSTOM_ID,
                 forkBackupVersion: FORK_BACKUP_VERSION,
                 forkFateSettingsLocal: { [fateKey]: '{"factors":[]}' },
-                forkUiPrefsLocal: { 'sullyos.chatNotify.enabled.v1': '0' },
+                forkUiPrefsLocal: {
+                    'sullyos.chatNotify.enabled.v1': '0',
+                    'sully-lock-screen-v5': lockValue,
+                    'sully_repair_prefs': '{"temperature":0.42}',
+                    'sully_assistant_user_format_rules': '修格式时别动英文',
+                    'sully-call-tts-timestamp-proxy-v1': 'https://proxy.example/tts',
+                    'sully-call-mode-v1': 'video',
+                    'sully-call-theme-v1': 'light',
+                    'sully-call-incremental-voice': 'off',
+                },
                 forkLiveLocal: { live_speech_perform_enabled: '0' },
                 forkParenTranslationLocal: { [parenEnabledKey]: 'true' },
             } as any);
@@ -258,11 +299,25 @@ describe('forkBackup', () => {
             expect(result.restoredForkLayer).toBe(true);
             expect(localStorage.getItem(fateKey)).toBe('{"factors":[]}');
             expect(localStorage.getItem('sullyos.chatNotify.enabled.v1')).toBe('0');
+            expect(localStorage.getItem('sully-lock-screen-v5')).toBe(lockValue);
+            expect(localStorage.getItem('sully_repair_prefs')).toBe('{"temperature":0.42}');
+            expect(localStorage.getItem('sully_assistant_user_format_rules')).toBe('修格式时别动英文');
+            expect(localStorage.getItem('sully-call-tts-timestamp-proxy-v1')).toBe('https://proxy.example/tts');
+            expect(localStorage.getItem('sully-call-mode-v1')).toBe('video');
+            expect(localStorage.getItem('sully-call-theme-v1')).toBe('light');
+            expect(localStorage.getItem('sully-call-incremental-voice')).toBe('off');
             expect(localStorage.getItem('live_speech_perform_enabled')).toBe('0');
             expect(localStorage.getItem(parenEnabledKey)).toBe('true');
         } finally {
             localStorage.removeItem(fateKey);
             localStorage.removeItem('sullyos.chatNotify.enabled.v1');
+            localStorage.removeItem('sully-lock-screen-v5');
+            localStorage.removeItem('sully_repair_prefs');
+            localStorage.removeItem('sully_assistant_user_format_rules');
+            localStorage.removeItem('sully-call-tts-timestamp-proxy-v1');
+            localStorage.removeItem('sully-call-mode-v1');
+            localStorage.removeItem('sully-call-theme-v1');
+            localStorage.removeItem('sully-call-incremental-voice');
             localStorage.removeItem('live_speech_perform_enabled');
             localStorage.removeItem(parenEnabledKey);
         }
