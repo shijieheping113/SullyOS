@@ -15,6 +15,7 @@ import { buildPhoneEvidenceChatCard } from './phoneEvidence';
 import { mergePhoneGeneration, PHONE_GENERATION_COMMITTED, type PhoneGeneration } from './phoneGeneration';
 import {deleteSecretNotesForIds, announceSecretNotesChanged} from './secretNote';
 import { ensureStoryTimelineRepair, invalidateStoryTimelineRepair } from './storyTheaterTimeline';
+import { announceChatMessagesCommitted } from './chatMessageEvents';
 
 import { orderWorldEpisodes } from './worldHome/episodeOrder';
 
@@ -1147,6 +1148,7 @@ export const DB = {
                     if (hwm >= newId) localStorage.removeItem(key);
                 }
             } catch { /* localStorage 不可用时静默跳过 */ }
+            announceChatMessagesCommitted(msg.charId);
             resolve(newId);
         };
         request.onerror = () => reject(request.error);
@@ -1188,6 +1190,7 @@ export const DB = {
             }
           } catch { /* message was committed even if browser preferences are unavailable */ }
         }
+        if (inserted) announceChatMessagesCommitted(msg.charId);
         resolve(savedId);
       };
       tx.onerror = () => reject(tx.error);
@@ -1473,7 +1476,7 @@ export const DB = {
       const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
       deleteSecretNotesForIds(transaction.objectStore(STORE_MESSAGES), [id]);
       transaction.objectStore(STORE_MESSAGES).delete(id);
-      transaction.oncomplete = () => {announceSecretNotesChanged(); resolve();};
+      transaction.oncomplete = () => {announceSecretNotesChanged(); announceChatMessagesCommitted(); resolve();};
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error || new Error('deleteMessage aborted'));
     });
@@ -1489,7 +1492,7 @@ export const DB = {
       deleteSecretNotesForIds(store, ids);
       ids.forEach(id => store.delete(id));
       return new Promise((resolve, reject) => {
-          transaction.oncomplete = () => {announceSecretNotesChanged(); resolve();};
+          transaction.oncomplete = () => {announceSecretNotesChanged(); announceChatMessagesCommitted(); resolve();};
           transaction.onerror = () => reject(transaction.error);
           transaction.onabort = () => reject(transaction.error || new Error('deleteMessages aborted'));
       });
@@ -1516,7 +1519,7 @@ export const DB = {
         }
       };
       request.onerror = () => reject(request.error);
-      transaction.oncomplete = () => {announceSecretNotesChanged(charId); resolve();};
+      transaction.oncomplete = () => {announceSecretNotesChanged(charId); announceChatMessagesCommitted(charId); resolve();};
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error || new Error('clearMessages aborted'));
     });

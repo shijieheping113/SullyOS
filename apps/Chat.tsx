@@ -9,7 +9,11 @@ import {resolvePsycheAppearance} from '../utils/psycheAppearance';
 import { startsNewMessageGroup } from '../utils/chatMessageGrouping';
 import EmojiExportDialog from '../components/chat/EmojiExportDialog';
 import BlobRefStyle from '../components/chat/BlobRefStyle';
-import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback, useContext } from 'react';
+import { AppNavigationActive } from '../hooks/useLocalBackHandler';
+import { CHAT_MESSAGES_COMMITTED } from '../utils/chatMessageEvents';
+import { registerDisplayedChat } from '../utils/chatReadSurface';
+import { isUnreadChatMessage } from '../utils/chatUnread';
 import { createAppPortal as createPortal } from '../components/os/appPortal';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -278,6 +282,7 @@ const chatRecentMessagesCache = new Map<string, { messages: Message[]; totalMsgC
 
 export interface HomePhoneChatProps {characterId:string;getContext:()=>string;onBack:()=>void;emojiPickerEnabled?:boolean}
 const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
+    const routeActive = useContext(AppNavigationActive);
     const { activeApp, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, openDateWithChar, registerBackHandler } = useOS();
     const miaomiao = useMiaomiaoBox();
     const activeCharacterId=homePhone?.characterId??osActiveCharacterId;
@@ -1579,7 +1584,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 setSettingsIncomingCallPrompt((char.incomingCallPrompt || '').trim() || DEFAULT_INCOMING_CALL_PROMPT);
                 setSettingsIncomingCallCooldownMin(char.incomingCallCooldownMin == null ? '' : String(char.incomingCallCooldownMin));
                 setSettingsIncomingCallDailyMax(char.incomingCallDailyMax == null ? '' : String(char.incomingCallDailyMax));
-                clearUnread(char.id);
             }
             // Per-character translation toggle + language pair
             try {
@@ -1801,16 +1805,52 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
     useEffect(() => {
         if (!activeCharacterId) return;
-        // 与切角色首屏 effect 同一次提交：那边已经 reload，这里只清未读。
+        // 切角色首屏 effect 已经请求读取；已读由真实显示后的 effect 确认。
         if (skipTimestampReloadForCharRef.current === activeCharacterId) {
             skipTimestampReloadForCharRef.current = null;
-            clearUnread(activeCharacterId);
             return;
         }
         reloadMessages(visibleCountRef.current);
-        clearUnread(activeCharacterId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- clearUnread is stable (useCallback with []), omit to prevent stale-dep lint noise
-    }, [lastMsgTimestamp, activeCharacterId, char?.hideSystemLogs, reloadMessages, clearUnread]);
+    }, [lastMsgTimestamp, activeCharacterId, char?.hideSystemLogs, reloadMessages]);
+
+    useLayoutEffect(() => {
+        if (routeActive && !showEntry && messagesReadyCharRef.current === activeCharacterId
+            && messages.some(message => message.charId === activeCharacterId)) return registerDisplayedChat(activeCharacterId);
+    }, [messages, messagesReadyTick, activeCharacterId, routeActive, showEntry]);
+
+    useEffect(() => {
+        if (!routeActive || showEntry || !activeCharacterId || messagesReadyCharRef.current !== activeCharacterId) return;
+        const confirmDisplayed = () => {
+            if (document.visibilityState !== 'visible') return;
+            // Only IDs actually rendered for this character can move the read position.
+            const lastDisplayed = messages.reduce((last, message) =>
+                message.charId === activeCharacterId && isUnreadChatMessage(message) ? Math.max(last, message.id || 0) : last, 0);
+            if (lastDisplayed > 0) clearUnread(activeCharacterId, lastDisplayed);
+        };
+        // Commit + one rendering opportunity before confirming. Returning to the foreground
+        // runs the same check; the OS verifies visibility, lock state and the active route.
+        let frame = window.requestAnimationFrame(confirmDisplayed);
+        const onVisible = () => {
+            window.cancelAnimationFrame(frame);
+            if (document.visibilityState === 'visible') frame = window.requestAnimationFrame(confirmDisplayed);
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('pageshow', onVisible);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('pageshow', onVisible);
+        };
+    }, [messages, messagesReadyTick, activeCharacterId, routeActive, showEntry, clearUnread]);
+
+    useEffect(() => {
+        const committed = (event: Event) => {
+            const charId = (event as CustomEvent).detail?.charId;
+            if (!charId || charId === activeCharacterId) void reloadMessages(visibleCountRef.current);
+        };
+        window.addEventListener(CHAT_MESSAGES_COMMITTED, committed);
+        return () => window.removeEventListener(CHAT_MESSAGES_COMMITTED, committed);
+    }, [activeCharacterId, reloadMessages]);
 
     useEffect(() => {
         const onRecord = (e: Event) => {

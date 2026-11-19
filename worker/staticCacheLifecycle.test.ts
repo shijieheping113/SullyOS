@@ -11,19 +11,24 @@ const source = buildSync({
   define: { __STATIC_CACHE_MANIFEST__: JSON.stringify({ buildId: 'test', appVersion: 'v0', entries: [{ url: 'index.html', bytes: 4, revision: 'abcd' }], shell: ['index.html'] }) },
 }).outputFiles[0].text;
 
-function worker(previouslyInstalled: boolean) {
+function worker(previouslyInstalled: boolean, windows: unknown[] = []) {
   const handlers = new Map<string, ((event: any) => void)[]>();
   let skipCount = 0;
   let claimCount = 0;
   let cacheOpens = 0;
   let clientQueries = 0;
   const toActive: unknown[] = [];
+  const opened: string[] = [];
   const self = {
     registration: { scope: 'https://example.com/SullyOS/', active: previouslyInstalled ? { postMessage: (message: unknown) => { toActive.push(message); } } : null },
     caches: { open: async () => { cacheOpens++; throw new Error('quota unavailable'); }, delete: async () => true, keys: async () => [] },
     addEventListener: (type: string, handler: (event: any) => void) => handlers.set(type, [...handlers.get(type) || [], handler]),
     skipWaiting: async () => { skipCount++; },
-    clients: { claim: async () => { claimCount++; }, matchAll: async () => { clientQueries++; return []; } },
+    clients: {
+      claim: async () => { claimCount++; },
+      matchAll: async () => { clientQueries++; return windows; },
+      openWindow: async (url: string) => { opened.push(url); },
+    },
   };
   runInNewContext(source, {
     self, console: { ...console, warn: () => {} }, crypto: webcrypto,
@@ -35,10 +40,28 @@ function worker(previouslyInstalled: boolean) {
     for (const handler of handlers.get(type) || []) handler({ ...fields, waitUntil: (job: Promise<unknown>) => jobs.push(job) });
     await Promise.all(jobs);
   }
-  return { dispatch, skipCount: () => skipCount, claimCount: () => claimCount, cacheOpens: () => cacheOpens, clientQueries: () => clientQueries, toActive, handlers };
+  return { dispatch, skipCount: () => skipCount, claimCount: () => claimCount, cacheOpens: () => cacheOpens, clientQueries: () => clientQueries, toActive, handlers, opened };
 }
 
 describe('cache integration with the existing push service worker', () => {
+  it('focuses a surviving page for a chat notification without navigating or opening another page', async () => {
+    const steps: unknown[] = [];
+    const sw = worker(true, [{
+      focus: async () => { steps.push('focus'); },
+      postMessage: (message: unknown) => { steps.push(message); },
+      navigate: () => { throw new Error('A surviving page must not be navigated'); },
+    }]);
+    await sw.dispatch('notificationclick', { notification: {
+      data: { charId: 'private-chat' }, close: () => { steps.push('close'); },
+    } });
+    expect(steps).toEqual(['close', 'focus', { type: 'active-msg-open', charId: 'private-chat' }]);
+    expect(sw.opened).toEqual([]);
+  });
+  it('opens the startup URL with the chat target only when no page can be found', async () => {
+    const sw = worker(true);
+    await sw.dispatch('notificationclick', { notification: { data: { charId: 'private-chat' }, close() {} } });
+    expect(sw.opened).toEqual(['https://example.com/SullyOS/?openApp=chat&activeMsgCharId=private-chat']);
+  });
   it('becomes ready on first installation without waiting for the offline shell', async () => {
     const sw = worker(false);
     await expect(sw.dispatch('install')).resolves.toBeUndefined();

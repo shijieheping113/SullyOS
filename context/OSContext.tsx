@@ -92,6 +92,9 @@ import { CHAT_GEN_EVENTS, setChatViewSnapshot, isEmbeddedChatVisible } from '../
 import { ChatParser } from '../utils/chatParser';
 import { runLocalAwayMessages, readLocalAwayAlarms, deliverLocalAwayNotification } from '../utils/awayMessage';
 import { startAwayMessageScheduler, requestAwayMessageReschedule } from '../utils/awayMessageScheduler';
+import { initializeChatUnread, markChatReadThrough, readChatUnread, CHAT_READ_KEY_PREFIX, rememberChatNotificationTarget, readChatNotificationTarget, forgetChatNotificationTarget } from '../utils/chatUnread';
+import { CHAT_MESSAGES_COMMITTED, CHAT_READ_CHANGED } from '../utils/chatMessageEvents';
+import { canConfirmChatRead, isChatDisplayed } from '../utils/chatReadSurface';
 import { mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import { applyLinkedArchiveDeletion, LINKED_ARCHIVE_DELETED, type LinkedArchiveDeletionDetail } from '../utils/memoryPalace/linkedArchiveDeletion';
 import {
@@ -511,7 +514,7 @@ interface OSContextType {
   // Global Message Signal
   lastMsgTimestamp: number; // New: Signal for Chat to refresh
   unreadMessages: Record<string, number>; // New: Track unread counts per character
-  clearUnread: (charId: string) => void; // New: Method to clear unread
+  clearUnread: (charId: string, displayedMessageId: number) => void;
 
   // Cloud Backup
   cloudBackupConfig: CloudBackupConfig;
@@ -984,6 +987,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [theme, setTheme] = useState<OSTheme>(() => ({ ...defaultTheme, ...readStoredBootTheme() }));
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
+  const lockedRef = useRef(isLocked);
+  lockedRef.current = isLocked;
   
   const getRealTime = (): VirtualTime => {
       const now = new Date();
@@ -1125,6 +1130,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   incomingCallRef.current = incomingCall;
   const [incomingCallLaunch, setIncomingCallLaunch] = useState<IncomingCallLaunch | null>(null);
   const [incomingCallHandoff, setIncomingCallHandoff] = useState<IncomingCallRequest | null>(null);
+  useEffect(() => {
+      if (!isDataLoaded) return;
+      const target = readChatNotificationTarget();
+      if (!target) return;
+      if (charactersRef.current.some(char => char.id === target)) {
+          setActiveCharacterId(target);
+          setActiveApp(AppID.Chat);
+      } else forgetChatNotificationTarget(target);
+  }, [isDataLoaded]);
   // 聊天「见面」按钮 → 见面：记录目标角色，DateApp 挂载后消费一次并自动进入见面
   const [dateAutoStartCharId, setDateAutoStartCharId] = useState<string | null>(null);
 
@@ -1935,6 +1949,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           ), 1200);
         }
 
+        try { await initializeChatUnread(finalChars.map(char => char.id)); }
+        catch (error) { console.warn('[ChatUnread] 未读状态初始化失败', error); addToast('未读状态暂未保存，请检查浏览器存储空间', 'error'); }
         if (finalChars.length > 0) {
           setCharacters(finalChars);
           const lastActiveId = localStorage.getItem('os_last_active_char_id');
@@ -2053,6 +2069,58 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   activeAppRef.current = activeApp;
   activeCharIdScheduleRef.current = activeCharacterId;
 
+  const isReadingCharacter = useCallback((charId: string) => canConfirmChatRead({
+      visible: document.visibilityState === 'visible', locked: lockedRef.current,
+      displayed: isChatDisplayed(charId),
+      active: (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId)
+          || isEmbeddedChatVisible(charId),
+  }), []);
+  const unreadRefreshGeneration = useRef(new Map<string, number>());
+  const refreshUnread = useCallback((event?: Event) => {
+      const target = (event as CustomEvent | undefined)?.detail?.charId as string | undefined;
+      const selected = charactersRef.current.filter(char => !target || char.id === target);
+      const requests = selected.map(char => {
+          const generation = (unreadRefreshGeneration.current.get(char.id) || 0) + 1;
+          unreadRefreshGeneration.current.set(char.id, generation);
+          return readChatUnread(char.id).then(result => ({ id: char.id, count: result.count, generation }));
+      });
+      void Promise.all(requests)
+          .then(rows => {
+              setUnreadMessages(previous => {
+                  const next = { ...previous };
+                  rows.forEach(({ id, count, generation }) => {
+                      if (unreadRefreshGeneration.current.get(id) !== generation) return;
+                      if (count > 0) next[id] = count;
+                      else delete next[id];
+                  });
+                  Object.keys(next).forEach(id => { if (!charactersRef.current.some(char => char.id === id)) delete next[id]; });
+                  return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+              });
+          }).catch(error => console.warn('[ChatUnread] 未读消息读取失败', error));
+  }, []);
+  useEffect(() => {
+      if (!isDataLoaded) return;
+      void initializeChatUnread(characters.map(char => char.id)).then(() => refreshUnread())
+          .catch(error => { console.warn('[ChatUnread] 未读状态初始化失败', error); addToast('未读状态暂未保存，请检查浏览器存储空间', 'error'); });
+      const visible = () => { if (document.visibilityState === 'visible') refreshUnread(); };
+      const storage = (event: StorageEvent) => {
+          if (event.key === null || event.key.startsWith(CHAT_READ_KEY_PREFIX)) refreshUnread();
+      };
+      window.addEventListener(CHAT_MESSAGES_COMMITTED, refreshUnread);
+      window.addEventListener(CHAT_READ_CHANGED, refreshUnread);
+      window.addEventListener('storage', storage);
+      window.addEventListener('pageshow', visible);
+      document.addEventListener('visibilitychange', visible);
+      return () => {
+          unreadRefreshGeneration.current.forEach((generation, id) => unreadRefreshGeneration.current.set(id, generation + 1));
+          window.removeEventListener(CHAT_MESSAGES_COMMITTED, refreshUnread);
+          window.removeEventListener(CHAT_READ_CHANGED, refreshUnread);
+          window.removeEventListener('storage', storage);
+          window.removeEventListener('pageshow', visible);
+          document.removeEventListener('visibilitychange', visible);
+      };
+  }, [isDataLoaded, characters, refreshUnread]);
+
   // 当前聊天视图快照 → 模块级 slot（utils/chatGenEvents）。根级 ChatBroadcast 挂在
   // OSProvider 之外拿不到这两个 state，靠快照判断"用户正看着的会话不弹全局横幅"。
   useEffect(() => {
@@ -2068,7 +2136,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       const checkAllSchedules = async () => {
           if (cancelled) return;
           let hasNewMessage = false;
-          const unreadUpdates: Record<string, number> = {};
 
           for (const char of characters) {
               try {
@@ -2094,12 +2161,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       if (cancelled) return;
                       hasNewMessage = true;
                       // Use refs for latest state (avoids stale closure & unnecessary deps)
-                      const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === char.id;
+                      const isChattingWithThisChar = isReadingCharacter(char.id);
 
                       // If not chatting specifically with this char right now, mark as unread
                       if (!isChattingWithThisChar) {
                           addToast(`${chatCharacterDisplayName(char)} 发来了一条消息`, 'success');
-                          unreadUpdates[char.id] = dueMessages.length;
 
                           // Web Notification
                           if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
@@ -2125,14 +2191,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           if (hasNewMessage && !cancelled) {
               setLastMsgTimestamp(Date.now());
-              // Use functional updater to avoid depending on unreadMessages in the effect deps
-              setUnreadMessages(prev => {
-                  const next = { ...prev };
-                  for (const [charId, count] of Object.entries(unreadUpdates)) {
-                      next[charId] = (next[charId] || 0) + count;
-                  }
-                  return next;
-              });
+              refreshUnread();
           }
       };
       schedulerRef.current = setInterval(checkAllSchedules, 5000);
@@ -2140,14 +2199,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => { cancelled = true; if (schedulerRef.current) clearInterval(schedulerRef.current); };
   }, [isDataLoaded, characters]);
 
-  const clearUnread = useCallback((charId: string) => {
-      setUnreadMessages(prev => {
-          if (!prev[charId]) return prev; // no change needed — avoid unnecessary re-render
-          const next = { ...prev };
-          delete next[charId];
-          return next;
-      });
-  }, []);
+  const clearUnread = useCallback((charId: string, displayedMessageId: number) => {
+      if (!isReadingCharacter(charId)) return;
+      try { markChatReadThrough(charId, displayedMessageId); forgetChatNotificationTarget(charId); }
+      catch (error) { console.warn('[ChatUnread] 已读位置保存失败', error); }
+      refreshUnread();
+  }, [isReadingCharacter, refreshUnread]);
 
   // ─── Global Proactive Message Handler ───
   // Registered at OS level so it works even when Chat is not open.
@@ -2160,7 +2217,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           };
           setLastMsgTimestamp(Date.now());
 
-          const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
+          const isChattingWithThisChar = isReadingCharacter(charId);
           if (source === 'local-away') {
               const character = charactersRef.current.find(c => c.id === charId);
               const displayName = character ? chatCharacterDisplayName(character) : charName;
@@ -2168,7 +2225,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   charId, charName: displayName,
                   avatarRef: character?.avatar, bodies: bodies || [],
                   isChattingWithThisChar, pageVisible: document.visibilityState === 'visible',
-                  unread: () => setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 })),
+                  unread: refreshUnread,
                   toast: () => addToast(`${displayName} 给你发了消息`, 'success'),
               }).catch(error => console.warn('[AwayMessage] 通知发送失败', error));
               return;
@@ -2180,7 +2237,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               } else {
                   awayActiveMsgCount += 1;
               }
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+              refreshUnread();
               const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
               void sendProactiveNativeNotification(charId, charName, preview);
               // SW push handler 已经 fire 过系统通知（不在前台时露出真实内容、在前台时
@@ -2197,6 +2254,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const { routeCharacterNotification } = await import('../utils/userSpaceNavigation');
               const result = await routeCharacterNotification(charId);
               if (result === 'current') {
+                  rememberChatNotificationTarget(charId);
                   setActiveApp(AppID.Chat);
                   setActiveCharacterId(charId);
               } else if (result === 'missing') addToast('这条通知的角色已不在本机', 'info');
@@ -2381,7 +2439,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const { charId, charName } = ((e as CustomEvent).detail || {}) as { charId?: string; charName?: string };
           if (!charId) return;
           setLastMsgTimestamp(Date.now());
-          const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
+          const isChattingWithThisChar = isReadingCharacter(charId);
           // 「正开着这个聊天」不等于「人看着这个聊天」：按了手机 home 键 / 熄屏之后，
           // 页面里照样停在聊天页，可屏幕上根本没有它。这种时候必须发系统通知——
           // 以前只看「开的是哪个页面」，于是从聊天页直接大退就一点动静都没有。
@@ -2397,7 +2455,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (delivery === 'silent') return;
 
           if (!isChattingWithThisChar) {
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+              refreshUnread();
           }
           // 用户在设置里把「私聊回复通知」关掉了：屏幕上又看不到这一页，就安静收下，
           // 只留未读数。页内 toast 不受影响——那是聊天本身的一部分，不是系统弹窗。
@@ -2478,9 +2536,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const { charId } = ((e as CustomEvent).detail || {}) as { charId?: string };
           if (!charId) return;
           setLastMsgTimestamp(Date.now());
-          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          const isChattingWithThisChar = isReadingCharacter(charId);
           if (!isChattingWithThisChar) {
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+              refreshUnread();
           }
       };
 
@@ -3345,6 +3403,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
       emotionConfig: { enabled: true },
     };
+    try { markChatReadThrough(newChar.id, 0); } catch { /* Initialization reports unavailable storage. */ }
     setCharacters(prev => [...prev, newChar]);
     setActiveCharacterId(newChar.id);
     await DB.saveCharacter(newChar);
@@ -5476,7 +5535,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setActiveApp(AppID.Date);
   };
   const consumeDateAutoStart = () => setDateAutoStartCharId(null);
-  const unlock = () => setIsLocked(false);
+  const unlock = () => { lockedRef.current = false; setIsLocked(false); };
 
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string; voiceView?: 'keys' | 'log'; pendingAvatarTouches?: AvatarTouchRecord[] }) => {
     setSuspendedCall(info);

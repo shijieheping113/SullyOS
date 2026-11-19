@@ -6,7 +6,8 @@ import { DB } from '../../utils/db';
 import { getBlobForRef, isBlobRef } from '../../utils/blobRef';
 import { loadBlobRefUrl } from '../../utils/blobRefSessionCache';
 import { chatCharacterDisplayName } from '../../utils/characterRemark';
-import { chatPreviewText, isChatPreviewMessage } from '../../utils/chatMessageVisibility';
+import { chatPreviewText } from '../../utils/chatMessageVisibility';
+import { readChatUnread } from '../../utils/chatUnread';
 import { RealtimeContextManager } from '../../utils/realtimeContext';
 import type { RealtimeConfig } from '../../utils/realtimeContext';
 import type { WeatherData } from '../../utils/realtimeWorldCore';
@@ -106,8 +107,7 @@ function LockMusic({ motion, controls, sample }: { motion: MotionRef; controls: 
 }
 
 async function readLockNotice(char: CharacterProfile): Promise<LockNotice | null> {
-  const { messages: [message] } = await DB.getRecentMessagesWithCount(char.id, 1, row =>
-    row.role === 'assistant' && isChatPreviewMessage(row) && row.id >= (char.hideBeforeMessageId || 0), 48);
+  const { newest: message } = await readChatUnread(char.id);
   if (!message || !Number.isFinite(new Date(message.timestamp).getTime())
     || message.metadata?.activeMsg2 || message.metadata?.source === 'active_msg_2') return null;
   return {
@@ -115,7 +115,7 @@ async function readLockNotice(char: CharacterProfile): Promise<LockNotice | null
     charId: char.id,
     name: chatCharacterDisplayName(char) || char.name,
     avatar: char.avatar || '',
-    text: chatPreviewText(message).replace(/\s+/g, ' ').slice(0, 160),
+    text: String(message.metadata?.peekText || message.metadata?.requestText || chatPreviewText(message)).replace(/\s+/g, ' ').slice(0, 160),
     timestamp: message.timestamp,
     count: 1,
   };
