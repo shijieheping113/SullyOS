@@ -5,8 +5,8 @@ import {putImageBlobDeduped} from '../../utils/blobRef';
 import {useChatAppearance} from './appearance/ChatAppearanceMode';
 import AtelierIcon from './appearance/AtelierIcon';
 
-export default function AvatarFrameImageEditor({css, disabled, onChange, onBusy, onError}: {
-    css: string; disabled: boolean; onChange: (css: string) => void;
+export default function AvatarFrameImageEditor({css, readCss, disabled, onChange, onBusy, onError}: {
+    css: string; readCss?: () => string; disabled: boolean; onChange: (css: string) => void;
     onBusy: (busy: boolean) => void; onError: (error: string) => void;
 }) {
     const {mode}=useChatAppearance();const atelier=mode==='atelier';
@@ -19,7 +19,7 @@ export default function AvatarFrameImageEditor({css, disabled, onChange, onBusy,
     const generate=(image:string,width:number,height:number,style=UPLOADED_AVATAR_FRAME_STYLE)=>targetAvatarFrameCss(uploadedAvatarFrameCss(image,width,height,style),target);
     const adjustable = frame && css === generate(frame.image, frame.width, frame.height, fit);
     return <>
-        {atelier?<div className="atelier-target-line"><span>使用对象</span><div role="group" aria-label="头像框给谁用">{AVATAR_FRAME_TARGETS.map(([id,label])=><button key={id} type="button" aria-pressed={target===id} disabled={disabled} onClick={()=>{setTarget(id);onChange(targetAvatarFrameCss(css,id));}}>{id==='both'?'双方':id==='user'?'用户':'角色'}</button>)}</div></div>:<label>头像框给谁用<select aria-label="头像框给谁用" disabled={disabled} value={target} onChange={e=>{const next=e.target.value as AvatarFrameTarget;setTarget(next);onChange(targetAvatarFrameCss(css,next));}}>{AVATAR_FRAME_TARGETS.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>}
+        {atelier?<div className="atelier-target-line"><span>使用对象</span><div role="group" aria-label="头像框给谁用">{AVATAR_FRAME_TARGETS.map(([id,label])=><button key={id} type="button" aria-pressed={target===id} disabled={disabled} onClick={()=>{setTarget(id);onChange(targetAvatarFrameCss(readCss?.()??css,id));}}>{id==='both'?'双方':id==='user'?'用户':'角色'}</button>)}</div></div>:<label>头像框给谁用<select aria-label="头像框给谁用" disabled={disabled} value={target} onChange={e=>{const next=e.target.value as AvatarFrameTarget;setTarget(next);onChange(targetAvatarFrameCss(css,next));}}>{AVATAR_FRAME_TARGETS.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>}
         <label className={atelier?'atelier-material-upload':undefined}>{atelier?<><AtelierIcon kind="avatar"/><span>头像框图片</span><span className="atelier-material-action">{frame?'更换':'＋ 选择图片'}</span></>:'选择透明头像框图片'}<input aria-label="选择透明头像框图片" type="file" accept="image/*" disabled={disabled} onChange={async event => {
             const file = event.target.files?.[0]; event.target.value = '';
             if (!file) return;

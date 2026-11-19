@@ -54,6 +54,9 @@ export const CHAT_PREVIEW_SCENES:ChatPreviewScene[] = [
   msg(101,'text','我也有想分享的！',undefined,'user'),
   msg(160,'text','我发现了一套很喜欢的美化，想换上试试。连着说两句，也能看看气泡和头像的间距。',undefined,'user'),
  ]),
+  scene('motion','消息动画演示',Array.from({length:18},(_,index)=>msg(300+index,'text',
+   ['晚一点到家，想给你看今天拍到的一片云。','那就等你回来，慢慢讲给猫儿听。','从这里往下滑，可以看下一条消息的出现效果。'][index%3],
+   undefined,index%2?'user':'assistant'))),
  scene('psyche','心象 · 折叠',[msg(103,'text','回来就好。',{thinkingChain:'听到开门的声音，忽然想把刚才看到的那朵云也分享给你。这段文字只是用来检查心象排版的示例。'})]),
  scene('psyche-open','心象 · 展开',[msg(104,'text','回来就好。',{thinkingChain:'听到开门的声音，忽然想把刚才看到的那朵云也分享给你。\n\n这是一段较长的虚构文字，用来检查字号、行距、换行和展开后的阅读效果。'})],{expanded:true}),
  scene('transfer','转账 · 待接收',[CHAT_TYPE_SAMPLES.transfer]),
@@ -74,4 +77,4 @@ export const CHAT_PREVIEW_SCENES:ChatPreviewScene[] = [
  scene('schedule','日程修改回执',[]),
 ];
 // A complete, scrollable conversation is also available, in addition to focused scenes.
-CHAT_PREVIEW_SCENES.unshift(scene('all','完整聊天记录',Array.from(new Map(CHAT_PREVIEW_SCENES.flatMap(item=>item.messages).map(message=>[message.id,message])).values())));
+CHAT_PREVIEW_SCENES.unshift(scene('all','完整聊天记录',Array.from(new Map(CHAT_PREVIEW_SCENES.filter(item=>item.id!=='motion').flatMap(item=>item.messages).map(message=>[message.id,message])).values())));

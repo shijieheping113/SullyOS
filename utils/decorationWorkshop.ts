@@ -1,3 +1,4 @@
+import {cloneDecorationBubbles} from './decorationBubbles';
 import {validateCollaborationCss} from '../features/collaboration/appearance';
 import {MEETING_CSS_SCOPE, MEETING_CSS_HINT, MEETING_CSS_PROMPT} from './meetingAppearance';
 import {JOURNAL_AI_CSS_PROMPT,JOURNAL_CSS_SCOPE_REGEX,JOURNAL_CSS_SCOPE_HINT} from './journalAppearance';
@@ -22,18 +23,18 @@ export function workshopCss(preset:DecorationPreset,category:DecorationWorkshop)
 }
 export function replaceWorkshopCss(base:string,category:'avatar'|'background',css:string){return [base.replace(workshopBlock(category),'').trim(),css.trim()?`/* sully-composer:${category} */\n${css}\n/* end-sully-composer:${category} */`:''].filter(Boolean).join('\n');}
 export function makeWorkshopPreset(category:DecorationWorkshop):DecorationPreset{
- const parts:DecorationPreset['parts']=category==='collaboration'?{collaboration:{uiTheme:'sully',customCss:'',avatarMode:'theme',avatarStyle:'circle'}}:category==='date'?{date:{preset:'novel'}}:category==='story'?{story:{preset:'novel'}}:category==='journal'?{journal:{preset:'original',customCss:''}}:category==='schedule'?{schedule:{preset:'original',customCss:''}}:category==='bubbles'?{bubbles:{...structuredClone(PRESET_THEMES.default),type:'custom'}}:category==='psyche'?{psyche:{styleId:'echo',customCss:''}}:category==='background'?{background:{image:null,style:'plain'}}:category==='sound'?{sound:null}:{css:''};
+ const parts:DecorationPreset['parts']=category==='collaboration'?{collaboration:{uiTheme:'sully',customCss:'',avatarMode:'theme',avatarStyle:'circle'}}:category==='date'?{date:{preset:'novel'}}:category==='story'?{story:{preset:'novel'}}:category==='journal'?{journal:{preset:'original',customCss:''}}:category==='schedule'?{schedule:{preset:'original',customCss:''}}:category==='bubbles'?{bubbles:{...cloneDecorationBubbles(PRESET_THEMES.default),type:'custom'}}:category==='psyche'?{psyche:{styleId:'echo',customCss:''}}:category==='background'?{background:{image:null,style:'plain'}}:category==='sound'?{sound:null}:{css:''};
  return {format:'sullyos-chat-decoration',version:1,name:`我的${DECORATION_WORKSHOPS.find(([id])=>id===category)![1]}`,parts};
 }
 export function projectWorkshopPreset(preset:DecorationPreset,category:DecorationWorkshop):DecorationPreset{
- if(category==='whitebox')return structuredClone(preset);
+ if(category==='whitebox')return {...preset,parts:{...preset.parts}};
  const out=makeWorkshopPreset(category);out.name=preset.name;
  if(category==='avatar'||category==='background'){
   const css=replaceWorkshopCss('',category,workshopCss(preset,category));
   if(css)out.parts.css=css;else delete out.parts.css;
   if(category==='background'&&preset.parts.background)out.parts.background=preset.parts.background;
   if(category==='avatar'&&preset.parts.bubbles&&(preset.parts.bubbles.user.avatarDecoration||preset.parts.bubbles.ai.avatarDecoration)){
-   const bubbles=structuredClone(PRESET_THEMES.default);
+   const bubbles=cloneDecorationBubbles(PRESET_THEMES.default);
    for(const side of ['user','ai'] as const)for(const field of ['avatarDecoration','avatarDecorationX','avatarDecorationY','avatarDecorationScale','avatarDecorationRotate'] as const){
     const value=preset.parts.bubbles[side][field];if(value!==undefined)(bubbles[side] as any)[field]=value;
    }
@@ -47,11 +48,11 @@ export function workshopPreview(preset:DecorationPreset,category:DecorationWorks
  const parts={...context?.parts,...preset.parts};
  if(context&&(category==='avatar'||category==='background'))parts.css=replaceWorkshopCss(context.parts.css||'',category,workshopCss(preset,category));
  if(context?.parts.bubbles&&category==='avatar'&&preset.parts.bubbles){
-  const bubbles=structuredClone(context.parts.bubbles);
+  const bubbles=cloneDecorationBubbles(context.parts.bubbles);
   for(const side of ['user','ai'] as const)for(const field of ['avatarDecoration','avatarDecorationX','avatarDecorationY','avatarDecorationScale','avatarDecorationRotate'] as const){const value=preset.parts.bubbles[side][field];if(value!==undefined)(bubbles[side] as any)[field]=value;else delete (bubbles[side] as any)[field];}
   parts.bubbles=bubbles;
  }
- if(!Object.values(parts).some(value=>typeof value==='string'?!!value.trim():value!==undefined&&value!==null))parts.bubbles=structuredClone(PRESET_THEMES.default);
+ if(!Object.values(parts).some(value=>typeof value==='string'?!!value.trim():value!==undefined&&value!==null))parts.bubbles=cloneDecorationBubbles(PRESET_THEMES.default);
  return {...preset,parts};
 }
 const scopes={

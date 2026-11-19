@@ -21,7 +21,8 @@ export function decorationThumbnailPart(value:unknown):DecorationThumbnailPart|u
 
 const ALL_SCOPE_SCENES = new Set(['all','conversation','transfer','transfer-accepted','transfer-returned','voice','voice-loading','voice-playing','psyche','psyche-open','music_card','collaboration_file']);
 /** Limit the menu to the preset's parts and explicit CSS targets, not the fixture catalog. */
-export function decorationPreviewScenes(value: unknown, scope: 'preset'|'all' = 'preset'): ChatPreviewScene[] {
+export function decorationPreviewScenes(value: unknown, scope: 'preset'|'all'|'motion' = 'preset'): ChatPreviewScene[] {
+  if(scope==='motion')return CHAT_PREVIEW_SCENES.filter(scene=>scene.id==='motion');
   if((value as Partial<DecorationPreset>|null)?.parts?.collaboration)return [{id:'collaboration',label:'协同工作',messages:[]}];
   if((value as Partial<DecorationPreset>|null)?.parts?.date)return [{id:'date-reading',label:'见面界面',messages:[]}];
   if((value as Partial<DecorationPreset>|null)?.parts?.story)return [{id:'story-reading',label:'剧情界面',messages:[]}];

@@ -61,3 +61,28 @@ it('starts the atelier with ordinary conversation and matches live typography wi
   expect(host.querySelector('[role=alert]')).toBeNull();
  }finally{await act(async()=>root.unmount());host.remove();live.remove();vi.unstubAllGlobals();}
 });
+
+it('keeps the same preview nodes when applying another draft stylesheet or when the new draft fails',async()=>{
+ vi.stubGlobal('ResizeObserver',class {observe(){}disconnect(){}});
+ const host=document.createElement('div');document.body.append(host);
+ const root=createRoot(host);
+ const base={format:'sullyos-chat-decoration',version:1,name:'draft'};
+ const current=()=>host.querySelector('[data-beauty-preview-source]')?.shadowRoot?.querySelector('main');
+ const render=async(css:string)=>{
+  await act(async()=>root.render(React.createElement(ChatAppearanceProvider,{mode:'atelier',
+   children:React.createElement(BeautyPresetPreview,{data:{...base,parts:{css}},editing:true,sceneScope:'all'})})));
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,70));});
+ };
+ try {
+  await render('.sully-chat-root{color:red}');
+  const initial=current();
+  expect(initial).toBeTruthy();
+  await render('.sully-chat-root{color:blue}');
+  expect(current()).toBe(initial);
+  expect(renderer.mock.calls.at(-1)?.[4]).toMatchObject({markup:'<main class="sully-chat-root">preview</main>'});
+  renderer.mockImplementationOnce(()=>{throw Error('样式读不到');});
+  await render('.sully-chat-root{color:orange}');
+  expect(current()).toBe(initial);
+  expect(host.querySelector('[role=alert]')?.textContent).toBe('样式读不到');
+ }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals();}
+});

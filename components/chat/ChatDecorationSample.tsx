@@ -13,7 +13,7 @@ import ChatHeaderShell from './ChatHeaderShell';
 import ChatInputArea from './ChatInputArea';
 import {PRESET_THEMES} from './ChatConstants';
 import ScheduleChangeNotice from './ScheduleChangeNotice';
-import {validateDecoration} from '../../utils/chatDecoration';
+import {validateDecoration,validateLocalDecorationPreview} from '../../utils/chatDecoration';
 import {buildChatFineTuneCss} from '../../utils/chatFineTuneCss';
 import {CHAT_PREVIEW_SCENES} from '../../utils/chatPreviewFixtures';
 import {BEAUTY_PREVIEW_AVATAR} from '../../utils/beautyPreviewAssets';
@@ -29,11 +29,11 @@ const noop=()=>{};
 const defaultBubble=PRESET_THEMES.default;
 
 /** Static rendering intentionally never mounts effects or binds actual message actions. */
-export function renderChatDecorationSample(value:unknown,sceneId:string,thumbnailPart?:DecorationThumbnailPart,state:DecorationPreviewState={},options:{entrance?:boolean}={}) {
- const p=validateDecoration(value).parts,l=p.layout||{};
- const suppressEntrance=!options.entrance;
+export function renderChatDecorationSample(value:unknown,sceneId:string,thumbnailPart?:DecorationThumbnailPart,state:DecorationPreviewState={},options:{editing?:boolean;markup?:string;defaultEntrance?:boolean}={}) {
+ const p=(options.editing?validateLocalDecorationPreview(value):validateDecoration(value)).parts,l=p.layout||{};
+ const suppressEntrance=true;
  // 影子 DOM 吃不到主文档 Tailwind 的 fade-in；预览/重播要自带关键帧。
- const entranceCss=`@keyframes sully-preview-fade-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}.animate-fade-in{animation:sully-preview-fade-in .35s cubic-bezier(.4,0,.2,1) both}`;
+ const entranceCss=options.defaultEntrance===false?'':`@keyframes sully-preview-fade-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}.animate-fade-in{animation:sully-preview-fade-in .35s cubic-bezier(.4,0,.2,1) both}`;
  if(p.collaboration)return renderCollaborationBeautySample(p.collaboration,!!thumbnailPart);
  if(p.date||p.story){
   const style=meetingAppearance(p.date||p.story);
@@ -58,11 +58,14 @@ export function renderChatDecorationSample(value:unknown,sceneId:string,thumbnai
  }
  const scene=CHAT_PREVIEW_SCENES.find(item=>item.id===sceneId)||CHAT_PREVIEW_SCENES[0];
   const messages=scene.messages.flatMap(message=>{const status=state.transfers?.[message.id];if(!status||message.type!=='transfer'||message.metadata?.receipt)return [message];return [{...message,metadata:{...message.metadata,status}},{...message,id:-message.id,role:'user' as const,metadata:{amount:message.metadata?.amount,receipt:status}}];});
- const markup=renderToStaticMarkup(thumbnailPart?<main className={`sully-chat-root sample-chat sample-part sample-part-${thumbnailPart}`}>
+ const surface=chatSurface({...l,chatBackgroundStyle:p.background?.style||'plain'},p.background?.image);
+ const markup=options.markup??renderToStaticMarkup(thumbnailPart?<main className={`sully-chat-root sample-chat sample-part sample-part-${thumbnailPart}`}
+    style={thumbnailPart==='background'?surface.style:undefined}>
+   {thumbnailPart==='background'&&<div className="sully-chat-messages sample-messages" aria-hidden="true"/>}
   {thumbnailPart==='avatar'&&<div className={`sample-avatar sully-chat-message sully-chat-message-${readAvatarFrameTarget(p.css||'')==='user'?'user':'ai'}`}><span className="sully-chat-avatar-wrap" style={{position:'relative',display:'block',width:100,height:100,margin:'auto'}}><img className="sully-chat-message-avatar-img" src={BEAUTY_PREVIEW_AVATAR} alt="示例头像" style={{width:'100%',height:'100%',borderRadius:'50%'}}/>{p.bubbles?.ai.avatarDecoration&&<img className="sully-chat-avatar-frame" src={p.bubbles.ai.avatarDecoration} alt="" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}}/>}</span></div>}
   {thumbnailPart==='psyche'&&<div className="sample-psyche"><ThinkingChainBlock chain="听到开门的声音，忽然想把刚才看到的那朵云也分享给你。" styleId={p.psyche?.styleId} customColors={p.psyche?.customColors}/></div>}
   {thumbnailPart==='bubbles'&&<div className="sully-chat-messages sample-bubbles">{CHAT_PREVIEW_SCENES.find(item=>item.id==='conversation')!.messages.map((message,index)=><MessageItem key={message.id} msg={message} activeTheme={p.bubbles||defaultBubble} isFirstInGroup={index%2===0} isLastInGroup={index%2===1} charAvatar={BEAUTY_PREVIEW_AVATAR} userAvatar={BEAUTY_PREVIEW_AVATAR} charName="示例角色" onLongPress={noop} onReply={noop} selectionMode={false} isSelected={false} onToggleSelect={noop} showTimestamp="never" suppressEntranceAnimation={suppressEntrance}/>)}</div>}
-  </main>:<main className={`sully-chat-root sample-chat ${chatSurface(l).className}`} style={chatSurface({...l,chatBackgroundStyle:p.background?.style||'plain'},p.background?.image).style}>
+  </main>:<main className={`sully-chat-root sample-chat ${surface.className}`} style={surface.style}>
    <ChatHeaderShell selectionMode={false} selectedCount={0} onCancelSelection={noop} activeCharacter={{id:'whitebox-preview',name:'示例角色',avatar:BEAUTY_PREVIEW_AVATAR}} isTyping={false} isSummarizing={false} lastTokenUsage={null} onClose={noop} onTriggerAI={noop} onShowCharsPanel={noop} hideBuffs={(l.chatHideHeaderBuffs??false)||l.chatEmotionView==='peek'} headerStyle={l.chatHeaderStyle} avatarShape={l.chatAvatarShape} headerAlign={l.chatHeaderAlign} headerDensity={l.chatHeaderDensity} statusStyle={l.chatStatusStyle} chromeStyle={l.chatChromeStyle}/>
    <div className="sully-chat-messages sample-messages flex-1 overflow-y-auto overflow-x-hidden pt-6 no-scrollbar">
    {(scene.id==='schedule'||scene.id==='all') && <ScheduleChangeNotice onDone={noop} detail={{eventId:'preview',charId:'whitebox-preview',date:'2026-09-26',schedule:{} as any,changes:[{startTime:'18:00',before:'整理房间',after:'一起散步'},{startTime:'20:00',before:'看书',after:'一起看电影'}]}}/>}

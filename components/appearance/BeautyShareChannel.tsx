@@ -52,7 +52,7 @@ import {readDecorationFile,portableDecoration,readBubbleDecoration} from '../../
 import {readDecorationOrigin,writeDecorationOrigin,saveLibraryDecoration,saveLibraryDecorationBatch,importedOrigin,type DecorationOrigin} from '../../utils/decorationLibrary';
 import {shareOrDownloadBlob} from '../../utils/shareExport';
 import {safeShareFileName,isPng,pngHasShare,extractShareFromPng} from '../../utils/pngShare';
-import {snapshotDecoration} from '../../utils/chatDecoration';
+import {snapshotDecoration,snapshotEditableDecoration} from '../../utils/chatDecoration';
 import {PRESET_THEMES} from '../chat/ChatConstants';
 import {DECORATION_WORKSHOPS,workshopCss,makeWorkshopPreset,projectWorkshopPreset,type DecorationWorkshop} from '../../utils/decorationWorkshop';
 import {combineDecorationOrigins,writeDecorationOrigin as writeOrigin} from '../../utils/decorationLibrary';
@@ -82,7 +82,6 @@ export default function BeautyShareChannel({ presets, onExport, onImport, onBusy
   const [atelierPage,setAtelierPage]=useState<'role'|'components'|'rooms'|'author'|'work'>('role');
   const [atelierRoomsOpen,setAtelierRoomsOpen]=useState(false);
   const [atelierAuthorTab,setAtelierAuthorTab]=useState<'receive'|'share'|'mine'>('receive');
-  const [atelierCurrent,setAtelierCurrent]=useState<DecorationPreset>();
   const [atelierSpecial,setAtelierSpecial]=useState<{kind:AtelierCssComponent;preset?:DecorationPreset;origin:DecorationOrigin;originalKey?:string}|null>(null);
   const atelierNav=(id:typeof atelierPage)=>{setAtelierPage(id);if(id==='role'||id==='rooms'){setPage('library');}else if(id==='author'){setAtelierAuthorTab('receive');setPage('receive');}else{setPage('library');setCategory(id==='work'?'collaboration':'all');}};
   const { characters, activeCharacterId, theme, updateTheme, customIcons, setCustomIcon, deleteAppearancePreset, removeCustomTheme, replaceAppearancePreset, customThemes=[], applyAppearancePreset, addCustomTheme, updateCharacter, setActiveCharacterId, openApp, closeApp } = useOS();
@@ -97,7 +96,11 @@ export default function BeautyShareChannel({ presets, onExport, onImport, onBusy
   const [received, setReceived] = useState<{ kind: 'appearance'; id: string; name: string } | { kind: 'chat-decoration'; preset: DecorationPreset; name: string } | null>(null);
   const [target, setTarget] = useState(targetCharacterId || activeCharacterId || characters[0]?.id || '');
   const targetCharacter = characters.find(character => character.id === target);
-  useEffect(()=>{if(mode!=='atelier'||!targetCharacter)return;let alive=true;const bubbleId=targetCharacter.bubbleStyle||theme.chatDefaultBubbleStyle||'default';void snapshotDecoration(`${targetCharacter.name}的搭配`,theme,targetCharacter,customThemes.find(item=>item.id===bubbleId)||PRESET_THEMES[bubbleId]||PRESET_THEMES.default).then(value=>{if(alive)setAtelierCurrent(value);}).catch(()=>{if(alive)setError('当前装扮预览读取失败，请重新进入。');});return()=>{alive=false;};},[mode,targetCharacter,theme,customThemes]);
+  const targetBubbleId=targetCharacter?.bubbleStyle||theme.chatDefaultBubbleStyle||'default';
+  const targetBubble=customThemes.find(item=>item.id===targetBubbleId)||PRESET_THEMES[targetBubbleId]||PRESET_THEMES.default;
+  const atelierCurrent=useMemo(()=>mode==='atelier'&&targetCharacter
+    ?snapshotEditableDecoration(`${targetCharacter.name}的搭配`,theme,targetCharacter,targetBubble)
+    :undefined,[mode,targetCharacter,theme,targetBubble]);
   const [collaborationAppearance,setCollaborationAppearance]=useState<CollaborationAppearance>();
   useEffect(()=>{let alive=true;CollaborationStore.loadSettings().then(value=>{if(alive)setCollaborationAppearance(validateCollaborationAppearance(value));}).catch(()=>{});return()=>{alive=false;};},[]);
   const applyCollaboration=async(value:CollaborationAppearance)=>{
@@ -162,11 +165,9 @@ export default function BeautyShareChannel({ presets, onExport, onImport, onBusy
   };
   const customize=async()=>{setBusy(true);setError('');try{
     if(!targetCharacter)throw Error('请先选择角色');
-    const key=await DB.getAsset('decoration_applied_'+target);
-    const slots=await DB.getAsset('decoration_slots_'+target);
+    const [key,slots]=await Promise.all([DB.getAsset('decoration_applied_'+target),DB.getAsset('decoration_slots_'+target)]);
     const origin:DecorationOrigin=slots?combineDecorationOrigins(await Promise.all(Object.values(JSON.parse(slots) as Record<string,string>).map(readDecorationOrigin))):key?await readDecorationOrigin(key):{kind:'self'};
-    const bubbleId=targetCharacter.bubbleStyle||theme.chatDefaultBubbleStyle||'default';
-    const preset=await snapshotDecoration(`${targetCharacter.name}的搭配`,theme,targetCharacter,customThemes.find(item=>item.id===bubbleId)||PRESET_THEMES[bubbleId]||PRESET_THEMES.default);
+    const preset=atelierCurrent??await snapshotDecoration(`${targetCharacter.name}的搭配`,theme,targetCharacter,targetBubble);
     setDraft({preset,origin});if(guideStep!==null)setGuideStep(2);
   }catch(e){setError(e instanceof Error?e.message:'无法创建草稿');}finally{setBusy(false);}};
   const importFile=async(file:File)=>{setBusy(true);onBusyChange(true);setError('');setApplyAll(false);setApplyError('');try{
@@ -349,7 +350,7 @@ export default function BeautyShareChannel({ presets, onExport, onImport, onBusy
     {mode==='atelier'&&page!=='library'&&libraryContext==='chat'&&<button className="atelier-public-library" disabled={busy} onClick={()=>setPage('catalog')}>装扮库 · 测试版 ↗</button>}
     {mode==='atelier'&&page==='library'&&(error||notice)&&<div className="atelier-library-notice">{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}</div>}
     {mode==='atelier'&&page!=='library'&&<div className="atelier-author-shell"><AtelierNavigation page="author" onNavigate={atelierNav} disabled={busy||applying}/><header className="atelier-content-heading"><div className="atelier-title-art"><AtelierIcon kind="author"/><h1>作者美化库</h1></div></header><nav className="atelier-author-tabs" aria-label="作者美化库">{([['receive','领取'],['share','分享'],['mine','我的提交']] as const).map(([id,label])=><button key={id} aria-pressed={atelierAuthorTab===id} disabled={busy} onClick={()=>{setAtelierAuthorTab(id);setPage(id==='receive'?'receive':'mine');if(id==='mine')setShareMethod('code');}}>{label}</button>)}</nav></div>}
-    {mode==='atelier'&&page==='library'&&<AtelierLibraryView onBack={goBack} page={atelierPage} category={category} onNavigate={id=>{if(id==='rooms')setAtelierPage('rooms');else atelierNav(id);}} onCategory={setCategory} characters={characters} target={target} onTarget={setTarget} current={atelierCurrent} busy={busy||applying} entries={visibleEntries} builtins={atelierBuiltins} outfits={outfitEntries} getUsage={getUsage} onEdit={entry=>void editEntry(entry)} onApply={entry=>void applyLocal(entry)} onExport={entry=>void exportEntry(entry)} onShare={entry=>{setShareSource(entry.id);setPage('mine');}} onDelete={setDeleteEntry} onUpdate={entry=>void checkUpdate(entry)} onImport={()=>setPage('receive')} onNew={id=>openMaker(id as DecorationWorkshop)} onNewSpecial={kind=>setAtelierSpecial({kind,origin:{kind:'self'}})} onCustomize={()=>void customize()} onSettings={onCustomize} onNewOutfit={()=>{setDraft({preset:{format:'sullyos-chat-decoration',version:1,name:'新的搭配',parts:{}},origin:{kind:'self'}});}} onOutfit={entry=>void openAtelierOutfit(entry)} onReset={()=>void restoreCategory()}/>}
+    {mode==='atelier'&&page==='library'&&<AtelierLibraryView onBack={goBack} page={atelierPage} category={category} onNavigate={id=>{if(id==='rooms')setAtelierPage('rooms');else atelierNav(id);}} onCategory={setCategory} characters={characters} target={target} onTarget={setTarget} current={atelierCurrent} previewActive={!draft&&!atelierSpecial&&!received} busy={busy||applying} entries={visibleEntries} builtins={atelierBuiltins} outfits={outfitEntries} getUsage={getUsage} onEdit={entry=>void editEntry(entry)} onApply={entry=>void applyLocal(entry)} onExport={entry=>void exportEntry(entry)} onShare={entry=>{setShareSource(entry.id);setPage('mine');}} onDelete={setDeleteEntry} onUpdate={entry=>void checkUpdate(entry)} onImport={()=>setPage('receive')} onNew={id=>openMaker(id as DecorationWorkshop)} onNewSpecial={kind=>setAtelierSpecial({kind,origin:{kind:'self'}})} onCustomize={()=>void customize()} onSettings={onCustomize} onNewOutfit={()=>{setDraft({preset:{format:'sullyos-chat-decoration',version:1,name:'新的搭配',parts:{}},origin:{kind:'self'}});}} onOutfit={entry=>void openAtelierOutfit(entry)} onReset={()=>void restoreCategory()}/>}
     {atelierSpecial&&<AtelierComponentMaker {...atelierSpecial} onClose={()=>setAtelierSpecial(null)} onSaved={()=>{setAtelierSpecial(null);void refreshSaved();setNotice('作品已保存，未应用到角色。');}}/>}
     <div className={mode==='atelier'&&page==='library'?'atelier-legacy-library-hidden':mode==='atelier'?'atelier-author-content':undefined}>
     <div className="wardrobe-navigation">
@@ -363,7 +364,6 @@ export default function BeautyShareChannel({ presets, onExport, onImport, onBusy
       </div>}
     </div>
     <div className="wardrobe-content">
-    {mode==='atelier'&&atelierPage==='role'&&page==='library'&&<section className="atelier-current-stage">{atelierCurrent?<BeautyPresetPreview data={atelierCurrent} sceneScope="all"/>:<p role="status">正在读取当前装扮…</p>}<button className="atelier-current-edit" disabled={busy||!atelierCurrent} onClick={()=>void customize()}><AtelierIcon kind="clipboard"/>装修单</button></section>}
     {page==='library'&&targetCharacterId&&<div className="wardrobe-character-context"><label>当前角色：<select aria-label="当前角色" disabled={busy||applying} value={target} onChange={e=>{setTarget(e.target.value);setNotice('');}}>{!characters.length&&<option value="">暂无角色</option>}{characters.map(character=><option key={character.id} value={character.id}>{character.name}</option>)}</select></label></div>}
     {page==='library'&&libraryContext==='chat'&&<button className="wardrobe-catalog-entry" disabled={busy} onClick={()=>{setGuideStep(null);setPage('catalog');}}><span>装扮库 <small>测试版</small></span><span aria-hidden="true">↗</span></button>}
     {page === 'library' && <div className="wardrobe-entrypoints">

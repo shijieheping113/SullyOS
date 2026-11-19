@@ -3,7 +3,7 @@ import {getCachedBlobRefUrl, loadBlobRefUrl} from './blobRefSessionCache';
 
 // Scan once, including large data URLs. Avoid selector/URL regex backtracking on
 // multi-megabyte images, and leave comments and CSS string literals untouched.
-function urls(css: string): Array<{start: number; end: number; value: string}> {
+export function findCssUrls(css: string): Array<{start: number; end: number; value: string}> {
     const found: Array<{start: number; end: number; value: string}> = [];
     const quotedEnd = (start: number) => {
         const quote = css[start]; let i = start + 1;
@@ -39,7 +39,7 @@ function urls(css: string): Array<{start: number; end: number; value: string}> {
     return found;
 }
 
-function replaceUrls(css: string, values: ReadonlyMap<string, string>, found = urls(css)): string {
+function replaceUrls(css: string, values: ReadonlyMap<string, string>, found = findCssUrls(css)): string {
     const chunks: string[] = []; let cursor = 0;
     for (const url of found) {
         chunks.push(css.slice(cursor, url.start), values.get(url.value) ?? url.value); cursor = url.end;
@@ -48,7 +48,7 @@ function replaceUrls(css: string, values: ReadonlyMap<string, string>, found = u
 }
 
 async function mapUrls(css: string, transform: (value: string) => Promise<string>, concurrency = 1): Promise<string> {
-    const found = urls(css);
+    const found = findCssUrls(css);
     const unique = [...new Set(found.map(url => url.value))];
     const values = new Map<string, string>(); let next = 0;
     const results = await Promise.allSettled(Array.from({length: Math.min(concurrency, unique.length)}, async () => {
@@ -104,7 +104,7 @@ export function portableCssImages(css: string): Promise<string> {
 /** Unique blobref tokens used as CSS url(...) values. */
 export function listCssBlobRefTokens(css: string): string[] {
     if (!css.includes('blobref:')) return [];
-    return [...new Set(urls(css).map(url => url.value).filter(value => value.startsWith('blobref:')))];
+    return [...new Set(findCssUrls(css).map(url => url.value).filter(value => value.startsWith('blobref:')))];
 }
 
 /** Sync map when every CSS blobref is already in the session cache; otherwise null. */

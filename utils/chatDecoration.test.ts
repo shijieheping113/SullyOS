@@ -3,13 +3,30 @@ import {File} from 'node:buffer';
 import {embedShareInPng} from './pngShare';
 import {describe,it,expect,vi} from 'vitest';
 vi.mock('./blobRef',()=>({resolveRefToDataUrl:vi.fn(async(v:string)=>v==='blobref:missing'?'':'data:image/png;base64,AA=='),blobToDataUrl:vi.fn(),migrateDataUrlToRef:vi.fn(async(v:string)=>v.startsWith('data:')?'blobref:new':v),migrateChatThemeBlobRefs:vi.fn(async(v:any)=>v)}));
-import {decorationPatches,exportDecoration,parseDecorationText,validateDecoration,resolveDecorationTheme,decorationCssPatch,LAYOUT_DEFAULTS,readDecorationFile,readBubbleDecoration} from './chatDecoration';
+import {decorationPatches,exportDecoration,parseDecorationText,validateDecoration,validateLocalDecorationPreview,snapshotEditableDecoration,prepareDecorationForSave,resolveDecorationTheme,decorationCssPatch,LAYOUT_DEFAULTS,readDecorationFile,readBubbleDecoration} from './chatDecoration';
 import {PRESET_THEMES} from '../components/chat/ChatConstants';
 import {upsertWhiteboxSound} from './whiteboxSound';
 const char:any={id:'a',name:'Private name',systemPrompt:'SECRET',chromeCustomCss:'.x{color:red}',chatSound:{src:'chime'},chatFineTune:{enabled:true,chatBubbleFontSize:18}};
 const base:any={chatHeaderStyle:'telegram',chatChromeCustomCss:'.base{color:blue}',chatSound:{src:'ding'},apiKey:'SECRET',wallpaper:'SECRET'};
-const wrap=(parts:any)=>({format:'sullyos-chat-decoration',version:1,name:'Test',parts});
+const wrap=(parts:any)=>({format:'sullyos-chat-decoration' as const,version:1 as const,name:'Test',parts});
 describe('portable chat decoration',()=>{
+ it('opens an existing CSS draft even when an unrelated local wallpaper cannot be read',async()=>{
+  const draft=snapshotEditableDecoration('Current',base,{...char,chatBackground:'blobref:missing'},PRESET_THEMES.default);
+  expect(draft.parts.background?.image).toBe('blobref:missing');
+  expect(draft.parts.css).toContain('.x{color:red}');
+  await expect(prepareDecorationForSave(draft)).rejects.toThrow('丢失');
+  expect(draft.parts.css).toContain('.x{color:red}');
+ });
+ it('keeps browser object URLs exclusive to local preview and only converts media when saving',async()=>{
+  const preview=wrap({background:{image:'blob:https://local.invalid/wallpaper',style:'plain'}});
+  expect(validateLocalDecorationPreview(preview).parts.background?.image).toBe(preview.parts.background.image);
+  expect(()=>validateDecoration(preview)).toThrow('可分享');
+  const draft=snapshotEditableDecoration('Current',base,{...char,chatBackground:'blobref:picture'},PRESET_THEMES.default);
+  const saved=await prepareDecorationForSave(draft);
+  expect(saved.parts.background?.image).toMatch(/^data:image/);
+  expect(saved.parts.css).toBe(draft.parts.css);
+  await expect(prepareDecorationForSave(wrap({schedule:{preset:'original'}}))).resolves.toMatchObject({parts:{schedule:{preset:'original'}}});
+ });
  it('reads local bubble images before validating the portable package without changing the original',async()=>{
   const bubble=structuredClone(PRESET_THEMES.default);
   bubble.user.backgroundImage='blobref:picture';bubble.ai.avatarDecoration='blobref:frame';

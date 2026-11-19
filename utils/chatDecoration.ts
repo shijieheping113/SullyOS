@@ -1,3 +1,4 @@
+import {cloneDecorationBubbles} from './decorationBubbles';
 import {validateCollaborationAppearance, type CollaborationAppearance} from '../features/collaboration/appearance';
 import {validateMeetingAppearance, type MeetingAppearance} from './meetingAppearance';
 import {validateJournalAppearance} from './journalAppearance';
@@ -35,17 +36,20 @@ export function resolveDecorationTheme(theme:OSTheme,char?:CharacterProfile):OST
 export const PART_LABELS={collaboration:'协同工作（全局）',layout:'布局',bubbles:'气泡',background:'背景',sound:'声音',date:'见面界面',story:'剧情界面（全局）',css:'白框 CSS',psyche:'心象卡片',schedule:'日程表（全局）',journal:'交换日记'} as const;
 export type DecorationPart=keyof typeof PART_LABELS;
 export interface DecorationPreset{format:'sullyos-chat-decoration';version:1;name:string;parts:{collaboration?:CollaborationAppearance;date?:MeetingAppearance;story?:MeetingAppearance;journal?:JournalAppearance;schedule?:ScheduleCardAppearance;psyche?:PsycheAppearance;layout?:DecorationLayout;bubbles?:ChatTheme;background?:{image:string|null;style:OSTheme['chatBackgroundStyle']};sound?:{src:string;volume?:number}|null;css?:string}}
-function resource(value:unknown):string{
- if(typeof value!=='string'||value.length>40*1024*1024||!(/^(data:(image|audio)\/[\w.+-]+[;,]|https?:\/\/)/i.test(value)))throw Error('资源不是可分享的图片或音频，请重新导出原文件');return value;
+function resource(value:unknown, previewObjectUrls=false):string{
+ if(typeof value!=='string'||value.length>40*1024*1024||!(/^(data:(image|audio)\/[\w.+-]+[;,]|https?:\/\/)/i.test(value)||(previewObjectUrls&&value.startsWith('blob:'))))throw Error('资源不是可分享的图片或音频，请重新导出原文件');return value;
 }
-export function validateBubble(value:unknown):ChatTheme{
+export function validateBubble(value:unknown):ChatTheme {
+ return validateBubbleAssets(value,false);
+}
+function validateBubbleAssets(value:unknown, previewObjectUrls:boolean):ChatTheme{
  if(!record(value)||typeof value.name!=='string'||!record(value.user)||!record(value.ai))throw Error('气泡主题格式无效');
  const result:ChatTheme={id:'import-preview',name:value.name.slice(0,60),type:'custom',user:{} as any,ai:{} as any};
  for(const side of ['user','ai'] as const){const v=value[side],out:Record<string,any>={};
   for(const k of ['backgroundColor','textColor']){if(typeof v[k]!=='string'||v[k].length>300)throw Error('气泡颜色无效');out[k]=v[k];}
   for(const k of ['borderRadius','opacity','backgroundImageOpacity','borderTopLeftRadius','borderTopRightRadius','borderBottomRightRadius','borderBottomLeftRadius','decorationX','decorationY','decorationScale','decorationRotate','avatarDecorationX','avatarDecorationY','avatarDecorationScale','avatarDecorationRotate'])if(v[k]!==undefined){if(typeof v[k]!=='number'||!Number.isFinite(v[k])||Math.abs(v[k])>10000)throw Error('气泡数值无效');out[k]=v[k];}
   out.borderRadius??=20;out.opacity??=1;
-  for(const k of ['backgroundImage','decoration','avatarDecoration'])if(v[k])out[k]=resource(v[k]);
+  for(const k of ['backgroundImage','decoration','avatarDecoration'])if(v[k])out[k]=resource(v[k],previewObjectUrls);
   for(const k of ['voiceBarBg','voiceBarActiveBg','voiceBarBtnColor','voiceBarWaveColor','voiceBarTextColor'])if(typeof v[k]==='string'&&v[k].length<300)out[k]=v[k];
   if(['every','last','none'].includes(v.tailMode))out.tailMode=v.tailMode;
   result[side]=out as any;
@@ -53,7 +57,14 @@ export function validateBubble(value:unknown):ChatTheme{
  if(value.customCss!==undefined){if(typeof value.customCss!=='string')throw Error('气泡 CSS 无效');result.customCss=value.customCss;}
  return result;
 }
-export function validateDecoration(value:unknown):DecorationPreset{
+export function validateDecoration(value:unknown):DecorationPreset {
+ return validateDecorationAssets(value,false);
+}
+/** The editing preview uses in-session object URLs. Import and sharing still validate portable assets. */
+export function validateLocalDecorationPreview(value:unknown):DecorationPreset {
+ return validateDecorationAssets(value,true);
+}
+function validateDecorationAssets(value:unknown,previewObjectUrls:boolean):DecorationPreset{
  if(!record(value)||value.format!=='sullyos-chat-decoration')throw Error('不是装扮预设');if(value.version!==1)throw Error('此装扮版本暂不支持，请更新应用');
  if(!record(value.parts))throw Error('装扮缺少内容');const p=value.parts,result:DecorationPreset={format:'sullyos-chat-decoration',version:1,name:typeof value.name==='string'?value.name.slice(0,60):'导入的装扮',parts:{}};
  if((p.schedule!==undefined||p.journal!==undefined)&&Object.keys(p).some(key=>key!=='schedule'&&key!=='journal'))throw Error('App 美化与聊天装扮请分别保存');
@@ -66,9 +77,9 @@ export function validateDecoration(value:unknown):DecorationPreset{
  if(p.schedule!==undefined)result.parts.schedule=validateScheduleAppearance(p.schedule);
  if(p.psyche!==undefined)result.parts.psyche=validatePsycheAppearance(p.psyche);
  if(p.layout!==undefined)result.parts.layout=pickDecorationLayout(p.layout);
- if(p.bubbles!==undefined)result.parts.bubbles=validateBubble(p.bubbles);
- if(p.background!==undefined){if(!record(p.background)||!['plain','grid','paper','mesh'].includes(p.background.style))throw Error('背景格式无效');result.parts.background={image:p.background.image===null?null:resource(p.background.image),style:p.background.style};}
- if(p.sound!==undefined){if(p.sound===null)result.parts.sound=null;else{if(!record(p.sound)||typeof p.sound.src!=='string')throw Error('提示音格式无效');const src=p.sound.src;if(src!=='none'&&!Object.prototype.hasOwnProperty.call(BUILTIN_SOUNDS,src))resource(src);if(p.sound.volume!==undefined&&(typeof p.sound.volume!=='number'||p.sound.volume<0||p.sound.volume>1))throw Error('音量无效');result.parts.sound={src,volume:p.sound.volume??.6};}}
+ if(p.bubbles!==undefined)result.parts.bubbles=validateBubbleAssets(p.bubbles,previewObjectUrls);
+ if(p.background!==undefined){if(!record(p.background)||!['plain','grid','paper','mesh'].includes(p.background.style))throw Error('背景格式无效');result.parts.background={image:p.background.image===null?null:resource(p.background.image,previewObjectUrls),style:p.background.style};}
+ if(p.sound!==undefined){if(p.sound===null)result.parts.sound=null;else{if(!record(p.sound)||typeof p.sound.src!=='string')throw Error('提示音格式无效');const src=p.sound.src;if(src!=='none'&&!Object.prototype.hasOwnProperty.call(BUILTIN_SOUNDS,src))resource(src,previewObjectUrls);if(p.sound.volume!==undefined&&(typeof p.sound.volume!=='number'||p.sound.volume<0||p.sound.volume>1))throw Error('音量无效');result.parts.sound={src,volume:p.sound.volume??.6};}}
  if(p.css!==undefined){if(typeof p.css!=='string'||p.css.length>8*1024*1024||/<\/?(?:script|html|iframe)\b/i.test(p.css))throw Error('CSS 内容无效');result.parts.css=p.css;}
  if(!Object.keys(result.parts).length)throw Error('预设中没有可用的装扮内容');
  return result;
@@ -98,18 +109,24 @@ export async function exportDecoration(name:string,theme:OSTheme,char:CharacterP
  const result=await portableDecoration(await snapshotDecoration(name,theme,char,bubble));
  if(new Blob([JSON.stringify(result)]).size>40*1024*1024)throw Error('整套素材超过 40 MB，请精简背景或气泡图片后导出');return result;
 }
-/** Editable snapshot keeps primary CSS assets in IndexedDB. */
-export async function snapshotDecoration(name:string,theme:OSTheme,char:CharacterProfile|undefined,bubble:ChatTheme):Promise<DecorationPreset>{
+/** Local draft creation never reads images or converts them to shareable strings. */
+export function snapshotEditableDecoration(name:string,theme:OSTheme,char:CharacterProfile|undefined,bubble:ChatTheme):DecorationPreset{
  const effective=resolveDecorationTheme(theme,char);
  const layout=char?{...effective,...mergeChatFineTune(effective,char.chatFineTune)}:theme;
  const css=[effective.chatChromeCustomCss,char?.chromeCustomCss].filter(Boolean).join('\n');
- const preset:DecorationPreset={format:'sullyos-chat-decoration',version:1,name,parts:{
+ return {format:'sullyos-chat-decoration',version:1,name,parts:{
   psyche:resolvePsycheAppearance(theme,char),
-  layout:{...LAYOUT_DEFAULTS,...pickDecorationLayout(layout)},bubbles:structuredClone(bubble),background:{image:(char?.chatBackground??theme.chatBackground)||null,style:effective.chatBackgroundStyle||'plain'},
+  layout:{...LAYOUT_DEFAULTS,...pickDecorationLayout(layout)},bubbles:cloneDecorationBubbles(bubble),background:{image:(char?.chatBackground??theme.chatBackground)||null,style:effective.chatBackgroundStyle||'plain'},
   sound:resolveActiveSound(char?.chromeCustomCss,char?.chatSound,effective.chatChromeCustomCss,theme.chatSound),css:stripWhiteboxSoundDirective(css),
  }};
+}
+/** Prepare data for existing save/apply flows; keep the primary CSS assets in IndexedDB. */
+export async function prepareDecorationForSave(preset:DecorationPreset):Promise<DecorationPreset>{
  const {css:primaryCss,...other}=preset.parts;
- return validateDecoration({...preset,parts:{...await portableTree(other),css:primaryCss}});
+ return validateDecoration({...preset,parts:{...await portableTree(other),...(primaryCss===undefined?{}:{css:primaryCss})}});
+}
+export function snapshotDecoration(name:string,theme:OSTheme,char:CharacterProfile|undefined,bubble:ChatTheme):Promise<DecorationPreset>{
+ return prepareDecorationForSave(snapshotEditableDecoration(name,theme,char,bubble));
 }
 export type DecorationImport={kind:'preset';preset:DecorationPreset}|{kind:'image';image:string;name:string};
 export function parseDecorationText(text:string,name='导入的装扮'):DecorationPreset{
