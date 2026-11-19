@@ -15,9 +15,10 @@ function Page({ id }: { id: AppID }) {
   return React.createElement('button', { 'data-control': id }, id);
 }
 const page = (id: AppID) => React.createElement(Page, { id });
-function render(id: AppID, options: { locked?: boolean; disabled?: boolean; app?: (id: AppID) => React.ReactNode } = {}) {
+function render(id: AppID, options: { locked?: boolean; disabled?: boolean; glass?: boolean; app?: (id: AppID) => React.ReactNode } = {}) {
   act(() => root.render(React.createElement(AppWindowHost, {
     activeApp: id, locked: Boolean(options.locked), disabled: Boolean(options.disabled),
+    preserveChatBackdropLayers: options.glass,
     desktop: React.createElement('button', { 'data-home': '' }, 'home'),
     renderApp: options.app || page,
     renderBackdrop: (app, settled) => React.createElement('div', { 'data-backing': app, 'data-settled': String(settled) }),
@@ -50,6 +51,37 @@ afterEach(() => {
 });
 
 describe('App window navigation lifetime', () => {
+  it('keeps glass chat layers through finish and releases them when another app takes over', () => {
+    render(AppID.Launcher);
+    render(AppID.Chat, { glass: true });
+    advance(700);
+    const chat = windows()[0];
+    expect(surface().dataset.appMotion).toBe('settled');
+    expect(surface().style.transform).toContain('scale(1)');
+    expect(surface().style.willChange).toBe('transform, opacity');
+    expect(chat.style.willChange).toBe('transform, opacity');
+    expect(chat.style.transform).toContain('scale(1)');
+    expect(mounts[AppID.Chat]).toBe(1);
+    render(AppID.Settings, { glass: true });
+    advance(700);
+    expect(windows().map(node => node.dataset.appWindow)).toEqual([AppID.Settings]);
+    expect(surface().style.willChange).toBe('');
+    expect(windows()[0].style.willChange).toBe('');
+  });
+
+  it('cleans retained layers on lock and does not retain them for chat without glass CSS', () => {
+    render(AppID.Chat, { glass: true });
+    expect(surface().style.willChange).toBe('transform, opacity');
+    render(AppID.Chat, { locked: true, disabled: true, glass: true });
+    expect(surface().style.willChange).toBe('');
+    expect(windows()).toHaveLength(0);
+    render(AppID.Chat);
+    advance(700);
+    expect(surface().style.transform).toBe('none');
+    expect(surface().style.willChange).toBe('');
+    expect(windows()[0].style.willChange).toBe('');
+  });
+
   it('opens vertically, keeps its backdrop through the full entrance and reverses on home', () => {
     render(AppID.Launcher);
     render(AppID.Settings);

@@ -79,6 +79,7 @@ type Props = {
   activeApp: AppID;
   locked: boolean;
   disabled: boolean;
+  preserveChatBackdropLayers?: boolean;
   desktop: React.ReactNode;
   renderApp: (id: AppID, active: boolean) => React.ReactNode;
   renderBackdrop: (id: AppID, settled: boolean) => React.ReactNode;
@@ -86,7 +87,7 @@ type Props = {
 };
 
 /** 只管理窗口寿命与合成层；导航、App 内返回和锁屏手势仍由原来的拥有者处理。 */
-export default function AppWindowHost({ activeApp, locked, disabled, desktop, renderApp, renderBackdrop, renderLoading }: Props) {
+export default function AppWindowHost({ activeApp, locked, disabled, preserveChatBackdropLayers = false, desktop, renderApp, renderBackdrop, renderLoading }: Props) {
   const reduced = useReducedMotion();
   const [pages, setPages] = useState<AppID[]>([]);
   const [busy, setBusy] = useState(false);
@@ -107,6 +108,9 @@ export default function AppWindowHost({ activeApp, locked, disabled, desktop, re
   const frame = useRef<number>();
   const currentPages = useRef(pages);
   currentPages.current = pages;
+  const preserveChatBackdrop = useRef(preserveChatBackdropLayers);
+  preserveChatBackdrop.current = preserveChatBackdropLayers;
+  const holdingBackdropLayers = useRef(false);
 
   const cancel = () => {
     timers.current.forEach(window.clearTimeout);
@@ -133,7 +137,15 @@ export default function AppWindowHost({ activeApp, locked, disabled, desktop, re
     setBusy(!instant);
     // 带锁屏的桌面有自己的 transform；这里只复位其外层，绝不接管解锁手势。
     if (locked) {
-      if (surface.current) surface.current.style.visibility = 'hidden';
+      if (surface.current) {
+        surface.current.style.visibility = 'hidden';
+        if (holdingBackdropLayers.current) {
+          surface.current.style.transition = 'none';
+          surface.current.style.transform = 'none';
+          surface.current.style.willChange = '';
+          holdingBackdropLayers.current = false;
+        }
+      }
       if (desktopMotion.current) {
         desktopMotion.current.style.transition = 'none';
         desktopMotion.current.style.transform = 'none';
@@ -156,17 +168,20 @@ export default function AppWindowHost({ activeApp, locked, disabled, desktop, re
     const transition = (move: number) => `transform ${move}ms ${APP_WINDOW_MOTION.ease}, opacity ${fade}ms ${APP_WINDOW_MOTION.ease}`;
     const finish = () => {
       if (op.token !== token.current) return;
+      // 玻璃白框在老内核会随窗口绘制层拆除而白闪。窗口已停稳，保留两层直到离开私聊。
+      const keep = op.to === AppID.Chat && preserveChatBackdrop.current;
+      holdingBackdropLayers.current = keep;
       setPages(op.to === AppID.Launcher ? [] : [op.to]);
       setBusy(false);
       windowNode.style.transition = 'none';
-      windowNode.style.transform = 'none';
-      windowNode.style.willChange = '';
+      windowNode.style.transform = keep ? rest : 'none';
+      windowNode.style.willChange = keep ? 'transform, opacity' : '';
       home.style.willChange = '';
       nodes.current.forEach(node => {
-        node.style.willChange = '';
+        node.style.willChange = keep && node.dataset.appWindow === op.to ? 'transform, opacity' : '';
         if (node.dataset.appWindow === op.to) {
           node.style.transition = 'none';
-          node.style.transform = 'none';
+          node.style.transform = keep ? rest : 'none';
         }
       });
       if (op.to === AppID.Launcher) windowNode.style.visibility = 'hidden';

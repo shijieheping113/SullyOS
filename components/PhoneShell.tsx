@@ -113,7 +113,7 @@ import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/s
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp, resolveStatusBarMode } from '../utils/iosStandalone';
-import { canHideShellBackdropWhenSettled, shouldSkipShellWallpaperBlur, useReducedBlur } from '../utils/blurPolicy';
+import { canHideShellBackdropWhenSettled, hasCustomBackdropFilter, shouldSkipShellWallpaperBlur, useReducedBlur } from '../utils/blurPolicy';
 import { isBlobRef, warmBlobRefUrls } from '../utils/blobRef';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
@@ -349,6 +349,11 @@ const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, groups, handleBack, suspendedCall, resumeCall, activeCharacterId, setActiveCharacterId, errorDialog, dismissError, sysOperation, incomingCall, acceptIncomingCall, rejectIncomingCall, snoozeIncomingCall, registerBackHandler, customIcons } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
   const reducedBlur = useReducedBlur();
+  const activeCharacter = characters.find(c => c.id === activeCharacterId) || characters[0];
+  const characterChromeCss = activeCharacter?.chromeCustomCss;
+  const preserveChatBackdropLayers = useMemo(() => !reducedBlur && (
+    hasCustomBackdropFilter(theme.chatChromeCustomCss) || hasCustomBackdropFilter(characterChromeCss)
+  ), [reducedBlur, theme.chatChromeCustomCss, characterChromeCss]);
   const [lockSettings, setLockSettings] = useState(readLockScreenSettings);
   useEffect(() => {
     if (isLocked || activeApp !== AppID.Chat || !characters.some(char => char.id === activeCharacterId)) return;
@@ -909,7 +914,6 @@ const PhoneShell: React.FC = () => {
   // 其余尚未迁移、靠外壳兜底的 App，仍由外壳用单一来源变量 --safe-* 统一让出安全区，避免顶栏怼进状态栏。
   // 自理名单见 utils/safeAreaApps.ts（迁移一个 App = 把它加进名单 + 顶栏用 --chrome-top 自己让位）。
   // TODO(safe-area-A): 把剩余「未迁移」App 逐个改为自理安全区后，移除外壳这层兜底，实现全屏无色条。
-  const activeCharacter = characters.find(c => c.id === activeCharacterId);
   const renderShellBackdrop = (appId: AppID, settled: boolean) => {
     const hasCustomChatChromeCss = Boolean(theme.chatChromeCustomCss ||
       (appId === AppID.Chat && activeCharacter?.chromeCustomCss) ||
@@ -944,6 +948,7 @@ const PhoneShell: React.FC = () => {
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppWindowHost activeApp={activeApp} locked={isLocked} disabled={isLocked || booting}
+              preserveChatBackdropLayers={preserveChatBackdropLayers}
               renderBackdrop={renderShellBackdrop}
               renderLoading={({ pending, active }) => <AppLoadingFallback pending={pending} active={active} onReturn={closeApp} />}
               desktop={

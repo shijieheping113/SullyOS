@@ -10,6 +10,7 @@ import { AppID, type ChatTheme, type Message } from '../types';
 import {
     REDUCED_BLUR_ATTR,
     canHideShellBackdropWhenSettled,
+    hasCustomBackdropFilter,
     installReducedBlurPolicy,
     isGeckoEngine,
     resolveReducedGlassCardStyle,
@@ -21,6 +22,13 @@ import {
 const readSource = (rel: string) => readFileSync(path.resolve(__dirname, rel), 'utf8');
 
 describe('blurPolicy 引擎与无障碍透明度策略识别', () => {
+    it('detects functional filters in glass whitebox CSS without treating resets or comments as glass', () => {
+        expect(hasCustomBackdropFilter('.input { backdrop-filter: blur(var(--pop-glass-blur)) saturate(1.16) !important; }')).toBe(true);
+        expect(hasCustomBackdropFilter('.input { -webkit-backdrop-filter: var(--glass); }')).toBe(true);
+        expect(hasCustomBackdropFilter('/* .input { backdrop-filter: blur(4px); } */ .top { backdrop-filter: none !important; }')).toBe(false);
+        expect(hasCustomBackdropFilter('.input { filter: blur(4px); }')).toBe(false);
+        expect(hasCustomBackdropFilter()).toBe(false);
+    });
     it('识别 Android / 鸿蒙容器版与桌面版 Gecko Firefox，排除 WebKit / Blink 浏览器', () => {
         // 鸿蒙容器 / Android 版 Firefox
         expect(

@@ -156,6 +156,10 @@ const OPAQUE_FULLSCREEN_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.CharCreatorDev,
 ]);
 
+/** Match a filter function or var() declaration, skipping comments and resets like none. */
+export const hasCustomBackdropFilter = (css?: string): boolean => Boolean(css &&
+    /(?:^|[;{])\s*(?:-webkit-)?backdrop-filter\s*:\s*[\w-]+\(/i.test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
+
 export const canHideShellBackdropWhenSettled = (
     activeApp: AppID,
     options?: {
