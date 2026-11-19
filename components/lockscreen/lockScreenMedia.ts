@@ -21,6 +21,13 @@ export interface LockNotice {
   count: number;
 }
 
+export const LOCK_NOTICE_PREVIEW_LIMIT = 8;
+const NOTICE_MOTION = {
+  enter: 300, fade: 140, exit: 160,
+  gap: 180, gapStep: 20, minGap: 100,
+  ease: 'cubic-bezier(.2,.75,.25,1)',
+};
+
 export interface LockPlayerControls {
   toggle(): void;
   prev(): void;
@@ -161,17 +168,109 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
   const stamp = byId('noticeStamp');
   const count = byId('noticeCount');
   const clock = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
-  let pending: LockNotice | null = null;
+  let pending: LockNotice[] = [];
+  let unreadCount = 0;
+  let queue: LockNotice[] = [];
+  let seen = new Set<string>();
+  let sequenceStep = 0;
+  let sequenceTimer = 0;
+  let disposed = false;
   let visible: LockNotice | null = null;
   let animation: Animation | undefined;
+  let departing: HTMLElement | undefined;
+  let departureAnimation: Animation | undefined;
+
+  function stopSequence() {
+    window.clearTimeout(sequenceTimer);
+    sequenceTimer = 0;
+  }
+
+  function removeDeparting() {
+    departureAnimation?.cancel();
+    departureAnimation = undefined;
+    departing?.remove();
+    departing = undefined;
+  }
+
+  function pauseNotice() {
+    stopSequence();
+    animation?.cancel();
+    animation = undefined;
+    removeDeparting();
+    if (!visible) { notice.hidden = true; stack.hidden = true; }
+  }
+
+  function retireVisible() {
+    removeDeparting();
+    if (!visible || notice.hidden || typeof notice.animate !== 'function') return;
+    const current = getComputedStyle(notice);
+    const opacity = current.opacity;
+    const transform = current.transform;
+    const clone = notice.cloneNode(true) as HTMLElement;
+    if (typeof clone.animate !== 'function') return;
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
+    clone.dataset.noticeDeparting = '';
+    clone.setAttribute('aria-hidden', 'true');
+    clone.setAttribute('inert', '');
+    clone.tabIndex = -1;
+    clone.style.pointerEvents = 'none';
+    clone.style.zIndex = '2';
+    notice.before(clone);
+    departing = clone;
+    departureAnimation = clone.animate([
+      { opacity, transform },
+      { opacity: 0, transform: 'translateY(6px) scale(.96)' },
+    ], { duration: NOTICE_MOTION.gap, easing: NOTICE_MOTION.ease });
+    departureAnimation.onfinish = () => { if (departing === clone) removeDeparting(); };
+  }
+
+  function paintNotice(next: LockNotice, animate = false) {
+    const changed = visible?.key !== next.key;
+    if (changed && animate && !options.reducedMotion()) retireVisible();
+    visible = next;
+    notice.dataset.noticeKey = next.key;
+    setText(name, next.name);
+    setText(text, next.text);
+    setText(stamp, clock.format(next.timestamp));
+    setText(initial, Array.from(next.name)[0] || '•');
+    count.hidden = unreadCount < 2;
+    // The badge always reports the real unread total. Only the decorative stack
+    // grows as the incoming cards land; playing an animation never marks a read.
+    const stacked = queue.length ? unreadCount - pending.length + seen.size : unreadCount;
+    stack.hidden = stacked < 2;
+    stack.dataset.layers = String(Math.min(2, Math.max(0, stacked - 1)));
+    setText(count, unreadCount + ' 条未读');
+    if (avatar.getAttribute('src') !== next.avatar) {
+      avatar.hidden = true;
+      if (next.avatar) avatar.src = next.avatar;
+      else avatar.removeAttribute('src');
+    }
+    notice.tabIndex = 0;
+    notice.removeAttribute('aria-hidden');
+    notice.style.pointerEvents = '';
+    notice.hidden = false;
+    if (!changed || !animate || typeof notice.animate !== 'function') return;
+    animation?.cancel();
+    const fadeOnly = options.reducedMotion();
+    const opacity = 'var(--glass-alpha, 1)';
+    const frames = fadeOnly ? [{ opacity: 0 }, { opacity }] : [
+      { opacity: 0, transform: 'translateY(14px) scale(.96)' },
+      { opacity, transform: 'translateY(-1px) scale(1)', offset: .76 },
+      { opacity, transform: 'translateY(0) scale(1)' },
+    ];
+    animation = notice.animate(frames, {
+      duration: fadeOnly ? NOTICE_MOTION.fade : NOTICE_MOTION.enter, easing: NOTICE_MOTION.ease,
+    });
+  }
 
   function flushNotice() {
-    if (!options.atRest()) return;
-    if (pending === visible) return;
-    const previous = visible;
-    const next = pending;
-    visible = next;
-    if (!next) {
+    if (disposed || moving || !options.atRest() || document.visibilityState === 'hidden') return;
+    if (!pending.length) {
+      stopSequence();
+      removeDeparting();
+      if (!visible) return;
+      visible = null;
       stack.hidden = true;
       const opacity = getComputedStyle(notice).opacity;
       notice.tabIndex = -1;
@@ -182,38 +281,52 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
         notice.hidden = true;
         return;
       }
-      animation = notice.animate([{ opacity }, { opacity: 0 }], { duration: 160, easing: 'ease-out', fill: 'forwards' });
+      animation = notice.animate([{ opacity }, { opacity: 0 }], { duration: NOTICE_MOTION.exit, easing: 'ease-out', fill: 'forwards' });
       animation.onfinish = () => { if (!visible) notice.hidden = true; };
       return;
     }
-    setText(name, next.name);
-    setText(text, next.text);
-    setText(stamp, clock.format(next.timestamp));
-    setText(initial, Array.from(next.name)[0] || '•');
-    count.hidden = next.count < 2;
-    stack.hidden = next.count < 2;
-    stack.dataset.layers = String(Math.min(2, next.count - 1));
-    setText(count, next.count + ' 条未读');
-    if (avatar.getAttribute('src') !== next.avatar) {
-      avatar.hidden = true;
-      if (next.avatar) avatar.src = next.avatar;
-      else avatar.removeAttribute('src');
+    if (options.reducedMotion() || typeof notice.animate !== 'function') {
+      stopSequence();
+      removeDeparting();
+      pending.forEach(item => seen.add(item.key));
+      queue = [];
+      paintNotice(pending[pending.length - 1], true);
+      return;
     }
-    notice.tabIndex = 0;
-    notice.removeAttribute('aria-hidden');
-    notice.style.pointerEvents = '';
-    notice.hidden = false;
-    if (previous?.key === next.key || typeof notice.animate !== 'function') return;
-    animation?.cancel();
-    const fadeOnly = options.reducedMotion();
-    const opacity = 'var(--glass-alpha, 1)';
-    const frames = fadeOnly ? [{ opacity: 0 }, { opacity }] : [
-      { opacity: 0, transform: 'translateY(14px) scale(.96)' },
-      { opacity, transform: 'translateY(-1px) scale(1)', offset: .76 },
-      { opacity, transform: 'translateY(0) scale(1)' },
-    ];
-    animation = notice.animate(frames, { duration: fadeOnly ? 140 : 300, easing: 'cubic-bezier(.2,.75,.25,1)' });
+    const updated = pending.find(item => item.key === visible?.key);
+    if (updated) paintNotice(updated);
+    if (sequenceTimer) return;
+    const next = queue.shift();
+    if (!next) {
+      if (!updated) paintNotice(pending[pending.length - 1]);
+      return;
+    }
+    seen.add(next.key);
+    paintNotice(next, true);
+    // Keep a short handoff even if the next message arrives after this snapshot.
+    const gap = Math.max(NOTICE_MOTION.minGap, NOTICE_MOTION.gap - sequenceStep * NOTICE_MOTION.gapStep);
+    sequenceStep += 1;
+    sequenceTimer = window.setTimeout(() => { sequenceTimer = 0; flushNotice(); }, gap);
   }
+
+  function setNotices(notices: LockNotice[], total: number) {
+    if (disposed) return;
+    const unique = new Map(notices.map(item => [item.key, item]));
+    pending = Array.from(unique.values()).slice(-LOCK_NOTICE_PREVIEW_LIMIT);
+    unreadCount = Math.max(0, total);
+    seen = new Set(Array.from(seen).filter(key => unique.has(key)));
+    queue = pending.filter(item => !seen.has(item.key));
+    if (!pending.length) { seen.clear(); sequenceStep = 0; stopSequence(); }
+    if (!sequenceTimer) sequenceStep = 0;
+    if (moving || !options.atRest() || document.visibilityState === 'hidden') pauseNotice();
+    flushNotice();
+  }
+
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') pauseNotice();
+    else flushNotice();
+  };
+  document.addEventListener('visibilitychange', onVisibility);
 
   avatar.onload = () => { avatar.hidden = false; };
   avatar.onerror = () => { avatar.hidden = true; };
@@ -226,19 +339,25 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
     setMoving(value: boolean) {
       if (moving === value) return;
       moving = value;
+      if (value) pauseNotice();
       controls.classList.toggle('lock-moving', value);
       if (!value && deferredSong !== undefined) {
         const next = deferredSong;
         deferredSong = undefined;
         setPlayer(next);
       }
+      if (!value) flushNotice();
     },
     musicFraction,
-    setNotice(next: LockNotice | null) { pending = next; flushNotice(); },
+    setNotice(next: LockNotice | null) { setNotices(next ? [next] : [], next?.count || 0); },
+    setNotices,
     flushNotice,
     noticeTarget: () => visible?.charId,
     dispose() {
-      animation?.cancel();
+      disposed = true;
+      pauseNotice();
+      queue = [];
+      document.removeEventListener('visibilitychange', onVisibility);
       titleObserver?.disconnect();
       cancelAnimationFrame(titleFrame);
     },

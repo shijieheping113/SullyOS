@@ -3,6 +3,7 @@ import { openDB } from './db';
 import { isChatPreviewMessage } from './chatMessageVisibility';
 import { CHAT_READ_CHANGED } from './chatMessageEvents';
 import { SESSION_SPACE_ID } from './userSpaces';
+import { compareChatMessages } from './chatMessageOrder';
 
 export const CHAT_READ_KEY_PREFIX = 'sully_chat_read_v1:';
 const NOTIFICATION_TARGET_KEY = 'sully_chat_notification_target_v1:' + SESSION_SPACE_ID;
@@ -64,7 +65,7 @@ export async function initializeChatUnread(charIds: string[]): Promise<void> {
     }));
 }
 
-export async function readChatUnread(charId: string): Promise<{ count: number; newest: Message | null }> {
+export async function readChatUnread(charId: string, previewLimit = 0): Promise<{ count: number; newest: Message | null; previews: Message[] }> {
     const position = readPosition(charId) ?? 0;
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -72,6 +73,7 @@ export async function readChatUnread(charId: string): Promise<{ count: number; n
         const request = tx.objectStore('messages').index('charId').openCursor(IDBKeyRange.only(charId), 'prev');
         let count = 0;
         let newest: Message | null = null;
+        const previews: Message[] = [];
         request.onsuccess = () => {
             const cursor = request.result;
             if (!cursor || Number(cursor.primaryKey) <= position) return;
@@ -80,10 +82,15 @@ export async function readChatUnread(charId: string): Promise<{ count: number; n
                 count += 1;
                 if (!newest || message.timestamp > newest.timestamp
                     || (message.timestamp === newest.timestamp && message.id > newest.id)) newest = message;
+                if (previewLimit > 0) {
+                    previews.push(message);
+                    previews.sort(compareChatMessages);
+                    if (previews.length > previewLimit) previews.shift();
+                }
             }
             cursor.continue();
         };
-        tx.oncomplete = () => resolve({ count, newest });
+        tx.oncomplete = () => resolve({ count, newest, previews });
         tx.onerror = tx.onabort = () => reject(tx.error || new Error('未读消息读取失败'));
     });
 }

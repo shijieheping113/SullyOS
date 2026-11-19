@@ -8,6 +8,7 @@ import { loadBlobRefUrl } from '../../utils/blobRefSessionCache';
 import { chatCharacterDisplayName } from '../../utils/characterRemark';
 import { chatPreviewText } from '../../utils/chatMessageVisibility';
 import { readChatUnread } from '../../utils/chatUnread';
+import { compareChatMessages } from '../../utils/chatMessageOrder';
 import { RealtimeContextManager } from '../../utils/realtimeContext';
 import type { RealtimeConfig } from '../../utils/realtimeContext';
 import type { WeatherData } from '../../utils/realtimeWorldCore';
@@ -15,6 +16,7 @@ import type { CharacterProfile } from '../../types';
 import { LOCK_SCREEN_FOREGROUND } from './lockScreenSettings';
 import type { LockScreenMotion } from './lockScreenMotion';
 import type { LockNotice, LockPlayerControls } from './lockScreenMedia';
+import { LOCK_NOTICE_PREVIEW_LIMIT } from './lockScreenMedia';
 
 export function useLockForeground(enabled: boolean) {
   const [url, setUrl] = useState('');
@@ -106,23 +108,16 @@ function LockMusic({ motion, controls, sample }: { motion: MotionRef; controls: 
   return null;
 }
 
-async function readLockNotice(char: CharacterProfile): Promise<LockNotice | null> {
-  const { newest: message } = await readChatUnread(char.id);
-  if (!message || !Number.isFinite(new Date(message.timestamp).getTime())
-    || message.metadata?.activeMsg2 || message.metadata?.source === 'active_msg_2') return null;
-  return {
-    key: char.id + ':' + message.id,
-    charId: char.id,
-    name: chatCharacterDisplayName(char) || char.name,
-    avatar: char.avatar || '',
-    text: String(message.metadata?.peekText || message.metadata?.requestText || chatPreviewText(message)).replace(/\s+/g, ' ').slice(0, 160),
-    timestamp: message.timestamp,
-    count: 1,
-  };
+async function readLockNotices(char: CharacterProfile) {
+  const { previews } = await readChatUnread(char.id, LOCK_NOTICE_PREVIEW_LIMIT);
+  return previews.filter(message => Number.isFinite(new Date(message.timestamp).getTime())
+    && !message.metadata?.activeMsg2 && message.metadata?.source !== 'active_msg_2')
+    .map(message => ({ char, message }));
 }
 
 function lockNoticeAvatar(avatar: string) {
-  return isBlobRef(avatar) ? loadBlobRefUrl(avatar) : Promise.resolve(/^(https?:|blob:|data:image\/|\.?\/)/i.test(avatar) ? avatar : '');
+  return isBlobRef(avatar) ? loadBlobRefUrl(avatar).then(url => url || '')
+    : Promise.resolve(/^(https?:|blob:|data:image\/|\.?\/)/i.test(avatar) ? avatar : '');
 }
 
 function LockUnread({ motion }: { motion: MotionRef }) {
@@ -135,22 +130,28 @@ function LockUnread({ motion }: { motion: MotionRef }) {
       return;
     }
 
-    void Promise.all(unreadCharacters.map(async char => {
-      const notice = await readLockNotice(char);
-      return notice ? { ...notice, count: unreadMessages[char.id] } : null;
-    })).then(notices => {
+    void Promise.all(unreadCharacters.map(readLockNotices)).then(groups => {
       if (!active) return;
-      const candidates = notices.filter(item => item !== null).sort((a, b) => b.timestamp - a.timestamp);
-      const newest = candidates[0];
-      if (!newest) {
+      const candidates = groups.flat().sort((a, b) => compareChatMessages(a.message, b.message))
+        .slice(-LOCK_NOTICE_PREVIEW_LIMIT);
+      if (!candidates.length) {
         motion.current?.setNotice(null);
         return;
       }
-      const count = candidates.reduce((total, candidate) => total + candidate.count, 0);
-      motion.current?.setNotice({ ...newest, count, avatar: '' });
-      void lockNoticeAvatar(newest.avatar).then(url => {
-        if (active && url) motion.current?.setNotice({ ...newest, count, avatar: url });
+      const count = groups.reduce((total, group, index) => total + (group.length ? unreadMessages[unreadCharacters[index].id] : 0), 0);
+      const notices: LockNotice[] = candidates.map(({ char, message }) => ({
+        key: char.id + ':' + message.id, charId: char.id,
+        name: chatCharacterDisplayName(char) || char.name, avatar: '',
+        text: String(message.metadata?.peekText || message.metadata?.requestText || chatPreviewText(message)).replace(/\s+/g, ' ').slice(0, 160),
+        timestamp: message.timestamp, count,
+      }));
+      motion.current?.setNotices(notices, count);
+      const avatars = new Map<string, Promise<string>>();
+      candidates.forEach(({ char }) => {
+        if (!avatars.has(char.id)) avatars.set(char.id, lockNoticeAvatar(char.avatar || ''));
       });
+      void Promise.all(notices.map(async notice => ({ ...notice, avatar: await avatars.get(notice.charId)! })))
+        .then(resolved => { if (active) motion.current?.setNotices(resolved, count); }).catch(() => {});
     }).catch(() => {});
 
     return () => { active = false; };

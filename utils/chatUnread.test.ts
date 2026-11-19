@@ -62,6 +62,19 @@ describe('persistent private-chat unread', () => {
         expect((await readChatUnread('a')).count).toBe(0);
     });
 
+    it('collects a bounded chronological preview without reducing the actual unread count or marking read', async () => {
+        await initializeChatUnread(['a']);
+        const newest = await save('a', { timestamp: 5000 });
+        await save('a', { timestamp: 1000 });
+        const equalFirst = await save('a', { timestamp: 3000 });
+        const equalSecond = await save('a', { timestamp: 3000 });
+        expect((await readChatUnread('a')).previews).toEqual([]);
+        const result = await readChatUnread('a', 3);
+        expect(result.count).toBe(4);
+        expect(result.previews.map(message => message.id)).toEqual([equalFirst, equalSecond, newest]);
+        expect((await readChatUnread('a')).count).toBe(4);
+    });
+
     it('counts visible incoming bubbles and request cards, excluding user messages and internal records', async () => {
         await initializeChatUnread(['a']);
         await save('a', { role: 'user' });

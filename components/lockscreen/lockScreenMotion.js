@@ -672,6 +672,7 @@ export function mountLockScreen(root, options) {
     setSettings: setSettings,
     setPlayer: media.setPlayer,
     setNotice: media.setNotice,
+    setNotices: media.setNotices,
     setWeather: function (value, iconCode) {
       var code = /^\d{2}[dn]$/.test(iconCode) ? iconCode : "";
       var icon = WEATHER_ICONS[code] || WEATHER_ICONS[code.slice(0, 2)];

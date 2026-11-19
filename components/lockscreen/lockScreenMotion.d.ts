@@ -29,6 +29,7 @@ export interface LockScreenMotion {
   setSettings(settings: LockScreenSettings): void;
   setPlayer(song: LockSong | null): void;
   setNotice(notice: LockNotice | null): void;
+  setNotices(notices: LockNotice[], count: number): void;
   setWeather(value: string, iconCode?: string): void;
   prepareClock(): void;
   prepareWakeWallpaper(image: HTMLImageElement, largePhoto?: boolean): void;
