@@ -4206,8 +4206,8 @@ const MessageItem = React.memo(({
     // 靠 metadata.stt 认出这是语音条——原声不在本机（换设备导入/资产丢失）也照旧认。
     const hasUserSttMarker = isUser && m.type === 'text' && !!(m.metadata as any)?.stt;
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || hasUserSttMarker;
-    // 用户语音消息（语音识别直发 + 原声）：按 AI 语音条同款 sully-voice 类名渲染，
-    // 用户自定义 CSS 的语音条美化自动匹配；文本藏进「转文字」展开区。
+    // 用户语音消息（语音识别直发 + 原声）：同款 sully-voice 类名渲染，自定义 CSS 仍匹配；
+    // 条内布局相对角色侧左右镜像（sully-voice-bar-user + flex-row-reverse）。
     // 认条不再依赖壳标签：有壳或有 stt 记号都算，顶部不再重复渲染正文文字泡。
     const isUserVoiceMsg = isUser && m.type === 'text' && (
         (hasVoiceTag)
@@ -4362,13 +4362,19 @@ const MessageItem = React.memo(({
                 // 外语语音消息顶部正文已隐藏（交给语音条渲染），同样按纯语音处理，去掉多余上间距。
                 // 用户语音消息同理：语音条就是消息本体，文字在「转文字」里。
                 const isVoiceOnly = isUserVoiceMsg || (!!voiceData?.url && (!displayContent || isForeignVoiceMsg));
+                // 用户侧语音条左右镜像：播放钮靠右、转文字靠左；角色侧保持原布局。
+                const mirrorUserVoice = isUser;
+                const voiceWaveHeights = mirrorUserVoice
+                    ? [6, 12, 7, 10, 8, 5, 11, 6, 9, 4, 13, 7, 11, 5, 12, 8, 14, 6, 10, 4]
+                    : [4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6];
+                const voiceBarRowClass = `sully-voice-bar group flex items-center gap-2.5 w-full px-3 py-2 rounded-2xl transition-all duration-300 active:scale-[0.97] select-none${mirrorUserVoice ? ' sully-voice-bar-user flex-row-reverse' : ''}`;
                 return (
                 <div className={`sully-voice-bar-shell relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
                     {voiceData?.url ? (
                         <div className="max-w-[260px]">
                             <button
                                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(m.id); if (!isVoicePlaying) trackEvent('播放语音条'); }}
-                                className="sully-voice-bar group flex items-center gap-2.5 w-full px-3 py-2 rounded-2xl transition-all duration-300 active:scale-[0.97] select-none"
+                                className={voiceBarRowClass}
                                 style={{
                                     background: isVoicePlaying
                                         ? (vbActiveBg || 'linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(52,211,153,0.08) 100%)')
@@ -4388,12 +4394,13 @@ const MessageItem = React.memo(({
                                     {isVoicePlaying ? (
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
                                     ) : (
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                        /* 用户侧播放三角朝波形（向左）；角色侧仍朝右 */
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className={`w-3 h-3 ${mirrorUserVoice ? 'mr-0.5' : 'ml-0.5'}`} style={mirrorUserVoice ? { transform: 'scaleX(-1)' } : undefined}><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
                                     )}
                                 </div>
                                 {/* Waveform bars */}
                                 <div className="sully-voice-bar-wave flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
-                                    {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
+                                    {voiceWaveHeights.map((h, i) => (
                                         <div
                                             key={i}
                                             className={`sully-voice-bar-wave-segment w-[2.5px] rounded-full transition-all duration-150 ${isVoicePlaying ? 'animate-pulse' : ''}`}
@@ -4410,7 +4417,7 @@ const MessageItem = React.memo(({
                                 </div>
                                 {/* Text toggle button — always available so user can read the text */}
                                 <div
-                                    className={`sully-voice-bar-toggle shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                    className={`sully-voice-bar-toggle shrink-0 ${mirrorUserVoice ? 'mr-0.5' : 'ml-0.5'} px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
                                     style={{
                                         color: vbText || 'rgba(100,116,139,0.7)',
                                         backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',
@@ -4469,13 +4476,13 @@ const MessageItem = React.memo(({
                             )}
                         </div>
                     ) : voiceLoading ? (
-                        <div className="sully-voice-bar sully-voice-bar-loading flex items-center gap-2 px-3 py-2 max-w-[200px] rounded-2xl" style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.04) 100%)', border: '1px solid rgba(0,0,0,0.04)' }}>
+                        <div className={`sully-voice-bar sully-voice-bar-loading flex items-center gap-2 px-3 py-2 max-w-[200px] rounded-2xl${mirrorUserVoice ? ' sully-voice-bar-user flex-row-reverse' : ''}`} style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.04) 100%)', border: '1px solid rgba(0,0,0,0.04)' }}>
                             <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.2)' : '#f1f5f9' }}>
                                 <svg className="animate-spin h-3.5 w-3.5" style={{ color: vbBtn || '#94a3b8' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3.5"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                             </div>
                             <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
                                 {[...Array(14)].map((_, i) => (
-                                    <div key={i} className="w-[2.5px] rounded-full animate-pulse" style={{ height: `${3 + (i % 3) * 2}px`, backgroundColor: vbWave ? vbWave + '40' : '#e2e8f0', animationDelay: `${i * 100}ms` }} />
+                                    <div key={i} className="w-[2.5px] rounded-full animate-pulse" style={{ height: `${3 + ((mirrorUserVoice ? 13 - i : i) % 3) * 2}px`, backgroundColor: vbWave ? vbWave + '40' : '#e2e8f0', animationDelay: `${i * 100}ms` }} />
                                 ))}
                             </div>
                             <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
@@ -4489,7 +4496,7 @@ const MessageItem = React.memo(({
                            照旧一条语音条，「转文字」读正文里的同一句字。 */
                         <div className="max-w-[260px]">
                             <div
-                                className="sully-voice-bar sully-voice-bar-placeholder flex items-center gap-2 px-3 py-2 rounded-2xl"
+                                className={`sully-voice-bar sully-voice-bar-placeholder flex items-center gap-2 px-3 py-2 rounded-2xl${mirrorUserVoice ? ' sully-voice-bar-user flex-row-reverse' : ''}`}
                                 style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)', border: '1px solid rgba(0,0,0,0.05)' }}
                             >
                                 <button
@@ -4497,16 +4504,16 @@ const MessageItem = React.memo(({
                                     className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center active:scale-[0.92] transition-transform"
                                     style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)' }}
                                 >
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className={`w-3 h-3 ${mirrorUserVoice ? 'mr-0.5' : 'ml-0.5'}`} style={mirrorUserVoice ? { transform: 'scaleX(-1)' } : undefined}><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
                                 </button>
                                 <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
-                                    {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
+                                    {voiceWaveHeights.map((h, i) => (
                                         <div key={i} className="w-[2.5px] rounded-full" style={{ height: `${Math.max(2, h * 0.4)}px`, backgroundColor: vbWave ? vbWave + '60' : `rgba(148, 163, 184, ${0.25 + (h / 14) * 0.35})` }} />
                                     ))}
                                 </div>
                                 {(voiceTagText || displayContent) ? (
                                     <div
-                                        className={`shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                        className={`shrink-0 ${mirrorUserVoice ? 'mr-0.5' : 'ml-0.5'} px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
                                         style={{
                                             color: vbText || 'rgba(100,116,139,0.7)',
                                             backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',

@@ -1,6 +1,6 @@
 import React from 'react';
 import type {OSTheme,ChatFineTuneFields} from '../../types';
-import ChatFineTunePanel from './ChatFineTunePanel';
+import AtelierFineTunePanel from './appearance/AtelierFineTunePanel';
 const FINE_TUNE_DEFAULTS: Required<ChatFineTuneFields> = {
     chatAvatarVisibility: 'both',
     chatAvatarPlacement: 'beside',
@@ -419,7 +419,7 @@ const content=<div><details className="chat-decoration-layout-group"><summary>�
                     )}
                 </div>
                 </div></details>
-<details className="chat-decoration-layout-group" open><summary>细节微调</summary><div><ChatFineTunePanel value={theme} onChange={updateTheme}/><button className="chat-decoration-link" onClick={()=>updateTheme({...FINE_TUNE_DEFAULTS})}>微调恢复默认</button></div></details>
+<details className="chat-decoration-layout-group" open><summary>细节微调</summary><div><AtelierFineTunePanel value={theme} onChange={updateTheme}/><button className="chat-decoration-link" onClick={()=>updateTheme({...FINE_TUNE_DEFAULTS})}>微调恢复默认</button></div></details>
 <details className="chat-decoration-layout-group"><summary>表情包与输入栏</summary><div>
                     <ChoiceGroup title="表情包大小" items={choices.emojiSize} value={theme.chatEmojiSize || 'small'} onPick={(value) => updateTheme({ chatEmojiSize: value as OSTheme['chatEmojiSize'] })} />
                     <p className="mt-2 text-[10px] text-slate-400">调整当前范围内的表情包图片尺寸；全局默认也会用于群聊。用自定义 CSS 调过尺寸的美化会继续覆盖这里的设置。</p>

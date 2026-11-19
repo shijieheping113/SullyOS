@@ -1,0 +1,52 @@
+/* 二改：细节微调拉条。原生 range 指针事件关掉，改由轨道手势判定横拖/竖滑，避免下滑误触。 */
+.atelier-fine-tune-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 6px;
+}
+.atelier-fine-tune-range > span:first-child {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+.atelier-fine-tune-range output {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #475569;
+}
+.atelier-fine-tune-range-track {
+  display: block;
+  height: 28px;
+  min-width: 0;
+  touch-action: pan-y;
+  cursor: ew-resize;
+}
+.atelier-fine-tune-range-track input[type='range'] {
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--color-primary, #6366f1);
+  pointer-events: none;
+}
+.atelier-fine-tune-reset {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.atelier-fine-tune-reset:disabled {
+  opacity: 0.45;
+}

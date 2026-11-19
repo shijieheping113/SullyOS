@@ -30,6 +30,7 @@ import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, Dail
 import { processImage, processImageToBlob } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
+import { buildAtelierAvatarTuneCss } from '../utils/atelierAvatarTuneCss';
 import { PAREN_TRANSLATION_LOCK_CSS } from '../utils/parenTranslation';
 import TokenImg from '../components/os/TokenImg';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
@@ -5360,6 +5361,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     // deleting the last character does not change React's hook order.
     const mergedFineTune = useMemo(() => mergeChatFineTune(osTheme, homePhone?undefined:char?.chatFineTune), [osTheme, char?.chatFineTune,!!homePhone]);
     const chatFineTuneCss = useMemo(() => buildChatFineTuneCss(mergedFineTune), [mergedFineTune]);
+    // 头像垂直微调单独挂在白框 CSS 之后，避免美化里的 transform:none 把拉条效果吃掉。
+    const atelierAvatarTuneCss = useMemo(() => buildAtelierAvatarTuneCss(mergedFineTune), [mergedFineTune]);
     const selectedAvatarFrameCss=useMemo(()=>avatarFrameLayer([osTheme.chatChromeCustomCss,char?.chromeCustomCss].filter(Boolean).join('\n')),[osTheme.chatChromeCustomCss,char?.chromeCustomCss]);
     if (!char) {
         return (
@@ -5428,6 +5431,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
              {!homePhone && selectedAvatarFrameCss && <BlobRefStyle css={selectedAvatarFrameCss} />}
+             {/* 二改：头像垂直微调必须在白框 / 气泡自定义 CSS 之后，才能压过 transform:none。 */}
+             {atelierAvatarTuneCss && <style>{atelierAvatarTuneCss}</style>}
              {/* 气泡工坊的尾巴频率依赖直接挂在气泡上的稳定类。用户 CSS 即使给
                  ::before/::after 写了 !important，中间气泡仍会按“仅组末/隐藏”设置收起尾巴。 */}
              <style>{`

@@ -24,6 +24,7 @@ import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { resolveChatTheme, scopeBubbleThemeCss } from '../utils/groupChat/theme';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../utils/bubbleAppearance';
 import { buildChatFineTuneCss } from '../utils/chatFineTuneCss';
+import { buildAtelierAvatarTuneCss } from '../utils/atelierAvatarTuneCss';
 import { isReducedBlurActive, useReducedBlur } from '../utils/blurPolicy';
 import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../utils/groupChat/parse';
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
@@ -1875,6 +1876,7 @@ ${memberTimeline || '(暂无互动记录)'}
                 }
                 : { backgroundImage: 'none' };
     const groupFineTuneCss = buildChatFineTuneCss(osTheme);
+    const atelierAvatarTuneCss = buildAtelierAvatarTuneCss(osTheme);
     const finalGroupRootClass = acnh
         ? 'h-full w-full flex flex-col overflow-hidden font-sans relative transition-[background-color] duration-500'
         : groupChatRootClass;
@@ -1891,6 +1893,7 @@ ${memberTimeline || '(暂无互动记录)'}
             {activeGroup?.chromeCustomCss && <BlobRefStyle css={activeGroup.chromeCustomCss}/>}
             {/* 气泡工坊 CSS 排在白框之后，与私聊优先级一致；每套成员主题都限定在自己的消息上。 */}
             {groupBubbleCustomCss && <style>{groupBubbleCustomCss}</style>}
+            {atelierAvatarTuneCss && <style>{atelierAvatarTuneCss}</style>}
             <style>{`
                 .sully-bubble-tail-hidden::before,
                 .sully-bubble-tail-hidden::after { content: none !important; display: none !important; }
