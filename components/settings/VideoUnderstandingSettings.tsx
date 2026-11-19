@@ -9,14 +9,17 @@ import {
   VIDEO_API_MAX_FRAMES,
   VIDEO_API_MAX_FPS,
   VIDEO_API_PRESETS,
+  VIDEO_API_RECOMMENDED_MODELS,
   describeVideoWithVideoApi,
   formatVideoDetailLabel,
   getVideoApiUsage,
+  isVideoQwen35Model,
   resetVideoApiUsage,
   videoApiUsageSummary,
   effectiveVideoFrames,
   loadBuiltInVideoApiTestFile,
   matchVideoPresetId,
+  matchVideoRecommendedModel,
   normalizeVideoApiConfig,
   videoApiConfigFromPreset,
   videoApiPresetLabel,
@@ -67,6 +70,7 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
   const [maxFramesDraft, setMaxFramesDraft] = useState(() => String(saved.maxFrames));
   const [maxDurationSec, setMaxDurationSec] = useState(saved.maxDurationSec);
   const [maxSizeMB, setMaxSizeMB] = useState(saved.maxSizeMB);
+  const [enableThinking, setEnableThinking] = useState(saved.enableThinking === true);
   const [statusMsg, setStatusMsg] = useState('');
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -89,6 +93,7 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
     setMaxFramesDraft(String(cfg.maxFrames));
     setMaxDurationSec(cfg.maxDurationSec);
     setMaxSizeMB(cfg.maxSizeMB);
+    setEnableThinking(cfg.enableThinking === true);
     setSelectedPresetId(matchVideoPresetId(cfg) ?? CUSTOM_PRESET_ID);
   }, [apiConfig.videoApi]);
 
@@ -105,9 +110,10 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
     maxFrames: samplingOverride?.maxFrames ?? maxFrames,
     maxDurationSec,
     maxSizeMB,
+    enableThinking,
   });
 
-  const presetLabel = useMemo(() => videoApiPresetLabel(buildDraft()), [enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB]);
+  const presetLabel = useMemo(() => videoApiPresetLabel(buildDraft()), [enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB, enableThinking]);
 
   const resolveCredentials = (cfg: APIConfig) => {
     const v = normalizeVideoApiConfig(cfg.videoApi);
@@ -126,7 +132,7 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
     const draft: APIConfig = { ...apiConfig, videoApi: buildDraft(true) };
     const creds = resolveCredentials(draft);
     return !!creds.baseUrl && !!creds.model && !!creds.apiKey;
-  }, [apiConfig, enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB]);
+  }, [apiConfig, enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB, enableThinking]);
 
   const commitSamplingDrafts = () => {
     const nextFps = clampFpsFromDraft(fpsDraft, fps);
@@ -154,11 +160,18 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
   };
 
   const isCustomMode = selectedPresetId === CUSTOM_PRESET_ID;
-  const draftSampling = useMemo(() => buildDraft(), [enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB]);
+  const draftSampling = useMemo(() => buildDraft(), [enabled, url, key, model, detail, fps, maxFrames, maxDurationSec, maxSizeMB, enableThinking]);
   const effectiveFramesPreview = useMemo(
     () => effectiveVideoFrames(60, draftSampling.fps, draftSampling.maxFrames),
     [draftSampling.fps, draftSampling.maxFrames],
   );
+  const selectedRecommended = useMemo(() => matchVideoRecommendedModel(model), [model]);
+  const showThinkingToggle = useMemo(() => isVideoQwen35Model(model), [model]);
+
+  const selectRecommendedModel = (id: string) => {
+    setModel(id);
+    setTestResult(null);
+  };
 
   useEffect(() => {
     if (enabled) setUsageStats(getVideoApiUsage());
@@ -467,6 +480,44 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
               {loadingModels ? 'Fetching...' : '刷新模型列表'}
             </button>
           </div>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {VIDEO_API_RECOMMENDED_MODELS.map(item => {
+              const selected = selectedRecommended?.id === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  title={item.hint}
+                  disabled={!enabled}
+                  onClick={() => selectRecommendedModel(item.id)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors disabled:cursor-not-allowed ${
+                    selected
+                      ? 'border-violet-400 bg-violet-500 text-white shadow-sm'
+                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-violet-200'
+                  }`}
+                >
+                  <span>{item.label}</span>
+                  <span className={`text-[9px] font-semibold ${selected ? 'text-violet-100' : 'text-slate-400'}`}>
+                    {item.priceTag}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-slate-500 leading-relaxed mb-2 pl-0.5">
+            {selectedRecommended ? (
+              <>
+                <span className="font-semibold text-slate-600">{selectedRecommended.label}</span>
+                <span className="text-slate-300 mx-1">·</span>
+                {selectedRecommended.priceLine}
+              </>
+            ) : (
+              <>手填或列表里的别的模型 · 价钱以硅基控制台为准</>
+            )}
+          </p>
+          <p className="text-[9px] text-slate-400 leading-relaxed mb-2 pl-0.5">
+            换模型不用改接口。点选后保存，再用「测试视频」看效果。
+          </p>
           <input
             type="text"
             value={model}
@@ -485,6 +536,32 @@ const VideoUnderstandingSettings: React.FC<Props> = ({ apiConfig, apiPresets, up
             >
               {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
+          )}
+          {showThinkingToggle && (
+            <div className="mt-2.5 flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/80 px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-bold text-slate-600">3.5 思考</p>
+                <p className="text-[9px] text-slate-400 leading-relaxed mt-0.5">
+                  关着更快，适合测视频；开了会更慢、更费一点
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={enableThinking}
+                disabled={!enabled}
+                onClick={() => { setEnableThinking(v => !v); setTestResult(null); }}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed ${
+                  enableThinking ? 'bg-violet-500' : 'bg-slate-200'
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                    enableThinking ? 'translate-x-5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
           )}
         </div>
 

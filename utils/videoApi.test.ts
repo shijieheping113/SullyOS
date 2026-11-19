@@ -6,10 +6,13 @@ import {
   cleanVideoApiDescription,
   isVideoApi50507Error,
   defaultVideoApiConfig,
+  matchVideoRecommendedModel,
+  isVideoQwen35Model,
   normalizeVideoApiConfig,
   resolveVideoApiCredentials,
   videoApiPresetLabel,
   VIDEO_API_PRESETS,
+  VIDEO_API_RECOMMENDED_MODELS,
   VIDEO_API_TEST_VIDEO_URL,
   pickVideoDescriptionMaxTokens,
 } from './videoApi';
@@ -22,6 +25,27 @@ describe('videoApi config', () => {
     expect(d.enabled).toBe(false);
     expect(d.maxSizeMB).toBe(30);
     expect(d.maxDurationSec).toBe(200);
+    expect(d.enableThinking).toBe(false);
+  });
+
+  it('keeps three recommended video models with price lines', () => {
+    expect(VIDEO_API_RECOMMENDED_MODELS).toHaveLength(3);
+    expect(VIDEO_API_RECOMMENDED_MODELS.map(m => m.id)).toEqual([
+      'Qwen/Qwen3-VL-30B-A3B-Instruct',
+      'Qwen/Qwen3.5-35B-A3B',
+      'Qwen/Qwen3-VL-8B-Instruct',
+    ]);
+    expect(matchVideoRecommendedModel(defaultVideoApiConfig().model)?.label).toBe('30B 默认');
+    expect(matchVideoRecommendedModel('Qwen/Qwen3-VL-32B-Instruct')).toBeUndefined();
+    expect(matchVideoRecommendedModel('Qwen/Qwen3.5-35B-A3B')?.priceTag).toBe('省');
+    expect(matchVideoRecommendedModel('someone/else')).toBeUndefined();
+  });
+
+  it('detects Qwen3.5 for thinking toggle and normalizes enableThinking', () => {
+    expect(isVideoQwen35Model('Qwen/Qwen3.5-35B-A3B')).toBe(true);
+    expect(isVideoQwen35Model('Qwen/Qwen3-VL-8B-Instruct')).toBe(false);
+    expect(normalizeVideoApiConfig({ enableThinking: true }).enableThinking).toBe(true);
+    expect(normalizeVideoApiConfig({}).enableThinking).toBe(false);
   });
 
   it('matches recommended preset label', () => {
@@ -41,7 +65,7 @@ describe('videoApi config', () => {
       model: 'gpt',
       videoApi: { ...defaultVideoApiConfig(), enabled: true, apiKey: '' },
       visionApi: { enabled: false, baseUrl: '', apiKey: 'vision-key', model: '' },
-      sttApi: { engine: 'teleasr', sfApiKey: 'stt-key' },
+      sttApi: { engine: 'sensevoice', sfApiKey: 'stt-key' },
     };
     expect(resolveVideoApiCredentials(api).apiKey).toBe('vision-key');
     api.visionApi!.apiKey = '';

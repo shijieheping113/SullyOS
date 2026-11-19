@@ -41,6 +41,52 @@ export {
 export const DEFAULT_VIDEO_API_BASE = 'https://api.siliconflow.cn/v1';
 export const DEFAULT_VIDEO_API_MODEL = 'Qwen/Qwen3-VL-30B-A3B-Instruct';
 
+/** 设置页快捷点选：三档（32B 硅基暂不认 video_url，已撤）。价钱摘自硅基模型页，单位：元 / 百万 token。 */
+export interface VideoApiRecommendedModel {
+  id: string;
+  label: string;
+  hint: string;
+  /** 一行人话价钱，给当前选中项旁白用 */
+  priceLine: string;
+  /** chip 上的短价钱标记，别抢主文案 */
+  priceTag: string;
+}
+
+export const VIDEO_API_RECOMMENDED_MODELS: readonly VideoApiRecommendedModel[] = [
+  {
+    id: 'Qwen/Qwen3-VL-30B-A3B-Instruct',
+    label: '30B 默认',
+    hint: '现在的默认档，稳、中等价',
+    priceLine: '入 ¥0.70 / 出 ¥2.80（每百万字）· 三档里居中',
+    priceTag: '中',
+  },
+  {
+    id: 'Qwen/Qwen3.5-35B-A3B',
+    label: '3.5 划算',
+    hint: '更新一代，短片输入往往更便宜；可用下方开关关思考',
+    priceLine: '入 ¥0.40 / 出 ¥3.20（短片常见档）· 三档里输入最省',
+    priceTag: '省',
+  },
+  {
+    id: 'Qwen/Qwen3-VL-8B-Instruct',
+    label: '8B 更省',
+    hint: '轻量 VL，省钱，能力可能弱一截（已实测能通视频）',
+    priceLine: '入 ¥0.50 / 出 ¥2.00（每百万字）· 三档里整体偏省',
+    priceTag: '省',
+  },
+];
+
+export function matchVideoRecommendedModel(model: string | undefined | null): VideoApiRecommendedModel | undefined {
+  const id = (model || '').trim();
+  if (!id) return undefined;
+  return VIDEO_API_RECOMMENDED_MODELS.find(m => m.id === id);
+}
+
+/** Qwen3.5 默认会开思考；视频理解用开关显式传 enable_thinking。 */
+export function isVideoQwen35Model(model: string | undefined | null): boolean {
+  return /Qwen3\.5/i.test((model || '').trim());
+}
+
 export const VIDEO_DESCRIPTION_METADATA_KEY = 'videoDescription';
 
 export interface VideoDescribeResult {
@@ -90,6 +136,7 @@ export const defaultVideoApiConfig = (): VideoApiConfig => ({
   maxFrames: 16,
   maxDurationSec: 200,
   maxSizeMB: 30,
+  enableThinking: false,
 });
 
 export function normalizeVideoApiConfig(raw?: Partial<VideoApiConfig> | null): VideoApiConfig {
@@ -118,6 +165,7 @@ export function normalizeVideoApiConfig(raw?: Partial<VideoApiConfig> | null): V
     maxFrames,
     maxDurationSec,
     maxSizeMB,
+    enableThinking: raw.enableThinking === true,
   };
 }
 
@@ -223,37 +271,43 @@ async function requestVideoDescription(
   model: string,
   durationSec: number,
   maxTokensOverride?: number,
+  enableThinking = false,
 ): Promise<{ description: string; usage?: VideoDescribeResult['usage']; maxTokens: number }> {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const effectiveFrames = effectiveVideoFrames(durationSec, sampling.fps, sampling.maxFrames);
   const maxTokens = maxTokensOverride ?? pickVideoDescriptionMaxTokens(durationSec, effectiveFrames);
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'video_url',
+          video_url: {
+            url: dataUrl,
+            detail: sampling.detail,
+            fps: sampling.fps,
+            max_frames: sampling.maxFrames,
+          },
+        },
+        { type: 'text', text: buildVideoModelUserText(titleForModel) },
+      ],
+    }],
+    temperature: 0,
+    max_tokens: maxTokens,
+    stream: false,
+  };
+  // 3.5 默认会开思考；必须显式传，关着才不会拖很久
+  if (isVideoQwen35Model(model)) {
+    body.enable_thinking = enableThinking === true;
+  }
   const data = await safeFetchJson(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'video_url',
-            video_url: {
-              url: dataUrl,
-              detail: sampling.detail,
-              fps: sampling.fps,
-              max_frames: sampling.maxFrames,
-            },
-          },
-          { type: 'text', text: buildVideoModelUserText(titleForModel) },
-        ],
-      }],
-      temperature: 0,
-      max_tokens: maxTokens,
-      stream: false,
-    }),
+    body: JSON.stringify(body),
   }, 0, 180_000, { appName: '消息', purpose: '视频理解' });
 
   const description = cleanVideoApiDescription(extractContent(data));
@@ -290,18 +344,19 @@ export async function describeVideoWithVideoApi(
   };
   let sampling: SamplingParams = { ...requestedSampling };
   let samplingFallback = false;
+  const enableThinking = cfg.enableThinking === true;
   try {
     let result: { description: string; usage?: VideoDescribeResult['usage']; maxTokens: number };
     try {
       result = await requestVideoDescription(
-        dataUrl, titleForModel, sampling, baseUrl, apiKey, model, durationSec,
+        dataUrl, titleForModel, sampling, baseUrl, apiKey, model, durationSec, undefined, enableThinking,
       );
     } catch (err) {
       if (!isVideoApi50507Error(err) || !shouldRetryVideoApi50507(sampling)) throw err;
       sampling = videoApiConfigFor50507Fallback(sampling);
       samplingFallback = true;
       result = await requestVideoDescription(
-        dataUrl, titleForModel, sampling, baseUrl, apiKey, model, durationSec,
+        dataUrl, titleForModel, sampling, baseUrl, apiKey, model, durationSec, undefined, enableThinking,
       );
     }
 
@@ -311,7 +366,7 @@ export async function describeVideoWithVideoApi(
       if (bumped > result.maxTokens) {
         describeRetried = true;
         result = await requestVideoDescription(
-          dataUrl, titleForModel, sampling, baseUrl, apiKey, model, durationSec, bumped,
+          dataUrl, titleForModel, sampling, baseUrl, apiKey, model, durationSec, bumped, enableThinking,
         );
       }
     }

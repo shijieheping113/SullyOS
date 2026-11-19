@@ -30,7 +30,7 @@
 </head>
 <body>
 <h1>语音识别测试页 v3</h1>
-<div class="sub">v3 策略：TeleSpeechASR 秒出文字（2并发）＋ SenseVoice 后台追情绪。测完复制日志给猫儿</div>
+<div class="sub">切段听写测试。硅基转写口可试 SenseVoice / 星辰 Ultra / 星辰 GSR；旧档 TeleASR、Omni、豆包仍在。测完复制日志给猫儿</div>
 
 <div class="card">
   <h2>API Key</h2>
@@ -44,13 +44,16 @@
   <div class="sub">玩法：点「开始说话」→ 随便聊，停顿约0.7秒自动切一句（文字先出）→ 全说完点「说完了」</div>
   <div class="row">
     <select id="seg-engine" style="padding:8px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px">
-      <option value="tele">TeleASR快出字 + 声学特征（推荐·免费）</option>
-      <option value="omni">Qwen3-Omni 多模态（试试能不能出情绪）</option>
+      <option value="sensevoice">SenseVoiceSmall（免费·主听写自带情绪）</option>
+      <option value="xingchen-ultra">星辰 Ultra（免费·口语规整）</option>
+      <option value="xingchen-gsr">星辰 GSR（免费·语义润色）</option>
+      <option value="tele">TeleASR快出字（旧档·平台页已难找）</option>
+      <option value="omni">Qwen3-Omni 多模态（按 token 计费）</option>
       <option value="doubao">豆包流式2.0（火山·带情绪·按发送计费）</option>
     </select>
   </div>
   <div class="row">
-    <label class="chk"><input type="checkbox" id="seg-emo" checked> 追加SenseVoice情绪（仅TeleASR模式，后台慢补）</label>
+    <label class="chk"><input type="checkbox" id="seg-emo" checked> 追加SenseVoice情绪（TeleASR / 星辰可选后台补；SenseVoice 主档自带）</label>
   </div>
   <button onclick="startSeg()">开始说话</button>
   <button class="stop" onclick="stopSeg()" disabled>说完了</button>
@@ -192,10 +195,14 @@ async function startSeg() {
     document.querySelector('button[onclick="startSeg()"]').disabled = true;
     document.querySelector('button[onclick="stopSeg()"]').disabled = false;
     refreshSegLive();
-    const engineName = document.getElementById('seg-engine').value === 'omni' ? 'Qwen3-Omni全模态'
-      : document.getElementById('seg-engine').value === 'doubao' ? '豆包流式2.0（火山）'
+    const eng = document.getElementById('seg-engine').value;
+    const engineName = eng === 'omni' ? 'Qwen3-Omni全模态'
+      : eng === 'doubao' ? '豆包流式2.0（火山）'
+      : eng === 'sensevoice' ? 'SenseVoiceSmall×2并发（自带情绪）'
+      : eng === 'xingchen-ultra' ? ('星辰Ultra×2并发' + (document.getElementById('seg-emo').checked ? ' + SenseVoice补情绪' : ''))
+      : eng === 'xingchen-gsr' ? ('星辰GSR×2并发' + (document.getElementById('seg-emo').checked ? ' + SenseVoice补情绪' : ''))
       : ('TeleASR出字×2并发' + (document.getElementById('seg-emo').checked ? ' + SenseVoice补情绪' : ''));
-    if (document.getElementById('seg-engine').value === 'doubao') dbConnect();
+    if (eng === 'doubao') dbConnect();
     log('v3 录音开始（' + engineName + '）');
   } catch (e) { document.getElementById('seg-err').textContent = '启动失败: ' + e.message; }
 }
@@ -281,31 +288,57 @@ async function runSeg(p) {
       segRender(p, mainText, toneLine, `${cost}ms Omni`);
       log(`第${p.idx}段 Omni(${cost}ms): ${out.replace(/\n/g, ' / ')}`);
     } else {
-      // TeleASR 快出字
+      // 硅基转写口：SenseVoice / 星辰 Ultra / 星辰 GSR / TeleASR
+      const SF_MODELS = {
+        sensevoice: 'FunAudioLLM/SenseVoiceSmall',
+        'xingchen-ultra': 'XingChenAGI/XingChenASR-V3.2-Ultra',
+        'xingchen-gsr': 'XingChenAGI/XingChenGSR-V1.0',
+        tele: 'TeleAI/TeleSpeechASR',
+      };
+      const model = SF_MODELS[engine] || SF_MODELS.tele;
+      const shortName = engine === 'sensevoice' ? 'SenseVoice'
+        : engine === 'xingchen-ultra' ? '星辰Ultra'
+        : engine === 'xingchen-gsr' ? '星辰GSR'
+        : 'TeleASR';
       const t0 = performance.now();
-      const r = await sfStt(p.wav, 'TeleAI/TeleSpeechASR');
+      const r = await sfStt(p.wav, model);
       const cost = Math.round(performance.now() - t0);
       let text = (r.text || '(空)').trim();
-      segRender(p, text, '', `${cost}ms 文字版`);
-      log(`第${p.idx}段 文字(${cost}ms): ${text}`);
-      // SenseVoice 后台补情绪（可选）
-      if (document.getElementById('seg-emo').checked) {
-        try {
-          const t1 = performance.now();
-          const r2 = await sfStt(p.wav, 'FunAudioLLM/SenseVoiceSmall');
-          const cost2 = Math.round(performance.now() - t1);
-          const { emo, clean } = modelEmotion((r2.text || '').trim());
-          let finalText = clean && clean.length >= 2 ? clean : text;
-          let tag = '';
-          if (emo && EMO_ZH[emo]) {
-            if (emo === 'ANGRY' && p.feat.peak < 0.10) tag = '';
-            else if (emo === 'SAD' && p.feat.peak > 0.20) tag = '';
-            else tag = EMO_ZH[emo];
+
+      // SenseVoice 当主引擎：同一次回信里拆情绪标签
+      if (engine === 'sensevoice') {
+        const { emo, clean } = modelEmotion(text);
+        const finalText = clean && clean.length >= 2 ? clean : text;
+        let tag = '';
+        if (emo && EMO_ZH[emo]) {
+          if (emo === 'ANGRY' && p.feat.peak < 0.10) tag = '';
+          else if (emo === 'SAD' && p.feat.peak > 0.20) tag = '';
+          else tag = EMO_ZH[emo];
+        }
+        segRender(p, finalText, tag, `${cost}ms ${shortName} emo:${emo || '无'}${tag ? '' : (emo ? '(门控拦截)' : '')}`);
+        log(`第${p.idx}段 ${shortName}(${cost}ms): emo=${emo || '-'} → ${tag || '不标'} | ${tag}${finalText}`);
+      } else {
+        segRender(p, text, '', `${cost}ms ${shortName}`);
+        log(`第${p.idx}段 ${shortName}(${cost}ms): ${text}`);
+        // TeleASR / 星辰：可选后台 SenseVoice 补情绪
+        if (document.getElementById('seg-emo').checked) {
+          try {
+            const t1 = performance.now();
+            const r2 = await sfStt(p.wav, 'FunAudioLLM/SenseVoiceSmall');
+            const cost2 = Math.round(performance.now() - t1);
+            const { emo, clean } = modelEmotion((r2.text || '').trim());
+            let finalText = clean && clean.length >= 2 ? clean : text;
+            let tag = '';
+            if (emo && EMO_ZH[emo]) {
+              if (emo === 'ANGRY' && p.feat.peak < 0.10) tag = '';
+              else if (emo === 'SAD' && p.feat.peak > 0.20) tag = '';
+              else tag = EMO_ZH[emo];
+            }
+            segRender(p, finalText, tag, `${cost}ms+${cost2}ms 情绪:${emo || '无'}${tag ? '' : (emo ? '(门控拦截)' : '')}`);
+            log(`第${p.idx}段 情绪(${cost2}ms): emo=${emo || '-'} peak=${p.feat.peak.toFixed(2)} → ${tag || '不标'} | 最终: ${tag}${finalText}`);
+          } catch (e) {
+            log(`第${p.idx}段 情绪识别失败: ${e.message}（文字保留）`);
           }
-          segRender(p, finalText, tag, `${cost}ms+${cost2}ms 情绪:${emo || '无'}${tag ? '' : (emo ? '(门控拦截)' : '')}`);
-          log(`第${p.idx}段 情绪(${cost2}ms): emo=${emo || '-'} peak=${p.feat.peak.toFixed(2)} → ${tag || '不标'} | 最终: ${tag}${finalText}`);
-        } catch (e) {
-          log(`第${p.idx}段 情绪识别失败: ${e.message}（文字保留）`);
         }
       }
     }

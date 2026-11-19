@@ -77,7 +77,7 @@ import {
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '../utils/apiConfigNormalize';
 import { configFromPreset, findActivePresetId, presetDiffersFromConfig, type PresetSwitchPatch } from '../utils/apiPresetSwitch';
 import type { APIConfig, TtsProvider, SttEngineId, SttApiConfig, SttUsageStats } from '../types';
-import { defaultQwenEmotionPrompt, getSttUsage, resetSttUsage, doubaoGzipSupported, isSttSupported } from '../utils/volcStt';
+import { defaultQwenEmotionPrompt, getSttUsage, resetSttUsage, doubaoGzipSupported, isSttSupported, normalizeSttEngine } from '../utils/volcStt';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
 import VideoUnderstandingSettings from '../components/settings/VideoUnderstandingSettings';
 import SecondaryLlmSettings from '../components/settings/SecondaryLlmSettings';
@@ -554,7 +554,7 @@ const Settings: React.FC = () => {
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
   // ---- 语音识别（STT）：聊天麦克风按钮的三引擎配置 ----
-  const [localSttEngine, setLocalSttEngine] = useState<SttEngineId>(apiConfig.sttApi?.engine || 'doubao');
+  const [localSttEngine, setLocalSttEngine] = useState<SttEngineId>(() => normalizeSttEngine(apiConfig.sttApi?.engine));
   const [localSttVolcKey, setLocalSttVolcKey] = useState(apiConfig.sttApi?.volcApiKey || '');
   const [localSttSfKey, setLocalSttSfKey] = useState(apiConfig.sttApi?.sfApiKey || '');
   const [localSttHotwords, setLocalSttHotwords] = useState(apiConfig.sttApi?.hotwords || '');
@@ -889,7 +889,7 @@ const Settings: React.FC = () => {
   // 语音识别（STT）独立区块的同步 —— 与识图同样的套路：
   // 依赖写到具体字段上，避免整个 apiConfig 对象变化时把还没保存的草稿冲掉。
   useEffect(() => {
-      setLocalSttEngine(apiConfig.sttApi?.engine || 'doubao');
+      setLocalSttEngine(normalizeSttEngine(apiConfig.sttApi?.engine));
       setLocalSttVolcKey(apiConfig.sttApi?.volcApiKey || '');
       setLocalSttSfKey(apiConfig.sttApi?.sfApiKey || '');
       setLocalSttHotwords(apiConfig.sttApi?.hotwords || '');
@@ -1282,7 +1282,7 @@ const Settings: React.FC = () => {
 
   /** 语音识别独立区块的保存：只提交 sttApi 一个字段，不牵连其他区块的草稿 */
   const buildSttApiConfig = (): SttApiConfig => ({
-      engine: localSttEngine,
+      engine: normalizeSttEngine(localSttEngine),
       volcApiKey: localSttVolcKey.trim() || undefined,
       sfApiKey: localSttSfKey.trim() || undefined,
       hotwords: localSttHotwords.trim() || undefined,
@@ -1293,7 +1293,7 @@ const Settings: React.FC = () => {
   const handleSaveSttApi = () => {
       const next = buildSttApiConfig();
       if (!next.volcApiKey && !next.sfApiKey) {
-          addToast('请至少填一个 Key（豆包填火山引擎、Omni/TeleASR 填硅基流动）', 'error');
+          addToast('请至少填一个 Key（豆包填火山引擎、其余填硅基流动）', 'error');
           return;
       }
       if (next.engine === 'doubao' && !next.volcApiKey) {
@@ -1301,7 +1301,7 @@ const Settings: React.FC = () => {
           return;
       }
       if (next.engine !== 'doubao' && !next.sfApiKey) {
-          addToast('Omni / TeleASR 引擎需要填硅基流动 API Key', 'error');
+          addToast('Omni / SenseVoice / 星辰 Ultra 需要填硅基流动 API Key', 'error');
           return;
       }
       updateApiConfig({ sttApi: next });
@@ -1343,7 +1343,7 @@ const Settings: React.FC = () => {
     updateApiConfig(buildOtherApiConfig({ elevenLabsModel: model }));
   };
 
-  // STT 引擎三选一：立即落库。只提交 sttApi 一个字段，并把当前草稿一起带上，
+  // STT 引擎四选一：立即落库。只提交 sttApi 一个字段，并把当前草稿一起带上，
   // 避免刚填还没保存的 Key 被同步 effect 冲掉（与 TTS 引擎切换同一个套路）。
   const selectSttEngine = (engine: SttEngineId) => {
     setLocalSttEngine(engine);
@@ -1355,7 +1355,10 @@ const Settings: React.FC = () => {
       emotionEnabled: localSttEmotion,
       qwenEmotionPrompt: localSttQwenPrompt.trim() || undefined,
     } });
-    const label = engine === 'doubao' ? '豆包流式' : engine === 'omni' ? 'Qwen3-Omni' : 'TeleASR';
+    const label = engine === 'doubao' ? '豆包流式'
+      : engine === 'omni' ? 'Qwen3-Omni'
+      : engine === 'sensevoice' ? 'SenseVoice'
+      : '星辰 Ultra';
     addToast(`语音识别已切到 ${label}（记得点保存确认 Key）`, 'success');
   };
 
@@ -2961,7 +2964,7 @@ const Settings: React.FC = () => {
             />
         </SettingsSection>
 
-        {/* 语音识别（STT）—— 独立区块（与识图 API 平级）：聊天麦克风按钮 + 通话共用的三引擎配置 */}
+        {/* 语音识别（STT）—— 独立区块（与识图 API 平级）：聊天麦克风按钮 + 通话共用 */}
         <SettingsSection
             title="语音识别"
             icon={
@@ -2974,17 +2977,18 @@ const Settings: React.FC = () => {
             }
         >
             <div className="space-y-3">
-                <p className="text-[11px] text-slate-400 leading-relaxed">说话转文字 + 情绪标注。聊天输入框的 🎤 按钮用这里选的引擎；三个引擎的 Key 都保存在这儿，随时切换对比。</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed">说话转文字 + 情绪标注。聊天输入框的 🎤 与电话收音共用这里选的引擎；四个引擎的 Key 都保存在这儿，随时切换对比。</p>
                 {!isSttSupported() && (
                     <p className="text-[11px] text-rose-500 leading-relaxed">⚠️ 当前浏览器不支持录音（需要 HTTPS 访问 + 麦克风权限）。手机请用 https:// 开头的地址访问。</p>
                 )}
 
-                {/* 引擎三选一：立即生效，Key 用下面填的 */}
+                {/* 引擎四选一：立即生效，Key 用下面填的 */}
                 <div className="space-y-2">
                     {([
                         ['doubao', '豆包流式 2.0', '最准最快 · 热词接口级 · 情绪5格 · 1元/时只按实说话计费（静音不扣钱）'],
                         ['omni', 'Qwen3-Omni', '情绪最细腻（委屈/不耐烦/撒娇）· 长句偶有幻听 · 按段计费'],
-                        ['teleasr', 'TeleASR', '免费档 · 出字快 · 专有名词较弱 · 情绪靠 SenseVoice 后台补'],
+                        ['sensevoice', 'SenseVoice', '免费档 · 出字稳 · 自带情绪 · 暂无热词'],
+                        ['xingchen_ultra', '星辰 Ultra', '免费档 · 口语规整 · 不额外接情绪 · 暂无热词'],
                     ] as const).map(([key, name, desc]) => {
                         const active = localSttEngine === key;
                         return (
@@ -3014,19 +3018,19 @@ const Settings: React.FC = () => {
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">需开通「豆包流式语音识别模型 2.0」。免费送 20 小时/半年。{doubaoGzipSupported() ? '' : '⚠️ 这台浏览器较老，豆包引擎无法 gzip 压缩，建议换新浏览器。'}</p>
                 </div>
                 <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">硅基流动 API Key <span className="normal-case font-medium text-slate-400">→ Omni / TeleASR / SenseVoice 用</span></label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">硅基流动 API Key <span className="normal-case font-medium text-slate-400">→ Omni / SenseVoice / 星辰 Ultra 用</span></label>
                     <input type="password" name="stt-sf-key" autoComplete="new-password" spellCheck={false} value={localSttSfKey} onChange={(e) => setLocalSttSfKey(e.target.value)} placeholder="sk-xxx（siliconflow.cn 控制台创建）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                    <p className="text-[11px] text-slate-400 mt-1 pl-1">Omni 走 Qwen3-Omni-30B-A3B（按段计费）；TeleASR 免费档。</p>
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">Omni 走 Qwen3-Omni-30B-A3B（按段计费）；SenseVoice / 星辰 Ultra 免费档。</p>
                 </div>
 
                 <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">热词（人名 / 昵称 / 专有词，逗号分隔）</label>
                     <input type="text" spellCheck={false} value={localSttHotwords} onChange={(e) => setLocalSttHotwords(e.target.value)} placeholder="如：诚哥,猫儿,阿贝贝" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm focus:bg-white transition-all" />
-                    <p className="text-[11px] text-slate-400 mt-1 pl-1">豆包走接口级热词（识别层纠音）；Omni 写进提示词（理解层纠字）；TeleASR 暂不支持热词。</p>
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">豆包走接口级热词（识别层纠音）；Omni 写进提示词（理解层纠字）；SenseVoice / 星辰 Ultra 暂不支持热词。</p>
                 </div>
 
                 <label className="flex items-center justify-between gap-3 text-[11px] text-slate-500">
-                    <span>情绪标注（在每句前加「（委屈地）」这类标签，让 AI 听懂语气）</span>
+                    <span>情绪标注（豆包/Omni/SenseVoice 可用；星辰 Ultra 开了也不另补情绪）</span>
                     <input
                         type="checkbox"
                         checked={localSttEmotion}
@@ -3068,16 +3072,17 @@ const Settings: React.FC = () => {
                     </div>
                 )}
 
-                {/* 费用统计：豆包按实际发送秒数折算，Omni/TeleASR 按段数 */}
+                {/* 费用统计：豆包按实际发送秒数折算，其余按段数 */}
                 <div className="rounded-xl border border-slate-200/60 bg-white/40 p-2.5 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">费用统计（本机）</div>
                         <div className="text-[11px] text-slate-500 leading-relaxed">
-                            {sttUsage.doubaoMs || sttUsage.omniSegments || sttUsage.teleasrSegments ? (
+                            {sttUsage.doubaoMs || sttUsage.omniSegments || sttUsage.sensevoiceSegments || sttUsage.xingchenUltraSegments ? (
                                 <>
                                     {sttUsage.doubaoMs > 0 && <span className="block">豆包 {(sttUsage.doubaoMs / 60000).toFixed(1)} 分钟 ≈ {(sttUsage.doubaoMs / 3600000).toFixed(4)} 元（按实际发送音频）</span>}
                                     {sttUsage.omniSegments > 0 && <span className="block">Omni {sttUsage.omniSegments} 段（按段计费，账单以硅基流动控制台为准）</span>}
-                                    {sttUsage.teleasrSegments > 0 && <span className="block">TeleASR {sttUsage.teleasrSegments} 段（免费档）</span>}
+                                    {sttUsage.sensevoiceSegments > 0 && <span className="block">SenseVoice {sttUsage.sensevoiceSegments} 段（免费档）</span>}
+                                    {sttUsage.xingchenUltraSegments > 0 && <span className="block">星辰 Ultra {sttUsage.xingchenUltraSegments} 段（免费档）</span>}
                                 </>
                             ) : (
                                 <span>暂无用量——用麦克风说过话后这里会有记录</span>
@@ -3087,7 +3092,7 @@ const Settings: React.FC = () => {
                     <button
                         type="button"
                         onClick={handleResetSttUsage}
-                        disabled={!(sttUsage.doubaoMs || sttUsage.omniSegments || sttUsage.teleasrSegments)}
+                        disabled={!(sttUsage.doubaoMs || sttUsage.omniSegments || sttUsage.sensevoiceSegments || sttUsage.xingchenUltraSegments)}
                         className="shrink-0 text-[11px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
                     >
                         清零

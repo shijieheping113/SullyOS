@@ -306,24 +306,31 @@ export interface VideoApiConfig {
   maxFrames: number;
   maxDurationSec: number;
   maxSizeMB: number;
+  /**
+   * 仅 Qwen3.5 视频模型会带上 `enable_thinking`。
+   * 缺省 / false：关思考（更快，适合视频理解）；true：开思考（更慢更贵）。
+   */
+  enableThinking?: boolean;
 }
 
-// ===== 语音识别（STT）三引擎配置 =====
+// ===== 语音识别（STT）四引擎配置 =====
 // 聊天麦克风与电话收音共用这一套（utils/volcStt.ts）：
-//   doubao  → 豆包流式 2.0（火山引擎，走 /api/volc-ws 代理，情绪 5 格，1元/时按实说话计费）
-//   omni    → Qwen3-Omni 全模态（硅基流动，走 /v1/chat/completions 代理，情绪词库细腻，按段计费）
-//   teleasr → TeleASR 出字（硅基流动，走 /api/sf-stt 代理，可选 SenseVoice 后台补情绪，免费档）
-export type SttEngineId = 'doubao' | 'omni' | 'teleasr';
+//   doubao         → 豆包流式 2.0（火山引擎，走 /api/volc-ws 代理，情绪 5 格，1元/时按实说话计费）
+//   omni           → Qwen3-Omni 全模态（硅基流动，走 /v1/chat/completions 代理，情绪词库细腻，按段计费）
+//   sensevoice     → SenseVoiceSmall（硅基流动 /api/sf-stt，免费；自带情绪标签，不另跑第二次）
+//   xingchen_ultra → 星辰 Ultra（硅基流动 /api/sf-stt，免费；口语规整；不额外接情绪）
+// 旧存档若仍是 teleasr，读取时归到 sensevoice（见 normalizeSttEngine）。
+export type SttEngineId = 'doubao' | 'omni' | 'sensevoice' | 'xingchen_ultra';
 
 export interface SttApiConfig {
   engine: SttEngineId;
   // 火山引擎 API Key（豆包流式 2.0 专用）
   volcApiKey?: string;
-  // 硅基流动 API Key（Omni / TeleASR / SenseVoice 共用）
+  // 硅基流动 API Key（Omni / SenseVoice / 星辰 Ultra 共用）
   sfApiKey?: string;
-  // 热词，逗号/顿号分隔。豆包走 corpus 接口级热词，Omni 写进提示词。
+  // 热词，逗号/顿号分隔。豆包走 corpus 接口级热词，Omni 写进提示词；SenseVoice / 星辰 Ultra 暂无热词口。
   hotwords?: string;
-  // 情绪标注开关（缺省 true）。豆包/Omni 是引擎自带情绪；TeleASR 是 SenseVoice 后台补。
+  // 情绪标注开关（缺省 true）。豆包/Omni/SenseVoice 引擎自带；星辰 Ultra 开了也不另补情绪。
   emotionEnabled?: boolean;
   // Omni 专属：自定义情绪识别提示词（留空 → utils/volcStt.ts 内置默认）
   qwenEmotionPrompt?: string;
@@ -335,8 +342,10 @@ export interface SttUsageStats {
   doubaoMs: number;
   // Omni 累计识别段数
   omniSegments: number;
-  // TeleASR 累计识别段数（SenseVoice 情绪补识别不计费，不单独记）
-  teleasrSegments: number;
+  // SenseVoice 累计识别段数（免费档）
+  sensevoiceSegments: number;
+  // 星辰 Ultra 累计识别段数（免费档）
+  xingchenUltraSegments: number;
   lastUpdated: number;
 }
 

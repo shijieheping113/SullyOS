@@ -1,23 +1,39 @@
 // ============================================================
-// 聊天语音识别（STT）三引擎 —— 从 public/stt-test.html 移植的生产版
+// 聊天语音识别（STT）四引擎 —— 从 public/stt-test.html 移植的生产版
 //
-//   doubao  → 豆包流式 2.0（火山引擎 /api/volc-ws 代理）
-//             实时流式、热词接口级、情绪 5 格（angry/happy/neutral/sad/surprise）
-//             计费：1元/小时，只按实际发送音频（静音停发护栏在 dbFeed）
-//   omni    → Qwen3-Omni 全模态（硅基流动 /v1/chat/completions 代理）
-//             本地 VAD 切段→逐段请求，情绪词库细腻（可自定义提示词），按段计费
-//   teleasr → TeleASR 出字（硅基流动 /api/sf-stt 代理）
-//             本地 VAD 切段→逐段请求，可选 SenseVoice 后台补情绪
+//   doubao         → 豆包流式 2.0（火山引擎 /api/volc-ws 代理）
+//                    实时流式、热词接口级、情绪 5 格（angry/happy/neutral/sad/surprise）
+//                    计费：1元/小时，只按实际发送音频（静音停发护栏在 dbFeed）
+//   omni           → Qwen3-Omni 全模态（硅基流动 /v1/chat/completions 代理）
+//                    本地 VAD 切段→逐段请求，情绪词库细腻（可自定义提示词），按段计费
+//   sensevoice     → SenseVoiceSmall（硅基流动 /api/sf-stt）
+//                    本地 VAD 切段→逐段请求；自带情绪标签，不另跑第二次
+//   xingchen_ultra → 星辰 Ultra（硅基流动 /api/sf-stt）
+//                    本地 VAD 切段→逐段请求；口语规整；不额外接情绪
 //
 // 计费记账：本机 localStorage（stt_usage_stats_v1），设置页展示。
 // ============================================================
 import type { SttApiConfig, SttEngineId, SttUsageStats } from '../types';
 import { fetchViaProxy, voiceSocketUrls, workerProxyUrl } from './proxyFallback';
 
+/** 旧存档 teleasr → sensevoice；非法值回落豆包。 */
+export function normalizeSttEngine(raw: string | undefined | null): SttEngineId {
+  if (raw === 'omni' || raw === 'sensevoice' || raw === 'xingchen_ultra' || raw === 'doubao') return raw;
+  if (raw === 'teleasr') return 'sensevoice';
+  return 'doubao';
+}
+
+function sfEngineLabel(engine: SttEngineId): string {
+  if (engine === 'omni') return 'Omni';
+  if (engine === 'sensevoice') return 'SenseVoice';
+  if (engine === 'xingchen_ultra') return '星辰 Ultra';
+  return '豆包';
+}
+
 // ---------- 对外回调与句柄 ----------
 
 export interface SttCallbacks {
-  /** 中间结果（实时上屏用，可被后续覆盖）。切段引擎（omni/teleasr）不产生中间结果。 */
+  /** 中间结果（实时上屏用，可被后续覆盖）。切段引擎（omni/sensevoice/xingchen_ultra）不产生中间结果。 */
   onPartial?: (text: string) => void;
   /** 定句/段落完成。emotion 形如「（委屈地）」；emotionEnabled 关闭或引擎无情绪时为 ''。 */
   onFinal: (text: string, emotion: string) => void;
@@ -79,7 +95,7 @@ const MIN_SEG_MS = 350;          // 短于 350ms 的碎段丢弃
 const MAX_SEG_MS = 15000;        // 最长段 15s 硬切
 const DB_MUTE_MS = 1500;         // 豆包护栏：连续静音 1.5s 停发（不扣费）
 const DB_PREROLL_SAMPLES = 8000; // 豆包恢复发包时补 0.5s 前置（16k 采样）
-const SEG_SLOTS = 2;             // omni/teleasr 并发请求数
+const SEG_SLOTS = 2;             // omni/sensevoice/xingchen_ultra 并发请求数
 
 // ---------- 情绪标签翻译 ----------
 const VOLC_EMO_ZH: Record<string, string> = { angry: '（生气）', happy: '（开心）', neutral: '（平静）', sad: '（低落）', surprise: '（惊讶）' };
@@ -137,12 +153,14 @@ export function getSttUsage(): SttUsageStats {
       return {
         doubaoMs: p.doubaoMs || 0,
         omniSegments: p.omniSegments || 0,
-        teleasrSegments: p.teleasrSegments || 0,
+        // 旧 TeleASR 段数并入 SenseVoice 展示，避免清零前数字凭空消失
+        sensevoiceSegments: (p.sensevoiceSegments || 0) + (p.teleasrSegments || 0),
+        xingchenUltraSegments: p.xingchenUltraSegments || 0,
         lastUpdated: p.lastUpdated || 0,
       };
     }
   } catch { /* ignore */ }
-  return { doubaoMs: 0, omniSegments: 0, teleasrSegments: 0, lastUpdated: 0 };
+  return { doubaoMs: 0, omniSegments: 0, sensevoiceSegments: 0, xingchenUltraSegments: 0, lastUpdated: 0 };
 }
 
 function addSttUsage(patch: Partial<SttUsageStats>): void {
@@ -151,7 +169,8 @@ function addSttUsage(patch: Partial<SttUsageStats>): void {
     const next: SttUsageStats = {
       doubaoMs: cur.doubaoMs + (patch.doubaoMs || 0),
       omniSegments: cur.omniSegments + (patch.omniSegments || 0),
-      teleasrSegments: cur.teleasrSegments + (patch.teleasrSegments || 0),
+      sensevoiceSegments: cur.sensevoiceSegments + (patch.sensevoiceSegments || 0),
+      xingchenUltraSegments: cur.xingchenUltraSegments + (patch.xingchenUltraSegments || 0),
       lastUpdated: Date.now(),
     };
     localStorage.setItem(STATS_KEY, JSON.stringify(next));
@@ -168,7 +187,8 @@ export function sttUsageSummary(): string {
   const parts: string[] = [];
   if (s.doubaoMs) parts.push(`豆包 ${(s.doubaoMs / 60000).toFixed(1)} 分钟 ≈ ${(s.doubaoMs / 3600000).toFixed(4)} 元`);
   if (s.omniSegments) parts.push(`Omni ${s.omniSegments} 段`);
-  if (s.teleasrSegments) parts.push(`TeleASR ${s.teleasrSegments} 段`);
+  if (s.sensevoiceSegments) parts.push(`SenseVoice ${s.sensevoiceSegments} 段`);
+  if (s.xingchenUltraSegments) parts.push(`星辰 Ultra ${s.xingchenUltraSegments} 段`);
   return parts.length ? `累计：${parts.join(' · ')}` : '暂无用量';
 }
 
@@ -224,7 +244,7 @@ function uuid(): string {
     : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
 }
 
-/** 硅基流动音频转写（TeleASR / SenseVoice） */
+/** 硅基流动音频转写（SenseVoice / 星辰 Ultra 等） */
 async function sfStt(wavBlob: Blob, model: string, apiKey: string): Promise<any> {
   const form = new FormData();
   form.append('file', wavBlob, 'speech.wav');
@@ -267,12 +287,12 @@ export async function startVoiceInput(
   if (abort?.aborted) throw new SttCancelled();
   if (!isSttSupported()) throw new Error('当前浏览器不支持录音（需要 HTTPS + 麦克风权限）');
 
-  const engine: SttEngineId = cfg.engine || 'doubao';
+  const engine: SttEngineId = normalizeSttEngine(cfg.engine);
   const emotionOn = cfg.emotionEnabled !== false; // 缺省开
   const hotwords = (cfg.hotwords || '').split(/[,，、\s]+/).filter(Boolean);
 
   if (engine === 'doubao' && !(cfg.volcApiKey || '').trim()) throw new Error('豆包引擎需要先在设置里填火山引擎 API Key');
-  if (engine !== 'doubao' && !(cfg.sfApiKey || '').trim()) throw new Error(`${engine === 'omni' ? 'Omni' : 'TeleASR'} 引擎需要先在设置里填硅基流动 API Key`);
+  if (engine !== 'doubao' && !(cfg.sfApiKey || '').trim()) throw new Error(`${sfEngineLabel(engine)} 引擎需要先在设置里填硅基流动 API Key`);
 
   cb.onStatus?.('connecting');
 
@@ -699,7 +719,7 @@ async function startDoubao(cfg: SttApiConfig, cb: SttCallbacks, ec: EngineCtx, a
 }
 
 // ============================================================
-// 引擎二/三：切段式（Omni / TeleASR）—— 本地 VAD 切段 → 逐段请求
+// 切段式（Omni / SenseVoice / 星辰 Ultra）—— 本地 VAD 切段 → 逐段请求
 // ============================================================
 interface SegPayload {
   wav: Blob;
@@ -707,8 +727,10 @@ interface SegPayload {
   state: 'queued' | 'working';
 }
 
+type SegmentSttEngine = 'omni' | 'sensevoice' | 'xingchen_ultra';
+
 async function startSegmentEngine(
-  engine: 'omni' | 'teleasr',
+  engine: SegmentSttEngine,
   cfg: SttApiConfig,
   cb: SttCallbacks,
   hotwords: string[],
@@ -812,28 +834,26 @@ async function startSegmentEngine(
           cb.onFinal(lines.join(''), '');
         }
         addSttUsage({ omniSegments: 1 });
-      } else {
-        // TeleASR 快出字
-        const r = await sfStt(p.wav, 'TeleAI/TeleSpeechASR', sfKey);
-        const text = (r.text || '').trim();
-        let finalText = text;
+      } else if (engine === 'sensevoice') {
+        // SenseVoiceSmall：同一次回信出字 + 情绪（不另跑第二次）
+        const r = await sfStt(p.wav, 'FunAudioLLM/SenseVoiceSmall', sfKey);
+        const raw = (r.text || '').trim();
+        const { emo, clean } = senseVoiceEmotion(raw);
+        let finalText = clean && clean.length >= 2 ? clean : raw;
         let tag = '';
-        // SenseVoice 后台补情绪（可选）
-        if (emotionOn) {
-          try {
-            const r2 = await sfStt(p.wav, 'FunAudioLLM/SenseVoiceSmall', sfKey);
-            const { emo, clean } = senseVoiceEmotion((r2.text || '').trim());
-            if (clean && clean.length >= 2) finalText = clean;
-            if (emo && EMO_ZH[emo]) {
-              // 声学门控：峰值太低的"生气"/峰值太高的"低落"多半是误判，不标
-              if (emo === 'ANGRY' && p.feat.peak < 0.10) { /* 不标 */ }
-              else if (emo === 'SAD' && p.feat.peak > 0.20) { /* 不标 */ }
-              else tag = EMO_ZH[emo];
-            }
-          } catch { /* 情绪失败不影响文字 */ }
+        if (emotionOn && emo && EMO_ZH[emo]) {
+          // 声学门控：峰值太低的"生气"/峰值太高的"低落"多半是误判，不标
+          if (emo === 'ANGRY' && p.feat.peak < 0.10) { /* 不标 */ }
+          else if (emo === 'SAD' && p.feat.peak > 0.20) { /* 不标 */ }
+          else tag = EMO_ZH[emo];
         }
         cb.onFinal(finalText, tag);
-        addSttUsage({ teleasrSegments: 1 });
+        addSttUsage({ sensevoiceSegments: 1 });
+      } else {
+        // 星辰 Ultra：只出字，不额外接情绪
+        const r = await sfStt(p.wav, 'XingChenAGI/XingChenASR-V3.2-Ultra', sfKey);
+        cb.onFinal((r.text || '').trim(), '');
+        addSttUsage({ xingchenUltraSegments: 1 });
       }
     } catch (e: any) {
       cb.onError?.(`第${queue.length + 1}段识别失败: ${e.message}（跳过该段）`);

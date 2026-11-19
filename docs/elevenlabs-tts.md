@@ -15,7 +15,7 @@
 
 ## 技术说明
 
-Eleven v4 是 TTS（文字合成声音）。电话与聊天的语音输入（STT）走设置里的三引擎识别（豆包流式 / Qwen3-Omni / TeleASR），与 TTS 服务商独立配置。
+Eleven v4 是 TTS（文字合成声音）。电话与聊天的语音输入（STT）走设置里的四引擎识别（豆包流式 / Qwen3-Omni / SenseVoice / 星辰 Ultra），与 TTS 服务商独立配置。
 
 ## 配置与默认行为
 

@@ -4166,7 +4166,7 @@ export default {
     // 部署后那层代理不存在，前端会按「本地 → 本 Worker」的顺序改走这里。
     // Worker 不读不存任何 key，只做 CORS + 转发。
 
-    // 硅基流动：音频转写（TeleASR / SenseVoice）
+    // 硅基流动：音频转写（SenseVoice / 星辰 Ultra 等，model 原样转发）
     if (url.pathname === '/sf-stt/transcriptions') {
       if (request.method !== 'POST') {
         return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
