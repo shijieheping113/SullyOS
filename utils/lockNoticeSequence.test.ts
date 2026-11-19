@@ -50,7 +50,7 @@ describe('lock notice arrival sequence', () => {
     expect(s.text()).toBe('消息1');
     expect(s.stack.hidden).toBe(true);
     expect(s.root.querySelector('#noticeCount')!.textContent).toBe('3 条未读');
-    vi.advanceTimersByTime(179);
+    vi.advanceTimersByTime(999);
     expect(s.text()).toBe('消息1');
     vi.advanceTimersByTime(1);
     expect(s.text()).toBe('消息2');
@@ -60,11 +60,16 @@ describe('lock notice arrival sequence', () => {
     expect(departing.hasAttribute('inert')).toBe(true);
     expect(departing.querySelector('[id]')).toBeNull();
     expect(s.root.querySelectorAll('#notice')).toHaveLength(1);
-    vi.advanceTimersByTime(160);
+    vi.advanceTimersByTime(999);
+    expect(s.text()).toBe('消息2');
+    vi.advanceTimersByTime(1);
     expect(s.text()).toBe('消息3');
     expect(s.stack.dataset.layers).toBe('2');
     expect(s.entries.map(entry => entry.key)).toEqual(['a:1', 'a:2', 'a:3']);
-    expect(s.entries.every(entry => entry.timing.duration === 300)).toBe(true);
+    expect(s.entries.every(entry => entry.timing.duration === 580)).toBe(true);
+    expect(s.entries.every(entry => entry.timing.easing === 'cubic-bezier(.32,.72,0,1)')).toBe(true);
+    expect(s.entries[0].frames[0].transform).toBe('translateY(20px) scale(0.96)');
+    expect(s.entries[0].frames[1].transform).toBe('translateY(-1.5px) scale(1)');
     expect(s.root.querySelectorAll('[data-notice-departing]')).toHaveLength(1);
     vi.runOnlyPendingTimers();
     expect(vi.getTimerCount()).toBe(0);
@@ -78,7 +83,9 @@ describe('lock notice arrival sequence', () => {
     s.media.setNotices([row(1, { avatar: '/cat.png' }), row(2)], 2);
     expect(s.text()).toBe('消息1');
     expect(s.entries).toHaveLength(1);
-    vi.advanceTimersByTime(120);
+    vi.advanceTimersByTime(939);
+    expect(s.text()).toBe('消息1');
+    vi.advanceTimersByTime(1);
     expect(s.text()).toBe('消息2');
     s.media.setNotices([row(1), row(2, { avatar: '/cat.png' })], 2);
     vi.runAllTimers();
@@ -122,7 +129,7 @@ describe('lock notice arrival sequence', () => {
     const s = setup();
     s.media.setNotices([row(1), row(2), row(3)], 3);
     s.media.setNotices([row(1), row(3)], 2);
-    vi.advanceTimersByTime(180);
+    vi.advanceTimersByTime(1000);
     expect(s.text()).toBe('消息3');
     s.media.setNotice(null);
     expect(s.notice.tabIndex).toBe(-1);
@@ -153,6 +160,12 @@ describe('lock notice arrival sequence', () => {
     const s = setup();
     s.media.setNotices(Array.from({ length: 30 }, (_, i) => row(i + 1)), 30);
     expect(s.text()).toBe('消息' + (31 - LOCK_NOTICE_PREVIEW_LIMIT));
+    for (let id = 24; id <= 30; id += 1) {
+      vi.advanceTimersByTime(999);
+      expect(s.text()).toBe('消息' + (id - 1));
+      vi.advanceTimersByTime(1);
+      expect(s.text()).toBe('消息' + id);
+    }
     vi.runAllTimers();
     expect(s.text()).toBe('消息30');
     expect(s.entries).toHaveLength(LOCK_NOTICE_PREVIEW_LIMIT);

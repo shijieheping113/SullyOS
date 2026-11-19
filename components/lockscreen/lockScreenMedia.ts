@@ -23,9 +23,9 @@ export interface LockNotice {
 
 export const LOCK_NOTICE_PREVIEW_LIMIT = 8;
 const NOTICE_MOTION = {
-  enter: 300, fade: 140, exit: 160,
-  gap: 180, gapStep: 20, minGap: 100,
-  ease: 'cubic-bezier(.2,.75,.25,1)',
+  enter: 580, hold: 420, retire: 220, fade: 140, exit: 160,
+  distance: 20, startScale: .96, overshoot: 1.5,
+  ease: 'cubic-bezier(.32,.72,0,1)',
 };
 
 export interface LockPlayerControls {
@@ -172,7 +172,6 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
   let unreadCount = 0;
   let queue: LockNotice[] = [];
   let seen = new Set<string>();
-  let sequenceStep = 0;
   let sequenceTimer = 0;
   let disposed = false;
   let visible: LockNotice | null = null;
@@ -221,7 +220,7 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
     departureAnimation = clone.animate([
       { opacity, transform },
       { opacity: 0, transform: 'translateY(6px) scale(.96)' },
-    ], { duration: NOTICE_MOTION.gap, easing: NOTICE_MOTION.ease });
+    ], { duration: NOTICE_MOTION.retire, easing: NOTICE_MOTION.ease });
     departureAnimation.onfinish = () => { if (departing === clone) removeDeparting(); };
   }
 
@@ -255,8 +254,8 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
     const fadeOnly = options.reducedMotion();
     const opacity = 'var(--glass-alpha, 1)';
     const frames = fadeOnly ? [{ opacity: 0 }, { opacity }] : [
-      { opacity: 0, transform: 'translateY(14px) scale(.96)' },
-      { opacity, transform: 'translateY(-1px) scale(1)', offset: .76 },
+      { opacity: 0, transform: 'translateY(' + NOTICE_MOTION.distance + 'px) scale(' + NOTICE_MOTION.startScale + ')' },
+      { opacity, transform: 'translateY(-' + NOTICE_MOTION.overshoot + 'px) scale(1)', offset: .76 },
       { opacity, transform: 'translateY(0) scale(1)' },
     ];
     animation = notice.animate(frames, {
@@ -303,9 +302,9 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
     }
     seen.add(next.key);
     paintNotice(next, true);
-    // Keep a short handoff even if the next message arrives after this snapshot.
-    const gap = Math.max(NOTICE_MOTION.minGap, NOTICE_MOTION.gap - sequenceStep * NOTICE_MOTION.gapStep);
-    sequenceStep += 1;
+    // Let each card settle and remain readable before the next arrival, including
+    // messages appended mid-animation. Backlogs use the same pace throughout.
+    const gap = NOTICE_MOTION.enter + NOTICE_MOTION.hold;
     sequenceTimer = window.setTimeout(() => { sequenceTimer = 0; flushNotice(); }, gap);
   }
 
@@ -316,8 +315,7 @@ export function bindLockScreenMedia(root: HTMLElement, options: MediaOptions) {
     unreadCount = Math.max(0, total);
     seen = new Set(Array.from(seen).filter(key => unique.has(key)));
     queue = pending.filter(item => !seen.has(item.key));
-    if (!pending.length) { seen.clear(); sequenceStep = 0; stopSequence(); }
-    if (!sequenceTimer) sequenceStep = 0;
+    if (!pending.length) { seen.clear(); stopSequence(); }
     if (moving || !options.atRest() || document.visibilityState === 'hidden') pauseNotice();
     flushNotice();
   }

@@ -268,7 +268,7 @@ describe('lock screen handoff', () => {
     });
     const message = { key: 'a:1', charId: 'a', name: '角色甲', text: '新消息', count: 1, avatar: '', timestamp: 123456789 };
     media.setNotice(message);
-    expect(notice.animate).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ duration: 300 }));
+    expect(notice.animate).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ duration: 580 }));
     media.setNotice({ ...message, count: 2 });
     expect(notice.animate).toHaveBeenCalledTimes(1);
     expect(root.querySelector<HTMLElement>('#noticeStack')?.dataset.layers).toBe('1');
