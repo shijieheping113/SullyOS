@@ -31,6 +31,7 @@ try{
  let chars=await page.evaluate(async()=>[await window.qaBooks.DB.getCharacter('qa-book-char'),await window.qaBooks.DB.getCharacter('qa-partial')]);
  assert.equal(chars[0].mountedWorldbooks.length,2);assert.equal(chars[1].mountedWorldbooks.length,1);assert(chars.flatMap(c=>c.mountedWorldbooks).every(b=>b.category==='常驻版本'&&b.constant&&b.key.length));
  await button('character').click();await page.getByText('测试角色',{exact:true}).first().click();
+ await page.getByRole('button',{name:'按分组',exact:true}).click();
  const group=page.locator('[data-mounted-worldbook-group="常驻版本"]');await group.locator('summary').first().click();await group.getByText('条目A',{exact:true}).click();await group.getByText('世界设定A',{exact:true}).waitFor();await page.screenshot({path:out+'/mounted-groups.png'});
  await group.getByRole('button',{name:'整组取消挂载'}).click();await page.waitForFunction(async()=>!(await window.qaBooks.DB.getCharacter('qa-book-char')).mountedWorldbooks.length);
  assert.equal((await page.evaluate(()=>window.qaBooks.DB.getAllWorldbooks())).length,2);

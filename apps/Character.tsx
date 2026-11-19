@@ -1,5 +1,6 @@
 import CharacterLinkActions from '../components/character/CharacterLinkActions';
 import CharacterApiPanel from '../components/character/CharacterApiPanel';
+import CharacterMountedWorldbooks from '../components/character/CharacterMountedWorldbooks';
 import CharacterSettingsSection from '../components/character/CharacterSettingsSection';
 import CharacterStatsPanel from '../components/character/CharacterStatsPanel';
 import { characterRemark } from '../utils/characterRemark';
@@ -8,7 +9,7 @@ import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
-import { SlidersHorizontal, SpeakerHigh, Books, BookOpen } from '@phosphor-icons/react';
+import { SlidersHorizontal, SpeakerHigh } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
 import { DB } from '../utils/db';
@@ -105,7 +106,7 @@ const CharacterCard: React.FC<{
 );
 
 const Character: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, characterGroups, createCharacterGroup, renameCharacterGroup, deleteCharacterGroup, apiConfig, addToast, userProfile, worldbooks, addWorldbook } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, characterGroups, createCharacterGroup, renameCharacterGroup, deleteCharacterGroup, apiConfig, addToast, userProfile, worldbooks, addWorldbook, updateWorldbook } = useOS();
   const launchIntent = characterLaunch.peek();
   const [view, setView] = useState<'list' | 'detail'>(() => launchIntent ? 'detail' : 'list');
   const [charPage, setCharPage] = useState(0); // 角色列表分页（每页 6 个，仅未建分组时）
@@ -147,7 +148,6 @@ const Character: React.FC = () => {
       window.addEventListener(LINKED_ARCHIVE_DELETED, applyDeletion);
       return () => window.removeEventListener(LINKED_ARCHIVE_DELETED, applyDeletion);
   }, []);
-  const [expandedMountedBookIds, setExpandedMountedBookIds] = useState<Set<string>>(new Set());
   const [isCompressing, setIsCompressing] = useState(false);
   // 头像 URL 输入的 draft, 不逐字 commit 到 formData.avatar —— 否则每输入一个字符,
   // 所有引用 char.avatar 的 <img> 都会拿到不完整字符串当相对路径请求根目录,
@@ -465,12 +465,6 @@ const Character: React.FC = () => {
           addToast('该组世界书已全部挂载', 'info');
       }
       setShowWorldbookModal(false);
-  };
-
-  const unmountWorldbook = (bookId: string) => {
-      if (!formData) return;
-      const currentBooks = formData.mountedWorldbooks || [];
-      handleChange('mountedWorldbooks', currentBooks.filter(b => b.id !== bookId));
   };
 
   // 挂载弹窗的分组数据。必须 useMemo：之前这段 reduce 内联在 JSX 里，
@@ -1807,46 +1801,14 @@ ${isInitialGeneration ? `
 
                            <CharacterApiPanel key={formData.id} character={formData} onChange={api => handleChange('dialogueApi', api)} />
 
-                           {/* Worldbook Section */}
-                           <div>
-                               <div className="flex justify-between items-center mb-2 px-1">
-                                   <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block flex items-center gap-1"><Books size={12} /> 扩展设定 (Worldbooks)</label>
-                                   <button onClick={openWorldbookModal} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">+ 挂载</button>
-                                </div>
-                                <div className="space-y-2">
-                                   {formData.mountedWorldbooks && formData.mountedWorldbooks.length > 0 ? (
-                                       [...formData.mountedWorldbooks.reduce((groups, book) => {
-                                           const category = book.category || '未分类设定 (General)';
-                                           groups.set(category, [...(groups.get(category) || []), book]);
-                                           return groups;
-                                       }, new Map<string, NonNullable<CharacterProfile['mountedWorldbooks']>>())].map(([category, books]) => (
-                                           <details key={category} className="rounded-2xl border border-indigo-50 bg-white overflow-hidden" data-mounted-worldbook-group={category}>
-                                               <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-slate-700 break-words">{category} <span className="font-normal text-slate-400">· {books.length} 条</span></summary>
-                                               <div className="px-4 pb-3">
-                                                   <div className="mb-2 flex justify-end"><button type="button" onClick={() => {
-                                                       const ids = new Set(books.map(book => book.id));
-                                                       setFormData(prev => prev ? { ...prev, mountedWorldbooks: (prev.mountedWorldbooks || []).filter(book => !ids.has(book.id)) } : prev);
-                                                   }} className="py-1 text-[11px] text-rose-400">整组取消挂载</button></div>
-                                                   {books.map(wb => <div key={wb.id} className="flex items-start gap-2 border-t border-slate-100 py-2">
-                                                       <details className="min-w-0 flex-1" onToggle={event => {
-                                                           const open = event.currentTarget.open;
-                                                           setExpandedMountedBookIds(prev => { const next = new Set(prev); if (open) next.add(wb.id); else next.delete(wb.id); return next; });
-                                                       }}>
-                                                           <summary className="cursor-pointer text-xs text-slate-600 break-words">{wb.title}</summary>
-                                                           {expandedMountedBookIds.has(wb.id) && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-500">{wb.content}</p>}
-                                                       </details>
-                                                       <button type="button" aria-label={'取消挂载 ' + wb.title} onClick={() => unmountWorldbook(wb.id)} className="shrink-0 px-2 text-slate-400">×</button>
-                                                   </div>)}
-                                               </div>
-                                           </details>
-                                       ))
-                                   ) : (
-                                       <div className="text-center py-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 text-xs">
-                                           暂未挂载任何世界书
-                                       </div>
-                                   )}
-                               </div>
-                           </div>
+                           <CharacterMountedWorldbooks
+                               books={formData.mountedWorldbooks || []}
+                               worldbooks={worldbooks}
+                               onMountClick={openWorldbookModal}
+                               addToast={addToast}
+                               onUpdateLibraryBook={updateWorldbook}
+                               onChangeMounted={next => handleChange('mountedWorldbooks', next)}
+                           />
 
                            {/* Export Card Button */}
                            <div className="pt-4">

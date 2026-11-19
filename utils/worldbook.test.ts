@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { MountedWorldbook, Worldbook } from '../types';
 import {
+    compareWorldbooksBySendOrder,
+    groupWorldbooksByCategory,
+    groupWorldbooksBySendPosition,
     injectWorldbookDepthEntries,
     isWorldbookEntryActive,
     parseStandardWorldbook,
     resolveWorldbookEntries,
     serializeStandardWorldbook,
+    sortWorldbooksBySendOrder,
     splitWorldbookSections,
     toMountedWorldbook,
     upsertMountedWorldbooks,
@@ -196,5 +200,45 @@ describe('mounted worldbook synchronization', () => {
         expect(retried.map(entry => entry.id)).toEqual(['existing', 'generated-1', 'generated-2']);
         expect(retried.filter(entry => entry.category === '学院')).toHaveLength(2);
         expect(resolveWorldbookEntries(retried, [{ content: '我们去钟楼看看' }]).map(entry => entry.book.id)).toEqual(['generated-1', 'generated-2', 'existing']);
+    });
+});
+
+describe('worldbook send-order display', () => {
+    it('sorts by position then order, keeping mount index for ties', () => {
+        const books = [
+            book({ id: 'late-mount', position: 1, order: 100 }),
+            book({ id: 'before', position: 0, order: 200 }),
+            book({ id: 'early-mount', position: 1, order: 100 }),
+            book({ id: 'after-low', position: 1, order: 50 }),
+        ];
+        expect(sortWorldbooksBySendOrder(books).map(entry => entry.id)).toEqual([
+            'before',
+            'after-low',
+            'late-mount',
+            'early-mount',
+        ]);
+        expect(compareWorldbooksBySendOrder(books[0], books[2], 0, 2)).toBeLessThan(0);
+    });
+
+    it('groups by injection position for the character mounted list', () => {
+        const groups = groupWorldbooksBySendPosition([
+            book({ id: 'a', position: 1, order: 20, category: '乙' }),
+            book({ id: 'b', position: 0, order: 10, category: '甲' }),
+            book({ id: 'c', position: 1, order: 10, category: '甲' }),
+        ]);
+        expect(groups.map(group => [group.position, group.books.map(entry => entry.id)])).toEqual([
+            [0, ['b']],
+            [1, ['c', 'a']],
+        ]);
+    });
+
+    it('keeps category discovery order but sorts inside each category', () => {
+        const groups = groupWorldbooksByCategory([
+            book({ id: '乙-后', category: '乙', position: 1, order: 20 }),
+            book({ id: '甲', category: '甲', position: 0, order: 1 }),
+            book({ id: '乙-前', category: '乙', position: 1, order: 5 }),
+        ]);
+        expect(groups.map(group => group.category)).toEqual(['乙', '甲']);
+        expect(groups[0].books.map(entry => entry.id)).toEqual(['乙-前', '乙-后']);
     });
 });

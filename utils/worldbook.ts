@@ -367,3 +367,65 @@ export const parseStandardWorldbook = (
     if (books.length === 0) throw new Error('世界书里没有可导入的有效条目');
     return books;
 };
+
+/** 与 resolveWorldbookEntries / 文档一致：位置 → order → 原数组下标（挂载先后）。 */
+export const compareWorldbooksBySendOrder = (
+    a: WorldbookLike,
+    b: WorldbookLike,
+    indexA = 0,
+    indexB = 0,
+): number => {
+    const positionA = a.position ?? 1;
+    const positionB = b.position ?? 1;
+    if (positionA !== positionB) return positionA - positionB;
+    const orderA = Number.isFinite(a.order) ? Number(a.order) : 100;
+    const orderB = Number.isFinite(b.order) ? Number(b.order) : 100;
+    if (orderA !== orderB) return orderA - orderB;
+    return indexA - indexB;
+};
+
+export const sortWorldbooksBySendOrder = <T extends WorldbookLike>(books: T[]): T[] => (
+    books
+        .map((book, index) => ({ book, index }))
+        .sort((left, right) => compareWorldbooksBySendOrder(left.book, right.book, left.index, right.index))
+        .map(entry => entry.book)
+);
+
+export const groupWorldbooksBySendPosition = <T extends WorldbookLike>(
+    books: T[],
+): Array<{ position: WorldbookPosition; label: string; books: T[] }> => {
+    const sorted = sortWorldbooksBySendOrder(books);
+    const groups: Array<{ position: WorldbookPosition; label: string; books: T[] }> = [];
+    for (const book of sorted) {
+        const position = (book.position ?? 1) as WorldbookPosition;
+        const last = groups[groups.length - 1];
+        if (last && last.position === position) {
+            last.books.push(book);
+        } else {
+            groups.push({
+                position,
+                label: WORLDBOOK_POSITION_LABELS[position],
+                books: [book],
+            });
+        }
+    }
+    return groups;
+};
+
+export const groupWorldbooksByCategory = <T extends WorldbookLike>(
+    books: T[],
+    fallbackCategory = '未分类设定 (General)',
+): Array<{ category: string; books: T[] }> => {
+    const groups = new Map<string, T[]>();
+    // 分组出现顺序跟挂载列表走；组内再按发给模型的上下排。
+    for (const book of books) {
+        const category = book.category || fallbackCategory;
+        const list = groups.get(category);
+        if (list) list.push(book);
+        else groups.set(category, [book]);
+    }
+    return [...groups.entries()].map(([category, grouped]) => ({
+        category,
+        books: sortWorldbooksBySendOrder(grouped),
+    }));
+};
