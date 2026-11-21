@@ -1,0 +1,73 @@
+.date-thought-cloud {
+    position: absolute;
+    left: max(calc(5% + 23px), calc(50% - 233px));
+    bottom: calc(100% + 10px);
+    width: 36px;
+    height: 32px;
+    font-size: 18px;
+    line-height: 1;
+    opacity: .77;
+    animation: date-thought-appear 200ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.date-thought-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgb(0 0 0 / 48%);
+}
+
+.date-thought-card {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 430px;
+    max-height: min(72vh, 620px);
+    color: #eef0f7;
+    background: #22212c;
+    border: 1px solid rgb(255 255 255 / 14%);
+    border-radius: 18px;
+    box-shadow: 0 16px 45px rgb(0 0 0 / 35%);
+}
+
+.date-thought-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid rgb(255 255 255 / 12%);
+    font-size: 12px;
+}
+
+.date-thought-header b { margin-right: auto; }
+.date-thought-header button { min-height: 36px; padding: 0 6px; color: #d1c5f4; }
+.date-thought-header button:last-child { font-size: 20px; }
+
+.date-thought-text {
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 14px 18px 20px;
+    font-size: 13px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+@keyframes date-thought-appear {
+    0% { opacity: 0; transform: translateY(4px) scale(.92); }
+    100% { opacity: .77; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .date-thought-cloud { animation-name: date-thought-fade; }
+}
+
+@keyframes date-thought-fade {
+    from { opacity: 0; }
+    to { opacity: .77; }
+}

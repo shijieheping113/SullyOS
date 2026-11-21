@@ -822,6 +822,26 @@ export interface CompanionAvatarConfig {
 
 // 见面模式文风配置。由「场景布置」面板调整，datePrompts 构建 VN 提示词时读取，
 // 改动即时生效于后续生成（system prompt 每次请求重建）。
+export interface DateRuleEntry {
+  id: string;
+  title: string;
+  body: string;
+  enabled: boolean;
+}
+
+export interface DateReplySettings {
+  thinking?: boolean;
+  effort?: 'default' | 'low' | 'medium' | 'high';
+  thinkingMode?: 'default' | 'custom';
+  steps?: DateRuleEntry[];
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  stream?: boolean;
+}
+
 export interface DateStyleConfig {
   /** 写作风格预设 id，见 datePrompts.DATE_STYLE_PRESETS；缺省 = cinematic（电影感） */
   style?: string;
@@ -831,6 +851,7 @@ export interface DateStyleConfig {
   digDeeper?: boolean;
   /** 自定义补充文风要求，原样追加进风格块 */
   extra?: string;
+  rules?: DateRuleEntry[];
 }
 
 export interface RoomItem {
@@ -3111,7 +3132,10 @@ export interface CharacterProfile {
   dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
   activeSkinSetId?: string;     // Currently active skin set ID
   dateStyleConfig?: DateStyleConfig; // 见面模式文风（写作风格 / 叙事人称 / 自定义补充）
-  dateExtraPresets?: Array<{ id: string; name: string; content: string }>; // 当前角色的见面自定义补充预设
+  dateReplySettings?: DateReplySettings;
+  dateCustomBackground?: string;
+  datePortraitPoses?: Record<string, SpriteConfig>;
+  dateExtraPresets?: Array<{ id: string; name: string; content: string; rules?: DateRuleEntry[] }>; // 当前角色的见面补充规则预设
   /** 观测协议 OBSERVE：开启后每条回复注入「时间/地点/状态/细节」结构化观测，渲染成全息 HUD（样式/字段可自定义） */
   dateObserve?: DateObserveConfig;
 

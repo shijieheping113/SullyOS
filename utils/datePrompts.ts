@@ -23,6 +23,7 @@
 import { CharacterProfile, UserProfile, Message, Emoji, DateStyleConfig, DateObservation, DateObserveConfig, DateObserveCustomField } from '../types';
 import { ContextBuilder } from './context';
 import { ChatPrompts } from './chatPrompts';
+import { enabledDateEntries } from './dateSceneSettings';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from './ttsProvider';
@@ -241,7 +242,8 @@ const buildPovBlock = (config: DateStyleConfig | undefined, charName: string, us
 
 /** 自定义补充文风要求块。为空时不注入。 */
 const buildExtraStyleBlock = (config?: DateStyleConfig): string => {
-    const extra = (config?.extra || '').trim();
+    const rules = enabledDateEntries(config?.rules);
+    const extra = [(config?.extra || '').trim(), rules.map(rule => `- ${rule}`).join('\n')].filter(Boolean).join('\n\n');
     if (!extra) return '';
     return `### 用户对文风的额外要求（优先级高于风格预设）
 ${extra}

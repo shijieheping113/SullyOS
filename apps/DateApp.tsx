@@ -11,7 +11,8 @@ import { processNewMessagesWithAutoArchive } from '../utils/memoryPalace/autoArc
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { getRoomLabel } from '../utils/memoryPalace/types';
-import { safeResponseJson, extractContent } from '../utils/safeApi';
+import { safeResponseJson } from '../utils/safeApi';
+import { dateReplyRequest, parseDateReply } from '../utils/dateSceneSettings';
 import Modal from '../components/os/Modal';
 import TokenImg from '../components/os/TokenImg';
 import DateSession from '../components/date/DateSession';
@@ -109,6 +110,7 @@ const DateApp: React.FC = () => {
     };
 
     const [peekStatus, setPeekStatus] = useState<string>('');
+    const openingThought = useRef<{ text: string; thinkingChain?: string } | undefined>(undefined);
     const [peekLoading, setPeekLoading] = useState(false);
     
     // History State
@@ -207,29 +209,23 @@ const DateApp: React.FC = () => {
     const formatTime = () => `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
     // peek / send / reroll 共用的 LLM 调用（提示词构建统一在 utils/datePrompts.ts）
-    const callLLM = async (messages: ApiMessage[], temperature: number, speaker = char): Promise<string> => {
+    const callLLM = async (messages: ApiMessage[], temperature: number, speaker = char) => {
         const dialogueApi = resolveDialogueApi(apiConfig, speaker);
         const response = await fetch(`${dialogueApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dialogueApi.apiKey}` },
-            body: JSON.stringify({
-                model: dialogueApi.model,
-                messages,
-                temperature,
-                // max_tokens 是 Claude 原生 API 的必填字段；缺了它，糯米机/Csy 等
-                // OpenAI→Claude 中转会被上游打回，再包成 502 / bad_response_status_code。
-                // 与私聊 (useChatAI.ts) 对齐，统一带 8000。
-                max_tokens: 8000,
-                stream: dialogueApi.stream ?? false,
-            })
+            body: JSON.stringify(dateReplyRequest(speaker, userProfile?.name || '用户', {
+                model: dialogueApi.model, messages, temperature, stream: dialogueApi.stream,
+                nativeAnthropic: dialogueApi.apiType === 'anthropic',
+            }))
         });
         if (!response.ok) throw new Error(`API Error ${response.status}`);
         const data = await safeResponseJson(response);
         // 思考型渠道会把正文塞进 reasoning_content、content 留空——直接取 content
         // 会拿到空串且不报错：感知页黑屏卡死（无按钮可退），会话里则落库空消息。
-        const content = extractContent(data);
-        if (!content) throw new Error('模型返回了空回复，请重试或检查渠道/模型设置');
-        return content;
+        const reply = parseDateReply(data, speaker?.dateReplySettings?.thinking);
+        if (!reply.content) throw new Error('模型返回了空回复，请重试或检查渠道/模型设置');
+        return reply;
     };
 
     // 每次进入独立记次；模型上下文仍由共享管线决定。续场会覆盖 encounterId。
@@ -318,7 +314,8 @@ const DateApp: React.FC = () => {
                         role: 'assistant',
                         type: 'text',
                         content: peekStatus,
-                        metadata: { source: 'date', isOpening: true, dateEncounterId: enteringEncounterId, dateOpeningMode: openingMode }
+                        metadata: { source: 'date', isOpening: true, dateEncounterId: enteringEncounterId, dateOpeningMode: openingMode,
+                            thinkingChain: openingThought.current?.text === peekStatus ? openingThought.current.thinkingChain : undefined }
                     });
                     markDateTurnDirty(char);
                     if (encounterIdRef.current !== enteringEncounterId) return;
@@ -344,6 +341,7 @@ const DateApp: React.FC = () => {
     // --- Peek (Generation) Logic ---
     const startPeek = async (c: CharacterProfile, selectedOpening: 'approach' | 'invite' = openingMode) => {
         const requestId = ++peekRequestRef.current;
+        openingThought.current = undefined;
         setOpeningMode(selectedOpening);
         setActiveCharacterId(c.id);
         setMode('peek');
@@ -364,8 +362,11 @@ const DateApp: React.FC = () => {
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 openingMode: selectedOpening,
             }));
-            const content = await callLLM(messages, resolveDialogueApi(apiConfig, c).temperature ?? 0.85, c);
-            if (requestId === peekRequestRef.current) setPeekStatus(content);
+            const { content, thinkingChain } = await callLLM(messages, resolveDialogueApi(apiConfig, c).temperature ?? 0.85, c);
+            if (requestId === peekRequestRef.current) {
+                openingThought.current = { text: content, thinkingChain };
+                setPeekStatus(content);
+            }
 
         } catch (e: any) {
             if (requestId === peekRequestRef.current) addToast(`开场生成失败：${e.message}`, 'error');
@@ -481,7 +482,7 @@ const DateApp: React.FC = () => {
             variant: 'send',
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
-        const rawContent = await callLLM(messages, resolveDialogueApi(apiConfig, char).temperature ?? 0.85);
+        const { content: rawContent, thinkingChain } = await callLLM(messages, resolveDialogueApi(apiConfig, char).temperature ?? 0.85);
         const parsed = parseSARModuleReply(rawContent, sarModulePlan);
         const sarModuleEvents = createSARModuleEventMeta(sarModulePlan);
         const userSurface = sarModulePlan.user?.phase === 'active' && parsed.userSurface
@@ -499,7 +500,7 @@ const DateApp: React.FC = () => {
             : undefined;
 
         // 3. Save AI Response
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: parsed.canonical, metadata: { source: 'date', dateEncounterId: currentEncounterId, ...(assistantSurface ? { sarModuleSurface: assistantSurface } : {}) } });
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: parsed.canonical, metadata: { source: 'date', dateEncounterId: currentEncounterId, ...(thinkingChain ? { thinkingChain } : {}), ...(assistantSurface ? { sarModuleSurface: assistantSurface } : {}) } });
         if (sarModulePlan.character) {
             updateCharacter(char.id, previous => ({
                 vrState: { ...(previous.vrState || { enabled: false, intervalMinutes: 120 }), sarModule: advanceSARModuleAfterReply(previous.vrState?.sarModule, sarModulePlan.character) },
@@ -548,14 +549,17 @@ const DateApp: React.FC = () => {
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
             }));
-            const content = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
+            const { content, thinkingChain } = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
             // 生成成功后才动库：先删旧开场、再带 isOpening 落新开场，请求失败时原剧情不丢
             await DB.deleteMessage(lastMsg.id);
-            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata: { ...lastMsg.metadata, source: 'date', isOpening: true } });
+            const metadata = { ...lastMsg.metadata, source: 'date', isOpening: true, thinkingChain };
+            if (!thinkingChain) delete metadata.thinkingChain;
+            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata });
             markDateTurnDirty(char);
             trackEvent('重掷见面回复', { 目标: '开场白' });
             // 阅读模式空会话时顶部渲染的开场 & 退出快照里的 peekStatus 同步成新开场
             if (encounterIdRef.current === currentEncounterId) {
+                openingThought.current = { text: content, thinkingChain };
                 setPeekStatus(content);
                 setDateMessages(previous => previous.filter(message => message.id !== lastMsg.id));
                 await loadDateMessages();
@@ -581,7 +585,7 @@ const DateApp: React.FC = () => {
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
         // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
-        const rawContent = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
+        const { content: rawContent, thinkingChain } = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
         const sarPlan = getSARModuleRuntimePlan(char, userProfile);
         const parsed = parseSARModuleReply(rawContent, sarPlan);
         const sarModuleEvents = createSARModuleEventMeta(sarPlan);
@@ -601,7 +605,7 @@ const DateApp: React.FC = () => {
 
         // 生成成功后才删旧回复：以前先删后调 API，请求一失败上一条剧情就永久消失
         await DB.deleteMessage(lastMsg.id);
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: parsed.canonical, metadata: { source: 'date', dateEncounterId: currentEncounterId, ...(assistantSurface ? { sarModuleSurface: assistantSurface } : {}) } });
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: parsed.canonical, metadata: { source: 'date', dateEncounterId: currentEncounterId, ...(thinkingChain ? { thinkingChain } : {}), ...(assistantSurface ? { sarModuleSurface: assistantSurface } : {}) } });
         markDateTurnDirty(char);
         trackEvent('重掷见面回复', { 目标: '回复' });
 
@@ -1181,6 +1185,7 @@ const DateApp: React.FC = () => {
                     userProfile={userProfile}
                     messages={dateMessages}
                     peekStatus={peekStatus}
+                    openingThinking={openingThought.current?.text === peekStatus ? openingThought.current.thinkingChain : undefined}
                     initialState={sessionInitialState}
                     encounterId={encounterIdRef.current}
                     onSendMessage={handleSendMessage}

@@ -60,13 +60,16 @@ describe('见面场景布置（DateSettings）的立绘缩略图', () => {
   const source = readFileSync(path.join(repoRoot, 'components/date/DateSettings.tsx'), 'utf8');
 
   it('基础情绪 / 自定义情绪的格子走 TokenImg', () => {
-    expect(source).toContain('<TokenImg value={sprites[key]}');
-    expect(source).not.toContain('<img src={sprites[key]}');
+    expect(source).toContain('portraitGrid(REQUIRED_EMOTIONS, sprites, null)');
+    expect(source).toContain('portraitGrid(customEmotions, sprites, null, true)');
+    expect(source).toContain('<TokenImg value={images[key]}');
+    expect(source).not.toContain('<img src={images[key]}');
   });
 
   it('换装套装里的格子走 TokenImg', () => {
-    expect(source).toContain('<TokenImg value={skin.sprites[emoKey]}');
-    expect(source).not.toContain('<img src={skin.sprites[emoKey]}');
+    expect(source).toContain('portraitGrid([...REQUIRED_EMOTIONS, ...customEmotions, ...otherPortraits(skin.sprites)], skin.sprites, skin.id)');
+    expect(source).toContain('<TokenImg value={images[key]}');
+    expect(source).not.toContain('<img src={images[key]}');
   });
 });
 
@@ -80,9 +83,10 @@ describe('见面场景布置（DateSettings）的立绘上传写端', () => {
 
   it('三个入口（基础情绪 / 自定义情绪 / 换装套装）写的都是令牌', () => {
     // 基础情绪和自定义情绪共用 char.sprites 这一条写入分支。
-    expect(source).toContain('const newSprites = { ...(char.sprites || {}), [key]: ref };');
-    expect(source).toContain('sprites: { ...s.sprites, [key]: ref }');
-    expect(source).not.toContain('[key]: base64');
+    expect(source).toContain('await storeSprite(target, ref)');
+    expect(source).toContain('if (src) return { ...next, [slot.key]: src }');
+    expect(source).toContain('sprites: patch(previous.sprites)');
+    expect(source).toContain('sprites: patch(skin.sprites)');
   });
 
   it('立绘保持原来的压缩口径（不像背景那样 skipCompression）', () => {
@@ -95,7 +99,6 @@ describe('见面场景布置（DateSettings）的立绘上传写端', () => {
   });
 
   it('图床 URL 入口照旧写外链（外链不是本机资源，不该令牌化）', () => {
-    expect(source).toContain('sprites: { ...s.sprites, [key]: url }');
-    expect(source).toContain('const newSprites = { ...(char.sprites || {}), [key]: url };');
+    expect(source).toContain('await storeSprite(sourceSlot, url)');
   });
 });

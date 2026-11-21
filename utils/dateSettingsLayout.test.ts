@@ -5,7 +5,8 @@ import { expect, it, vi } from 'vitest';
 import DateSettings from '../components/date/DateSettings';
 import DateSession from '../components/date/DateSession';
 
-vi.mock('../context/OSContext', () => ({ useOS: () => ({ updateCharacter: vi.fn(), addToast: vi.fn(), userProfile: { name: '用户' }, apiConfig: {}, registerBackHandler: () => () => {} }) }));
+const updateCharacter = vi.hoisted(() => vi.fn());
+vi.mock('../context/OSContext', () => ({ useOS: () => ({ updateCharacter, addToast: vi.fn(), userProfile: { name: '用户' }, apiConfig: {}, registerBackHandler: () => () => {} }) }));
 vi.mock('../components/date/MeetingAppearanceControl', () => ({ default: () => React.createElement('div', null, '当前美化') }));
 vi.mock('../components/date/ObserveSettings', () => ({ default: () => null }));
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,7 +19,8 @@ it('opens an independent settings panel without advancing the date or measuring 
         return {top: this.closest('.animate-slide-up') ? 800 : 0, bottom: 800, height: 800} as DOMRect;
     });
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
-    const char = {id: 'test', name: '角色', avatar: ''};
+    const char = {id: 'test', name: '角色', avatar: '', sprites: { normal: 'https://example.com/portrait.png' }};
+    updateCharacter.mockClear();
     try {
         await act(async () => root.render(React.createElement(DateSession, {char, userProfile: {name: '用户'}, messages: [], peekStatus: '[normal] 第一句台词\n[normal] 第二句台词',
             onSendMessage: async () => '', onReroll: async () => '', onExit: vi.fn(), onEditMessage: vi.fn(), onDeleteMessage: vi.fn(), onDeleteMessages: async () => {}, onSettings: vi.fn()} as any)));
@@ -35,6 +37,33 @@ it('opens an independent settings panel without advancing the date or measuring 
         expect(scene.textContent).toContain('第一句台词');
         expect(scene.textContent).not.toContain('第二句台词');
         expect(scene.contains(scroll)).toBe(false);
+        expect(scene.style.visibility).toBe('hidden');
+        await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === '立绘位置调整')!.click());
+        const adjust = host.querySelector('[aria-label="在见面画面调整立绘"]')!;
+        const scope = adjust.querySelector('select')!;
+        const zoom = adjust.querySelector<HTMLInputElement>('[aria-label="缩放"]')!;
+        expect(scope.value).toBe('global');
+        expect(scene.style.visibility).toBe('visible');
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(zoom, '1.5');
+            zoom.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(scene.querySelector('img[style*="scale(1.5)"]')).toBeTruthy();
+        await act(async () => { scope.value = 'single'; scope.dispatchEvent(new Event('change', { bubbles: true })); });
+        expect(scene.querySelector('[data-date-adjusted-portrait]')).toBeTruthy();
+        expect(zoom.value).toBe('1');
+        await act(async () => { scope.value = 'global'; scope.dispatchEvent(new Event('change', { bubbles: true })); });
+        expect(zoom.value).toBe('1.5');
+        await act(async () => [...adjust.querySelectorAll('button')].find(button => button.textContent === '保存全局调整')!.click());
+        expect(updateCharacter.mock.lastCall?.[1](char)).toEqual({ spriteConfig: { scale: 1.5, x: 0, y: 0 } });
+        await act(async () => { scope.value = 'single'; scope.dispatchEvent(new Event('change', { bubbles: true })); });
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(zoom, '1.25');
+            zoom.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => [...adjust.querySelectorAll('button')].find(button => button.textContent === '保存这张')!.click());
+        expect(updateCharacter.mock.lastCall?.[1](char)).toEqual({ datePortraitPoses: { '[null,"normal"]': { scale: 1.25, x: 0, y: 0 } } });
+        await act(async () => [...adjust.querySelectorAll('button')].find(button => button.textContent === '返回布置')!.click());
         expect(scene.style.visibility).toBe('hidden');
         await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.includes('保存当前布置'))!.click());
         expect(host.querySelector('[data-testid="date-settings-scroll"]')).toBeNull();
@@ -60,6 +89,7 @@ it('scrolls the preview with the editor, collapses it, and keeps focused input a
         await act(async () => toggle.click());
         expect(scroll.textContent).not.toContain('预览 (Preview)');
         expect(toggle.textContent).toBe('展开场景预览');
+        await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === '补充规则')!.click());
         const textarea = host.querySelector('textarea[aria-label="自定义补充"]') as HTMLTextAreaElement;
         vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({ top: 64, bottom: 380, height: 316 } as DOMRect);
         vi.spyOn(textarea, 'getBoundingClientRect').mockReturnValue({ top: 500, bottom: 580, height: 80 } as DOMRect);

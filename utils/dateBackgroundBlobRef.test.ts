@@ -15,7 +15,7 @@ const personaSimSource = readFileSync(path.resolve(__dirname, '../apps/PersonaSi
 describe('见面背景的 blobref 读写路径', () => {
   it('上传后存的是令牌，不是 base64', () => {
     expect(settingsSource).toContain('const blob = await processImageToBlob(file, { skipCompression: true });');
-    expect(settingsSource).toContain('updateCharacter(char.id, { dateBackground: ref });');
+    expect(settingsSource).toContain('updateCharacter(char.id, { dateBackground: ref, dateCustomBackground: ref });');
     expect(settingsSource).not.toContain('updateCharacter(char.id, { dateBackground: base64 });');
   });
 

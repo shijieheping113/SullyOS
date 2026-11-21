@@ -10,10 +10,14 @@ import { describe, expect, it } from 'vitest';
 // char.avatar 本身也会是令牌（一键优化会把它转成令牌），于是躲开等于换一张同样裂的图。
 // 挑选逻辑里不该再出现任何 `!isBlobRef(...)` 的过滤。
 const source = readFileSync(path.resolve(__dirname, '../components/date/DateSession.tsx'), 'utf8');
+const renderer = readFileSync(path.resolve(__dirname, '../components/date/DatePortraitAdjust.tsx'), 'utf8');
 
 describe('见面立绘 / 背景的 blobref 渲染路径', () => {
   it('立绘走 TokenImg，不是裸 <img>', () => {
-    expect(source).toContain('<TokenImg value={currentSprite}');
+    expect(source).toContain('<DateDefaultPortrait src={currentSprite}');
+    expect(source).toContain('<DateAdjustedPortrait src={currentSprite}');
+    expect(renderer.match(/<TokenImg value={src}/g)).toHaveLength(2);
+    expect(renderer).not.toContain('<img src={src}');
     expect(source).not.toContain('<img src={currentSprite}');
   });
 

@@ -19,6 +19,7 @@ it.each(['完成', '返回'])('expands outside clipping ancestors, follows the k
     const root = createRoot(host);
     try {
         await act(async () => root.render(React.createElement(DateSettings, { char: { id: 'test', name: '角色', dateStyleConfig: { extra: '旧内容', pov: 'first-you' } } as any, onBack: vi.fn() })));
+        await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === '补充规则')!.click());
         const expand = host.querySelector<HTMLButtonElement>('[aria-label="展开自定义补充"]')!;
         await act(async () => { expand.focus(); expand.click(); });
         const dialog = document.querySelector('[role="dialog"][aria-label="编辑自定义补充"]')!;
@@ -37,7 +38,9 @@ it.each(['完成', '返回'])('expands outside clipping ancestors, follows the k
         await act(async () => exit === '完成' ? dialog.querySelector('button')!.click() : state.back!());
         expect(document.querySelector('[aria-label="编辑自定义补充"]')).toBeNull();
         expect(host.querySelector<HTMLTextAreaElement>('[aria-label="自定义补充"]')!.value).toBe('新的文风补充');
-        expect(state.update).toHaveBeenLastCalledWith('test', { dateStyleConfig: { extra: '新的文风补充', pov: 'first-you' } });
+        expect(state.update.mock.lastCall?.[0]).toBe('test');
+        const apply = state.update.mock.lastCall?.[1];
+        expect(apply({ dateStyleConfig: { extra: '旧内容', pov: 'first-you' } })).toEqual({ dateStyleConfig: { extra: '新的文风补充', pov: 'first-you' } });
         expect(state.unregister).toHaveBeenCalled();
     } finally { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); }
 });

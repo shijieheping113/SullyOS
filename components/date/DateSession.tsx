@@ -9,6 +9,9 @@ import ObserveHUD from './ObserveHUD';
 import { extractObservation, hasObservation } from '../../utils/datePrompts';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import TokenImg from '../os/TokenImg';
+import { DateAdjustedPortrait, DateDefaultPortrait, type DatePortraitPreview } from './DatePortraitAdjust';
+import DateThought from './DateThought';
+import { datePoseFor } from '../../utils/dateSceneSettings';
 
 import { VALID_EMOTIONS } from '../../utils/minimaxTts';
 import {
@@ -118,6 +121,7 @@ interface DateSessionProps {
     userProfile: UserProfile;
     messages: Message[]; // The DB messages for history/novel mode
     peekStatus: string;  // Initial text from the Peek phase
+    openingThinking?: string;
     initialState?: DateState; // Resume state
     encounterId?: string;
     onSendMessage: (text: string, kind?: 'continue') => Promise<string>; // Returns AI content
@@ -186,7 +190,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     char, 
     userProfile,
     messages: historyMessages,
-    peekStatus, 
+    peekStatus,
+    openingThinking,
     initialState,
     encounterId,
     onSendMessage, 
@@ -253,6 +258,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     
     // Settings Overlay State (Internal)
     const [showSettings, setShowSettings] = useState(false);
+    const [portraitPreview, setPortraitPreview] = useState<DatePortraitPreview | null>(null);
 
     // 顶栏折叠菜单：常驻只留「输入」+「菜单」两钮，低频操作全收进来
     const [showMenu, setShowMenu] = useState(false);
@@ -655,6 +661,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const activeSprites = React.useMemo(() => getSpritesForSkin(), [char.activeSkinSetId, char.dateSkinSets, char.sprites]);
+    const portraitSkin = [initialState?.activeSkinSetId, char.activeSkinSetId].find(skinId =>
+        skinId && char.dateSkinSets?.some(skin => skin.id === skinId && skin.sprites[currentSpriteKey] === currentSprite));
+    const portraitPose = currentSpriteKey && (portraitSkin || char.sprites?.[currentSpriteKey] === currentSprite)
+        ? datePoseFor(char, currentSpriteKey, portraitSkin) : undefined;
 
     const pickFallbackSprite = (sprites: Record<string, string>) => {
         const key = ['normal', 'default', ...dateEmotionKeys].find(k => sprites[k]);
@@ -805,12 +815,20 @@ const DateSession: React.FC<DateSessionProps> = ({
     // 但立绘引擎不会自动重解析 —— 于是立绘停在旧文字、旧语音，感觉「没同步」。这里监听最后一条
     // assistant 消息的内容，变了就把当前批次重解析同步过来。首帧跳过（含 initialState 恢复的播放
     // 位置），isTyping 时也跳过（新回复交给 handleSend / handleRerollClick 处理，避免重复解析）。
-    const lastAssistantContent = React.useMemo(() => {
+    const lastAssistant = React.useMemo(() => {
         for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i]?.role === 'assistant') return getSARSurface(messages[i]) || messages[i].content || '';
+            if (messages[i]?.role === 'assistant') return messages[i];
         }
-        return '';
     }, [messages]);
+    const lastAssistantContent = lastAssistant ? getSARSurface(lastAssistant) || lastAssistant.content || '' : '';
+    const thought = React.useMemo(() => {
+        if (!char.dateReplySettings?.thinking || !currentText) return undefined;
+        if (isShowingOpening && openingThinking) return openingThinking;
+        const chain = lastAssistant?.metadata?.thinkingChain;
+        if (typeof chain !== 'string' || !chain.trim()) return undefined;
+        const { rest } = extractObservation(lastAssistantContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
+        return parseDialogue(rest).some(item => item.text === currentText) ? chain : undefined;
+    }, [char.dateReplySettings?.thinking, char.dateObserve?.custom, currentText, isShowingOpening, openingThinking, lastAssistant, lastAssistantContent, observeEnabled]);
     const dialogueSyncMountRef = useRef(false);
     // 续场已用 initialState 停在末句；消息列表稍后到齐时不要把立绘拨回该轮第一句。
     const resumeSkipDialogueSyncRef = useRef(!!initialState);
@@ -993,7 +1011,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const scene = (
         <div className={`h-full w-full relative bg-black overflow-hidden font-sans select-none ${decoratedReading ? 'meeting-reading' : ''}`}
             data-reading-preset={readingStyle.id}
-            style={showSettings ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
+            style={showSettings ? { visibility: portraitPreview ? 'visible' : 'hidden', pointerEvents: 'none' } : undefined}
             aria-hidden={showSettings || undefined}
             {...(showSettings ? { inert: '' } : {})}
             onPointerDownCapture={() => { if (voiceEnabled && apiConfig.ttsProvider === 'elevenlabs') streamingVoice.prime(); }}
@@ -1354,9 +1372,14 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* Visual Mode View */}
             {!isNovelMode && (
                 <>
-                    <div className="absolute inset-x-0 bottom-0 h-[90%] flex items-end justify-center pointer-events-none z-10 overflow-hidden">
-                        {currentSprite && <TokenImg value={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
-                    </div>
+                    {portraitPreview ? (portraitPreview.single
+                        ? <DateAdjustedPortrait src={portraitPreview.src} pose={portraitPreview.pose} />
+                        : <DateDefaultPortrait src={portraitPreview.src} pose={portraitPreview.pose} preview />) :
+                    portraitPose && currentSprite ? <DateAdjustedPortrait src={currentSprite} pose={portraitPose}
+                        brightness={!showInputBox && isTextAnimating ? 'brightness(1.05)' : undefined} /> :
+                    <DateDefaultPortrait src={currentSprite}
+                        pose={isTextAnimating ? { ...spriteConfig, scale: spriteConfig.scale * 1.02 } : spriteConfig}
+                        brightness={showInputBox || !isTextAnimating ? 'brightness(1)' : 'brightness(1.05)'} />}
                     {!isTyping && (
                         <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center">
                             <div
@@ -1428,6 +1451,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
                                 {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
                             </div>
+                            {thought && !showSettings && <DateThought key={thought} text={thought} />}
                         </div>
                     )}
                 </>
@@ -1504,8 +1528,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             {scene}
             {showSettings && (
                 // Keep the panel outside the scene's click handler and in place for its first height measurement.
-                <div className="absolute inset-0 z-[200] bg-white" role="dialog" aria-modal="true" aria-label="场景布置">
-                    <DateSettings char={char} onBack={() => setShowSettings(false)} />
+                <div className={'absolute inset-0 z-[200] ' + (portraitPreview ? 'bg-transparent' : 'bg-white')} role="dialog" aria-modal="true" aria-label="场景布置">
+                    <DateSettings char={char} onBack={() => setShowSettings(false)} onPortraitPreview={isNovelMode ? undefined : setPortraitPreview} />
                 </div>
             )}
         </div>
