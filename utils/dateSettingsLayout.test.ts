@@ -10,7 +10,8 @@ vi.mock('../components/date/MeetingAppearanceControl', () => ({ default: () => R
 vi.mock('../components/date/ObserveSettings', () => ({ default: () => null }));
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-it('opens settings from an active date without measuring the entrance animation as zero height', async () => {
+it('opens an independent settings panel without advancing the date or measuring zero height', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     vi.stubGlobal('visualViewport', Object.assign(new EventTarget(), {scale: 1, offsetTop: 0, height: 800}));
     // Model the browser geometry at the first frame of slideUp (translateY(100%)).
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
@@ -19,16 +20,30 @@ it('opens settings from an active date without measuring the entrance animation 
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
     const char = {id: 'test', name: '角色', avatar: ''};
     try {
-        await act(async () => root.render(React.createElement(DateSession, {char, userProfile: {name: '用户'}, messages: [], peekStatus: '',
+        await act(async () => root.render(React.createElement(DateSession, {char, userProfile: {name: '用户'}, messages: [], peekStatus: '[normal] 第一句台词\n[normal] 第二句台词',
             onSendMessage: async () => '', onReroll: async () => '', onExit: vi.fn(), onEditMessage: vi.fn(), onDeleteMessage: vi.fn(), onDeleteMessages: async () => {}, onSettings: vi.fn()} as any)));
+        const scene = host.querySelector<HTMLElement>('[data-reading-preset]')!;
+        act(() => vi.advanceTimersByTime(400));
+        expect(scene.textContent).toContain('第一句台词');
         await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="打开见面菜单"]')!.click());
         await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.includes('布置场景'))!.click());
         const scroll = host.querySelector('[data-testid="date-settings-scroll"]')!;
         expect((scroll.parentElement as HTMLElement).style.maxHeight).toBe('800px');
         expect(scroll.textContent).toContain('当前美化');
+        await act(async () => (scroll as HTMLElement).click());
+        await act(async () => (scroll as HTMLElement).click());
+        expect(scene.textContent).toContain('第一句台词');
+        expect(scene.textContent).not.toContain('第二句台词');
+        expect(scene.contains(scroll)).toBe(false);
+        expect(scene.style.visibility).toBe('hidden');
         await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.includes('保存当前布置'))!.click());
         expect(host.querySelector('[data-testid="date-settings-scroll"]')).toBeNull();
-    } finally { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); }
+        expect(scene.style.visibility).toBe('');
+        expect(scene.textContent).toContain('第一句台词');
+        await act(async () => scene.click());
+        act(() => vi.advanceTimersByTime(400));
+        expect(scene.textContent).toContain('第二句台词');
+    } finally { act(() => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); }
 });
 
 it('scrolls the preview with the editor, collapses it, and keeps focused input above a reduced viewport', async () => {

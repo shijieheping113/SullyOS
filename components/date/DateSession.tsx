@@ -990,8 +990,15 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Determine if we can reroll (last message is assistant)
     const canReroll = messages.length > 0 && messages[messages.length - 1].role === 'assistant';
 
-    return (
-        <div className={`h-full w-full relative bg-black overflow-hidden font-sans select-none ${decoratedReading ? 'meeting-reading' : ''}`} data-reading-preset={readingStyle.id} onPointerDownCapture={() => { if (voiceEnabled && apiConfig.ttsProvider === 'elevenlabs') streamingVoice.prime(); }} onClick={handleScreenClick}><style>{MEETING_READING_CSS + '\n' + meetingCustomCss(char.dateAppearance)}</style>
+    const scene = (
+        <div className={`h-full w-full relative bg-black overflow-hidden font-sans select-none ${decoratedReading ? 'meeting-reading' : ''}`}
+            data-reading-preset={readingStyle.id}
+            style={showSettings ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
+            aria-hidden={showSettings || undefined}
+            {...(showSettings ? { inert: '' } : {})}
+            onPointerDownCapture={() => { if (voiceEnabled && apiConfig.ttsProvider === 'elevenlabs') streamingVoice.prime(); }}
+            onClick={handleScreenClick}>
+            <style>{MEETING_READING_CSS + '\n' + meetingCustomCss(char.dateAppearance)}</style>
             <div className="absolute inset-x-0 bottom-28 z-[105] pointer-events-auto">
                 <StreamingVoiceBar state={streamingVoice.state} onStop={stopDateStream} />
             </div>
@@ -1456,14 +1463,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                 )}
             </div>
 
-            {/* Settings measures its visible height on mount. A translateY entrance
-                animation here would measure the offscreen position and lock it at 0. */}
-            {showSettings && (
-                <div className="absolute inset-0 z-[200] bg-white">
-                    <DateSettings char={char} onBack={() => setShowSettings(false)} />
-                </div>
-            )}
-
             <VoiceFavoriteActionSheet
                 open={!!voiceFavoriteTarget}
                 favorited={voiceFavoriteSaved}
@@ -1497,6 +1496,18 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <button onClick={() => { onDeleteMessage(selectedMessage!); setModalType('none'); }} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl">删除记录</button>
                 </div>
             </Modal>
+        </div>
+    );
+
+    return (
+        <div className="relative h-full w-full">
+            {scene}
+            {showSettings && (
+                // Keep the panel outside the scene's click handler and in place for its first height measurement.
+                <div className="absolute inset-0 z-[200] bg-white" role="dialog" aria-modal="true" aria-label="场景布置">
+                    <DateSettings char={char} onBack={() => setShowSettings(false)} />
+                </div>
+            )}
         </div>
     );
 };
