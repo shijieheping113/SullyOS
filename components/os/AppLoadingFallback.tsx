@@ -1,18 +1,28 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { setVisibleTimeout } from '../../utils/visibleTimeout';
 import { trackEvent } from '../../utils/analytics';
+import type { OSTheme } from '../../types';
+import './PigcatLoading.css';
 import PigcatLoading from './PigcatLoading';
+import TextLoading from './TextLoading';
 
 export const APP_LOADING_TIMING = { reveal: 250, exit: 160, recovery: 15_000 } as const;
 
-type Props = { pending: boolean; active: boolean; onReturn?: () => void };
+type Props = {
+  pending: boolean;
+  active: boolean;
+  onReturn?: () => void;
+  /** 未传或非 text 时用猪咪；与外观设置 appLoadingStyle 对齐。 */
+  style?: OSTheme['appLoadingStyle'];
+};
 
-// 背景立刻随窗口进入；只有确实需要等待时才显示猪咪，不给快速加载增加过场。
-const AppLoadingFallback: React.FC<Props> = ({ pending, active, onReturn }) => {
-  const [stage, setStage] = useState<'blank' | 'cat' | 'stalled'>('blank');
+// 背景立刻随窗口进入；只有确实需要等待时才显示等待画面，不给快速加载增加过场。
+const AppLoadingFallback: React.FC<Props> = ({ pending, active, onReturn, style }) => {
+  const [stage, setStage] = useState<'blank' | 'wait' | 'stalled'>('blank');
   const [exiting, setExiting] = useState(false);
   const shown = useRef(false);
   const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
+  const useText = style === 'text';
 
   useEffect(() => {
     const update = () => setHidden(document.visibilityState === 'hidden');
@@ -41,7 +51,7 @@ const AppLoadingFallback: React.FC<Props> = ({ pending, active, onReturn }) => {
     if (!pending || !active) return;
     const reveal = setVisibleTimeout(() => {
       shown.current = true;
-      setStage('cat');
+      setStage('wait');
     }, APP_LOADING_TIMING.reveal);
     const recovery = setVisibleTimeout(() => {
       shown.current = true;
@@ -53,7 +63,7 @@ const AppLoadingFallback: React.FC<Props> = ({ pending, active, onReturn }) => {
   }, [pending, active]);
 
   if (!pending && !exiting && !shown.current) return null;
-  return <div className={`sully-app-loading${!pending ? ' sully-app-loading-exiting' : ''}${!pending || !active || hidden ? ' sully-app-loading-paused' : ''}`}
+  return <div className={`sully-app-loading${useText ? ' sully-app-loading-text' : ''}${!pending ? ' sully-app-loading-exiting' : ''}${!pending || !active || hidden ? ' sully-app-loading-paused' : ''}`}
     role={pending && active ? 'status' : undefined} aria-label={pending && active ? '正在加载' : undefined}
     {...(!pending || !active ? { inert: '' } : {})}
     aria-hidden={!pending || !active} style={{ pointerEvents: pending && active ? 'auto' : 'none' }}>
@@ -88,7 +98,7 @@ const AppLoadingFallback: React.FC<Props> = ({ pending, active, onReturn }) => {
           )}
         </div>
       </div>
-    ) : stage === 'cat' ? <PigcatLoading /> : null}
+    ) : stage === 'wait' ? (useText ? <TextLoading /> : <PigcatLoading />) : null}
   </div>;
 };
 

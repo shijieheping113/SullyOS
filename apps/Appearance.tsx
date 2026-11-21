@@ -22,6 +22,7 @@ import { trackEvent } from '../utils/analytics';
 import { CaretRight, Check, ImageSquare, LockSimple, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
 import AppIconEditor from '../components/appearance/AppIconEditor';
 import BootAnimationSettings from '../components/appearance/BootAnimationSettings';
+import AppLoadingStyleSettings from '../components/appearance/AppLoadingStyleSettings';
 import FullscreenSettings from '../components/appearance/FullscreenSettings';
 import { shareOrDownloadBlob } from '../utils/shareExport';
 import { readShareFile } from '../utils/pngShare';
@@ -878,7 +879,7 @@ const Appearance: React.FC = () => {
             <>
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">动画与过场</h2>
-                    <p className="text-[10px] text-slate-400 mb-2">两项都默认开启，可以分别关闭。应用加载超过 15 秒时仍会保留恢复提示。</p>
+                    <p className="text-[10px] text-slate-400 mb-2">两项都默认开启，可以分别关闭。App 慢加载等待画面在下方同一张卡里选；超过 15 秒仍会保留恢复提示。</p>
                     <div className="divide-y divide-slate-100">
                         {([
                             {
@@ -1346,6 +1347,7 @@ const Appearance: React.FC = () => {
 
                 <section className="rounded-3xl border border-slate-100 bg-white px-5 pb-5 shadow-sm">
                     <BootAnimationSettings theme={theme} updateTheme={updateTheme} />
+                    <AppLoadingStyleSettings theme={theme} updateTheme={updateTheme} />
                 </section>
 
                 {/* Page 1 Desktop Square Image */}

@@ -120,11 +120,13 @@ export interface OSTheme {
   /** 冷启动时是否播放整机开机过场。默认开启（undefined 视为 true）。 */
   bootAnimationEnabled?: boolean;
   /** 整机开场风格；未设置时使用黑球猫猫。关闭动画时仍保留选择。 */
-  bootAnimationStyle?: 'classic' | 'jellyfish' | 'black-cat';
+  bootAnimationStyle?: 'classic' | 'jellyfish' | 'black-cat' | 'text';
   /** 进入聊天或切换角色时是否播放角色登场过场。默认开启。 */
   chatCharacterSwitchAnimationEnabled?: boolean;
   /** 旧加载提示开关，仅保留存档兼容；短时加载视觉提示已移除。 */
   appLoadingAnimationEnabled?: boolean;
+  /** App 打开较慢时的等待画面。默认猪咪跑圈；可选纯文字。未设置视为 pigcat。 */
+  appLoadingStyle?: 'pigcat' | 'text';
   /** 桌面整体皮肤。'animalcrossing' = 动森风格（NookPhone 彩色圆角图标 + 暖色界面）；
    *  'mobilegame' = 二次元手游首页风格（角色卡 + 等级经验条 + 货币栏 + 网格卡 + 罗盘 dock）；
    *  'tamagotchi' = 电子宠物养成机（桌面即角色的小屋舞台 + 四颗糖果实体键）。默认 'default'。 */

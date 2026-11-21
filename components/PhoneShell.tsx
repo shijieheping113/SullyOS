@@ -950,7 +950,7 @@ const PhoneShell: React.FC = () => {
             <AppWindowHost activeApp={activeApp} locked={isLocked} disabled={isLocked || booting}
               preserveChatBackdropLayers={preserveChatBackdropLayers}
               renderBackdrop={renderShellBackdrop}
-              renderLoading={({ pending, active }) => <AppLoadingFallback pending={pending} active={active} onReturn={closeApp} />}
+              renderLoading={({ pending, active }) => <AppLoadingFallback pending={pending} active={active} onReturn={closeApp} style={theme.appLoadingStyle} />}
               desktop={
                 <AppErrorBoundary onCloseApp={closeApp} resetKey="desktop">
                   <div ref={unlockDesktopRef}

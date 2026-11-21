@@ -182,10 +182,11 @@ it('uses black-cat for a fresh startup without saved settings', async () => {
   expect(host.textContent).toContain('桌面在准备');
 });
 
-it.each(['classic', 'jellyfish'] as const)('keeps an explicit %s opening instead of using the new default', async style => {
+it.each(['classic', 'jellyfish', 'text'] as const)('keeps an explicit %s opening instead of using the new default', async style => {
   await act(async () => root.render(React.createElement(BootSequence, { dataReady: false, style, onDone: vi.fn() })));
   expect(host.querySelector('.sully-splash')).toBeNull();
-  expect(host.childElementCount).toBeGreaterThan(0);
+  if (style === 'text') expect(host.querySelector('.sully-text-boot')).not.toBeNull();
+  else expect(host.childElementCount).toBeGreaterThan(0);
 });
 
 it('selects black-cat in settings when no opening style has been saved', async () => {
@@ -231,9 +232,26 @@ it('offers black-cat alongside both existing styles and saves the selected ident
   })));
   const options = [...host.querySelectorAll('button')];
   expect(options.map(option => option.textContent)).toEqual([
-    '原版壁纸柔光 · 文字浮现', '水母紫色星光 · 小水母', '黑球猫猫四角探头 · 礼花欢迎',
+    '原版壁纸柔光 · 文字浮现', '水母紫色星光 · 小水母', '黑球猫猫四角探头 · 礼花欢迎', '文字风pigcat ver. · 日语呼吸',
   ]);
   expect(options[2].getAttribute('aria-pressed')).toBe('true');
   await act(async () => options[2].click());
   expect(updateTheme).toHaveBeenCalledWith({ bootAnimationStyle: 'black-cat' });
+  await act(async () => options[3].click());
+  expect(updateTheme).toHaveBeenCalledWith({ bootAnimationStyle: 'text' });
+});
+
+it('routes the text opening and hands back after exit when data is ready', async () => {
+  const onDone = vi.fn();
+  await act(async () => root.render(React.createElement(BootSequence, { dataReady: false, style: 'text', onDone })));
+  expect(host.querySelector('.sully-text-boot')).not.toBeNull();
+  expect(host.textContent).toContain('起動しています');
+  expect(host.textContent).toContain('pigcat ver.');
+  await act(async () => root.render(React.createElement(BootSequence, { dataReady: true, style: 'text', onDone })));
+  await advance(50);
+  expect(host.textContent).toContain('ようこそ');
+  await advance(1100);
+  await advance(700);
+  expect(host.querySelector('.sully-text-boot')).toBeNull();
+  expect(onDone).toHaveBeenCalled();
 });

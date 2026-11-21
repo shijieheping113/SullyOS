@@ -3,6 +3,7 @@ import type { OSTheme } from '../../types';
 import ClassicBootSequence from './ClassicBootSequence';
 import JellyfishBootSequence from './JellyfishBootSequence';
 import SplashScreen from './SplashScreen';
+import TextBootSequence from './TextBootSequence';
 import { isMidAutumnBoot } from '../../utils/seasonalBoot';
 import { isUserSpaceArrival } from '../../utils/userSpaceTransition';
 
@@ -41,5 +42,6 @@ export default function BootSequence({style = 'black-cat', ...props}: Props) {
   const [midAutumn] = React.useState(() => isMidAutumnBoot());
   if (midAutumn) return <JellyfishBootSequence {...props} poster={`${import.meta.env.BASE_URL}boot/mid-autumn-2026.png`} />;
   if (style === 'black-cat') return <SplashScreen {...props} />;
+  if (style === 'text') return <TextBootSequence {...props} />;
   return style === 'classic' ? <ClassicBootSequence {...props} /> : <JellyfishBootSequence {...props} />;
 }

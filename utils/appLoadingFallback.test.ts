@@ -12,9 +12,10 @@ let container: HTMLDivElement;
 let root: Root;
 let visibility: DocumentVisibilityState;
 const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
-const render = (options: { pending?: boolean; active?: boolean; onReturn?: () => void } = {}) => act(() => root.render(React.createElement(AppLoadingFallback, { pending: true, active: true, ...options })));
+const render = (options: { pending?: boolean; active?: boolean; onReturn?: () => void; style?: 'pigcat' | 'text' } = {}) => act(() => root.render(React.createElement(AppLoadingFallback, { pending: true, active: true, ...options })));
 const overlay = () => container.querySelector<HTMLElement>('.sully-app-loading');
 const cat = () => container.querySelector('.sully-pigcat-loading');
+const textWait = () => container.querySelector('.sully-text-loading');
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
@@ -43,7 +44,21 @@ it('paints the waiting background immediately and reveals pigcat only after 250 
   expect(cat()).toBeNull();
   advance(1);
   expect(cat()).not.toBeNull();
+  expect(textWait()).toBeNull();
   expect(container.textContent).toContain('せっせと準備中…');
+});
+
+it('uses pure text waiting art when style is text, and keeps pigcat as the default', () => {
+  act(() => root.render(React.createElement(AppLoadingFallback, { pending: true, active: true, style: 'text' })));
+  advance(250);
+  expect(textWait()).not.toBeNull();
+  expect(cat()).toBeNull();
+  expect(overlay()?.classList.contains('sully-app-loading-text')).toBe(true);
+  expect(container.textContent).toContain('準備しています');
+  act(() => root.render(React.createElement(AppLoadingFallback, { pending: true, active: true })));
+  advance(250);
+  expect(cat()).not.toBeNull();
+  expect(textWait()).toBeNull();
 });
 
 it('skips pigcat and its exit delay when the page is already ready or finishes quickly', () => {

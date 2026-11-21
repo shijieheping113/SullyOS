@@ -710,7 +710,7 @@ const readStoredBootTheme = (): Pick<OSTheme, 'bootAnimationEnabled' | 'bootAnim
     if (!parsed || typeof parsed !== 'object') return {};
     const patch: Pick<OSTheme, 'bootAnimationEnabled' | 'bootAnimationStyle'> = {};
     if (typeof parsed.bootAnimationEnabled === 'boolean') patch.bootAnimationEnabled = parsed.bootAnimationEnabled;
-    if (parsed.bootAnimationStyle === 'classic' || parsed.bootAnimationStyle === 'jellyfish' || parsed.bootAnimationStyle === 'black-cat') {
+    if (parsed.bootAnimationStyle === 'classic' || parsed.bootAnimationStyle === 'jellyfish' || parsed.bootAnimationStyle === 'black-cat' || parsed.bootAnimationStyle === 'text') {
       patch.bootAnimationStyle = parsed.bootAnimationStyle;
     }
     return patch;
