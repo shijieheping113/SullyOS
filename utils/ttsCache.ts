@@ -80,3 +80,35 @@ export async function saveCachedTts(key: string, blob: Blob): Promise<void> {
     console.warn('[TTS cache] save failed', e);
   }
 }
+
+/** MiniMax 偶发只给远程链、本机拿不到 Blob 时，仍记住地址，避免下次再打一次计费接口。 */
+export type TtsCacheHit =
+  | { kind: 'blob'; blob: Blob }
+  | { kind: 'remote'; remoteUrl: string };
+
+export async function getCachedTtsHit(key: string): Promise<TtsCacheHit | null> {
+  try {
+    const entry = (await DB.getAssetRaw(key)) as (TtsCacheEntry & { remoteUrl?: string }) | null;
+    if (!entry) return null;
+    if (entry.blob instanceof Blob) {
+      DB.saveAssetRaw(key, { ...entry, lastUsedAt: Date.now() }).catch(() => { /* ignore */ });
+      return { kind: 'blob', blob: entry.blob };
+    }
+    if (typeof entry.remoteUrl === 'string' && entry.remoteUrl.trim()) {
+      DB.saveAssetRaw(key, { ...entry, lastUsedAt: Date.now() }).catch(() => { /* ignore */ });
+      return { kind: 'remote', remoteUrl: entry.remoteUrl.trim() };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCachedTtsRemoteUrl(key: string, remoteUrl: string): Promise<void> {
+  try {
+    const now = Date.now();
+    await DB.saveAssetRaw(key, { remoteUrl, createdAt: now, lastUsedAt: now });
+  } catch (e) {
+    console.warn('[TTS cache] save remote url failed', e);
+  }
+}

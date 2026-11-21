@@ -4,7 +4,7 @@
 import { CharacterProfile, APIConfig } from '../types';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { minimaxFetch } from './minimaxEndpoint';
-import { hashTtsParams, getCachedTts, saveCachedTts, TtsCacheMiss } from './ttsCache';
+import { hashTtsParams, getCachedTtsHit, saveCachedTts, saveCachedTtsRemoteUrl, TtsCacheMiss } from './ttsCache';
 import { normalizeVoiceTags } from './sanitize';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
@@ -496,9 +496,12 @@ export async function synthesizeSpeechDetailed(
   // the audio first — across sessions, across apps.
   const cacheKey = buildMiniMaxTtsCacheKey(payload, paramVersion);
   if (!options?.skipCache) {
-    const cached = await getCachedTts(cacheKey);
-    if (cached) {
-      return { url: URL.createObjectURL(cached), blob: cached, cached: true };
+    const cached = await getCachedTtsHit(cacheKey);
+    if (cached?.kind === 'blob') {
+      return { url: URL.createObjectURL(cached.blob), blob: cached.blob, cached: true };
+    }
+    if (cached?.kind === 'remote') {
+      return { url: cached.remoteUrl, blob: null, cached: true };
     }
   }
   if (options?.cacheOnly) throw new TtsCacheMiss();
@@ -539,7 +542,9 @@ export async function synthesizeSpeechDetailed(
       // fetch() may fail due to CORS when hitting MiniMax CDN directly;
       // return the raw URL so <audio src=...> can load it without CORS.
       console.warn('[TTS] fetchRemoteAudioBlob failed, returning remote URL directly', (e as any)?.message || e);
-      return { url: audio.trim(), blob: null };
+      const remoteUrl = audio.trim();
+      if (!options?.skipCache) saveCachedTtsRemoteUrl(cacheKey, remoteUrl).catch(() => { /* ignore */ });
+      return { url: remoteUrl, blob: null };
     }
   } else {
     blob = convertHexAudioToBlob(audio);

@@ -2,18 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { APIConfig, CharacterProfile } from '../types';
 import { fetchRemoteAudioBlob, synthesizeSpeechDetailed } from './minimaxTts';
 import { minimaxFetch } from './minimaxEndpoint';
-import { getCachedTts, saveCachedTts } from './ttsCache';
+import { getCachedTtsHit, saveCachedTts, saveCachedTtsRemoteUrl } from './ttsCache';
 
 vi.mock('./minimaxEndpoint', () => ({ minimaxFetch: vi.fn() }));
-vi.mock('./ttsCache', () => ({ hashTtsParams: () => 'test-key', getCachedTts: vi.fn(), saveCachedTts: vi.fn() }));
+vi.mock('./ttsCache', () => ({
+    hashTtsParams: () => 'test-key',
+    getCachedTts: vi.fn(),
+    getCachedTtsHit: vi.fn(),
+    saveCachedTts: vi.fn(),
+    saveCachedTtsRemoteUrl: vi.fn(),
+}));
 const char = { id: 'a', voiceProfile: { voiceId: 'voice', minimaxParamVersion: 'natural-v2' } } as CharacterProfile;
 const config = { minimaxApiKey: 'test-only' } as APIConfig;
 const response = (audio: string) => ({ ok: true, status: 200, json: async () => ({ data: { audio }, base_resp: { status_code: 0 } }) });
 
 beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getCachedTts).mockResolvedValue(null);
+    vi.mocked(getCachedTtsHit).mockResolvedValue(null);
     vi.mocked(saveCachedTts).mockResolvedValue(undefined);
+    vi.mocked(saveCachedTtsRemoteUrl).mockResolvedValue(undefined);
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -40,14 +47,22 @@ describe('MiniMax inline audio transport', () => {
         expect(fetch.mock.calls[0][0]).toBe(signed);
         expect(minimaxFetch).toHaveBeenCalledTimes(1);
         expect(saveCachedTts).not.toHaveBeenCalled();
+        expect(saveCachedTtsRemoteUrl).toHaveBeenCalledWith('test-key', signed);
     });
     it('does not hit the API when cached audio is available', async () => {
         const blob = new Blob(['audio'], { type: 'audio/mpeg' });
-        vi.mocked(getCachedTts).mockResolvedValue(blob);
+        vi.mocked(getCachedTtsHit).mockResolvedValue({ kind: 'blob', blob });
         const result = await synthesizeSpeechDetailed('你好', char, config);
         expect(result.blob).toBe(blob);
         expect(minimaxFetch).not.toHaveBeenCalled();
         URL.revokeObjectURL(result.url);
+    });
+    it('reuses a remembered remote URL without another paid synthesis', async () => {
+        const signed = 'https://audio.example.com/cached.mp3';
+        vi.mocked(getCachedTtsHit).mockResolvedValue({ kind: 'remote', remoteUrl: signed });
+        const result = await synthesizeSpeechDetailed('你好', char, config);
+        expect(result).toEqual({ url: signed, blob: null, cached: true });
+        expect(minimaxFetch).not.toHaveBeenCalled();
     });
     it('rejects HTML error pages instead of caching them as audio', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>expired</html>', { headers: { 'content-type': 'text/html' } })));

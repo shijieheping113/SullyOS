@@ -18,9 +18,11 @@ import {
     canSynthesizeSpeech,
     characterHasVoice,
     cleanTextForTtsProvider,
+    readCachedSpeechUrl,
     stripTtsMarkupForDisplay,
     synthesizeSpeech,
 } from '../../utils/ttsRouter';
+import { voiceEmotionForResumeState } from '../../utils/dateContinue';
 
 import { getPendingReplyText } from '../../utils/pendingReply';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../../utils/shareExport';
@@ -357,6 +359,18 @@ const DateSession: React.FC<DateSessionProps> = ({
                 dateStreamUrls.current.add(url);
                 return { url, spokenText: stripTtsMarkupForDisplay(ttsText, apiConfig), recording };
             }
+            // 续场／重进时优先读本机已有声音，命中就不打服务商。
+            const cachedUrl = await readCachedSpeechUrl(ttsText, char, apiConfig, {
+                languageBoost: voiceLang || undefined,
+                groupId: apiConfig.minimaxGroupId || undefined,
+                emotion,
+            });
+            if (cachedUrl) {
+                return {
+                    url: cachedUrl,
+                    spokenText: stripTtsMarkupForDisplay(ttsText, apiConfig),
+                };
+            }
             const url = await synthesizeSpeech(ttsText, char, apiConfig, {
                 languageBoost: voiceLang || undefined,
                 groupId: apiConfig.minimaxGroupId || undefined,
@@ -397,8 +411,14 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (!isDialogueLine(galShownText)) return;
         let cancelled = false;
         const dialogueText = extractDialogueText(galShownText, preserveAudioTags);
+        const emotion = currentLineEmotionRef.current;
         if (apiConfig.ttsProvider === 'elevenlabs') {
-            void translateAndSpeak(dialogueText, currentLineEmotionRef.current, 'gal').then(speech => {
+            const cached = voiceCacheRef.current[dialogueText];
+            if (cached?.recording) {
+                void streamingVoice.replay('gal', cached.recording).catch(() => {});
+                return () => { cancelled = true; stopDateStream(); };
+            }
+            void translateAndSpeak(dialogueText, emotion, 'gal').then(speech => {
                 if (speech && !cancelled) rememberDateSpeech(dialogueText, speech);
             });
             return () => { cancelled = true; stopDateStream(); };
@@ -409,7 +429,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             let speech: DateSpeechResult | undefined = voiceCacheRef.current[cacheKey];
             if (!speech) {
                 setGalVoiceLoading(true);
-                speech = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || undefined;
+                speech = await translateAndSpeak(dialogueText, emotion) || undefined;
                 if (cancelled) return;
                 setGalVoiceLoading(false);
                 if (!speech) return;
@@ -433,6 +453,11 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (streamingVoice.state && ['loading', 'playing'].includes(streamingVoice.state.status)) { stopDateStream(); return; }
             stopDateStream();
             const text = extractDialogueText(galShownText, preserveAudioTags);
+            const cached = voiceCacheRef.current[text];
+            if (cached?.recording) {
+                try { await streamingVoice.replay('gal', cached.recording); } catch { /* fall through */ }
+                return;
+            }
             const speech = await translateAndSpeak(text, currentLineEmotionRef.current, 'gal');
             if (speech) rememberDateSpeech(text, speech);
             return;
@@ -718,6 +743,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDialogueQueue(Array.isArray(initialState.dialogueQueue) ? initialState.dialogueQueue : []);
             setDialogueBatch(Array.isArray(initialState.dialogueBatch) ? initialState.dialogueBatch : []);
             setIsNovelMode(!!initialState.isNovelMode);
+            currentLineEmotionRef.current = voiceEmotionForResumeState(initialState);
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
             const initialSprite = pickFallbackSprite(activeSprites);

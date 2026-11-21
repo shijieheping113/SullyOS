@@ -85,6 +85,17 @@ export const buildDateResumeState = (
     };
 };
 
+/** 续场时找回当前台词的语音情绪，避免和首次合成时缓存钥匙对不上又重新计费。 */
+export const voiceEmotionForResumeState = (
+    state: Pick<DateState, 'currentText' | 'dialogueBatch'>,
+): string | undefined => {
+    const batch = Array.isArray(state.dialogueBatch) ? state.dialogueBatch : [];
+    if (!batch.length) return undefined;
+    const current = (state.currentText || '').trim();
+    const match = (current && batch.find(item => item.text === current)) || batch[batch.length - 1];
+    return match?.voiceEmotion;
+};
+
 export interface DateContinuePlan {
     /** 有场次号则沿用；旧数据没有时为 undefined，由调用方新开 UUID。 */
     encounterId?: string;

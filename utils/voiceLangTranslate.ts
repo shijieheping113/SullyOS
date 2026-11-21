@@ -5,8 +5,10 @@
  * 不对模型提字幕；中文原文由调用方当字幕。
  */
 import type { APIConfig } from '../types';
+import { DB } from './db';
 import { isSecondaryLlmReady } from './secondaryLlmApi';
 import { secondaryLlmCall } from './secondaryLlmCall';
+import { hashTtsParams } from './ttsCache';
 import { voiceLanguagePromptLabel } from './voiceLanguage';
 import { parseVoiceOutput } from './minimaxTts';
 import { resolveVoiceActingGuideFromApiConfig } from './voiceMessagePrompt';
@@ -108,10 +110,38 @@ const mainTranslateOnce = async (
     return (extractContent(data) || '').trim();
 };
 
+async function readCachedVoiceLangTranslation(cacheKey: string): Promise<string> {
+    try {
+        const entry = await DB.getAssetRaw(cacheKey) as { text?: string } | null;
+        return typeof entry?.text === 'string' ? entry.text.trim() : '';
+    } catch {
+        return '';
+    }
+}
+
+async function saveCachedVoiceLangTranslation(cacheKey: string, text: string): Promise<void> {
+    try {
+        const now = Date.now();
+        await DB.saveAssetRaw(cacheKey, { text, createdAt: now, lastUsedAt: now });
+    } catch {
+        /* 译文缓存失败不挡朗读 */
+    }
+}
+
 export async function translateVoiceLangText(opts: VoiceLangTranslateOpts): Promise<string> {
     const { apiConfig, systemPrompt, text, purpose, charId, retryMainOnce } = opts;
+    const cacheKey = hashTtsParams({
+        kind: 'voice-lang-translate-v1',
+        purpose,
+        systemPrompt,
+        text,
+    });
+    const cached = await readCachedVoiceLangTranslation(cacheKey);
+    if (cached) return cached;
+
+    let translated = '';
     if (isSecondaryLlmReady(apiConfig.secondaryLlm)) {
-        return secondaryLlmCall({
+        translated = await secondaryLlmCall({
             config: apiConfig.secondaryLlm!,
             purpose,
             messages: [
@@ -122,16 +152,20 @@ export async function translateVoiceLangText(opts: VoiceLangTranslateOpts): Prom
             timeoutMs: VOICE_LANG_TRANSLATE_TIMEOUT_MS,
             charId,
         });
-    }
-
-    try {
-        return await mainTranslateOnce(apiConfig, systemPrompt, text, purpose, charId);
-    } catch (err) {
-        if (!retryMainOnce) throw err;
+    } else {
         try {
-            return await mainTranslateOnce(apiConfig, systemPrompt, text, purpose, charId);
-        } catch {
-            return '';
+            translated = await mainTranslateOnce(apiConfig, systemPrompt, text, purpose, charId);
+        } catch (err) {
+            if (!retryMainOnce) throw err;
+            try {
+                translated = await mainTranslateOnce(apiConfig, systemPrompt, text, purpose, charId);
+            } catch {
+                translated = '';
+            }
         }
     }
+
+    const clean = (translated || '').trim();
+    if (clean) void saveCachedVoiceLangTranslation(cacheKey, clean);
+    return clean;
 }

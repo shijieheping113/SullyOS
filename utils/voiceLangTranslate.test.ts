@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { APIConfig } from '../types';
+import { DB } from './db';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { safeFetchJson } from './safeApi';
 import { secondaryLlmCall } from './secondaryLlmCall';
@@ -23,6 +24,13 @@ vi.mock('./safeApi', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./safeApi')>();
     return { ...actual, safeFetchJson: vi.fn() };
 });
+
+vi.mock('./db', () => ({
+    DB: {
+        getAssetRaw: vi.fn(async () => null),
+        saveAssetRaw: vi.fn(async () => undefined),
+    },
+}));
 
 const mainConfig = (): APIConfig => ({
     baseUrl: 'https://main.example.com/v1',
@@ -96,6 +104,10 @@ describe('translateVoiceLangText', () => {
     beforeEach(() => {
         vi.mocked(secondaryLlmCall).mockReset();
         vi.mocked(safeFetchJson).mockReset();
+        vi.mocked(DB.getAssetRaw).mockReset();
+        vi.mocked(DB.saveAssetRaw).mockReset();
+        vi.mocked(DB.getAssetRaw).mockResolvedValue(null);
+        vi.mocked(DB.saveAssetRaw).mockResolvedValue(undefined);
     });
 
     it('辅助 API 配齐时走副模型，温度 0.6、60 秒，不打主 API', async () => {
@@ -115,6 +127,20 @@ describe('translateVoiceLangText', () => {
             charId: 'c1',
             config: secondary,
         }));
+        expect(safeFetchJson).not.toHaveBeenCalled();
+        expect(DB.saveAssetRaw).toHaveBeenCalled();
+    });
+
+    it('同一句外语译文命中本地记录时不再请求模型', async () => {
+        vi.mocked(DB.getAssetRaw).mockResolvedValue({ text: 'cached hi' });
+        const out = await translateVoiceLangText({
+            apiConfig: { ...mainConfig(), secondaryLlm: secondary },
+            systemPrompt: buildVoiceLangTranslateSystemPrompt('en'),
+            text: '你好',
+            purpose: 'date-voice-translate',
+        });
+        expect(out).toBe('cached hi');
+        expect(secondaryLlmCall).not.toHaveBeenCalled();
         expect(safeFetchJson).not.toHaveBeenCalled();
     });
 

@@ -5,6 +5,7 @@ import {
     dateMessagesInContext,
     parseDateDialogueForResume,
     resolveDateContinueFromContext,
+    voiceEmotionForResumeState,
 } from './dateContinue';
 
 const msg = (partial: Partial<Message> & Pick<Message, 'id' | 'role' | 'content'>): Message => ({
@@ -41,6 +42,23 @@ describe('parseDateDialogueForResume / buildDateResumeState', () => {
         expect(state.currentSpriteKey).toBe('shy');
         expect(state.isNovelMode).toBe(false);
         expect(state.peekStatus).toBe('');
+    });
+
+    it('续场能找回末句的语音情绪，供本地声音缓存对上钥匙', () => {
+        const state = buildDateResumeState(msg({
+            id: 11,
+            role: 'assistant',
+            content: '[normal] 他点头。\n[shy][v:happy] "还在等你。"',
+            timestamp: 120,
+            metadata: { source: 'date' },
+        }));
+        expect(state.currentText).toBe('"还在等你。"');
+        expect(state.currentSpriteKey).toBe('shy');
+        expect(voiceEmotionForResumeState(state)).toBe('happy');
+        expect(voiceEmotionForResumeState({
+            currentText: '他点头。',
+            dialogueBatch: state.dialogueBatch,
+        })).toBeUndefined();
     });
 
     it('无标签散文也铺成末句', () => {
