@@ -168,8 +168,8 @@ export default function AppWindowHost({ activeApp, locked, disabled, preserveCha
     const transition = (move: number) => `transform ${move}ms ${APP_WINDOW_MOTION.ease}, opacity ${fade}ms ${APP_WINDOW_MOTION.ease}`;
     const finish = () => {
       if (op.token !== token.current) return;
-      // 玻璃白框在老内核会随窗口绘制层拆除而白闪。窗口已停稳，保留两层直到离开私聊。
-      const keep = op.to === AppID.Chat && preserveChatBackdrop.current;
+      // 见面选人页和玻璃私聊在老内核可能在拆绘制层时白闪，停稳后保留两层直到离开。
+      const keep = op.to === AppID.Date || (op.to === AppID.Chat && preserveChatBackdrop.current);
       holdingBackdropLayers.current = keep;
       setPages(op.to === AppID.Launcher ? [] : [op.to]);
       setBusy(false);

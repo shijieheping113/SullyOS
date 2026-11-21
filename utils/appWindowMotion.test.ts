@@ -82,6 +82,31 @@ describe('App window navigation lifetime', () => {
     expect(windows()[0].style.willChange).toBe('');
   });
 
+  it('keeps Date drawing layers after opening and releases them on exit or lock', () => {
+    render(AppID.Launcher);
+    render(AppID.Date);
+    advance(700);
+    const desktop = container.querySelector<HTMLElement>('[data-app-desktop]')!;
+    expect(desktop.style.visibility).toBe('hidden');
+    expect(surface().dataset.appMotion).toBe('settled');
+    expect(surface().style.transform).toBe('translate(0px, 0px) scale(1)');
+    expect(surface().style.willChange).toBe('transform, opacity');
+    expect(windows()[0].style.transform).toBe('translate(0px, 0px) scale(1)');
+    expect(windows()[0].style.willChange).toBe('transform, opacity');
+    expect(mounts[AppID.Date]).toBe(1);
+
+    render(AppID.Launcher);
+    advance(700);
+    expect(surface().style.willChange).toBe('');
+    expect(windows()).toHaveLength(0);
+
+    render(AppID.Date);
+    advance(700);
+    render(AppID.Date, { locked: true, disabled: true });
+    expect(surface().style.willChange).toBe('');
+    expect(windows()).toHaveLength(0);
+  });
+
   it('opens vertically, keeps its backdrop through the full entrance and reverses on home', () => {
     render(AppID.Launcher);
     render(AppID.Settings);
