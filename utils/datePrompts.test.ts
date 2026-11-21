@@ -105,6 +105,28 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(sys).toContain('不要写心理活动，多写对话。');
     });
 
+    it('开场、回复和重生成均使用已启用那套规则，只带开启的条目', async () => {
+        const char = makeChar({
+            dateStyleConfig: { extra: '少用比喻。', rules: [{ id: 'default', title: '', body: '默认场景独有内容', enabled: true }] },
+            dateActiveRuleSetId: 'adventure',
+            dateExtraPresets: [{ id: 'adventure', name: '冒险', content: '保留旧整段。', rules: [
+                { id: 'a', title: '地点', body: '留在咖啡馆。\n角色不会去别处。', enabled: true },
+                { id: 'b', title: '', body: '关闭的条目。', enabled: false },
+            ] }],
+        });
+        const peek = await DatePrompts.buildPeekPayload({ char, userProfile: user, allMsgs: [], emojis: [] });
+        const send = await DatePrompts.buildSessionPayload(baseInput(char));
+        const reroll = await DatePrompts.buildSessionPayload({ ...baseInput(char), variant: 'reroll' });
+        for (const payload of [peek, send, reroll]) {
+            const prompt = payload.messages.map(message => message.content).join('\n');
+            expect(prompt).toContain('### 用户对文风的额外要求（优先级高于风格预设）\n少用比喻。');
+            expect(prompt).toContain('### 本场见面规则\n以下是用户为本场见面指定的规则。开场、后续互动和重生成时都要遵守这些规则，把它们落实到场景、人物行为和叙述中。\n- 地点：留在咖啡馆。\n角色不会去别处。');
+            expect(prompt).not.toContain('保留旧整段。');
+            expect(prompt).not.toContain('默认场景独有内容');
+            expect(prompt).not.toContain('关闭的条目。');
+        }
+    });
+
     it('细节深挖默认开启：方法块进 system，聚焦线索进末尾 note；关闭后两者都消失', async () => {
         const on = await DatePrompts.buildSessionPayload(baseInput(makeChar()));
         expect(sysOf(on.messages)).toContain('深挖，别填充');

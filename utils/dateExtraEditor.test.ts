@@ -19,7 +19,7 @@ it.each(['完成', '返回'])('expands outside clipping ancestors, follows the k
     const root = createRoot(host);
     try {
         await act(async () => root.render(React.createElement(DateSettings, { char: { id: 'test', name: '角色', dateStyleConfig: { extra: '旧内容', pov: 'first-you' } } as any, onBack: vi.fn() })));
-        await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === '补充规则')!.click());
+        await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === '文风')!.click());
         const expand = host.querySelector<HTMLButtonElement>('[aria-label="展开自定义补充"]')!;
         await act(async () => { expand.focus(); expand.click(); });
         const dialog = document.querySelector('[role="dialog"][aria-label="编辑自定义补充"]')!;

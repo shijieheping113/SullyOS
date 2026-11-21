@@ -13,14 +13,14 @@ import ObserveSettings from './ObserveSettings';
 import DateExtraPresets from './DateExtraPresets';
 import DateExtraEditor from './DateExtraEditor';
 import DatePortraitAdjust, { type DatePortraitPreview } from './DatePortraitAdjust';
-import { DateReplyControls, DateRuleList } from './DateReplyControls';
+import { DateReplyControls } from './DateReplyControls';
 import { useLocalBackHandler } from '../../hooks/useLocalBackHandler';
-import { DATE_EMOTION_SLOTS, DATE_DEFAULT_POSE, dateEmotionLabel, datePoseKey, planDateSpriteBatch } from '../../utils/dateSceneSettings';
+import { DATE_EMOTION_SLOTS, DATE_DEFAULT_POSE, dateEmotionLabel, datePoseKey, dateWritingSupplement, planDateSpriteBatch } from '../../utils/dateSceneSettings';
 
 type PortraitSlot = { skinId: string | null; key: string };
 const tabs = [
     { id: 'scene', label: '场景' }, { id: 'writing', label: '文风' },
-    { id: 'rules', label: '补充规则' }, { id: 'parameters', label: '参数' },
+    { id: 'rules', label: '见面规则' }, { id: 'parameters', label: '参数' },
 ] as const;
 function isImageUrl(value: string) {
     try {
@@ -100,18 +100,19 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack, onPortraitPre
 
     // 文风与叙事（即时生效：system prompt 每次请求重建，存上就影响下一条回复）
     const styleConfig = char.dateStyleConfig || {};
-    const [extraDraft, setExtraDraft] = useState(styleConfig.extra || '');
-    const [extraEditorOpen, setExtraEditorOpen] = useState(false);
-    useEffect(() => { setExtraDraft(char.dateStyleConfig?.extra || ''); }, [char.id]);
+    const savedWritingExtra = dateWritingSupplement(styleConfig, true);
+    const [writingExtra, setWritingExtra] = useState(savedWritingExtra);
+    const [writingEditorOpen, setWritingEditorOpen] = useState(false);
+    useEffect(() => { setWritingExtra(savedWritingExtra); }, [char.id, savedWritingExtra]);
     const patchStyleConfig = (patch: Partial<DateStyleConfig>) => {
         updateCharacter(char.id, previous => ({ dateStyleConfig: { ...previous.dateStyleConfig, ...patch } }));
     };
-    const saveExtraDraft = () => {
-        const trimmed = extraDraft.trim();
-        if (trimmed === (char.dateStyleConfig?.extra || '')) return;
-        patchStyleConfig({ extra: trimmed || undefined });
-        addToast(trimmed ? '补充要求已保存' : '补充要求已清空', 'success');
+    const saveWritingExtra = () => {
+        if (writingExtra !== savedWritingExtra) patchStyleConfig({ extra: writingExtra });
     };
+    const legacyWritingPresets = (char.dateExtraPresets || []).map(preset => ({
+        id: preset.id, name: preset.name, text: preset.content || dateWritingSupplement({ rules: preset.rules }, true),
+    })).filter(preset => preset.text.trim());
     const readingAppearance = meetingAppearance(char.dateAppearance);
     const userName = userProfile?.name || '用户';
     const POV_OPTIONS: { id: DateStyleConfig['pov']; label: string; example: string }[] = [
@@ -337,14 +338,10 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack, onPortraitPre
                 dateStyleConfig: { ...previous.dateStyleConfig, style: undefined, pov: undefined, digDeeper: undefined },
                 dateObserve: previous.dateObserve ? { ...previous.dateObserve, enabled: false } : undefined,
             }));
-        } else if (tab === 'rules') {
-            updateCharacter(char.id, previous => ({
-                dateStyleConfig: { ...previous.dateStyleConfig, rules: previous.dateStyleConfig?.rules?.map(rule => ({ ...rule, enabled: false })) },
-            }));
         } else {
             updateCharacter(char.id, previous => ({ dateReplySettings: { steps: previous.dateReplySettings?.steps } }));
         }
-        addToast(tab === 'rules' ? '补充规则已停用，条目已保留' : '已恢复本页默认设置', 'success');
+        addToast('已恢复本页默认设置', 'success');
     };
 
     return (
@@ -612,51 +609,43 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack, onPortraitPre
                     </div>
 
                 </Section>
-                <ObserveSettings char={char} />
-            </div>
-            <div hidden={tab !== "rules"} className="p-4 space-y-4">
-                <Section title="规则预设" defaultOpen>
-                    <DateExtraPresets key={char.id} presets={char.dateExtraPresets || []} value={extraDraft} rules={styleConfig.rules || []}
-                        onApply={preset => {
-                            setExtraDraft(preset.content);
-                            patchStyleConfig({ extra: preset.content, ...(preset.rules ? { rules: preset.rules.map(rule => ({ ...rule })) } : {}) });
-                        }}
-                        onChange={dateExtraPresets => updateCharacter(char.id, { dateExtraPresets })} />
-                </Section>
-                <DateRuleList entries={styleConfig.rules} label="规则" change={apply => updateCharacter(char.id, previous => ({
-                    dateStyleConfig: { ...previous.dateStyleConfig, rules: apply(previous.dateStyleConfig?.rules || []) },
-                }))} />
-                <Section title="补充文本" defaultOpen>
-                    {/* 自定义补充 */}
-                    <div>
-                        <label className="text-[11px] text-slate-500 font-bold mb-2 block">自定义补充（可选）</label>
-                        <div className="relative">
-                        <textarea
-                            aria-label="自定义补充"
-                            value={extraDraft}
-                            onChange={e => setExtraDraft(e.target.value)}
-                            onBlur={saveExtraDraft}
-                            placeholder="比如：多写环境互动；不要写心理活动；对话占比多一些……"
-                            className="w-full h-28 px-4 pt-3 pb-11 bg-slate-100 rounded-xl text-sm resize-none focus:ring-1 focus:ring-primary/30 outline-none transition-all leading-relaxed"
-                        />
-                        <button type="button" aria-label="展开自定义补充" onClick={() => setExtraEditorOpen(true)}
-                            className="absolute bottom-2 right-2 px-3 py-1.5 rounded-lg bg-white text-xs font-semibold text-primary shadow-sm">↗ 展开</button>
-                        </div>
-                        <p className="text-[10px] text-slate-300 mt-1">点别处会自动保存；这段会照原样用上，比上面的风格优先。</p>
+                <Section title="自定义补充" defaultOpen>
+                    <p className="mb-2 text-xs text-slate-600">补充描写口吻、对话比例等文风要求。</p>
+                    <textarea aria-label="自定义补充" value={writingExtra} onChange={event => setWritingExtra(event.target.value)}
+                        onBlur={saveWritingExtra} rows={4} className="w-full rounded-xl bg-slate-100 p-3 text-base"
+                        placeholder="例如：少写抽象比喻，多写具体动作。" />
+                    <div className="flex flex-wrap justify-between items-center gap-2">
+                        {legacyWritingPresets.length > 0 && <select aria-label="取用旧补充预设" value="" className="rounded-lg bg-slate-100 p-2 text-xs"
+                            onChange={event => {
+                                const preset = legacyWritingPresets.find(item => item.id === event.target.value);
+                                if (preset) { setWritingExtra(preset.text); patchStyleConfig({ extra: preset.text }); }
+                            }}>
+                            <option value="">取用旧补充预设</option>
+                            {legacyWritingPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+                        </select>}
+                        <button type="button" aria-label="展开自定义补充" className="ml-auto text-xs text-violet-800 py-2"
+                            onClick={() => setWritingEditorOpen(true)}>↗ 展开</button>
                     </div>
                 </Section>
+                <ObserveSettings char={char} />
+            </div>
+            <div hidden={tab !== "rules"} className="p-4">
+                <DateExtraPresets key={char.id} char={char} update={patch => updateCharacter(char.id, patch)} />
             </div>
             <div hidden={tab !== "parameters"} className="p-4">
                 <DateReplyControls options={char.dateReplySettings} change={apply => updateCharacter(char.id, previous => ({ dateReplySettings: apply(previous.dateReplySettings || {}) }))} />
             </div>
             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
             <input type="file" ref={batchInputRef} className="hidden" accept="image/*" multiple onChange={importBatch} />
-            {extraEditorOpen && <DateExtraEditor key={char.id} value={extraDraft} onChange={setExtraDraft} onClose={() => { saveExtraDraft(); setExtraEditorOpen(false); }} />}
+            {writingEditorOpen && <DateExtraEditor writing value={writingExtra} onChange={setWritingExtra} onClose={() => {
+                saveWritingExtra();
+                setWritingEditorOpen(false);
+            }} />}
 
             <div className="p-4 pb-safe border-t border-slate-200 bg-white/90">
-                <button type="button" onClick={resetTab} className="w-full py-2 mb-1 text-xs font-semibold text-slate-600">
-                    {tab === 'rules' ? '停用全部补充规则' : '恢复本页默认'}
-                </button>
+                {tab !== 'rules' && <button type="button" onClick={resetTab} className="w-full py-2 mb-1 text-xs font-semibold text-slate-600">
+                    恢复本页默认
+                </button>}
                 <button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform">
                     保存当前布置
                 </button>

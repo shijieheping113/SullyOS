@@ -1,24 +1,32 @@
 import React, { useEffect, useState } from 'react';
 import type { DateReplySettings, DateRuleEntry } from '../../types';
+import DateExtraEditor from './DateExtraEditor';
 
 type RuleChange = (entries: DateRuleEntry[]) => DateRuleEntry[];
 const field = 'w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-base text-slate-800';
 
-function RuleFields({ entry, update }: { entry: DateRuleEntry; update: (patch: Partial<DateRuleEntry>) => void }) {
+function RuleFields({ entry, update, expandText }: { entry: DateRuleEntry; update: (patch: Partial<DateRuleEntry>) => void; expandText?: boolean }) {
     const [title, setTitle] = useState(entry.title);
     const [body, setBody] = useState(entry.body);
+    const [fullEditor, setFullEditor] = useState(false);
     useEffect(() => { setTitle(entry.title); }, [entry.title]);
     useEffect(() => { setBody(entry.body); }, [entry.body]);
     return <div className="grid gap-2">
         <input aria-label="标题" placeholder="标题（可选）" className={field} value={title}
             onChange={event => setTitle(event.target.value)} onBlur={() => { if (title !== entry.title) update({ title }); }} />
-        <textarea aria-label="内容" placeholder="输入内容" rows={3} className={field} value={body}
+        <textarea aria-label={expandText ? '规则正文' : '内容'} placeholder="输入内容" rows={3} className={field} value={body}
             onChange={event => setBody(event.target.value)} onBlur={() => { if (body !== entry.body) update({ body }); }} />
+        {expandText && <button type="button" aria-label="展开编辑规则正文" className="justify-self-end text-xs text-violet-800"
+            onClick={() => setFullEditor(true)}>↗ 展开</button>}
+        {fullEditor && <DateExtraEditor value={body} onChange={setBody} onClose={() => {
+            if (body !== entry.body) update({ body });
+            setFullEditor(false);
+        }} />}
     </div>;
 }
 
-export function DateRuleList({ entries = [], change, label, ordered }: {
-    entries?: DateRuleEntry[]; change: (updater: RuleChange) => void; label: string; ordered?: boolean;
+export function DateRuleList({ entries = [], change, label, ordered, expandText }: {
+    entries?: DateRuleEntry[]; change: (updater: RuleChange) => void; label: string; ordered?: boolean; expandText?: boolean;
 }) {
     const [expanded, setExpanded] = useState('');
     const move = (id: string, direction: number) => change(previous => {
@@ -43,7 +51,7 @@ export function DateRuleList({ entries = [], change, label, ordered }: {
                     <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={entry.enabled} onChange={event => update({ enabled: event.target.checked })} />启用</label>
                 </div>
                 {expanded === entry.id && <>
-                    <RuleFields entry={entry} update={update} />
+                    <RuleFields entry={entry} update={update} expandText={expandText} />
                     <div className="flex items-center gap-3 text-xs">
                         {ordered && <>
                             <button type="button" disabled={index === 0} className="disabled:opacity-40" onClick={() => move(entry.id, -1)}>上移</button>

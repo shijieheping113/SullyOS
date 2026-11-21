@@ -81,7 +81,7 @@ it('scrolls the preview with the editor, collapses it, and keeps focused input a
     const host = document.createElement('div'); document.body.append(host);
     const root = createRoot(host);
     try {
-        await act(async () => root.render(React.createElement(DateSettings, { char: { id: 'test', name: '角色' } as any, onBack: vi.fn() })));
+        await act(async () => root.render(React.createElement(DateSettings, { char: { id: 'test', name: '角色', dateStyleConfig: { extra: '规则测试' } } as any, onBack: vi.fn() })));
         const scroll = host.querySelector('[data-testid="date-settings-scroll"]') as HTMLElement;
         const toggle = [...host.querySelectorAll('button')].find(el => el.textContent === '收起场景预览')!;
         expect(scroll.contains(toggle)).toBe(true);
@@ -89,7 +89,7 @@ it('scrolls the preview with the editor, collapses it, and keeps focused input a
         await act(async () => toggle.click());
         expect(scroll.textContent).not.toContain('预览 (Preview)');
         expect(toggle.textContent).toBe('展开场景预览');
-        await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === '补充规则')!.click());
+        await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === '文风')!.click());
         const textarea = host.querySelector('textarea[aria-label="自定义补充"]') as HTMLTextAreaElement;
         vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({ top: 64, bottom: 380, height: 316 } as DOMRect);
         vi.spyOn(textarea, 'getBoundingClientRect').mockReturnValue({ top: 500, bottom: 580, height: 80 } as DOMRect);

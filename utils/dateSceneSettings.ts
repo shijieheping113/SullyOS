@@ -45,6 +45,26 @@ export function enabledDateEntries(entries: DateRuleEntry[] = []) {
         [entry.title.trim(), entry.body.trim()].filter(Boolean).join('：'));
 }
 
+// 短暂合并过的版本会把原文风补充写成这一条，恢复时按来源归位。
+export const isLegacyDateStyleRule = (rule: DateRuleEntry) => /^legacy-extra(?:-legacy)*$/.test(rule.id);
+
+export function dateMeetingRules(rules: DateRuleEntry[] = []) {
+    return rules.filter(rule => !isLegacyDateStyleRule(rule));
+}
+
+export function dateWritingSupplement(config?: { extra?: string; rules?: DateRuleEntry[] }, forEditor = false) {
+    return config?.extra ?? config?.rules?.find(rule => isLegacyDateStyleRule(rule) && (forEditor || rule.enabled))?.body ?? '';
+}
+
+export function activeDateRuleSet(char: CharacterProfile) {
+    return char.dateExtraPresets?.find(preset => preset.id === char.dateActiveRuleSetId && Array.isArray(preset.rules));
+}
+
+export function activeDateRules(char: CharacterProfile) {
+    const preset = activeDateRuleSet(char);
+    return dateMeetingRules(preset ? preset.rules : char.dateStyleConfig?.rules);
+}
+
 export function dateReplyRequest(char: CharacterProfile | undefined, userName: string, input: {
     model: string; messages: Array<{ role: string; content: unknown }>; temperature: number; stream?: boolean; nativeAnthropic?: boolean;
 }) {

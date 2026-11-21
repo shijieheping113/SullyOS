@@ -23,7 +23,7 @@
 import { CharacterProfile, UserProfile, Message, Emoji, DateStyleConfig, DateObservation, DateObserveConfig, DateObserveCustomField } from '../types';
 import { ContextBuilder } from './context';
 import { ChatPrompts } from './chatPrompts';
-import { enabledDateEntries } from './dateSceneSettings';
+import { activeDateRules, dateWritingSupplement, enabledDateEntries } from './dateSceneSettings';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from './ttsProvider';
@@ -241,12 +241,20 @@ const buildPovBlock = (config: DateStyleConfig | undefined, charName: string, us
 };
 
 /** 自定义补充文风要求块。为空时不注入。 */
-const buildExtraStyleBlock = (config?: DateStyleConfig): string => {
-    const rules = enabledDateEntries(config?.rules);
-    const extra = [(config?.extra || '').trim(), rules.map(rule => `- ${rule}`).join('\n')].filter(Boolean).join('\n\n');
+const buildExtraStyleBlock = (char: CharacterProfile): string => {
+    const extra = dateWritingSupplement(char.dateStyleConfig).trim();
     if (!extra) return '';
     return `### 用户对文风的额外要求（优先级高于风格预设）
 ${extra}
+`;
+};
+
+const buildMeetingRulesBlock = (char: CharacterProfile): string => {
+    const rules = enabledDateEntries(activeDateRules(char));
+    if (!rules.length) return '';
+    return `### 本场见面规则
+以下是用户为本场见面指定的规则。开场、后续互动和重生成时都要遵守这些规则，把它们落实到场景、人物行为和叙述中。
+${rules.map(rule => `- ${rule}`).join('\n')}
 `;
 };
 
@@ -598,7 +606,8 @@ const buildVNModeBlock = (char: CharacterProfile, userName: string): string => {
     const styleConfig = char.dateStyleConfig;
     const preset = getStylePreset(styleConfig);
     const povBlock = buildPovBlock(styleConfig, char.name, userName);
-    const extraBlock = buildExtraStyleBlock(styleConfig);
+    const extraBlock = buildExtraStyleBlock(char);
+    const rulesBlock = buildMeetingRulesBlock(char);
     const digBlock = isDigDeeperOn(styleConfig) ? `${DIG_DEEPER_BLOCK}\n` : '';
     const observeBlock = isObserveOn(char) ? buildObserveBlock(char) : '';
     return `### [Visual Novel Mode: 视觉小说脚本模式]
@@ -613,7 +622,7 @@ ${char.dateVoiceEnabled ? getDateVoiceGuide() : ''}
 
 ${preset.block}
 
-${digBlock}${povBlock}${extraBlock}### 场景上下文
+${digBlock}${povBlock}${extraBlock}${rulesBlock}### 场景上下文
 ${timeLine}- **Location**: 你们现在**面对面**。
 - **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
 ${observeBlock}`;
@@ -700,7 +709,8 @@ export const DatePrompts = {
         // 文风预设也作用于开场感知；人称（pov）刻意不作用——peek 的设计就是
         // 第三人称旁观镜头（用户还没"走过去"），人称指令只影响 session 内叙述
         const preset = getStylePreset(char.dateStyleConfig);
-        const extraBlock = buildExtraStyleBlock(char.dateStyleConfig);
+        const extraBlock = buildExtraStyleBlock(char);
+        const rulesBlock = buildMeetingRulesBlock(char);
 
         // 架空模式以剧情衔接，不用现实经过多久判断跳时，也不假定刚刚还在聊天。
         const contextSeparator = !dateTimeOn
@@ -726,7 +736,7 @@ ${invite ? '描写角色自己的到来、动作与必要的开场台词，停�
 1. **上下文连贯性**: ${continuityRule}
 2. **状态一致性**: ${!dateTimeOn ? '根据最近记录中的剧情进展、场景与情绪来决定当前状态，使角色表现与上一幕自然呼应。' : gapHint.includes('天') ? '如果间隔了很多天，可能在发呆、忙碌或者有点落寞。' : '根据最近的聊天内容和情绪来决定当前状态。如果刚聊完，角色的状态应该与聊天内容相呼应。'}
 3. **描写风格**: ${preset.peekHint}。${isObserveOn(char) ? '先按下方「观测协议」输出观测块，再开始描写内容（描写本身不要加任何前缀）。' : '不要输出任何前缀，直接输出描写内容。'}
-${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlock(char)}` : ''}`;
+${extraBlock ? `\n${extraBlock}` : ''}${rulesBlock ? `\n${rulesBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlock(char)}` : ''}`;
 
         return {
             messages: [

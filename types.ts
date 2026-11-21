@@ -3136,6 +3136,7 @@ export interface CharacterProfile {
   dateCustomBackground?: string;
   datePortraitPoses?: Record<string, SpriteConfig>;
   dateExtraPresets?: Array<{ id: string; name: string; content: string; rules?: DateRuleEntry[] }>; // 当前角色的见面补充规则预设
+  dateActiveRuleSetId?: string; // 未选预设时使用 dateStyleConfig 的规则
   /** 观测协议 OBSERVE：开启后每条回复注入「时间/地点/状态/细节」结构化观测，渲染成全息 HUD（样式/字段可自定义） */
   dateObserve?: DateObserveConfig;
 
